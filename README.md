@@ -87,6 +87,8 @@ xvfb-run -a -n 191 -e private/reports/xvfb.log -s '-screen 0 1280x1024x24 -nolis
 # While that process runs, use another terminal:
 python3 tools/python/reference_snapshot.py --state private/reference/captures/poison-fields.p2s --out private/reports/NEW_SNAPSHOT.json
 python3 tools/python/reference_trace.py --steps 24 --keys Up --out private/reports/NEW_TRACE.json
+# A bounded JSON list of {"steps":N,"keys":[...]} supports multi-segment scenarios:
+python3 tools/python/reference_trace.py --schedule SCHEDULE.json --out private/reports/NEW_SCHEDULE_TRACE.json
 ```
 
 The virtual display selects Mesa software presentation. See

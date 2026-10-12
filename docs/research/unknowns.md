@@ -20,7 +20,8 @@ replaced by a plausible gameplay rule or generated asset.
 | RNG reproducibility | Main loop reseeds using CPU time in static path | Observe actual seed calls and consumers with frame/timing context |
 | Damage/enemy rules | Local original-symbol functions exported | Controlled encounter scenarios; minimize first divergence |
 | Reference stepping transport | Xvfb F10 verifies one vblank per step; paused PINE reads repeat | Tie captures to actual guest function/update edges; verify debugger sample |
-| Reference scenario coverage | Frozen save reload and short idle/movement runs reproduce sampled bytes | Recover attack/event fields and repeat pickup/transition/save scenarios |
+| Reference scenario coverage | Full-heap reload guard; idle/movement/attack-state/one-key schedules repeat | Recover complete attack events and transition/game-save scenarios |
+| Animation numeric policy | Limited-guard/toward-zero experiment matches20 isolated additions and28 READY key caches | Implement bounded native subset; validate additional clips, interpolation, wrap and matrix operations |
 | Native saves/campaign/co-op/audio | Not implemented | Follow dependencies M10–M18; no release-scope claims yet |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 

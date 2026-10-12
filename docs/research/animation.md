@@ -57,6 +57,24 @@ failed. The original and corrected reports are preserved separately. Its
 consumer uses cached frame/data indexing; active clip and output-transform
 binding remain unresolved. These failures are not accepted native pose tests.
 
+Further evidence locates a candidate AnimInfo inside slot 0 at +0x94: its
+sequence/header pointers match the loaded SOR tree, count=137, index=0 (READY),
+frame count=30 and current frame=11. An initial one-update probe read the heap
+before state loading completed; the newer full-pool reload barrier explicitly
+asserts every measured cache equals the frozen state before stepping.
+
+Animation accumulation also exposes a numerical contract. Plain IEEE float32
+and simple toward-zero addition did not reproduce all cached values. The exact
+PCSX2 v2.6.3 FPU addition path masks the smaller operand's low significand bits
+according to exponent distance, retaining one alignment guard bit, before the
+configured single-precision addition. A separately written guarded/toward-zero
+experiment matches all 20 isolated one-delta updates and all 28 tested READY
+lower-key caches byte for byte. Inputs and first failed variants are preserved
+in private/reports/sor-*guard-experiment.json and cache reports. This validates
+a finite addition subset for this reference; it is not a complete hardware-FPU,
+interpolation, matrix or gameplay acceptance claim. Implement the bounded native
+numeric/key decoder next and extend comparisons across clips and boundaries.
+
 The rig inspector joins model labels using the source tree prefix and node
 label, truncated to the 16-byte model-definition field, then sums initial
 translations along the parent graph. This is a labelled rest-hierarchy

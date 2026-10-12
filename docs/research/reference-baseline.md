@@ -39,6 +39,14 @@ holds specified keyboard controls, and verifies each F10 step advances exactly
 one vblank before reading paused EE state. It releases controls even on failure.
 These are emulator vblank pauses, not guaranteed guest function boundaries.
 
+An additional barrier is now necessary before interpreting heap data: PINE may
+report paused while an asynchronous state load is still restoring EE RAM.
+One early animation probe saw restored player globals with the previous heap.
+The trace tool now also requires the complete source-derived animation pool to
+match frozen bytes before stepping. Its pointer/stride come from GetAnimData;
+the count/capacity are read from the fixture. The prior capture is retained as
+an invalid pre-load heap observation, not a pose discrepancy.
+
 Actual experiments: two 12-vblank idle runs and two 24-vblank Up schedules are
 byte-identical across every sampled field, including control and clock words.
 In this fixture, AFrame advances every second vblank and SPF remains 1/30.
@@ -50,6 +58,14 @@ attack events require additional source-derived fields. Two later 36-vblank
 Cross traces also agree after adding the signed word read by PlayerAttacking
 at offset 0x8c8. This is a mode-dependent state predicate, not a recovered
 animation enum or proof of a projectile/damage event.
+
+The nearest original key is item-definition 90 / instance 305, at
+(20.9921875,0.3515625,10.7734375). GrabPowerup's key branch performs 32-bit
+loads/stores at player+0x1a14. Two schedules of Right for 40 vblanks then Down
+for 26 produce identical sampled bytes. Keys change 0→1 at step 50, with player
+position (19.625153,0,9.589942). Repeating with the complete heap reload barrier
+gives the same result. This is a verified original pickup scenario; key limits,
+help prompts, ownership and gate behavior still need full recovery.
 
 Tools: reference_snapshot.py (frozen or paused live fields), reference_trace.py
 (bounded Xvfb schedule), virtual_display.py (isolated GUI environment). All raw

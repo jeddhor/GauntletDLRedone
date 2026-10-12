@@ -14,16 +14,45 @@ import subprocess
 import time
 
 from pine_probe import Pine, configured_socket
-from reference_snapshot import describe
+from reference_snapshot import describe, fixture_regions
 from virtual_display import environment
+
+KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L']
+
+
+def schedule_segments(path, steps, keys):
+    if path:
+        with path.open('rb') as file:
+            raw = file.read(16*1024+1)
+        if len(raw)>16*1024:
+            raise ValueError('schedule input exceeds policy')
+        segments=json.loads(raw)
+    else:
+        segments=[dict(steps=steps, keys=keys)]
+    if not isinstance(segments, list) or not 1 <= len(segments) <= 16:
+        raise ValueError('schedule must contain 1..16 segments')
+    result = []
+    for segment in segments:
+        if not isinstance(segment, dict) or set(segment) != {'steps', 'keys'}:
+            raise ValueError('segment needs only steps and keys')
+        n, held = segment['steps'], segment['keys']
+        if type(n) is not int or not 1 <= n <= 120 or not isinstance(held, list) or any(k not in KEYS for k in held):
+            raise ValueError('invalid step count/key list')
+        result.append(dict(steps=n, keys=list(dict.fromkeys(held))))
+    if sum(s['steps'] for s in result) > 120:
+        raise ValueError('schedule exceeds 120-vblank policy')
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--steps', type=int, default=12)
-    parser.add_argument('--keys', nargs='*', choices=['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L'], default=[])
+    parser.add_argument('--keys', nargs='*', choices=KEYS, default=[])
+    parser.add_argument('--schedule', type=pathlib.Path, help='JSON list of bounded steps/keys segments')
     parser.add_argument('--out', type=pathlib.Path, required=True)
     args = parser.parse_args()
+    segments = schedule_segments(args.schedule, args.steps, args.keys)
+    step_keys = [s['keys'] for s in segments for _ in range(s['steps'])]
     if not 1 <= args.steps <= 120 or not args.out.resolve().is_relative_to(pathlib.Path('private').resolve()):
         raise ValueError('trace must be private and bounded to 1..120 vblanks')
     if args.out.exists():
@@ -74,21 +103,27 @@ def main():
             from reference_snapshot import frozen_memory
             memory = frozen_memory(frozen)
             baseline = describe(lambda a, n: memory[a:a+n], profile)
+            regions = fixture_regions(memory, profile)
             # PINE queues the load asynchronously; wait for all fixture fields.
             pine.request(b'\x0a\x01')
             deadline = time.monotonic()+5
             while True:
                 observation = describe(read, profile)
-                if pine.status() == 1 and observation == baseline:
+                if pine.status() == 1 and observation == baseline and all(read(a, len(b)) == b for a, b in regions):
                     break
                 if time.monotonic() >= deadline:
                     raise ValueError('fixture reload did not settle')
                 time.sleep(0.02)
             samples = [dict(step=0, observation=observation)]
-            for key in args.keys:
-                xdo('keydown', key)
-                held.append(key)
-            for step in range(1, args.steps+1):
+            for step, wanted in enumerate(step_keys, start=1):
+                for key in list(held):
+                    if key not in wanted:
+                        xdo('keyup', key)
+                        held.remove(key)
+                for key in wanted:
+                    if key not in held:
+                        xdo('keydown', key)
+                        held.append(key)
                 before = observation['scalars']['vb_counter']['raw_u32']
                 xdo('key', '--delay', '20', 'F10')
                 deadline = time.monotonic()+5
@@ -104,15 +139,16 @@ def main():
                 observation = describe(read, profile)
                 if pine.status() != 1:
                     raise ValueError('reference resumed during paused sampling')
-                samples.append(dict(step=step, observation=observation))
-            report = dict(schema_version=1, source_profile=source['profile_id'], fixture_sha256=fixture_hash,
+                samples.append(dict(step=step, held_keys=list(wanted), observation=observation))
+            report = dict(schema_version=2, source_profile=source['profile_id'], fixture_sha256=fixture_hash,
                           launch=launch, transport='Xvfb keyboard F10 + paused PINE; one verified vblank per step',
                           alignment='emulator vblank boundary, not a guaranteed guest-update edge',
-                          held_keys=args.keys, samples=samples)
+                          reload_barrier='sampled fields plus complete source-derived animation heap array match frozen fixture',
+                          held_keys=args.keys, input_schedule=segments, samples=samples)
             with args.out.open('x') as file:
                 json.dump(report, file, indent=2, allow_nan=False)
                 file.write('\n')
-            print(f'{args.steps} verified vblank steps; keys={args.keys}')
+            print(f'{len(step_keys)} verified vblank steps; schedule={segments}')
         finally:
             for key in reversed(held):
                 xdo('keyup', key)

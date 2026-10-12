@@ -17,6 +17,26 @@ from pine_probe import Pine, configured_socket, finite_float32
 RAM_SIZE = 32 * 1024 * 1024
 
 
+def fixture_regions(memory, profile):
+    """Heap barriers: paused PINE status alone does not mean state loading ended."""
+    result = []
+    for array in profile.get('reload_barrier_arrays', []):
+        pointer_address = array['pointer_guest_address']
+        pointer, = struct.unpack_from('<I', memory, pointer_address)
+        count_address = profile['symbols'][array['count_symbol']]['guest_address']
+        capacity_address = profile['symbols'][array['capacity_symbol']]['guest_address']
+        count, = struct.unpack_from('<I', memory, count_address)
+        capacity, = struct.unpack_from('<I', memory, capacity_address)
+        size = count * array['stride_bytes']
+        if count > capacity or capacity > array['max_capacity'] or pointer % 4 or pointer + size > RAM_SIZE:
+            raise ValueError('invalid fixture heap array')
+        for address, n in [(pointer_address, 4), (count_address, 4), (capacity_address, 4), (pointer, size)]:
+            for offset in range(0, n, 2048):
+                length = min(2048, n-offset)
+                result.append((address+offset, memory[address+offset:address+offset+length]))
+    return result
+
+
 def describe(read, profile):
     symbols = profile['symbols']
     result = {'scalars': {}, 'strings': {}, 'players': []}

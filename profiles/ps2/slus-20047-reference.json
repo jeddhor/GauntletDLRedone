@@ -151,6 +151,22 @@
       "type": 1,
       "binding": 1,
       "section_index": 4
+    },
+    "AnimDataNum": {
+      "binding": 0,
+      "guest_address": 2223644,
+      "name": "AnimDataNum",
+      "section_index": 4,
+      "size": 4,
+      "type": 1
+    },
+    "AnimDataMax": {
+      "binding": 0,
+      "guest_address": 2223652,
+      "name": "AnimDataMax",
+      "section_index": 4,
+      "size": 4,
+      "type": 1
     }
   },
   "player_layout": {
@@ -183,8 +199,26 @@
         "consumer": "PlayerAttacking",
         "consumer_ee_address": 1273384,
         "interpretation": "signed state tested by consumer; enum meanings and mode-dependent attack predicate pending"
+      },
+      "keys": {
+        "offset_bytes": 6676,
+        "type": "int32",
+        "consumer": "GrabPowerup",
+        "consumer_ee_address": 1412184,
+        "evidence": "lw/sw at player+0x1a14 in key-subtype branch; complete limits/help/ownership rules pending"
       }
     },
     "activity_flags": "unknown; unused slots still contain nonzero health"
-  }
+  },
+  "reload_barrier_arrays": [
+    {
+      "name": "animation_data",
+      "pointer_guest_address": 2868592,
+      "count_symbol": "AnimDataNum",
+      "capacity_symbol": "AnimDataMax",
+      "stride_bytes": 160,
+      "max_capacity": 16384,
+      "evidence": "GetAnimData original lw of pointer at0x2bc570 and 0xa0 slot stride; ELF pointer symbol has NOTYPE/size0"
+    }
+  ]
 }

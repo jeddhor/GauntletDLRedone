@@ -52,7 +52,7 @@ Verified this checkpoint:
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Fifteen Rust parser tests and three Python transport/configuration tests pass.
+- Fifteen Rust parser tests and four Python transport/configuration/schedule tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
 - Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
@@ -64,10 +64,20 @@ Verified this checkpoint:
   A runtime-cache comparison incorrectly treated +0xc as a clip ID; original
   and corrected reports are preserved. Resolve active clip/descriptor before
   accepting any cache comparison; do not adjust channels to hide this mismatch.
+  Candidate slot0 AnimInfo at +0x94 identifies READY/frame11. Guarded toward-zero
+  addition experiments reproduce 20 isolated deltas and 28 READY lower-key caches
+  byte for byte. Ordinary IEEE and simple RZ variants remain as failed evidence.
+  Native numeric/key decoding is the next implementation; interpolation/matrices
+  are still unaccepted.
 - Stock GS dump framing now reads 1,806 events and records raw TEXA/ALPHA/TEST
   writes (private/reports/poison-fields-gs-registers-v1.json). Material binding
   remains open. Xvfb captures require exposing the window; an occluded reference
   capture was black, while the exposed original game rendered correctly.
+- One original key pickup reproduces: Right40/Down26 vblank schedule; keys at
+  player+0x1a14 change0→1 at step50. Source GrabPowerup's key branch is exported.
+  The segmented input tool is bounded to120 vblanks. Reload now compares the
+  full animation pool to frozen RAM, because paused status can occur during
+  asynchronous memory restoration. The key schedule is unchanged with this guard.
 
 Animation exports are now in private/reports/ghidra-animation. Player/clock
 exports remain in ghidra-player/ghidra-clock. Inspect original instructions before

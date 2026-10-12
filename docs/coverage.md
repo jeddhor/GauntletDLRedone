@@ -9,7 +9,7 @@ Content denominators remain provisional and do not indicate reachability.
 | M00 Charter | Complete | Charter, native-route decision, provenance/private-data policy and measurable requirements |
 | M01 Disc/ELF | Complete | Exact profile; 56-file inventory; independent extent checks; repeated extraction manifests identical; section/symbol/executable inventory |
 | M02 Tool/upstream audit | Complete | Pinned audit; R5900 import/analysis; stock PCSX2 scalar/FP/three-operand MULT/VU/LQ/SQ samples agree with Ghidra and original ELF words. Decompiled types remain qualified |
-| M03 Reference baseline | Partial | Durable source-qualified Poison Fields state; verified frozen/live reload; isolated Xvfb stepping; repeated idle/movement schedules agree. Attack/pickup/transition/save scenarios and direct debugger workflow remain |
+| M03 Reference baseline | Partial | Durable fixture, frozen/live/heap reload checks, stock debugger and Xvfb stepping; repeated idle/movement/attack-state/key-pickup schedules agree. Full attack-event, transition and game-save scenarios remain |
 | M04 Archive | Extraction complete; gate partial | 2,915/2,915 entries validated and independently compared; all retained; runtime WorldDir binds first-level package to entries 2194–2198; individual lookup trace completion remains |
 | M05 Texture/material proof | Partial | Complete observed metadata scan; six base color families; title/environment/character pixels rendered diagnostically. Formats 130/146, TEXA/GS materials, mipmaps and representative fidelity comparisons remain |
 | M06 Geometry/first scene | Partial | All first-level integer packets independently agree; world nodes read; native terrain viewer runs; glTF imports 930 nodes in Blender. Header triangle discrepancies, original transforms/materials and static character remain |
@@ -33,7 +33,7 @@ The private catalog includes 61 dictionary-labelled WORLDS.PS2 records, 643
 OBJECTS.PS2 records, 651 ANIM.PS2 records and other families. These are observed
 archive entries, not a declaration of 61 campaign areas or complete asset support.
 
-Checks actually performed: fifteen Rust parser tests, three Python transport/configuration tests,
+Checks actually performed: fifteen Rust parser tests, four Python transport/configuration/schedule tests,
 all-entry independent archive comparison, complete native texture-metadata scan,
 byte-for-byte comparison of all 15 native title PNG pixel buffers,
 repeated disc/ELF manifests, release builds and strict Clippy checks, native
