@@ -9,13 +9,13 @@ Content denominators remain provisional and do not indicate reachability.
 | M00 Charter | Complete | Charter, native-route decision, provenance/private-data policy and measurable requirements |
 | M01 Disc/ELF | Complete | Exact profile; 56-file inventory; independent extent checks; repeated extraction manifests identical; section/symbol/executable inventory |
 | M02 Tool/upstream audit | Partial | Pinned audit; R5900 import/analysis tested; direct debugger sample cross-check remains |
-| M03 Reference baseline | In progress | ISO boots; title/menu captures; user selected Yellow Sorceress / The Poison Fields; paused scene captured. Durable state and repeatable scenario suite pending |
-| M04 Archive | Extraction complete; gate partial | 2,915/2,915 entries validated and independently compared; all retained; first-level runtime lookup mapping pending |
+| M03 Reference baseline | Partial | Durable source-qualified Poison Fields state; verified frozen/live reload; isolated Xvfb stepping; repeated idle/movement schedules agree. Attack/pickup/transition/save scenarios and direct debugger workflow remain |
+| M04 Archive | Extraction complete; gate partial | 2,915/2,915 entries validated and independently compared; all retained; runtime WorldDir binds first-level package to entries 2194–2198; individual lookup trace completion remains |
 | M05 Texture/material proof | Partial | 651/651 observed metadata tables, 33,227 records; 15 title base PNGs; native Bevy viewer tested. Five formats, material/alpha/mipmap fidelity and representative comparisons pending |
-| M06 Geometry/first scene | Not implemented | Recover original vertex/VIF/primitive/transform semantics |
+| M06 Geometry/first scene | Partial | 1,729/1,729 first-level integer packets agree with independent decoder; 1,360 world nodes read; native original-terrain/base-texture scene runs. Header triangle discrepancies, original transforms/materials, static character and export remain |
 | M07 Rig/animation | Not implemented | Recover original skeleton, channels, sampling and events |
 | M08 Level/collision | Investigation leads | World/collision schemas and original-symbol functions; native verified queries pending |
-| M09 Clock/input | Investigation | Static loop/clock/control exports; measured update/input contract pending |
+| M09 Clock/input | Partial investigation | Repeatable vblank-stepped idle/movement fixture; one update per two vblanks observed locally. Full update order, input edges, game-mode cadence and RNG consumer contract remain |
 | M10 Movement/camera | Not implemented | Depends on accepted animation, collision and clock/input |
 | M11 Combat/enemy/pickups | Not implemented | Original attack/damage functions identified; reference scenarios and implementation pending |
 | M12 Playable slice | Not implemented | Proposed target: Yellow Sorceress / The Poison Fields, original-data encounter and transition/save |
@@ -33,9 +33,10 @@ The private catalog includes 61 dictionary-labelled WORLDS.PS2 records, 643
 OBJECTS.PS2 records, 651 ANIM.PS2 records and other families. These are observed
 archive entries, not a declaration of 61 campaign areas or complete asset support.
 
-Checks actually performed: six Rust parser tests, two Python transport tests,
+Checks actually performed: eleven Rust parser tests, three Python transport/configuration tests,
 all-entry independent archive comparison, complete native texture-metadata scan,
 byte-for-byte comparison of all 15 native title PNG pixel buffers,
 repeated disc/ELF manifests, release builds and strict Clippy checks, native
-window/input/alpha-mode visual smoke, reference startup and user-selected scene.
+window/input/alpha-mode visual smoke, native static scene captures, all-packet
+independent geometry comparison, reference startup and repeatable original scene.
 No unavailable fixture is counted as passing gameplay fidelity.

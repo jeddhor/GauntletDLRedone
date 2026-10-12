@@ -152,5 +152,39 @@
       "binding": 1,
       "section_index": 4
     }
+  },
+  "player_layout": {
+    "evidence": "verified instruction operands; live stepping semantics pending",
+    "base_symbol": "players",
+    "count": 4,
+    "stride_bytes": 11008,
+    "fields": {
+      "position": {
+        "offset_bytes": 80,
+        "type": "float32x3",
+        "consumer": "GetPlayerPos",
+        "consumer_ee_address": 1251288
+      },
+      "collision_position": {
+        "offset_bytes": 112,
+        "type": "float32x3",
+        "consumer": "GetPlayerColPos",
+        "consumer_ee_address": 1251336
+      },
+      "health": {
+        "offset_bytes": 6672,
+        "type": "float32",
+        "consumer": "PlayersRestoreHealth",
+        "consumer_ee_address": 1247840
+      },
+      "attack_state_word": {
+        "offset_bytes": 2248,
+        "type": "int32",
+        "consumer": "PlayerAttacking",
+        "consumer_ee_address": 1273384,
+        "interpretation": "signed state tested by consumer; enum meanings and mode-dependent attack predicate pending"
+      }
+    },
+    "activity_flags": "unknown; unused slots still contain nonzero health"
   }
 }

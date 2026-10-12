@@ -36,7 +36,7 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "WAD at {:#x}, entry {:?}: {}",
+            "data at {:#x}, entry {:?}: {}",
             self.byte_offset, self.entry_index, self.reason
         )
     }

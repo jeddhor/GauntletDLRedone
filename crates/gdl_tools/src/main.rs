@@ -139,6 +139,39 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && (args[0] == "objects-inspect" || args[0] == "world-inspect") {
+        let bytes = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let report = if args[0] == "world-inspect" {
+            let world = gdl_formats::world::World::parse(&bytes)?;
+            let placements = world.placements()?;
+            serde_json::json!({"source_sha256":hash(&bytes),"world":world,"candidate_placements":placements})
+        } else {
+            let objects = gdl_formats::objects::Objects::parse(&bytes)?;
+            let mut outcomes = Vec::new();
+            for object in &objects.objects {
+                for part in &object.parts {
+                    let result = part.decode_integer_geometry();
+                    outcomes.push(match result {
+                        Ok(geometry) => serde_json::json!({"object":object.index,"part":part.index,
+                            "geometry":geometry,"error":null}),
+                        Err(error) => serde_json::json!({"object":object.index,"part":part.index,
+                            "geometry":null,"error":error.to_string()}),
+                    });
+                }
+            }
+            serde_json::json!({"source_sha256":hash(&bytes),"objects":objects,"outcomes":outcomes})
+        };
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        let mut buffered = std::io::BufWriter::new(&mut file);
+        serde_json::to_writer_pretty(&mut buffered, &report)?;
+        buffered.flush()?;
+        drop(buffered);
+        file.write_all(b"\n")?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "texdef-inspect" {
         return texdef_export(Path::new(&args[1]), None, Path::new(&args[2]));
     }
@@ -150,7 +183,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);

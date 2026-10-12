@@ -8,18 +8,18 @@ replaced by a plausible gameplay rule or generated asset.
 | Retail revision label | Exact disc/ELF/archive hashes and serial established | Optional trusted revision catalog; exact-hash profile is already usable |
 | Full game types | Symbols recovered; initial STABS output contains library/ELF structures | Inspect .mdebug records/analyzer options; recover game layouts from instruction consumers if absent |
 | Runtime code overlays | DVP payloads and IRX modules inventoried | Trace runtime file/module requests and address reuse |
-| First slice resource IDs | User chose Yellow Sorceress / The Poison Fields | Bind paused reference globals/lookup traces to archive IDs |
+| First slice lookup trace | Frozen/live WorldDir=levels/levelG1 binds entries 2194–2198 | Confirm each original loader request and external dependencies |
 | Material/color pipeline | Title RGB/orientation plausible; raw alpha preserved | Compare upload flags, blend equations, known transparent/background pixels |
 | Five remaining pixel formats | Records retained; numeric inventory known | Recover each upload/consumer and compare distinctive samples |
 | Mipmap semantics | Raw counts/metadata retained | Decode sizes/layouts and compare native/reference LOD selections |
-| Original geometry | Object headers/format leads available | Bounded mesh/VIF investigation for slice static segment |
+| Original geometry | All 1,729 G1 integer packets independently agree; native terrain viewer runs | Resolve 62 triangle-count discrepancies, original transform/winding and material consumers |
 | Animation/rig | Function names and upstream schema leads | One local rig/idle/attack sampler experiment |
 | Collision and navigation | Local WorldCollide and player wall functions identified | Recover precise query inputs/outputs before native response implementation |
 | Update/input cadence | Clock/player-control disassembly exported | Guest-update-boundary captures, vblank/tick deltas, input-edge experiments |
 | RNG reproducibility | Main loop reseeds using CPU time in static path | Observe actual seed calls and consumers with frame/timing context |
 | Damage/enemy rules | Local original-symbol functions exported | Controlled encounter scenarios; minimize first divergence |
-| Reference stepping transport | Stock PINE has inspection/state commands, no input/update stepping | Validate GUI debugger/input recording; instrument only after measured blocker |
-| Reference scenario reproduction | Startup and user-selected playable area captured | Save/reload and repeat idle/movement/attack/pickup/transition scenarios |
+| Reference stepping transport | Xvfb F10 verifies one vblank per step; paused PINE reads repeat | Tie captures to actual guest function/update edges; verify debugger sample |
+| Reference scenario coverage | Frozen save reload and short idle/movement runs reproduce sampled bytes | Recover attack/event fields and repeat pickup/transition/save scenarios |
 | Native saves/campaign/co-op/audio | Not implemented | Follow dependencies M10–M18; no release-scope claims yet |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 

@@ -29,10 +29,16 @@ are presentation/reference observations, not proof of a fixed native simulation 
 The inspected PCSX2 source includes PINE read-memory/status/context and state
 operations. tools/python/pine_probe.py implements a bounded read-only subset,
 validates four loaded function-entry probes against the exact ELF and tags
-EE addresses. Synthetic transport tests pass. It has not yet been validated
-against an enabled PINE instance. Live reads are explicitly non-atomic; even
+EE addresses. Synthetic transport tests and the enabled live connection pass.
+Live reads are explicitly non-atomic; even
 paused reads are diagnostics until tied to a documented guest boundary.
 
 Stock PINE does not provide the proposed input schedule or guest-update stepping
 contract. A GUI debugger/input-recording workflow may suffice initially. A source
 patch is justified only if that remains a measured capture blocker.
+
+The bounded Xvfb keyboard/PINE workflow now verifies one vblank per F10 step.
+In the preserved Poison Fields fixture, AFrame advances every second vblank,
+SPF remains 1/30, and two idle plus two straight-movement runs are identical
+at every sampled clock/control/player field. See reference-baseline.md. This
+establishes a short repeatable fixture, not a universal fixed 30 Hz contract.

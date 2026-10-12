@@ -1,65 +1,76 @@
 # Current development checkpoint
 
-Objective: complete the supplied PS2-to-native Rust/Bevy master plan milestone by
-milestone. User has authorized continued development and emulator reference use.
-No permission to acquire other commercial images or leaked SDK/symbol artifacts.
-Single-agent sequential work; PCSX2 source checkout remains unchanged.
+Objective: complete the supplied PS2-to-native Rust/Bevy master plan milestone
+by milestone. User authorizes continued implementation and reference use.
+Single-agent sequential work. No external commercial images/leaked symbols.
+PCSX2 source is read-only research; native code remains separate MIT code.
 
-The session reserves root .git read-only. Source history uses the ignored
-private/source-control.git metadata with tools/git-local.sh; no retail data is staged.
+Source profile: profiles/ps2/slus-20047.json. Input identities remain unchanged.
+Root .git is session-reserved; history uses private/source-control.git through
+tools/git-local.sh. Never stage retail data, private/, user .vscode/ or the user's
+ghidra-emotionengine-reloaded checkout.
 
-Source profile: profiles/ps2/slus-20047.json. Original ISO and source BIOS hashes
-remain unchanged. The native workspace is at the project root. Private extraction,
-reports, emulator configuration, Ghidra project/module and captures are ignored.
+Current milestone work: M03 repeatable baseline, M05 material proof, M06 static
+geometry and M09 clock/input experiments. M00/M01 complete; M02 direct debugger
+instruction cross-check remains. M04 extraction is complete, with first-package
+binding; individual runtime lookups remain to trace. Native animation, gameplay,
+collision response, saves and campaign remain unimplemented. See docs/coverage.md.
 
-Active dependencies: finish M02 direct debugger decoding cross-check and M03
-repeatable reference state; finish M04 first-level resource mapping. M05 metadata
-and title RGB decode have a tested native viewer, with fidelity gates still open.
-M09 clock/RNG/input static investigation provides concrete experiments, not a
-native gameplay implementation. Full milestone statuses are in docs/coverage.md.
+User-selected fixture: Yellow Sorceress, The Poison Fields, profile PELE. Verified
+state private/reference/captures/poison-fields-original.p2s has SHA-256
+cc9b835f2d061bfc8a7950fb75b7a621d4e7217738a3aebcfb58609171a27399.
+It is copied to private emulator slot 1. Never overwrite the preserved original.
+WorldDir=levels/levelG1 binds entries 2194–2198. Four player records, position,
+collision position and health have instruction-derived offsets in the revision
+reference profile. Activity flags and class-ID interpretation remain open.
 
-User-selected scenario: Yellow Sorceress, The Poison Fields. Paused reference
-screen has profile label PELE, level 1, 483 health. Do not substitute a guessed
-fresh state or claim exact attack/movement results from this screenshot.
+The user requested Xvfb to avoid competing for desktop control. All automated
+GUI work now uses virtual_display.py, held by xvfb-run in the recorded private
+session. Helpers require it and refuse desktop fallback. The user allows desktop
+presentation for necessary manual tests. Do not send desktop keyboard/mouse input.
+Xvfb selects Mesa software presentation while PCSX2 keeps software GS; document
+backend changes. PINE works, default slot 28011. Reference operations require
+host namespace/socket access. Current PID/display/authority are in ignored
+private/reports/reference.pid and private/reference/xvfb-session.json. Query window
+IDs within that virtual session. Processes can outlive tool sessions; inspect first.
 
-Pending fixture: save a reference state through System → Save State → Save To
-File as private/reference/captures/poison-fields.p2s. The user's disabled PINE
-slot came from game-specific settings; the global INI still disables PINE.
-The installed 2.6.3 release initializes PINE at startup/disc changes rather than
-ordinary settings apply. A tested configuration helper and private launcher can
-enable global PINE and reload the saved state paused; slot 28011 is sufficient.
-See docs/research/reference-setup.md. A live relaunch is not yet tested. Automated
-F1 attempts did not produce a file. Keep the paused scenario intact. Window IDs
-change when display/settings dialogs change; query current IDs instead of relying
-on old IDs. Avoid input to unrelated desktop windows.
+Verified this checkpoint:
 
-Established findings: 56 verified disc files; 8,836 ELF symbols / 3,584 named
-function entries; 2,915 archive entries all independently agreeing; 651 validated
-texture tables / 33,227 records; native Bevy 0.18.1 viewer runs. Initial Ghidra
-STABS export recovered library/ELF structures, not player/entity types. Main loop
-reseeds RNG from CPU time. Clock consumes vblank deltas. LoadVU1GameLogic is a
-two-instruction no-op in this build. Five texture formats and material semantics
-remain unsupported. Two previously unnamed entries have additional matching
-Jester package name hypotheses; the original name report remains unchanged.
+- 56 disc files, 8,836 symbols / 3,584 named original functions.
+- 2,915 archive outcomes independently agree; 651 texture tables / 33,227 records
+  read. Three base pixel formats implemented; five remain open.
+- All 1,729 Poison Fields integer packets independently agree, 944 unique vertex
+  counts match, source radii fit, 1,360 world nodes / 3,461 collisions retained.
+  62 declared triangle counts differ; do not force a match.
+- Native gdl_scene renders 1,706 placed parts with original base textures.
+  Diagnostic opaque/unlit/double-sided materials remain explicit. Static alpha
+  edges, lightmaps, scene transforms and VU/GS assembly remain unaccepted.
+- Frozen and paused state observations match after reload. Xvfb F10 advances
+  exactly one vblank. In this fixture AFrame advances every second vblank with
+  SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
+  every sampled byte. Cross schedules do not yet establish actual attack events.
+- Eleven Rust parser tests and three Python transport/configuration tests pass.
+  Release scene build and strict workspace/all-target Clippy pass. Native
+  overview/close-view captures remain under private/reference/captures/.
 
-No first-divergence gameplay report exists yet: no accepted native simulation
-to compare. Private source-linked disassembly/decompiler exports are under
-private/reports/ghidra and ghidra-clock. Do not translate casts blindly.
+Animation exports are now in private/reports/ghidra-animation. Player/clock
+exports remain in ghidra-player/ghidra-clock. Inspect original instructions before
+accepting decompiler layouts. PlayerAttacking reads a signed state at player+0x8c8;
+this field is now bound and two 36-vblank Cross traces agree. Enum meanings and
+event timing still need validation. The loop reseeds RNG from
+guest CPU time; short schedules agree, but RNG consumers/replay scope remain open.
 
 Next useful actions:
 
-1. Confirm enabled reference PINE and saved state; run the bounded memory probe
-   against the expected serial and code-entry probes, preserving raw word values.
-2. Extend bounded probes to WorldDir/CurLevel and selected player records with
-   source-derived widths. Bind The Poison Fields to exact archive identities.
-3. Verify guest debugger disassembly for representative R5900 instructions.
-4. Capture/repeat idle, straight/diagonal movement and attack with documented
-   stepping boundaries; recover authoritative state layout and clock deltas.
-5. Recover slice mesh, animation and collision families in dependency order;
-   keep hypotheses outside accepted native gameplay until comparisons pass.
+1. Complete the direct PCSX2 debugger instruction sample comparison in Xvfb.
+2. Extend source-linked attack/animation probes and repeat event schedules;
+   establish pickup/transition/save scenarios without inventing rules.
+3. Resolve geometry transforms/counts/materials; export static glTF with source
+   provenance and unknown sidecars for independent inspection.
+4. Recover the selected character package, rig and actual idle/attack clips from
+   the original-function exports. Continue bounded consumer experiments.
 
-Useful commands are in README.md. Tests currently pass; the most recent complete
-Clippy run for the native client used release profile and denied warnings.
-Python transport/configuration tests are synthetic; PINE live behavior still
-awaits validation. Commands that inspect the GUI reference require access to
-the host process namespace/display; sandbox pgrep alone cannot see that process.
+reference_trace.py releases held keys on failure. Run_viewer.py also requires the
+virtual session. README and baseline/geometry dossiers give commands and evidence
+limits. Keep this checkpoint current as formats/configurations change. Do not
+claim a complete port or native playable slice yet.

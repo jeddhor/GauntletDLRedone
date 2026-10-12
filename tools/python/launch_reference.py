@@ -12,6 +12,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+from virtual_display import environment as virtual_environment
 
 
 def settings(path):
@@ -21,7 +22,7 @@ def settings(path):
     return parser
 
 
-def configure(root, slot, start_paused):
+def configure(root, slot, start_paused, diagnostic_hotkeys=False):
     path = root / 'private/reference/config/PCSX2/inis/PCSX2.ini'
     if not path.is_file():
         raise ValueError('missing established private reference configuration')
@@ -31,6 +32,12 @@ def configure(root, slot, start_paused):
     config['UI']['StartPaused'] = 'true' if start_paused else 'false'
     # Avoid a UI-selector dependency when collecting subsequent states by hotkey.
     config['EmuCore']['UseSavestateSelector'] = 'false'
+    if diagnostic_hotkeys:
+        if not config.has_section('Hotkeys'):
+            config.add_section('Hotkeys')
+        config['Hotkeys']['FrameAdvance'] = 'Keyboard/F10'
+        config['Hotkeys']['LoadStateFromSlot1'] = 'Keyboard/F7'
+        config['Hotkeys']['SaveStateToSlot2'] = 'Keyboard/F11'
     backup = path.with_name('PCSX2.before-pine.ini')
     if not backup.exists():
         shutil.copy2(path, backup)
@@ -64,6 +71,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--state', type=pathlib.Path)
     p.add_argument('--slot', type=int, default=28011)
+    p.add_argument('--diagnostic-hotkeys', action='store_true', help='private F10 advance, F7 load slot 1, F11 save slot 2')
     args = p.parse_args()
     if not 0 <= args.slot <= 65535:
         raise ValueError('PINE slot must be 0..65535')
@@ -86,8 +94,8 @@ def main():
     with iso.open('rb') as file:
         if hashlib.file_digest(file, 'sha256').hexdigest() != profile['image']['sha256']:
             raise ValueError('disc differs from the established source profile')
-    ini = configure(root, args.slot, state is not None)
-    env = os.environ.copy()
+    ini = configure(root, args.slot, state is not None, args.diagnostic_hotkeys)
+    env = virtual_environment()
     env.update(QT_QPA_PLATFORM='xcb', XDG_CONFIG_HOME=str(root / 'private/reference/config'),
                XDG_CACHE_HOME=str(root / 'private/reference/cache'),
                XDG_DATA_HOME=str(root / 'private/reference/data'))
@@ -99,7 +107,8 @@ def main():
                    pine_slot=args.slot, ini_sha256=hashlib.sha256(ini.read_bytes()).hexdigest(),
                    state=str(state.relative_to(root)) if state else None,
                    state_sha256=hashlib.sha256(state.read_bytes()).hexdigest() if state else None,
-                   start_paused=state is not None, command=command)
+                   start_paused=state is not None, diagnostic_hotkeys=args.diagnostic_hotkeys,
+                   display=env['DISPLAY'], presentation_driver='Mesa software / lavapipe for Xvfb', command=command)
     (root / 'private/reports/reference-launch.json').write_text(json.dumps(context, indent=2) + '\n')
     with (root / 'private/reports/reference-stdout.log').open('w') as output:
         process = subprocess.Popen(command, env=env, cwd=root, stdout=output, stderr=subprocess.STDOUT)

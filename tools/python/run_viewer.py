@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Launch the native texture viewer for an observed archive package label."""
+"""Launch a native data inspector for a hash-qualified archive package label."""
 import argparse
 import hashlib
 import json
 import pathlib
 import subprocess
+from virtual_display import environment as virtual_environment
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('package', nargs='?', default='TITLE', help='dictionary package label, e.g. TITLE or STATIC')
+    p.add_argument('--scene', action='store_true', help='static world/mesh inspector (e.g. LEVELS/levelG1)')
     args = p.parse_args()
     proposed = json.loads(pathlib.Path('private/reports/wad-independent.json').read_text())
     archive = json.loads(pathlib.Path('private/wad/manifest.json').read_text())
     if proposed['source_sha256'] != archive['source_sha256']:
         raise ValueError('name candidates and extraction refer to different archives')
     paths = []
-    for basename in ['TEXDEF.PS2', 'TEXTURES.PS2']:
+    basenames = ['OBJECTS.PS2', 'WORLDS.PS2', 'TEXDEF.PS2', 'TEXTURES.PS2'] if args.scene else ['TEXDEF.PS2', 'TEXTURES.PS2']
+    for basename in basenames:
         target = args.package.upper().rstrip('/') + '/' + basename
         entries = [e for e in proposed['entries'] if target in [n.upper() for n in e['proposed_names']]]
         if len(entries) != 1:
@@ -27,7 +30,8 @@ def main():
         if hashlib.sha256(path.read_bytes()).hexdigest() != e['decoded_sha256']:
             raise ValueError('decoded source identity differs')
         paths.append(path)
-    result = subprocess.run(['target/release/gdl_client', *map(str, paths)])
+    binary = 'gdl_scene' if args.scene else 'gdl_client'
+    result = subprocess.run([f'target/release/{binary}', *map(str, paths)], env=virtual_environment())
     raise SystemExit(result.returncode)
 
 
