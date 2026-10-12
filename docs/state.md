@@ -11,8 +11,8 @@ tools/git-local.sh. Never stage retail data, private/, user .vscode/ or the user
 ghidra-emotionengine-reloaded checkout.
 
 Current milestone work: M03 repeatable baseline, M05 material proof, M06 static
-geometry and M09 clock/input experiments. M00/M01 complete; M02 direct debugger
-instruction cross-check remains. M04 extraction is complete, with first-package
+geometry, M07 metadata and M09 clock/input experiments. M00–M02 complete; stock debugger scalar,
+FP, three-operand MULT, VU and 128-bit load/store samples agree. M04 extraction is complete, with first-package
 binding; individual runtime lookups remain to trace. Native animation, gameplay,
 collision response, saves and campaign remain unimplemented. See docs/coverage.md.
 
@@ -38,20 +38,36 @@ Verified this checkpoint:
 
 - 56 disc files, 8,836 symbols / 3,584 named original functions.
 - 2,915 archive outcomes independently agree; 651 texture tables / 33,227 records
-  read. Three base pixel formats implemented; five remain open.
+  read. Six base color families implemented; two alpha-only formats remain open.
+  CT16 colors use GS channel shifts; its alpha selector is explicitly diagnostic,
+  not an accepted TEXA/material-alpha conversion.
 - All 1,729 Poison Fields integer packets independently agree, 944 unique vertex
   counts match, source radii fit, 1,360 world nodes / 3,461 collisions retained.
   62 declared triangle counts differ; do not force a match.
 - Native gdl_scene renders 1,706 placed parts with original base textures.
   Diagnostic opaque/unlit/double-sided materials remain explicit. Static alpha
   edges, lightmaps, scene transforms and VU/GS assembly remain unaccepted.
+  Static glTF exports 930 placements and imports into Blender's empty scene.
 - Frozen and paused state observations match after reload. Xvfb F10 advances
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Eleven Rust parser tests and three Python transport/configuration tests pass.
+- Fifteen Rust parser tests and three Python transport/configuration tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
+- Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
+  Clip rates vary (10,12,15,24,30,45,60). YEL00 source entry 90 is bound to the
+  frozen loaded SOR_YEL blob at 0x9bb300, with 39 relocated/flag bytes differing.
+  The metadata reader does not validate frame sampling or emit animation events.
+  Fresh frame-zero reader follows original 32-bit bitmap alignment and reads
+  4,795 records. Native rest-hierarchy inspector shows 19 placed character parts.
+  A runtime-cache comparison incorrectly treated +0xc as a clip ID; original
+  and corrected reports are preserved. Resolve active clip/descriptor before
+  accepting any cache comparison; do not adjust channels to hide this mismatch.
+- Stock GS dump framing now reads 1,806 events and records raw TEXA/ALPHA/TEST
+  writes (private/reports/poison-fields-gs-registers-v1.json). Material binding
+  remains open. Xvfb captures require exposing the window; an occluded reference
+  capture was black, while the exposed original game rendered correctly.
 
 Animation exports are now in private/reports/ghidra-animation. Player/clock
 exports remain in ghidra-player/ghidra-clock. Inspect original instructions before
@@ -62,12 +78,11 @@ guest CPU time; short schedules agree, but RNG consumers/replay scope remain ope
 
 Next useful actions:
 
-1. Complete the direct PCSX2 debugger instruction sample comparison in Xvfb.
-2. Extend source-linked attack/animation probes and repeat event schedules;
+1. Extend source-linked attack/animation probes and repeat event schedules;
    establish pickup/transition/save scenarios without inventing rules.
-3. Resolve geometry transforms/counts/materials; export static glTF with source
-   provenance and unknown sidecars for independent inspection.
-4. Recover the selected character package, rig and actual idle/attack clips from
+2. Resolve geometry transforms/counts/materials using source consumers and the
+   independently inspectable glTF export.
+3. Recover the selected character package, rig and actual idle/attack clips from
    the original-function exports. Continue bounded consumer experiments.
 
 reference_trace.py releases held keys on failure. Run_viewer.py also requires the

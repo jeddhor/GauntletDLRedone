@@ -22,7 +22,7 @@ not been performed. No native Windows package is currently claimed.
 | Reference binary SHA-256 | aa7a28d83c30afc34e888a4399f50b51ceda05935b3c1b3f9d7421e6de6f7275 |
 | Reference source | 0f71e668b8adc950db7de1b1b15c2f5080c102e9; not rebuilt or modified |
 
-The Bevy build uses a small desktop image/sprite/text/render feature selection.
+The Bevy build uses desktop image/sprite/text/render plus 3D mesh/PBR features.
 No audio/physics/gameplay system is being represented by the texture laboratory.
 Native window rendering worked locally. GPU log notes a missing optional
 VK_EXT_physical_device_drm extension; it did not prevent the viewer from rendering.
@@ -44,6 +44,16 @@ disabled, fast boot, automatic 4:3 aspect and default interlacing. Exact INI,
 logs and screenshots remain private. PINE is initially disabled. Later enabling
 it changes the capture configuration and must be recorded before probing.
 Presentation field-rate log values do not establish the game's simulation cadence.
+PINE is now enabled globally and verified. Automated GUI work uses authenticated
+Xvfb with Mesa software presentation; launchers refuse desktop fallback.
+
+The stock installed PCSX2 EE debugger was opened and navigated read-only inside
+Xvfb. Its visible words/operands for GetPlayerPos (0x1317d8) and InitAnimData
+(0x10fa98–0x10fae0) agree with the ELF and Ghidra: scalar/FP accesses, the EE
+three-operand MULT, VU LQC2/VSUB.xyzw/SQC2 and 128-bit GPR LQ/SQ. Alias spelling
+differs (li versus addiu from zero). Captures and word offsets are preserved in
+private/reports/debugger-decoder-crosscheck.json. This is representative decoder
+validation, not certification of every opcode or decompiler type/behavior.
 
 No Python packages were installed for the standard-library research scripts.
 Pillow is used only for independent local image inspection. Record its version

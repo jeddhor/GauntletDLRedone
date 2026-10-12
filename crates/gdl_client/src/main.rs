@@ -26,6 +26,7 @@ struct Description;
 fn create_preview(gallery: &Gallery, images: &mut Assets<Image>) -> (Handle<Image>, Vec2, String) {
     let b = &gallery.table.bitmaps[gallery.selected];
     let mode = match gallery.alpha_mode {
+        0 if matches!(b.format, 0 | 16 | 48) => "CT16 alpha selector as binary alpha (diagnostic)",
         0 => "source alpha",
         1 => "opaque RGB diagnostic",
         _ => "GS 0..128 alpha hypothesis",

@@ -74,7 +74,12 @@ fn texdef_export(
         if let Some(data) = &pixels {
             match bitmap.decode_base_rgba(data) {
                 Ok(rgba) => {
-                    let name = format!("{:06}-source-alpha.png", bitmap.index);
+                    let channel = if matches!(bitmap.format, 0 | 16 | 48) {
+                        "binary-texa-selector"
+                    } else {
+                        "source-alpha"
+                    };
+                    let name = format!("{:06}-{channel}.png", bitmap.index);
                     let file = fs::OpenOptions::new()
                         .write(true)
                         .create_new(true)
@@ -100,8 +105,9 @@ fn texdef_export(
             .push(serde_json::json!({"bitmap_index":bitmap.index,"png":png_name,"error":error}));
     }
     let manifest = serde_json::json!({"schema_version":1,"converter_version":env!("CARGO_PKG_VERSION"),
+        "pixel_decoder_version":gdl_formats::texdef::BASE_RGBA_DECODER_VERSION,
         "texdef_sha256":hash(&bytes),"textures_sha256":pixels.as_ref().map(|p|hash(p)),
-        "decode_scope":"candidate base-level pixels only; source alpha preserved; material blending and mipmaps unverified",
+        "decode_scope":"candidate base pixels; 8-bit alpha preserved; CT16 alpha selector shown binary, TEXA/material blending/mipmaps unverified",
         "table":table,"outcomes":outcomes});
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -139,9 +145,35 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() == 3 && (args[0] == "objects-inspect" || args[0] == "world-inspect") {
+    if args.len() == 3
+        && (args[0] == "objects-inspect"
+            || args[0] == "world-inspect"
+            || args[0] == "anim-inspect"
+            || args[0] == "anim-initial-frames")
+    {
         let bytes = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
-        let report = if args[0] == "world-inspect" {
+        let report = if args[0] == "anim-initial-frames" {
+            let animations = gdl_formats::animation::Animations::parse(&bytes)?;
+            let mut samples = Vec::new();
+            let mut retained = 0usize;
+            for tree in &animations.trees {
+                let tree_samples = tree.initial_channels(&bytes)?;
+                retained += tree_samples
+                    .iter()
+                    .map(|s| s.bitmap_raw.len() + s.initial_values_raw.len())
+                    .sum::<usize>();
+                if retained > 64 * 1024 * 1024 {
+                    return Err("aggregate initial-channel byte policy exceeded".into());
+                }
+                samples.push(tree_samples);
+            }
+            serde_json::json!({"source_sha256":hash(&bytes),"initial_channels":samples,
+                "scope":"fresh frame-zero values only; compressed deltas/interpolation/matrix assembly/playback/events not implemented"})
+        } else if args[0] == "anim-inspect" {
+            let animations = gdl_formats::animation::Animations::parse(&bytes)?;
+            serde_json::json!({"source_sha256":hash(&bytes),"animations":animations,
+                "scope":"metadata and translation-only hierarchy; frame sampling/events not implemented"})
+        } else if args[0] == "world-inspect" {
             let world = gdl_formats::world::World::parse(&bytes)?;
             let placements = world.placements()?;
             serde_json::json!({"source_sha256":hash(&bytes),"world":world,"candidate_placements":placements})

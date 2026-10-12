@@ -51,6 +51,7 @@ With the established local cache and naming report, launch the native viewer:
 # Requires the isolated virtual display described below.
 python3 tools/python/run_viewer.py TITLE
 python3 tools/python/run_viewer.py --scene LEVELS/levelG1
+python3 tools/python/run_viewer.py --rig PLAYERS/SOR/YEL00
 ```
 
 Left/Right select the source bitmap. A cycles source alpha, opaque RGB and an
@@ -58,8 +59,9 @@ explicitly labelled GS alpha hypothesis. Esc closes. Source pixels and metadata
 remain unchanged; unsupported formats show a diagnostic. The TITLE package has
 15 records; TITLE00 begins at record 11. The static scene uses original terrain,
 base textures and vertex colors, with explicitly diagnostic opaque/double-sided
-materials. Arrows orbit, WASD pan, Q/E change distance, P shows the saved player's
-vicinity and R returns to overview. No native gameplay is implemented.
+materials. The rig option shows a labelled translation-only rest hierarchy;
+animated pose/skin semantics remain unverified. Arrows orbit, WASD pan, Q/E change
+distance, P shows a detail view and R returns to overview. No native gameplay is implemented.
 
 Independent research helpers require the separately pinned sources described in
 [the upstream audit](docs/research/upstream-audit.md):
@@ -90,3 +92,8 @@ python3 tools/python/reference_trace.py --steps 24 --keys Up --out private/repor
 The virtual display selects Mesa software presentation. See
 [reference evidence](docs/research/reference-baseline.md) and
 [geometry evidence](docs/research/geometry.md) for actual checks and limitations.
+The static research reports can also be exported as glTF:
+
+```sh
+python3 tools/python/export_scene_gltf.py OBJECTS_REPORT WORLD_REPORT TEXTURE_EXPORT_DIRECTORY NEW_PRIVATE_DIRECTORY
+```

@@ -1,9 +1,12 @@
 //! Observed TEXDEF.PS2 v23 metadata and candidate base-level RGBA decoding.
 //!
-//! Color layout is locally plausible, but source alpha remains unmodified.
+//! Eight-bit source alpha remains unmodified; one-bit selectors are displayed
+//! as binary alpha, explicitly separate from original TEXA/material semantics.
 //! Material/GS blending and mipmap parity are separate fidelity gates.
 use crate::wad::ParseError;
 use serde::Serialize;
+
+pub const BASE_RGBA_DECODER_VERSION: &str = "ps2-base-rgba-v2";
 
 fn fail(offset: usize, index: Option<u32>, reason: &str) -> ParseError {
     ParseError {
@@ -126,13 +129,17 @@ impl TextureTable {
     }
 }
 impl Bitmap {
-    /// Decode only observed 32-bit color families. Preserve source alpha bytes.
-    /// IDs 0/16/48/130/146 deliberately await further format evidence.
+    /// Candidate base pixels. CT16 RGB uses the GS five-bit channel shift.
+    /// Its high bit is a TEXA selector, displayed as 0/255 diagnostically.
+    /// IDs 130/146 and actual TEXA/material alpha await consumer evidence.
     pub fn decode_base_rgba(&self, textures: &[u8]) -> Result<Vec<u8>, ParseError> {
         let count = self.width as usize * self.height as usize;
         let (palette_bytes, pixels_bytes) = match self.format {
+            0 => (0usize, count * 2),
             2 => (0usize, count * 4),
+            16 => (32, count.div_ceil(2)),
             34 => (64, count.div_ceil(2)),
+            48 => (512, count),
             66 => (1024, count),
             _ => {
                 return Err(fail(
@@ -159,22 +166,39 @@ impl Bitmap {
         if self.format == 2 {
             return Ok(bytes[..pixels_bytes].to_vec());
         }
+        let color_bytes = if matches!(self.format, 0 | 16 | 48) {
+            2
+        } else {
+            4
+        };
         let indices = &bytes[palette_bytes..palette_bytes + pixels_bytes];
         let mut rgba = Vec::with_capacity(count * 4);
         for i in 0..count {
-            let index = if self.format == 34 {
-                (indices[i / 2] >> ((i % 2) * 4)) & 15
+            let index = if self.format == 0 {
+                i
+            } else if matches!(self.format, 16 | 34) {
+                ((indices[i / 2] >> ((i % 2) * 4)) & 15) as usize
             } else {
-                indices[i]
-            } as usize;
+                indices[i] as usize
+            };
             // The 256-entry GS CSM1 CLUT swaps address bits 3 and 4.
             // A 16-entry palette retains its own sequential storage.
-            let palette_index = if self.format == 66 {
+            let palette_index = if matches!(self.format, 48 | 66) {
                 (index & !24) | ((index & 8) << 1) | ((index & 16) >> 1)
             } else {
                 index
             };
-            rgba.extend_from_slice(&bytes[palette_index * 4..palette_index * 4 + 4]);
+            if color_bytes == 2 {
+                let packed = u16le(bytes, palette_index * 2);
+                rgba.extend_from_slice(&[
+                    ((packed & 31) << 3) as u8,
+                    (((packed >> 5) & 31) << 3) as u8,
+                    (((packed >> 10) & 31) << 3) as u8,
+                    if packed & 0x8000 != 0 { 255 } else { 0 },
+                ]);
+            } else {
+                rgba.extend_from_slice(&bytes[palette_index * 4..palette_index * 4 + 4]);
+            }
         }
         Ok(rgba)
     }
@@ -247,5 +271,36 @@ mod tests {
         let table = TextureTable::parse(&unknown).unwrap();
         assert_eq!(table.bitmaps[0].raw_record[8], 255);
         assert!(table.bitmaps[0].decode_base_rgba(&[0; 1088]).is_err());
+    }
+    #[test]
+    fn ct16_channel_shift_binary_selector_and_palette_addressing() {
+        let bytes = table(48, 576);
+        let bitmap = &TextureTable::parse(&bytes).unwrap().bitmaps[0];
+        let mut pixels = vec![0; 576];
+        pixels[16 * 2..16 * 2 + 2].copy_from_slice(&0x83ffu16.to_le_bytes());
+        pixels[512] = 8;
+        assert_eq!(
+            &bitmap.decode_base_rgba(&pixels).unwrap()[..4],
+            &[248, 248, 0, 255]
+        );
+        assert!(bitmap.decode_base_rgba(&pixels[..575]).is_err());
+        let bytes = table(0, 128);
+        let bitmap = &TextureTable::parse(&bytes).unwrap().bitmaps[0];
+        let mut pixels = vec![0; 128];
+        pixels[..2].copy_from_slice(&0x7c00u16.to_le_bytes());
+        assert_eq!(
+            &bitmap.decode_base_rgba(&pixels).unwrap()[..4],
+            &[0, 0, 248, 0]
+        );
+        let bytes = table(16, 64);
+        let bitmap = &TextureTable::parse(&bytes).unwrap().bitmaps[0];
+        let mut pixels = vec![0; 64];
+        pixels[2..4].copy_from_slice(&0x801fu16.to_le_bytes());
+        pixels[4..6].copy_from_slice(&0x03e0u16.to_le_bytes());
+        pixels[32] = 0x21;
+        assert_eq!(
+            &bitmap.decode_base_rgba(&pixels).unwrap()[..8],
+            &[248, 0, 0, 255, 0, 248, 0, 0]
+        );
     }
 }

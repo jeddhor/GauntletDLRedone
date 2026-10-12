@@ -59,6 +59,15 @@ Research harness: tools/python/verify_geometry.py. Reports and captures stay
 under ignored private/. Pinned gdl_tools format/primitive knowledge was consulted;
 its source is not transplanted into the Rust runtime (see THIRD_PARTY.md).
 
+The report exporter also emits private/exports/poison-fields-gltf-v1/scene.gltf,
+scene.bin, original base PNGs and provenance.json. It retains source record IDs,
+raw descriptors, candidate translations and lightmap UV attributes. Diagnostic
+material choices remain explicit. Blender 5.0.1 imported all 930 placed mesh nodes
+into an initially empty scene without error; 87 used images were imported from
+the 134 included source PNGs. Unreferenced assets and unresolved nodes remain
+listed rather than invented. This validates an independently inspectable export,
+not original animation, collisions or material equivalence.
+
 Next discriminating checks: original world-position consumers, VIF/VU primitive
 assembly, triangle-count meaning, GS material/lightmap state, and one character
 rig. Do not repair unexplained transforms by changing coordinates until the

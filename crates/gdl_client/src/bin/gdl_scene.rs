@@ -8,17 +8,27 @@ use bevy::{
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
     sprite::Anchor,
 };
-use gdl_formats::{objects::Objects, texdef::TextureTable, world::World};
+use gdl_formats::{animation::Animations, objects::Objects, texdef::TextureTable, world::World};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, error::Error, fs, path::Path};
 
 #[derive(Resource)]
 struct SceneSource {
     objects: Objects,
-    world: World,
+    placements: Vec<Placement>,
+    min: Vec3,
+    max: Vec3,
+    label: String,
+    detail: Vec3,
+    detail_distance: f32,
     table: TextureTable,
     textures: Vec<u8>,
     hashes: Vec<String>,
+}
+struct Placement {
+    index: u32,
+    label: String,
+    position: Vec3,
 }
 #[derive(Resource)]
 struct InspectionCamera {
@@ -27,6 +37,9 @@ struct InspectionCamera {
     yaw: f32,
     pitch: f32,
     distance: f32,
+    overview_distance: f32,
+    detail: Vec3,
+    detail_distance: f32,
 }
 #[derive(Component)]
 struct OrbitCamera;
@@ -162,8 +175,7 @@ fn setup(
         .collect();
     let mut placed = 0;
     let mut unmatched = Vec::new();
-    for placement in source.world.placements().expect("validated graph") {
-        let node = &source.world.nodes[placement.node_index as usize];
+    for node in &source.placements {
         if let Some(parts) = names
             .get(node.label.as_str())
             .and_then(|index| cache.get(index))
@@ -173,7 +185,7 @@ fn setup(
                     Name::new(format!("world:{}:{}", node.index, node.label)),
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material.clone()),
-                    Transform::from_translation(Vec3::from_array(placement.summed_position)),
+                    Transform::from_translation(node.position),
                 ));
                 placed += 1;
             }
@@ -196,14 +208,18 @@ fn setup(
         "Undecoded/external/ambiguous bitmap indices (magenta diagnostic): {unresolved_materials:?}"
     );
     println!("Nodes without a model definition (groups/unknown semantics): {unmatched:?}");
-    let center = (Vec3::from_array(source.world.min) + Vec3::from_array(source.world.max)) * 0.5;
-    let extent = Vec3::from_array(source.world.max) - Vec3::from_array(source.world.min);
+    let center = (source.min + source.max) * 0.5;
+    let extent = source.max - source.min;
     commands.insert_resource(InspectionCamera {
         target: center,
         overview: center,
         yaw: 0.0,
         pitch: 0.8,
-        distance: extent.length() * 0.7,
+        // Fit the source bounding sphere inside the default 45-degree view.
+        distance: extent.length() * 1.4,
+        overview_distance: extent.length() * 1.4,
+        detail: source.detail,
+        detail_distance: source.detail_distance,
     });
     commands.spawn((
         Camera3d::default(),
@@ -221,8 +237,8 @@ fn setup(
         },
     ));
     commands.spawn((Text2d::new(format!(
-        "The Poison Fields | STATIC DATA INSPECTOR | gameplay not implemented\nArrow keys: orbit   WASD: pan   Q/E: distance   P: saved player vicinity   R: overview   Esc: close\nOpaque base textures + source vertex colors; double sided; lightmaps/GS blending unverified\n{placed} placed parts | {} unresolved bitmap records shown magenta\nOBJECTS {}  WORLDS {}",
-        unresolved_materials.len(),&source.hashes[0][..12],&source.hashes[1][..12])),
+        "{} | STATIC DATA INSPECTOR | gameplay not implemented\nArrow keys: orbit   WASD: pan   Q/E: distance   P: detail   R: overview   Esc: close\nOpaque base textures + source vertex colors; double sided; lightmaps/GS blending unverified\n{placed} placed parts | {} unresolved bitmap records shown magenta\nOBJECTS {}  placement source {}",
+        source.label,unresolved_materials.len(),&source.hashes[0][..12],&source.hashes[1][..12])),
         TextFont {font_size:15.0,..default()},TextColor(Color::WHITE),Anchor::TOP_LEFT,
         Transform::from_xyz(-580.0,380.0,0.0)));
 }
@@ -268,14 +284,14 @@ fn controls(
     }
     if keys.just_pressed(KeyCode::KeyP) {
         // Recorded fixture, explicitly an inspection view, not a spawn rule.
-        view.target = Vec3::new(24.056019, 0.0, 5.14752);
-        view.distance = 70.0;
+        view.target = view.detail;
+        view.distance = view.detail_distance;
         view.yaw = 0.0;
         view.pitch = 0.9;
     }
     if keys.just_pressed(KeyCode::KeyR) {
         view.target = view.overview;
-        view.distance = 400.0;
+        view.distance = view.overview_distance;
         view.yaw = 0.0;
         view.pitch = 0.8;
     }
@@ -307,19 +323,106 @@ fn bounded_read(path: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(bytes)
 }
 fn run() -> Result<(), Box<dyn Error>> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    let rig = args.first().is_some_and(|a| a == "--rig");
+    if rig {
+        args.remove(0);
+    }
     if args.len() != 4 {
-        return Err("Usage: gdl_scene OBJECTS.PS2 WORLDS.PS2 TEXDEF.PS2 TEXTURES.PS2".into());
+        return Err("Usage: gdl_scene OBJECTS.PS2 WORLDS.PS2 TEXDEF.PS2 TEXTURES.PS2\n       gdl_scene --rig OBJECTS.PS2 ANIM.PS2 TEXDEF.PS2 TEXTURES.PS2".into());
     }
     let files: Vec<_> = args
         .iter()
         .map(|p| bounded_read(Path::new(p)))
         .collect::<Result<_, _>>()?;
-    let world = World::parse(&files[1])?;
-    world.placements()?;
+    let objects = Objects::parse(&files[0])?;
+    let (placements, min, max, label, detail, detail_distance) = if rig {
+        let animations = Animations::parse(&files[1])?;
+        if animations.trees.len() != 1 {
+            return Err("rig inspector requires one explicit tree".into());
+        }
+        let tree = &animations.trees[0];
+        let translations = tree.initial_translations()?;
+        let placements: Vec<_> = tree
+            .nodes
+            .iter()
+            .zip(translations)
+            .map(|(node, position)| Placement {
+                index: node.index,
+                label: (tree.prefix.clone() + &node.label)
+                    .chars()
+                    .take(16)
+                    .collect(),
+                position: Vec3::from_array(position),
+            })
+            .collect();
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for placement in &placements {
+            for def in objects
+                .definitions
+                .iter()
+                .filter(|d| d.label == placement.label)
+            {
+                let object = &objects.objects[def.object_index as usize];
+                for part in &object.parts {
+                    for strip in part.decode_integer_geometry()?.strips {
+                        for vertex in strip.positions {
+                            let point = Vec3::from_array(vertex) + placement.position;
+                            min = min.min(point);
+                            max = max.max(point);
+                        }
+                    }
+                }
+            }
+        }
+        if !min.is_finite() || !max.is_finite() {
+            return Err("no matching rig geometry".into());
+        }
+        let center = (min + max) * 0.5;
+        let distance = (max - min).length() * 1.4;
+        (
+            placements,
+            min,
+            max,
+            format!(
+                "{} | translation-only rest hierarchy; animated pose unverified",
+                tree.label
+            ),
+            center,
+            distance,
+        )
+    } else {
+        let world = World::parse(&files[1])?;
+        let placements = world
+            .placements()?
+            .iter()
+            .map(|p| {
+                let node = &world.nodes[p.node_index as usize];
+                Placement {
+                    index: node.index,
+                    label: node.label.clone(),
+                    position: Vec3::from_array(p.summed_position),
+                }
+            })
+            .collect();
+        (
+            placements,
+            Vec3::from_array(world.min),
+            Vec3::from_array(world.max),
+            "The Poison Fields".into(),
+            Vec3::new(24.056019, 0.0, 5.14752),
+            70.0,
+        )
+    };
     let source = SceneSource {
-        objects: Objects::parse(&files[0])?,
-        world,
+        objects,
+        placements,
+        min,
+        max,
+        label,
+        detail,
+        detail_distance,
         table: TextureTable::parse(&files[2])?,
         textures: files[3].clone(),
         hashes: files
