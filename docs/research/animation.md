@@ -17,8 +17,8 @@ and animation-header-relative offsets, tree/node/clip records and skeletal
 sequence-info records. It retains raw metadata and rejects truncated ranges,
 invalid parents/cycles, non-finite positions, pointer overflow, unsupported
 versions and excessive counts. Input limit 64 MiB; 4,096 trees; aggregate
-100,000 nodes/100,000 sequences/1,000,000 sequence-info records. It does not
-claim to validate compressed frame payloads or implement an animation sampler.
+100,000 nodes/100,000 sequences/1,000,000 sequence-info records. Channel payload validation and arithmetic now live in separate bounded modules,
+with evaluated channel acceptance limited to the measured scenarios below.
 
 Actual SOR data: 35 nodes, 137 named clips and 4,795 skeletal sequence-info
 records. READY is 30 frames at rate 30; WALK1 is 12 at 30; WALK2 is 11 at 30.
@@ -46,7 +46,8 @@ zero and absent scales to one. Initial-only records have no bitmap prefix;
 other records skip ceil(frame_count/32) 32-bit words before initial channel
 floats. All 4,795 SOR frame-zero records read within bounds. Synthetic coverage
 includes the 33-frame alignment boundary, truncation and non-finite data.
-Compressed deltas, interpolation and matrix assembly remain unimplemented.
+Compressed deltas and fresh channel interpolation are now implemented and
+qualified below. Matrix assembly remains unimplemented.
 
 A frozen runtime scan links 35 allocated animation-cache records to the SOR
 node sequence-table pointers. AnimDataList is an ELF NOTYPE/zero-size symbol;
@@ -54,8 +55,8 @@ the actual four-byte pointer width and 0xa0 stride come from GetAnimData loads,
 not symbol size. The fixture allocates 1,050 records of a 3,072-record capacity.
 An attempted comparison incorrectly treated cache word +0xc as a clip ID and
 failed. The original and corrected reports are preserved separately. Its
-consumer uses cached frame/data indexing; active clip and output-transform
-binding remain unresolved. These failures are not accepted native pose tests.
+consumer uses cached frame/data indexing; active clip interpretation was subsequently verified across the measured
+READY/walking/attack cache scenarios. Output matrix binding remains unresolved. These failures are not accepted native pose tests.
 
 Further evidence locates a candidate AnimInfo inside slot 0 at +0x94: its
 sequence/header pointers match the loaded SOR tree, count=137, index=0 (READY),
@@ -72,8 +73,8 @@ experiment matches all 20 isolated one-delta updates and all 28 tested READY
 lower-key caches byte for byte. Inputs and first failed variants are preserved
 in private/reports/sor-*guard-experiment.json and cache reports. This validates
 a finite addition subset for this reference; it is not a complete hardware-FPU,
-interpolation, matrix or gameplay acceptance claim. Implement the bounded native
-numeric/key decoder next and extend comparisons across clips and boundaries.
+interpolation, matrix or gameplay acceptance claim. The native finite numeric/key decoder now reproduces the measured cases below;
+exceptional numeric domains remain explicitly unsupported.
 
 The rig inspector joins model labels using the source tree prefix and node
 label, truncated to the 16-byte model-definition field, then sums initial
@@ -91,3 +92,46 @@ Actual TEXA-dependent alpha, blend state and material fidelity remain open.
 Next: recover and compare individual original channel values at named frame
 boundaries, then matrix assembly and distinct idle/walk/attack poses. Preserve
 the first mismatch instead of adjusting curves until the silhouette looks right.
+
+## Native key and channel evaluation
+
+`gdl_formats::animation_keys` exposes bounded borrowed payloads and retains bitmap,
+initial-value and row offsets/bytes. `gdl_core` is independent of Bevy and implements
+original channel accumulation plus fresh frame sampling. Absolute float rows and
+indexed delta rows remain distinct. Missing axes retain original defaults. All
+137 SOR clips decode, producing 76,542 encoded keys without reported errors.
+This is actual disc parser coverage, not acceptance of every clip's gameplay role.
+
+The finite arithmetic subset uses one alignment guard bit and toward-zero add,
+subtract and multiply. Non-finite, subnormal and overflow domains fail explicitly;
+no complete EE FPU or real-hardware multiplier certification is claimed. The
+reference's 255 reciprocal spacing entries equal nearest-rounded float32 1/n.
+Sampling currently rejects interpolation gaps of 256 or more, pending validation
+of the original division branch. Original instruction constants are retained as
+float bits: snap distance 0x3e000000, angle interpolation cutoff ±0x3fc90fdb,
+wrap thresholds ±0x40490fdb and wrap amount 0x40c90fdb. Frame zero and constant
+tracks use their original direct paths. Clip clocks, transition blending, mirror
+flags, root motion, matrices and events are not included in this sampler.
+
+Actual reference/native checks:
+
+- READY lower/upper keys before and after one update: 116/116 byte equal.
+- 24-vblank Up schedule: READY → WALK1; 1,542/1,542 key caches byte equal.
+- 36-vblank Cross(K) schedule: READY → THROW1S → THROW1 → THROW1R, repeating;
+  2,356/2,356 key caches byte equal.
+- DoAnimation writes evaluated angles/position/scale to cache +0x30/+0x60/+0x90
+  when blend fraction is zero. Comparing those fields gives 2,011/2,011 channel
+  records byte equal, including fractional attack frames. Initial-only records
+  are excluded because their cache vectors may be stale.
+- Independent a/b repetitions of both schedules match every captured observation.
+
+Reports remain private: sor-ready-native-cache-comparison-v1.json,
+sor-walk-native-cache-comparison-v2.json, sor-attack-native-cache-comparison-v1.json,
+sor-evaluated-channel-comparison-v1.json and sor-native-key-clips-v1/. Public
+comparison tools contain no retail vectors. Twenty-two Rust tests cover numeric
+rounding/domain rejection, sparse bitmap word boundaries, payload bounds, exact
+keys, snap/cutoff/wrap and earlier samples preceding invalid later data.
+
+Next bind original node matrix outputs through AnimateNode/DoAnimation and recover
+CreateRYPMatrix/CreatePYRMatrix, then compare local and world transforms before
+accepting a native animated pose.

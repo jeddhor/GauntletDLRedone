@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gdl_formats", "crates/gdl_tools", "crates/gdl_client"]
+members = ["crates/gdl_core", "crates/gdl_formats", "crates/gdl_tools", "crates/gdl_client"]
 resolver = "2"
 
 [workspace.package]

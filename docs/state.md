@@ -52,7 +52,7 @@ Verified this checkpoint:
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Fifteen Rust parser tests and four Python transport/configuration/schedule tests pass.
+- Twenty-two Rust parser/numeric/channel tests and four Python transport/configuration/schedule tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
 - Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
@@ -67,8 +67,11 @@ Verified this checkpoint:
   Candidate slot0 AnimInfo at +0x94 identifies READY/frame11. Guarded toward-zero
   addition experiments reproduce 20 isolated deltas and 28 READY lower-key caches
   byte for byte. Ordinary IEEE and simple RZ variants remain as failed evidence.
-  Native numeric/key decoding is the next implementation; interpolation/matrices
-  are still unaccepted.
+  Native key accumulation and fresh channel sampling now match116 READY key
+  observations,1,542 walking keys,2,356 attack keys and2,011 evaluated channel
+  records byte for byte. Both new schedules reproduce all observations. All137
+  clips decode76,542 keys. Matrices, clocks/blending/mirror/events remain open.
+  New gdl_core has no Bevy/emulator dependency. See animation.md for scope.
 - Stock GS dump framing now reads 1,806 events and records raw TEXA/ALPHA/TEST
   writes (private/reports/poison-fields-gs-registers-v1.json). Material binding
   remains open. Xvfb captures require exposing the window; an occluded reference

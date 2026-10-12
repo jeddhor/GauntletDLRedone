@@ -49,6 +49,7 @@ def main():
     parser.add_argument('--steps', type=int, default=12)
     parser.add_argument('--keys', nargs='*', choices=KEYS, default=[])
     parser.add_argument('--schedule', type=pathlib.Path, help='JSON list of bounded steps/keys segments')
+    parser.add_argument('--animation', action='store_true', help='capture fixture-qualified SOR animation cache records')
     parser.add_argument('--out', type=pathlib.Path, required=True)
     args = parser.parse_args()
     segments = schedule_segments(args.schedule, args.steps, args.keys)
@@ -114,7 +115,13 @@ def main():
                 if time.monotonic() >= deadline:
                     raise ValueError('fixture reload did not settle')
                 time.sleep(0.02)
+            capture_animation = None
+            if args.animation:
+                from reference_animation import cache_probe
+                capture_animation = cache_probe(memory, profile)
             samples = [dict(step=0, observation=observation)]
+            if capture_animation:
+                samples[0]['animation'] = capture_animation(read)
             for step, wanted in enumerate(step_keys, start=1):
                 for key in list(held):
                     if key not in wanted:
@@ -140,6 +147,8 @@ def main():
                 if pine.status() != 1:
                     raise ValueError('reference resumed during paused sampling')
                 samples.append(dict(step=step, held_keys=list(wanted), observation=observation))
+                if capture_animation:
+                    samples[-1]['animation'] = capture_animation(read)
             report = dict(schema_version=2, source_profile=source['profile_id'], fixture_sha256=fixture_hash,
                           launch=launch, transport='Xvfb keyboard F10 + paused PINE; one verified vblank per step',
                           alignment='emulator vblank boundary, not a guaranteed guest-update edge',

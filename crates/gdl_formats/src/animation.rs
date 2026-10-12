@@ -438,4 +438,66 @@ mod tests {
         b[260..264].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(a.trees[0].initial_channels(&b).is_err());
     }
+    #[test]
+    fn sparse_compressed_keys_cross_word_boundaries_and_retain_raw_rows() {
+        let mut b = fixture();
+        b.resize(1324, 0);
+        b[140..142].copy_from_slice(&33i16.to_le_bytes());
+        b[244..246].copy_from_slice(&0x2001u16.to_le_bytes());
+        b[216..220].copy_from_slice(&84u32.to_le_bytes()); // angle table = 300
+        b[252] = 5; // keys 0, 2
+        b[256] = 1; // key 32, including padding to 64 bits
+        b[260..264].copy_from_slice(&0.5f32.to_le_bytes());
+        b[264..266].copy_from_slice(&[1, 2]);
+        b[304..308].copy_from_slice(&0.125f32.to_le_bytes());
+        b[308..312].copy_from_slice(&(-0.25f32).to_le_bytes());
+        let a = Animations::parse(&b).unwrap();
+        let t = a.trees[0].key_track(&b, 0, 0).unwrap();
+        assert_eq!(t.key_frames, [0, 2, 32]);
+        assert_eq!(t.bitmap_raw.len(), 8);
+        assert_eq!(t.initial[0], 0.5);
+        assert_eq!(t.rows_raw, [1, 2]);
+        assert_eq!(t.row(0).unwrap()[0], 0.125);
+        assert_eq!(t.row(1).unwrap()[0], -0.25);
+        assert!(t.row(2).is_err());
+        assert!(a.trees[0].key_track(&b[..265], 0, 0).is_err());
+        b[264] = 255;
+        assert!(
+            a.trees[0]
+                .key_track(&b[..1000], 0, 0)
+                .unwrap()
+                .row(0)
+                .is_err()
+        );
+        b[304..308].copy_from_slice(&f32::NAN.to_le_bytes());
+        b[264] = 1;
+        assert!(a.trees[0].key_track(&b, 0, 0).unwrap().row(0).is_err());
+    }
+    #[test]
+    fn absolute_key_rows_and_initial_only_paths_are_distinct() {
+        let mut b = fixture();
+        b.resize(264, 0);
+        b[244..246].copy_from_slice(&1u16.to_le_bytes());
+        b[252] = 9; // key 3
+        b[256..260].copy_from_slice(&0.5f32.to_le_bytes());
+        b[260..264].copy_from_slice(&2.0f32.to_le_bytes());
+        let a = Animations::parse(&b).unwrap();
+        let t = a.trees[0].key_track(&b, 0, 0).unwrap();
+        assert_eq!(t.key_frames, [0, 3]);
+        assert!(!t.compressed);
+        assert_eq!(t.row(0).unwrap()[0], 2.0);
+        assert_eq!(t.row(0).unwrap()[6..], [1.0; 3]);
+        b[244..246].copy_from_slice(&0x4001u16.to_le_bytes());
+        b[252..256].copy_from_slice(&0.75f32.to_le_bytes());
+        let a = Animations::parse(&b).unwrap();
+        let t = a.trees[0].key_track(&b, 0, 0).unwrap();
+        assert_eq!(t.key_frames, [0]);
+        assert_eq!(t.initial[0], 0.75);
+        assert!(t.bitmap_raw.is_empty());
+        assert!(t.rows_raw.is_empty());
+        assert!(a.trees[0].key_track(&b, 1, 0).is_err());
+        b[244..246].copy_from_slice(&0xc001u16.to_le_bytes());
+        let a = Animations::parse(&b).unwrap();
+        assert!(a.trees[0].key_track(&b, 0, 0).is_err());
+    }
 }

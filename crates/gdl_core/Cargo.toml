@@ -1,0 +1,9 @@
+[package]
+name = "gdl_core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+gdl_formats = { path = "../gdl_formats" }

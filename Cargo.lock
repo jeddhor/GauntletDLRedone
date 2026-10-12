@@ -2010,6 +2010,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdl_core"
+version = "0.1.0"
+dependencies = [
+ "gdl_formats",
+]
+
+[[package]]
 name = "gdl_formats"
 version = "0.1.0"
 dependencies = [
@@ -2021,6 +2028,7 @@ dependencies = [
 name = "gdl_tools"
 version = "0.1.0"
 dependencies = [
+ "gdl_core",
  "gdl_formats",
  "png",
  "serde",

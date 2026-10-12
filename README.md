@@ -17,7 +17,7 @@ Build the pinned Rust workspace:
 
 ```sh
 cargo build --release --locked
-cargo test -p gdl_formats -p gdl_tools --locked
+cargo test -p gdl_core -p gdl_formats -p gdl_tools --locked
 python3 -m unittest discover -s tools/python -p 'test_*.py'
 ```
 
@@ -99,3 +99,19 @@ The static research reports can also be exported as glTF:
 ```sh
 python3 tools/python/export_scene_gltf.py OBJECTS_REPORT WORLD_REPORT TEXTURE_EXPORT_DIRECTORY NEW_PRIVATE_DIRECTORY
 ```
+
+Headless animation research commands preserve original channel payload identities:
+
+```sh
+target/release/gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json
+target/release/gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_KEYS.json
+# Requests are [{"tree":0,"node":N,"sequence":S,"frame":F}, ...].
+target/release/gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_SAMPLES.json
+python3 tools/python/reference_trace.py --animation --steps 24 --keys Up --out private/reports/NEW_ANIMATION_TRACE.json
+python3 tools/python/compare_animation_keys.py --trace TRACE.json --key-dir KEY_REPORT_DIRECTORY --out private/reports/NEW_COMPARISON.json
+```
+
+The bounded native sampler matches measured Sorceress channels, including walking
+and three attack clips. Matrix construction, playback clocks, transitions and
+events remain under recovery; this does not yet make the inspector animated or
+playable. See [animation evidence](docs/research/animation.md).
