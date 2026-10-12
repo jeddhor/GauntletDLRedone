@@ -68,3 +68,7 @@ The reference emulator uses its own private configuration and copied BIOS. It
 is a development dependency only. Do not use the texture viewer to infer native
 combat/campaign support. Gameplay, animation, collision, saves, co-op and release
 qualification follow the remaining master-plan gates.
+
+For global PINE setup and a saved-state-preserving reference launch, see
+[reference setup](docs/research/reference-setup.md). The launcher handles the
+private configuration; its memory probe accepts the default slot 28011.

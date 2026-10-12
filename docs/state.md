@@ -22,9 +22,14 @@ User-selected scenario: Yellow Sorceress, The Poison Fields. Paused reference
 screen has profile label PELE, level 1, 483 health. Do not substitute a guessed
 fresh state or claim exact attack/movement results from this screenshot.
 
-Pending user setup: enable PINE in the running reference with slot 28012 and
-save a reference state through the menu. Automated F1 attempts did not produce
-a file, while screenshots worked. Keep the paused scenario intact. Window IDs
+Pending fixture: save a reference state through System → Save State → Save To
+File as private/reference/captures/poison-fields.p2s. The user's disabled PINE
+slot came from game-specific settings; the global INI still disables PINE.
+The installed 2.6.3 release initializes PINE at startup/disc changes rather than
+ordinary settings apply. A tested configuration helper and private launcher can
+enable global PINE and reload the saved state paused; slot 28011 is sufficient.
+See docs/research/reference-setup.md. A live relaunch is not yet tested. Automated
+F1 attempts did not produce a file. Keep the paused scenario intact. Window IDs
 change when display/settings dialogs change; query current IDs instead of relying
 on old IDs. Avoid input to unrelated desktop windows.
 
@@ -55,4 +60,6 @@ Next useful actions:
 
 Useful commands are in README.md. Tests currently pass; the most recent complete
 Clippy run for the native client used release profile and denied warnings.
-Python transport tests are synthetic; PINE live behavior still awaits validation.
+Python transport/configuration tests are synthetic; PINE live behavior still
+awaits validation. Commands that inspect the GUI reference require access to
+the host process namespace/display; sandbox pgrep alone cannot see that process.

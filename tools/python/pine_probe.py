@@ -6,6 +6,7 @@ reference source. Running-state reads are explicitly non-atomic observations.
 Never include this tool in the native gameplay runtime.
 """
 import argparse
+import configparser
 import hashlib
 import json
 import math
@@ -69,10 +70,21 @@ def finite_float32(value):
     return value if math.isfinite(value) else None
 
 
+def configured_socket():
+    """Use the private global slot; the standard slot has no filename suffix."""
+    settings = configparser.ConfigParser(interpolation=None)
+    settings.optionxform = str
+    settings.read('private/reference/config/PCSX2/inis/PCSX2.ini')
+    slot = settings.getint('EmuCore', 'PINESlot', fallback=28011)
+    if not 0 <= slot <= 65535:
+        raise ValueError('invalid configured PINE slot')
+    filename = 'pcsx2.sock' if slot == 28011 else f'pcsx2.sock.{slot}'
+    return pathlib.Path(os.environ.get('XDG_RUNTIME_DIR', '/tmp')) / filename
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--socket', type=pathlib.Path,
-                   default=pathlib.Path(os.environ.get('XDG_RUNTIME_DIR', '/tmp')) / 'pcsx2.sock.28012')
+    p.add_argument('--socket', type=pathlib.Path, default=configured_socket())
     p.add_argument('--out', type=pathlib.Path, required=True)
     p.add_argument('symbols', nargs='*', default=['AFrame', 'Time', 'SPF', 'vb_elapsed', 'ticks_elapsed'])
     args = p.parse_args()
