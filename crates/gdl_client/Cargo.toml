@@ -1,0 +1,11 @@
+[package]
+name = "gdl_client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy.workspace = true
+gdl_formats = { path = "../gdl_formats" }
+sha2.workspace = true

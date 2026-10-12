@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/gdl_formats", "crates/gdl_tools", "crates/gdl_client"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT"
+
+[workspace.dependencies]
+flate2 = "=1.1.10"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+png = "=0.18.1"
+bevy = { version = "=0.18.1", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_log", "bevy_winit", "bevy_window", "bevy_render", "bevy_image", "bevy_sprite", "bevy_sprite_render", "bevy_core_pipeline", "bevy_color", "bevy_camera", "bevy_text", "default_font", "png", "x11", "keyboard"] }

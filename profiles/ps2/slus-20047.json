@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "profile_id": "ps2-slus-20047-fb47d40667df",
+  "evidence": "verified locally",
+  "image": {
+    "filename": "Gauntlet - Dark Legacy.iso",
+    "sha256": "fb47d40667dfd5b51ffdf2cf7030a3737510b0c4f29dada2a953cb34c65545f2",
+    "size": 620447744
+  },
+  "filesystem": "ISO9660",
+  "volume": "GAUNTLET",
+  "boot_path": "SLUS_200.47",
+  "boot_config": "BOOT2 = cdrom0:\\SLUS_200.47;1\nVER = 1.20\nVMODE = NTSC",
+  "serial": "SLUS_200.47",
+  "region": "NTSC; USA inferred from SLUS serial",
+  "retail_revision": "unknown; SYSTEM.CNF VER=1.20 is recorded without interpreting it as retail revision",
+  "executable": {
+    "iso_file_offset": 57344,
+    "lba": 28,
+    "path": "SLUS_200.47",
+    "sha256": "69056dc6969c3740a82422ecdf7f771b19b26e20aff208d620c6efec66a3d527",
+    "size": 2866160
+  },
+  "archive": {
+    "iso_file_offset": 3919872,
+    "lba": 1914,
+    "path": "WAD.BIN",
+    "sha256": "e047a4e060c2372407bd6e00c380602dcddeadb0f31637ba88630a8c029da946",
+    "size": 479993856
+  },
+  "entry_point": 1048584,
+  "load_segments": [
+    {
+      "alignment": 4096,
+      "file_offset": 4096,
+      "file_size": 1813320,
+      "flags": 7,
+      "memory_size": 1992836,
+      "physical_address": 1048576,
+      "type": 1,
+      "virtual_address": 1048576
+    }
+  ],
+  "symbol_count": 8836,
+  "named_function_count": 3584,
+  "debug_sections": [
+    {
+      "alignment": 4,
+      "entry_size": 1,
+      "file_offset": 1817604,
+      "flags": 0,
+      "info": 0,
+      "link": 0,
+      "name": ".mdebug",
+      "size": 737096,
+      "type": 1879048197,
+      "virtual_address": 3041412
+    },
+    {
+      "alignment": 4,
+      "entry_size": 12,
+      "file_offset": 2555268,
+      "flags": 0,
+      "info": 0,
+      "link": 18,
+      "name": ".stab",
+      "size": 34572,
+      "type": 1,
+      "virtual_address": 3041412
+    },
+    {
+      "alignment": 1,
+      "entry_size": 0,
+      "file_offset": 2597888,
+      "flags": 0,
+      "info": 0,
+      "link": 0,
+      "name": ".stabstr",
+      "size": 99,
+      "type": 3,
+      "virtual_address": 3041412
+    },
+    {
+      "alignment": 4,
+      "entry_size": 16,
+      "file_offset": 2614516,
+      "flags": 0,
+      "info": 4543,
+      "link": 29,
+      "name": ".symtab",
+      "size": 141376,
+      "type": 2,
+      "virtual_address": 0
+    },
+    {
+      "alignment": 1,
+      "entry_size": 0,
+      "file_offset": 2755892,
+      "flags": 0,
+      "info": 0,
+      "link": 0,
+      "name": ".strtab",
+      "size": 110268,
+      "type": 3,
+      "virtual_address": 0
+    }
+  ]
+}

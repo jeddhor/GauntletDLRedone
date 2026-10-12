@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "source_profile": "ps2-slus-20047-fb47d40667df",
+  "executable_sha256": "69056dc6969c3740a82422ecdf7f771b19b26e20aff208d620c6efec66a3d527",
+  "address_space": "EE virtual/physical addresses within the observed load segment",
+  "provenance": "original ELF symbol table; gameplay meanings beyond symbol labels remain provisional",
+  "symbols": {
+    "main": {
+      "guest_address": 1049056,
+      "size": 1624,
+      "type": 2,
+      "binding": 1,
+      "section_index": 1
+    },
+    "ClockOncePerFrame": {
+      "guest_address": 1060456,
+      "size": 828,
+      "type": 2,
+      "binding": 1,
+      "section_index": 1
+    },
+    "GetPlayerDMotion": {
+      "guest_address": 1329376,
+      "size": 1604,
+      "type": 2,
+      "binding": 0,
+      "section_index": 1
+    },
+    "WorldCollide": {
+      "guest_address": 1171808,
+      "size": 2808,
+      "type": 2,
+      "binding": 0,
+      "section_index": 1
+    },
+    "PlayerControls": {
+      "guest_address": 1070872,
+      "size": 1036,
+      "type": 2,
+      "binding": 1,
+      "section_index": 1
+    },
+    "PlayerDamageEnemy": {
+      "guest_address": 1339504,
+      "size": 632,
+      "type": 2,
+      "binding": 0,
+      "section_index": 1
+    },
+    "GetWadInfo": {
+      "guest_address": 1918968,
+      "size": 200,
+      "type": 2,
+      "binding": 0,
+      "section_index": 1
+    },
+    "InitWad": {
+      "guest_address": 1919208,
+      "size": 260,
+      "type": 2,
+      "binding": 0,
+      "section_index": 1
+    },
+    "players": {
+      "guest_address": 2233680,
+      "size": 44032,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "PlayerControl": {
+      "guest_address": 2168048,
+      "size": 240,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "WorldDir": {
+      "guest_address": 2225344,
+      "size": 64,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "CurLevel": {
+      "guest_address": 2351492,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "wad_last_filename": {
+      "guest_address": 2759976,
+      "size": 256,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "AFrame": {
+      "guest_address": 2160920,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "Time": {
+      "guest_address": 2160900,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "SPF": {
+      "guest_address": 2160904,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "vb_counter": {
+      "guest_address": 2759800,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "vb_elapsed": {
+      "guest_address": 2160924,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "ticks_elapsed": {
+      "guest_address": 2160936,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "last_hash": {
+      "guest_address": 2759968,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    },
+    "game_mode": {
+      "guest_address": 2161016,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
+    }
+  }
+}
