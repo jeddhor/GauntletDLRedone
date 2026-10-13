@@ -13,7 +13,7 @@ replaced by a plausible gameplay rule or generated asset.
 | Five remaining pixel formats | Records retained; numeric inventory known | Recover each upload/consumer and compare distinctive samples |
 | Mipmap semantics | Raw counts/metadata retained | Decode sizes/layouts and compare native/reference LOD selections |
 | Original geometry | All 1,729 G1 integer packets independently agree; native terrain viewer runs | Resolve 62 triangle-count discrepancies, original transform/winding and material consumers |
-| Animation/rig | 35-node SOR tree, 137 clips, frame-zero reader and native rest-hierarchy inspector | Local channels/matrices/blending and bounded player animation choice now compare exactly; recover world/VU composition, attachments and events |
+| Animation/rig | 35-node SOR tree, 137 clips, frame-zero reader and native rest-hierarchy inspector | Local channels/matrices/blending and bounded player animation choice now compare exactly; world helper compares two natural translations and one controlled bone chain; recover render scales, attachments and full events |
 | Animation cache words | 35 live caches matched to SOR; +0xc-as-clip-ID assumption contradicted | Trace frame/data indexing consumers before using cache fields as comparison output |
 | Collision and navigation | Local WorldCollide and player wall functions identified | Recover precise query inputs/outputs before native response implementation |
 | Update/input cadence | Clock/player-control disassembly exported | Guest-update-boundary captures, vblank/tick deltas, input-edge experiments |

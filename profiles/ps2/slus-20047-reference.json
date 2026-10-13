@@ -267,6 +267,10 @@
       "sequence_table_pointer": 36
     },
     "matrix_bytes": 64,
+    "matrix_box_capture_bytes": 128,
+    "matrix_box_flags_offset": 96,
+    "matrix_box_parent_offset": 116,
+    "matrix_box_evidence": "original GetWorldMat EE0x1d0714/0x1d071c/0x1d0728/0x1d0780 loads flags+0x60 and parent+0x74; retained 128 bytes match fixture allocation stride. Unknown bytes remain raw.",
     "scale_offset": 64,
     "local_capture_bytes": 80,
     "action_map_player_offset": 488,

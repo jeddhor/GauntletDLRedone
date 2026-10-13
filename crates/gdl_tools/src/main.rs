@@ -80,6 +80,13 @@ struct PlayerAnimationRequest {
     sampled: bool,
     events: Option<gdl_core::player_animation::ActionEventInput>,
 }
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WorldMatrixRequest {
+    leaf: gdl_core::world_transform::MatrixBox,
+    parents: Vec<gdl_core::world_transform::MatrixBox>,
+    offset: Option<[f32; 3]>,
+}
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -197,6 +204,35 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "world-matrix" {
+        let raw = bounded_read(Path::new(&args[1]), 4 * 1024 * 1024)?;
+        let requests: Vec<WorldMatrixRequest> = serde_json::from_slice(&raw)?;
+        if requests.len() > 4096
+            || requests
+                .iter()
+                .map(|r| (r.parents.len() + 1) * 64)
+                .sum::<usize>()
+                > 1_000_000
+        {
+            return Err("world-matrix request/work policy exceeded".into());
+        }
+        let outcomes: Vec<_> = requests.into_iter().map(|request| {
+            let mut parents = request.parents.clone();
+            match gdl_core::world_transform::compose(request.leaf,&mut parents,request.offset) {
+                Ok(output) => serde_json::json!({"request":request,"output":output,"parents_after":parents,"error":null}),
+                Err(e) => serde_json::json!({"request":request,"output":null,"error":e.to_string()}),
+            }
+        }).collect();
+        let report = serde_json::json!({"requests_sha256":hash(&raw),"outcomes":outcomes,
+            "scope":"source-derived finite GetWorldMat/MulMat4 experiment, configured VU RZ arithmetic; actual guest world outputs, scale consumers and render composition unaccepted"});
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        return Ok(());
+    }
     if args.len() == 4 && args[0] == "player-anim-select" {
         let source = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
         let animations = gdl_formats::animation::Animations::parse(&source)?;
@@ -215,7 +251,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 frames: clip.frames,
                 timing_factor: clip.timing_factor,
                 repeat: clip.repeat,
-                flags: clip.flags,
+                root_transfer_flags: clip.root_transfer_flags,
             })
         };
         let outcomes: Vec<_> = requests.into_iter().map(|request| {
@@ -612,7 +648,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);

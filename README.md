@@ -150,6 +150,12 @@ Add `--events` to the player comparison for the bounded ordinary Sorceress
 throw-request timeline. This compares the event word and start timestamp; native
 projectile creation, successful launches and hits remain unimplemented.
 
+`gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json` evaluates the
+bounded source-order world-matrix experiment. Stock debugger input/output capture
+uses `tools/python/reference_world_matrix.py`; inspected entry/return screenshots
+are required. See [world transform research](docs/research/world-transforms.md)
+for the controlled-input distinction and current comparison limits.
+
 `anim-samples`/`anim-transforms` requests can optionally include
 `"transition":{"from":[nine prior channels],"fraction":F,"mirror":false}`.
 The pose comparator supplies these observed values for nonzero reference blends.

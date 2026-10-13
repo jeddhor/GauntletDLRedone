@@ -63,6 +63,29 @@ pub fn sub_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     add_guarded_rz(a, -b)
 }
 
+/// Finite ordinary addition rounded toward zero, without the scalar EE alignment
+/// mask. Qualified against configured PCSX2 VU SSE arithmetic and a controlled
+/// live-bone GetWorldMat probe. General/exceptional domains remain unsupported.
+pub fn add_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
+    if (a != 0.0 && !a.is_normal()) || (b != 0.0 && !b.is_normal()) {
+        return Err(UnsupportedNumericDomain);
+    }
+    if a != 0.0 && b != 0.0 {
+        let exponent = |v: f32| ((v.to_bits() >> 23) & 255) as i32;
+        if (exponent(a) - exponent(b)).unsigned_abs() >= 25 {
+            let (large, small) = if a.abs() > b.abs() { (a, b) } else { (b, a) };
+            // Small is less than one ulp. Keep its sign as a sticky contribution;
+            // converting through f64 alone would lose it at very large gaps.
+            return Ok(if large.is_sign_negative() == small.is_sign_negative() {
+                large
+            } else {
+                f32::from_bits(large.to_bits() - 1)
+            });
+        }
+    }
+    round_rz(f64::from(a) + f64::from(b))
+}
+
 /// The configured reference's finite scalar multiply path, rounded toward zero.
 /// This is not certification of the real hardware's multiplier corner cases.
 pub fn mul_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
@@ -100,6 +123,23 @@ mod tests {
         assert_eq!(add_guarded_rz(1.0, small).unwrap(), 0.875);
         assert_eq!(add_guarded_rz(small, 1.0).unwrap(), 0.875);
         assert_eq!(add_guarded_rz(-1.0, -small).unwrap(), -0.875);
+    }
+    #[test]
+    fn ordinary_add_keeps_far_opposite_sign_sticky_bits_without_ee_mask() {
+        let tiny = f32::MIN_POSITIVE;
+        assert_eq!(add_rz(1.0, tiny).unwrap(), 1.0);
+        assert_eq!(add_rz(1.0, -tiny).unwrap().to_bits(), 0x3f7fffff);
+        assert_eq!(add_rz(-1.0, tiny).unwrap().to_bits(), 0xbf7fffff);
+        assert_eq!(add_rz(-0.0, -0.0).unwrap().to_bits(), 0x80000000);
+        assert_eq!(
+            add_rz(1.0, -f32::from_bits(0x3e000003)).unwrap().to_bits(),
+            0x3f5fffff
+        );
+        assert_ne!(
+            add_rz(1.0, -tiny).unwrap(),
+            add_guarded_rz(1.0, -tiny).unwrap()
+        );
+        assert!(add_rz(f32::MAX, f32::MAX).is_err());
     }
     #[test]
     fn toward_zero_and_exponent_distance_boundaries() {

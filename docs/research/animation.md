@@ -387,3 +387,14 @@ Forty-two Rust tests, four Python tests and strict workspace/all-target Clippy
 pass; logs native-player-events-tests-v1.log/native-player-events-clippy-v1.log.
 M07 remains partial because world/VU composition, attachments, other characters,
 reverse/mirror paths and complete gameplay event semantics remain open.
+
+Header binding correction during world-consumer review: the earlier metadata
+`flags` word at sequence+0x2a is now explicitly frame_order_flags. AnimateTree's
+root-transfer predicate reads the distinct word at+0x26, now root_transfer_flags.
+ClipTiming/selector bindings use the latter. All137 SOR words at both offsets
+are zero, so the previous SOR comparisons could not discriminate this mistaken
+binding; their results are unchanged. A synthetic metadata fixture gives the two
+words different values, and the selector's old-header flag tests still pass.
+Old private metadata reports retain their original labels/raw bytes. Latest
+attack and walk event comparisons remain18/18 and24/24 with corrected binding
+(sor-attack-events-v3/ and sor-walk-release-events-v2/). 45 Rust tests pass.

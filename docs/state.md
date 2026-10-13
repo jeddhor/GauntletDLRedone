@@ -52,7 +52,7 @@ Verified this checkpoint:
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Forty-two Rust parser/numeric/channel/transform/clock/selection tests and four Python transport/configuration/schedule tests pass.
+- Forty-five Rust parser/numeric/channel/transform/clock/selection tests and five Python transport/configuration/schedule tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
 - Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
@@ -128,7 +128,7 @@ Current selection follow-up (2026-10-13):
 - Source DoPlayerAction jump tables match ELF/frozen RAM. PlayerMotion and
   do_players caller exports identify event-word+0x8d8 consumers and the direct
   PlayerStartMissile call. PlayerUpdateAtts means attributes, not attachments.
-- Forty-two Rust tests, four Python tests and strict workspace/all-target Clippy
+- Forty-five Rust tests, five Python tests and strict workspace/all-target Clippy
   pass. Logs native-player-selection-tests-v2.log and
   native-player-selection-clippy-v3.log. Native CLI build passes.
 - All137 SOR sequence header+0x26 flags are zero, so AnimFixPos root-transfer
@@ -137,16 +137,49 @@ Current selection follow-up (2026-10-13):
 Next: trace PlayerMotion's requested-action production/event-word handling and
 PlayerStartMissile timeline, then world/VU/attachment proof and original collision
 queries. Reference remains paused in Xvfb; native inspectors are closed. No user
-question/test is pending. Animation selection is committed as0112f2d. Event edits are pending commit.
+question/test is pending. Animation selection is committed as0112f2d. Event implementation is committed ase5cfe08.
 
 Event follow-up: consume_events implements ordinary class6/no-weapon throw start,
 release-exit request and pending-marker consumption. Attack b/c traces reproduce;
 all18 updates match clock/action/category plus event word and start timestamp.
 Request markers atvblanks14/36 follow start timestamps at2/24; charge is zero in
 this scenario. Walking-release matches24 updates and emits no missile request.
-Reports sor-attack-events-v1/[-v2/] and sor-walk-release-events-v1/. Forty-two Rust
-and four Python tests pass; strict Clippy passes (native-player-events-* logs).
+Reports sor-attack-events-v1/[-v2/] and sor-walk-release-events-v1/. Forty-five Rust
+and five Python tests pass; strict Clippy passes (native-player-events-* logs).
 No native projectile, direction/origin, damage, audio or attachment consumer yet.
 Action context is now included in the frozen reload barrier. Continue world/VU
 composition and attachment/event source qualification; native inspectors remain
 closed and reference remains paused in Xvfb.
+
+World follow-up: native world_transform preserves original GetWorldMat parent
+order/flag4 branching and MulMat4 VU product/add order and W input writes. New
+finite ordinary add_rz is separate from scalar EE guarded addition. Two natural
+CreateDynobjGrid calls match64-byte outputs; one also matches observed return0.
+A controlled a0 substitution using source-bound live SOR node13 LEFTU#0 with
+8 ancestors matches64 bytes and return0; it is NOT a natural gameplay/render call.
+Case002 missed its return stop and remains excluded/input-only. Dossier:
+docs/research/world-transforms.md; raw cases world-breakpoint-case-001/003/
+004-controlled-bone/. Bone parent chains contain38 boxes, including3 actor/global
+ancestors beyond the35-node rig. Renderer/scale/attachment consumers remain open.
+
+Diagnostic breakpoint removed; copied fixture restored with full frozen heap/
+pose/context guard and two verified vblanks. No guest memory/register edits remain.
+Native inspectors closed; stock debugger remains open, with no breakpoints.
+Xvfb wrapper exited/reparented the holder during this turn. Actual Xvfb PID2638848,
+display/auth arguments and start-time were verified; virtual_display now binds
+that identity, keeping desktop fallback refused. Source guard test passes.
+45 Rust tests/5 Python tests and strict Clippy pass (native-world-* logs).
+World/guard edits await commit; next trace actual scale/render traversal and
+GetPlayerDMotion/collision consumers. No user question or test is pending.
+
+Review correction: metadata flags at+0x2a separated as frame_order_flags from
+root_transfer_flags at+0x26. Native ClipTiming now explicitly receives root flags.
+Both words zero in all137 SOR clips; latest event comparisons remain18/18+24/24.
+Distinct-word parser fixture adds a regression (45 total Rust tests). Full release
+workspace build passes, plus strict Clippy (native-world-build-v3.log,
+native-world-tests-v2.log, native-world-clippy-v2.log).
+GetPlayerDMotion is an action-intent classifier, not displacement arithmetic:
+ordinary idle/magnitude/attack branches return codes used by PlayerMotion. That
+caller downgrades run code13 to walk code8 while+0x874 timer is below its source
+threshold, then maps codes to requested actions. Capture this timer/code next;
+actual displacement/collision remains separate. World edits still await commit.

@@ -9,7 +9,8 @@ pub struct Sequence {
     pub frames: i16,
     pub timing_factor: i16,
     pub repeat: u16,
-    pub flags: u16,
+    pub root_transfer_flags: u16,
+    pub frame_order_flags: u16,
     pub raw: Vec<u8>,
 }
 #[derive(Debug, Serialize)]
@@ -148,7 +149,8 @@ impl Animations {
                     frames,
                     timing_factor,
                     repeat: r.u16(p + 36),
-                    flags: r.u16(p + 42),
+                    root_transfer_flags: r.u16(p + 38),
+                    frame_order_flags: r.u16(p + 42),
                     raw: bytes[p..p + 48].to_vec(),
                 });
             }
@@ -398,6 +400,16 @@ mod tests {
         assert_eq!(t.initial_translations().unwrap(), [[0.0, 1.0, 0.0]]);
         assert_eq!(t.sequence_infos[0].transform_flags, 0x4001);
         assert_eq!(t.blocks_offset, 252);
+    }
+    #[test]
+    fn root_transfer_and_frame_order_words_are_distinct() {
+        let mut b = fixture();
+        b[146..148].copy_from_slice(&0x81u16.to_le_bytes());
+        b[150..152].copy_from_slice(&0x22u16.to_le_bytes());
+        let a = Animations::parse(&b).unwrap();
+        let sequence = &a.trees[0].sequences[0];
+        assert_eq!(sequence.root_transfer_flags, 0x81);
+        assert_eq!(sequence.frame_order_flags, 0x22);
     }
     #[test]
     fn metadata_truncation_overflow_invalid_parents_and_counts_fail() {

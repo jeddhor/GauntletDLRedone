@@ -54,7 +54,7 @@ pub struct ClipTiming {
     pub frames: i16,
     pub timing_factor: i16,
     pub repeat: u16,
-    pub flags: u16,
+    pub root_transfer_flags: u16,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -125,7 +125,11 @@ pub fn select(
             },
         )?;
         frames = requested.frames;
-        flags = 1 | if current.flags & 1 != 0 { 8 } else { 0 };
+        flags = 1 | if current.root_transfer_flags & 1 != 0 {
+            8
+        } else {
+            0
+        };
     }
     if initialize_requested || first.return_code == 15 {
         let next = advance(state, input.now, frames, input.anim_time_scale)?;
@@ -327,7 +331,7 @@ mod tests {
             frames: 4,
             timing_factor: 30,
             repeat: 0,
-            flags: 0,
+            root_transfer_flags: 0,
         }
     }
     fn selection(sequence: u16, mode: i32, now: f32) -> SelectionInput {
@@ -397,7 +401,10 @@ mod tests {
     }
     #[test]
     fn selection_flags_use_old_header_and_zero_frame_result() {
-        let old = ClipTiming { flags: 1, ..clip() };
+        let old = ClipTiming {
+            root_transfer_flags: 1,
+            ..clip()
+        };
         let output = select(state(), old, clip(), selection(1, 2, 1.0)).unwrap();
         assert_eq!(output.return_flags, 9);
         let output = select(state(), clip(), old, selection(1, 2, 1.0)).unwrap();

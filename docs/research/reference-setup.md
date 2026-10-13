@@ -55,3 +55,11 @@ See reference-baseline.md for actual results and remaining timing limitations.
 The user is not expected to change their normal emulator configuration or saves.
 All of this is isolated development-reference tooling; native gameplay will not
 depend on PCSX2, PINE or a BIOS.
+
+Virtual-display guard follow-up: the authenticated xvfb-run wrapper can exit while
+its Xvfb server and Python holder remain alive under user systemd. The holder's
+current parent is insufficient as a lifetime check. The session now records and
+verifies actual Xvfb PID/start-time and exact display/auth arguments on every
+GUI operation; it still refuses Xorg/Xwayland or an authentication/PID mismatch.
+The existing :191 server was independently verified during this migration.
+A synthetic process fixture covers these rejection cases. No desktop fallback.
