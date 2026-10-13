@@ -35,6 +35,14 @@ struct AnimationSampleRequest {
     node: u32,
     sequence: u32,
     frame: f32,
+    transition: Option<TransitionSample>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct TransitionSample {
+    from: [f32; 9],
+    fraction: f32,
+    mirror: bool,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -306,7 +314,33 @@ fn run() -> Result<(), Box<dyn Error>> {
             if work > 1_000_000 {
                 return Err("animation sample work policy exceeded".into());
             }
-            let result = gdl_core::animation::sample_channels(&track, request.frame);
+            let result: Result<[f32; 9], Box<dyn Error>> =
+                gdl_core::animation::sample_channels(&track, request.frame)
+                    .map_err(|e| Box::new(e) as Box<dyn Error>);
+            let result = result.and_then(|values| {
+                if let Some(blend) = &request.transition
+                    && track.transform_flags & 0x0fff != 0
+                {
+                    let from = if blend.fraction == 0.0 {
+                        values
+                    } else {
+                        blend.from
+                    };
+                    let fraction = if blend.fraction == 0.0 {
+                        1.0
+                    } else {
+                        blend.fraction
+                    };
+                    return gdl_core::animation::blend_channels(
+                        from,
+                        values,
+                        fraction,
+                        blend.mirror,
+                    )
+                    .map_err(|e| Box::new(e) as Box<dyn Error>);
+                }
+                Ok(values)
+            });
             let sample = match result {
                 Ok(values) => {
                     if let Some(node) = rig_node {

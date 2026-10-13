@@ -258,3 +258,35 @@ idle blend. The sampled control/movement remains Up throughstep26 and clears
 by28; position then holds while RUN1 continues to frame5 bystep36. Preserve this
 input-pipeline observation instead of assuming keyboard release and game input
 change occur on the same boundary. A longer idle segment is now being measured.
+
+## Observed transition blending
+
+Up24/idle24 reaches READY atvblank42, following RUN1's final frame. At that
+point frame0/previous clip10/blend fraction0.5 are observed. Source DoPlayerAction
+sets its only nonzero transition-duration literal0x3d8888b5 at0x1787f4. Supplying
+that literal to native InitAnim/CalcAnimInfo plus the tagged-node sampling reset
+handshake reproduces all13 clock fields. The complete49-sample capture reproduces
+a/b, including input-clear and idle-return boundaries.
+
+Native transition interpolation follows InterpPYR/InterpXYZ rather than the
+sparse-key cutoff path. Differences wrap at ±pi; final angles are not normalized
+by InterpPYR. Equal channels copy old bits; mirroring applies afterward to angle
+Y/Z, position X and scale X. Mirroring has source/synthetic evidence, but remains
+excluded from actual-pose acceptance until separately captured. Zero blend uses
+the direct new-channel path. DoAnimation bypasses blending for no-axis records.
+
+At a nonzero blend, DoAnimation retains cache+0x30/+0x60/+0x90 as the prior
+unblended channels. With those observed old channels and the recorded fraction
+supplied, the native pipeline matches every local matrix/scale pair:35/35 at the
+transition and1,715/1,715 over each full walk-release trace. These inputs qualify
+the interpolation algorithm, not player action choice. Public pose comparison
+now handles observed blends and explicitly excludes unmeasured mirror paths.
+Reports: sor-blend-comparison-v1.json, sor-blend-clock-comparison-v1.json,
+sor-walk-release-poses-v1/ and sor-walk-release-poses-v2/.
+
+AnimFixPos's inspected root-transfer path rotates the child's translation into
+the parent's frame, transfers X/Z, clears child X/Z and selected cache positions,
+and resets the sampling marker. All137 SOR header flag words at sequence+0x26
+are zero, so this path is not exercised by the selected source clips. General
+root-motion, moving-object and other-character cases remain open. Thirty-four
+Rust tests and strict Clippy pass after transition support.

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Compare original local matrix/scale observations with the native sampler.
 
-World composition, materials, clip clocks, blend and mirror paths are excluded.
-Source-bound original node initial translations are checked, not adjusted.
+World composition, materials, clip clocks and mirror paths are excluded.
+Observed blend inputs and old channel caches are supplied when present;
+source-bound original node initial translations are checked, not adjusted.
 """
 import argparse
 import hashlib
@@ -37,8 +38,8 @@ def main():
         if len(info) != 64 or len(a['poses']) > 16384:
             raise ValueError('unsupported observation shape')
         blend, = struct.unpack_from('<f', info, 20)
-        if blend != 0 or info[19] & 1:
-            skipped.append(dict(step=sample['step'], reason='blend/mirror path is unsupported'))
+        if info[19] & 1:
+            skipped.append(dict(step=sample['step'], reason='mirror path lacks actual reference coverage'))
             continue
         clip, = struct.unpack_from('<H', info, 14)
         frame, = struct.unpack_from('<f', info, 24)
@@ -46,7 +47,15 @@ def main():
             raw = bytes.fromhex(pose['local_raw_hex'])
             if len(raw) != 80:
                 raise ValueError('local pose byte count differs')
-            requests.append(dict(tree=0, node=pose['node_index'], sequence=clip, frame=frame))
+            request=dict(tree=0, node=pose['node_index'], sequence=clip, frame=frame)
+            if blend!=0.0:
+                cache=next(c for c in a['caches'] if c['node_index']==pose['node_index'])
+                raw_cache=bytes.fromhex(cache['raw_hex'])
+                if len(raw_cache)!=160:
+                    raise ValueError('channel cache byte count differs')
+                old=[value for p in [48,96,144] for value in struct.unpack_from('<3f',raw_cache,p)]
+                request['transition']={'from':old,'fraction':blend,'mirror':False}
+            requests.append(request)
             expected.append(dict(step=sample['step'], node=pose['node_index'], expected_hex=raw[:76].hex()))
             if len(requests) > 4096:
                 raise ValueError('native request policy exceeded')

@@ -139,3 +139,9 @@ python3 tools/python/compare_animation_clock.py --trace CLOCK_TRACE.json --metad
 
 The clock evaluator matches measured updates that stay within a clip; action
 transitions, caller restarts, events and complete game-loop timing remain open.
+
+`anim-samples`/`anim-transforms` requests can optionally include
+`"transition":{"from":[nine prior channels],"fraction":F,"mirror":false}`.
+The pose comparator supplies these observed values for nonzero reference blends.
+Recorded walk-release blending now matches every local matrix/scale output; this
+still does not predict actions or establish complete event timing.

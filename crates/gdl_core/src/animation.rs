@@ -27,6 +27,46 @@ pub fn frame_period(
     mul_rz(scale, anim_time_scale)
 }
 
+/// CalcAnimation's transition channel blend, using InterpPYR/InterpXYZ and the
+/// original post-blend mirror axes. Angle differences wrap; results are not
+/// normalized afterward. This differs from the sparse-key interpolation path.
+pub fn blend_channels(
+    from: [f32; 9],
+    target: [f32; 9],
+    fraction: f32,
+    mirror: bool,
+) -> Result<[f32; 9], UnsupportedNumericDomain> {
+    if from
+        .iter()
+        .chain(&target)
+        .chain(std::iter::once(&fraction))
+        .any(|&v| v != 0.0 && !v.is_normal())
+    {
+        return Err(UnsupportedNumericDomain);
+    }
+    let mut result = from;
+    for axis in 0..9 {
+        if from[axis] != target[axis] {
+            let mut delta = sub_guarded_rz(target[axis], from[axis])?;
+            if axis < 3 {
+                if delta > f32::from_bits(0x4049_0fdb) {
+                    delta = sub_guarded_rz(delta, f32::from_bits(0x40c9_0fdb))?;
+                }
+                if delta <= f32::from_bits(0xc049_0fdb) {
+                    delta = add_guarded_rz(delta, f32::from_bits(0x40c9_0fdb))?;
+                }
+            }
+            result[axis] = add_guarded_rz(from[axis], mul_rz(fraction, delta)?)?;
+        }
+    }
+    if mirror {
+        for axis in [1, 2, 3, 6] {
+            result[axis] = -result[axis];
+        }
+    }
+    Ok(result)
+}
+
 #[derive(Debug)]
 pub enum KeyError {
     Format(ParseError),
@@ -195,6 +235,22 @@ mod tests {
         assert_eq!(frame_period(-1, 1.0, base).unwrap(), base);
         assert!(frame_period(30, 0.0, base).is_err());
         assert!(frame_period(30, f32::NAN, base).is_err());
+    }
+    #[test]
+    fn transition_blend_wraps_difference_and_preserves_equal_channel_bits() {
+        let from = [3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let mut target = from;
+        target[0] = -3.0;
+        target[3] = 4.0;
+        target[4] = -0.0;
+        let value = blend_channels(from, target, 0.5, false).unwrap();
+        assert!(value[0] > 3.0); // does not wrap the resulting angle back below pi
+        assert_eq!(value[3], 2.0);
+        assert_eq!(value[4].to_bits(), 0); // equality branch copies the old +zero
+        let mirrored = blend_channels(from, target, 0.5, true).unwrap();
+        assert_eq!(mirrored[3], -2.0);
+        assert_eq!(mirrored[6], -1.0);
+        assert_eq!(mirrored[1].to_bits(), 0x8000_0000);
     }
     #[test]
     fn exact_keys_accumulate_deltas_and_stop_before_later_invalid_data() {

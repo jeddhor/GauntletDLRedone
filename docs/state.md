@@ -52,7 +52,7 @@ Verified this checkpoint:
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Thirty-three Rust parser/numeric/channel/transform/clock tests and four Python transport/configuration/schedule tests pass.
+- Thirty-four Rust parser/numeric/channel/transform/clock tests and four Python transport/configuration/schedule tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
 - Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
@@ -118,10 +118,25 @@ division. All13 modelled state fields match12 same-clip attack and16 walking
 updates byte for byte; walking clock captures reproduce. Caller restarts and
 action/clip changes are excluded and reported. Return codes are source-derived,
 not directly measured. Source ATime/AnimTimeScale globals are in probes/barriers.
-33 Rust tests pass; Python4 pass. Valid-sequence InitAnim is also implemented; initialization/evaluation plus
+34 Rust tests pass; Python4 pass. Valid-sequence InitAnim is also implemented; initialization/evaluation plus
 DoAnimation reset handshake matches8 observed clip starts/restarts with supplied
 clip/start/zero-blend inputs. It does not predict player action choices. Clock
 edits are pending commit. Next qualify AnimateTree selection, capture walk-release
 blend and recover root/attachment/events. The first walk-release capture completes: movement stops atstep28, while
    RUN1 continues; no blend was observed bystep36. A longer48-vblank capture is
    now running. Source input-release latency/order remains to trace.
+
+Blend follow-up after8cb8019: Up24/idle24 now reaches READY transition atvblank42
+with blend fraction0.5. The entire49-sample trace reproduces a/b. Native
+transition channels plus local matrices/scales match1,715/1,715 observed poses
+(each trace), including all35 nodes during blending. InitAnim/CalcAnimInfo with
+source DoPlayerAction duration literal0x3d8888b5 matches all13 clock fields for
+that nonzero transition. Inputs/old caches/clip choice remain supplied evidence;
+player action-selection rules are not yet implemented. 34 Rust tests and strict
+workspace/all-target Clippy pass. Current uncommitted files: animation.rs,
+gdl_tools main.rs and compare_animation_poses.py plus these evidence docs.
+Next qualify AnimateTree selection and root-motion/attachments, then original
+world/VU composition and collision. All137 SOR source header+0x26 flag words are
+zero, so the AnimFixPos root-transfer path is not exercised by these SOR clips.
+Source GetPlayerDMotion consumes controls/facing; do not treat pose translation
+channels as movement without tracing their actual consumer.
