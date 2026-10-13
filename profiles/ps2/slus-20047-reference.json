@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_profile": "ps2-slus-20047-fb47d40667df",
   "executable_sha256": "69056dc6969c3740a82422ecdf7f771b19b26e20aff208d620c6efec66a3d527",
-  "address_space": "EE virtual/physical addresses within the observed load segment",
+  "address_space": "EE RAM; ELF-derived symbol addresses are within the load segment; transient heap addresses are source-bound from the preserved fixture",
   "provenance": "original ELF symbol table; gameplay meanings beyond symbol labels remain provisional",
   "symbols": {
     "main": {
@@ -220,5 +220,23 @@
       "max_capacity": 16384,
       "evidence": "GetAnimData original lw of pointer at0x2bc570 and 0xa0 slot stride; ELF pointer symbol has NOTYPE/size0"
     }
-  ]
+  ],
+  "animation_layout": {
+    "tree_instance_player_offset": 144,
+    "animinfo_player_offset": 148,
+    "runtime_node_size": 40,
+    "node_fields": {
+      "matrix_pointer": 0,
+      "child_pointer": 8,
+      "sibling_pointer": 12,
+      "initial_position": 16,
+      "cache_pointer": 28,
+      "node_type": 32,
+      "sequence_table_pointer": 36
+    },
+    "matrix_bytes": 64,
+    "scale_offset": 64,
+    "local_capture_bytes": 80,
+    "evidence": "DoPlayerAction EE0x177c60/0x177c78 and call0x178c24 bind player+0x90 instance / +0x94 AnimInfo; DoAnimateTree and AnimateNode/DoAnimation derive runtime pointers and outputs; observed35-node graph matches main SOR parent/layout"
+  }
 }

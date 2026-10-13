@@ -105,6 +105,11 @@ def main():
             memory = frozen_memory(frozen)
             baseline = describe(lambda a, n: memory[a:a+n], profile)
             regions = fixture_regions(memory, profile)
+            capture_animation = None
+            if args.animation:
+                from reference_animation import cache_probe
+                capture_animation, pose_regions = cache_probe(memory, profile)
+                regions.extend(pose_regions)
             # PINE queues the load asynchronously; wait for all fixture fields.
             pine.request(b'\x0a\x01')
             deadline = time.monotonic()+5
@@ -115,10 +120,6 @@ def main():
                 if time.monotonic() >= deadline:
                     raise ValueError('fixture reload did not settle')
                 time.sleep(0.02)
-            capture_animation = None
-            if args.animation:
-                from reference_animation import cache_probe
-                capture_animation = cache_probe(memory, profile)
             samples = [dict(step=0, observation=observation)]
             if capture_animation:
                 samples[0]['animation'] = capture_animation(read)
@@ -152,7 +153,7 @@ def main():
             report = dict(schema_version=2, source_profile=source['profile_id'], fixture_sha256=fixture_hash,
                           launch=launch, transport='Xvfb keyboard F10 + paused PINE; one verified vblank per step',
                           alignment='emulator vblank boundary, not a guaranteed guest-update edge',
-                          reload_barrier='sampled fields plus complete source-derived animation heap array match frozen fixture',
+                          reload_barrier='sampled fields and complete animation pool; animation probes also match source-bound nodes/local matrices to frozen fixture',
                           held_keys=args.keys, input_schedule=segments, samples=samples)
             with args.out.open('x') as file:
                 json.dump(report, file, indent=2, allow_nan=False)

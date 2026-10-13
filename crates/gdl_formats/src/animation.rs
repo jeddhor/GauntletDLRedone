@@ -496,7 +496,7 @@ mod tests {
         assert!(t.bitmap_raw.is_empty());
         assert!(t.rows_raw.is_empty());
         assert!(a.trees[0].key_track(&b, 1, 0).is_err());
-        b[244..246].copy_from_slice(&0xc001u16.to_le_bytes());
+        b[244..246].copy_from_slice(&0x1001u16.to_le_bytes());
         let a = Animations::parse(&b).unwrap();
         assert!(a.trees[0].key_track(&b, 0, 0).is_err());
     }

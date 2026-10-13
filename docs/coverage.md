@@ -13,7 +13,7 @@ Content denominators remain provisional and do not indicate reachability.
 | M04 Archive | Extraction complete; gate partial | 2,915/2,915 entries validated and independently compared; all retained; runtime WorldDir binds first-level package to entries 2194–2198; individual lookup trace completion remains |
 | M05 Texture/material proof | Partial | Complete observed metadata scan; six base color families; title/environment/character pixels rendered diagnostically. Formats 130/146, TEXA/GS materials, mipmaps and representative fidelity comparisons remain |
 | M06 Geometry/first scene | Partial | All first-level integer packets independently agree; world nodes read; native terrain viewer runs; glTF imports 930 nodes in Blender. Header triangle discrepancies, original transforms/materials and static character remain |
-| M07 Rig/animation | Partial investigation | Bounded metadata and fresh frame-zero readers; loaded SOR_YEL binding; native rest-hierarchy inspection. 76,542 source keys decoded; walking/attack key caches and2,011 evaluated channel records match. Matrices, clip clocks/blending/mirror flags and events remain |
+| M07 Rig/animation | Partial investigation | Bounded metadata and fresh frame-zero readers; loaded SOR_YEL binding; native rest-hierarchy inspection. 76,542 source keys decoded; walking/attack key caches and2,011 evaluated channel records match. All35 frozen local matrices and2,170 walking/attack local poses match. World composition, clip clocks/blending/mirror flags and events remain |
 | M08 Level/collision | Investigation leads | World/collision schemas and original-symbol functions; native verified queries pending |
 | M09 Clock/input | Partial investigation | Repeatable vblank-stepped idle/movement fixture; one update per two vblanks observed locally. Full update order, input edges, game-mode cadence and RNG consumer contract remain |
 | M10 Movement/camera | Not implemented | Depends on accepted animation, collision and clock/input |
@@ -33,7 +33,7 @@ The private catalog includes 61 dictionary-labelled WORLDS.PS2 records, 643
 OBJECTS.PS2 records, 651 ANIM.PS2 records and other families. These are observed
 archive entries, not a declaration of 61 campaign areas or complete asset support.
 
-Checks actually performed: twenty-two Rust parser/numeric/channel tests, four Python transport/configuration/schedule tests,
+Checks actually performed: twenty-five Rust parser/numeric/channel/transform tests, four Python transport/configuration/schedule tests,
 all-entry independent archive comparison, complete native texture-metadata scan,
 byte-for-byte comparison of all 15 native title PNG pixel buffers,
 repeated disc/ELF manifests, release builds and strict Clippy checks, native

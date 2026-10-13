@@ -13,7 +13,7 @@ ghidra-emotionengine-reloaded checkout.
 Current milestone work: M03 repeatable baseline, M05 material proof, M06 static
 geometry, M07 metadata and M09 clock/input experiments. M00–M02 complete; stock debugger scalar,
 FP, three-operand MULT, VU and 128-bit load/store samples agree. M04 extraction is complete, with first-package
-binding; individual runtime lookups remain to trace. Native animation, gameplay,
+binding; individual runtime lookups remain to trace. Native gameplay animation clocks/transitions, gameplay,
 collision response, saves and campaign remain unimplemented. See docs/coverage.md.
 
 User-selected fixture: Yellow Sorceress, The Poison Fields, profile PELE. Verified
@@ -52,7 +52,7 @@ Verified this checkpoint:
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Twenty-two Rust parser/numeric/channel tests and four Python transport/configuration/schedule tests pass.
+- Twenty-five Rust parser/numeric/channel/transform tests and four Python transport/configuration/schedule tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
 - Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
@@ -70,7 +70,9 @@ Verified this checkpoint:
   Native key accumulation and fresh channel sampling now match116 READY key
   observations,1,542 walking keys,2,356 attack keys and2,011 evaluated channel
   records byte for byte. Both new schedules reproduce all observations. All137
-  clips decode76,542 keys. Matrices, clocks/blending/mirror/events remain open.
+  clips decode76,542 keys. Local matrices/scales also match all35 frozen nodes and2,170 walking/attack
+  records; main SOR initial translations are source-bound, unlike30 YEL00 values.
+  World/VU composition, clocks/blending/mirror/events remain open.
   New gdl_core has no Bevy/emulator dependency. See animation.md for scope.
 - Stock GS dump framing now reads 1,806 events and records raw TEXA/ALPHA/TEST
   writes (private/reports/poison-fields-gs-registers-v1.json). Material binding
@@ -90,6 +92,11 @@ event timing still need validation. The loop reseeds RNG from
 guest CPU time; short schedules agree, but RNG consumers/replay scope remain open.
 
 Next useful actions:
+
+0. Native --animate inspector now builds and renders coherent READY/WALK1/IDLE1
+   poses in Xvfb; frame stepping, clip selection and preview toggles work. Attack frame2 also renders. Zero-frame INIT
+   and preview-toggle checks pass. Add source metadata/bone/attachment inspection, then continue
+   original world/VU composition and gameplay clock/transition recovery.
 
 1. Extend source-linked attack/animation probes and repeat event schedules;
    establish pickup/transition/save scenarios without inventing rules.

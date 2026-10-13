@@ -47,7 +47,8 @@ other records skip ceil(frame_count/32) 32-bit words before initial channel
 floats. All 4,795 SOR frame-zero records read within bounds. Synthetic coverage
 includes the 33-frame alignment boundary, truncation and non-finite data.
 Compressed deltas and fresh channel interpolation are now implemented and
-qualified below. Matrix assembly remains unimplemented.
+qualified below. Local matrix assembly is now qualified in the later section;
+world composition remains open.
 
 A frozen runtime scan links 35 allocated animation-cache records to the SOR
 node sequence-table pointers. AnimDataList is an ELF NOTYPE/zero-size symbol;
@@ -121,7 +122,7 @@ Actual reference/native checks:
   2,356/2,356 key caches byte equal.
 - DoAnimation writes evaluated angles/position/scale to cache +0x30/+0x60/+0x90
   when blend fraction is zero. Comparing those fields gives 2,011/2,011 channel
-  records byte equal, including fractional attack frames. Initial-only records
+  records byte equal, including fractional interpolation weights between sparse keys. Initial-only records
   are excluded because their cache vectors may be stale.
 - Independent a/b repetitions of both schedules match every captured observation.
 
@@ -135,3 +136,68 @@ keys, snap/cutoff/wrap and earlier samples preceding invalid later data.
 Next bind original node matrix outputs through AnimateNode/DoAnimation and recover
 CreateRYPMatrix/CreatePYRMatrix, then compare local and world transforms before
 accepting a native animated pose.
+
+## Local matrices and source rig positions
+
+The original DoPlayerAction instructions at0x177c60/0x177c78 construct
+player+0x90/player+0x94; its call at0x178c24 passes the instance to DoAnimateTree.
+That function supplies instance+4 as AnimInfo. The former candidate is now bound
+to the original actor caller. AnimateNode follows child/sibling pointers and
+passes node+0x1c cache, node+0 matrix, matrix+0x40 scale and node+0x10 initial
+position to DoAnimation. The complete35-node runtime graph matches main SOR
+sequence tags and parent indices. Public reference-layout fields now record
+these instruction-derived offsets; fixture addresses remain dynamically derived.
+
+A counterexample to the rest inspector's assumption is preserved:30 YEL00 initial
+translations differ slightly from runtime values, whereas all35 main SOR initial
+translations match byte for byte. No cached output values were edited to conceal
+that mismatch. Native sampled poses therefore use main SOR translations and
+YEL00 model names/geometry; the older translation-only inspector remains labelled.
+
+CreateRYPMatrix0x1d6530 and CreatePYRMatrix0x1d63f8 use ffcos/ffsin, not platform
+trigonometry. ffsin0x1d6d18 reduces quadrants and evaluates SIN_POLY0x1d6cb8.
+The independently expressed native polynomial preserves each original scalar
+operation and constant bit pattern. Its pi/2 overshoot (about3.7e-6) is retained,
+including compounded basis error; normalization would change reference bytes.
+Input reduction is bounded to16 turns and exceptional domains remain rejected.
+The PYR flag0x8000 is source-supported; actual Sorceress comparisons below use
+the RYP path. Synthetic quarter-turn tests cover the differing axis orders.
+
+All35 local matrix/scale pairs match the frozen READY fixture byte for byte.
+Across source-bound, stepped captures,875 walking and1,295 attack pose records
+match (2,170/2,170). These include constant tracks, every node, local translation,
+polynomial rotations and separate scale vectors. Reproduction commands are
+compare_animation_poses.py with original entry34 as both animation and initial
+translation source. Outputs: sor-walk-pose-comparison-v2/ and
+sor-attack-pose-comparison-v2/. The old YEL00 assumption report is preserved in
+sor-node-initial-source-comparison-v1.json.
+
+GetWorldMat uses a separate VU multiplication path and parent flags. World
+composition, scale inheritance, renderer traversal and full pose presentation
+are not accepted by the local-matrix comparison. A native animation inspector
+now uses these verified local outputs with explicitly unaccepted host matrix
+composition and diagnostic original base materials. Its preview loop is a viewer
+clock, not recovered gameplay update order or transition behavior.
+
+Native inspector QA: release build and strict Clippy pass. Xvfb READY frame11 and
+stepped frame12 render coherent original geometry; PageUp selects IDLE1; explicit
+WALK1/frame6 renders with the source rig; Space toggles the labelled preview loop.
+The camera now leaves room for diagnostic text, and paused poses are not recomputed
+every render frame. Captures remain in private/reference/captures/. Twenty-five
+Rust tests and four Python tests pass. No complete M07 gate is claimed: attachment
+visualization, world/VU composition, gameplay timing and events remain unresolved.
+
+Evidence precision: all captured AnimInfo frame indices in these walking/attack
+traces are integers. Sparse-key interpolation weights can be fractional; this is
+not a fractional-frame reference-input test. The snap-distance boundary currently
+has synthetic coverage. Source metadata rates and frame counts also do not alone
+explain action timing: the observed THROW1S/THROW1/THROW1R schedule progresses
+differently from a simple nominal-rate viewer loop. Recover DoPlayerAction's
+rate/transition inputs before accepting animation duration or event timing.
+
+Final UI checks: THROW1 source clip107 has three frames; out-of-range frame3 is
+rejected and measured frame2 renders. INIT is clip5 with zero frames and remains
+at frame0 when scrubbed forward. Walking preview starts and pauses with Space.
+Final release build and workspace/all-target strict Clippy pass after these fixes.
+Automated GUI interaction was confined to the authenticated virtual display;
+completed native inspectors were closed. Reference PCSX2 remains paused/running.

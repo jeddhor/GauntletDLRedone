@@ -153,9 +153,24 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() == 4 && args[0] == "anim-samples" {
+    if (args.len() == 4 && args[0] == "anim-samples")
+        || (args.len() == 5 && args[0] == "anim-transforms")
+    {
+        let transforms = args[0] == "anim-transforms";
         let bytes = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
-        let requests_raw = bounded_read(Path::new(&args[2]), 4 * 1024 * 1024)?;
+        let rig_bytes = if transforms {
+            Some(bounded_read(Path::new(&args[2]), 64 * 1024 * 1024)?)
+        } else {
+            None
+        };
+        let rig = rig_bytes
+            .as_ref()
+            .map(|b| gdl_formats::animation::Animations::parse(b))
+            .transpose()?;
+        let requests_raw = bounded_read(
+            Path::new(&args[if transforms { 3 } else { 2 }]),
+            4 * 1024 * 1024,
+        )?;
         let requests: Vec<AnimationSampleRequest> = serde_json::from_slice(&requests_raw)?;
         if requests.len() > 4096 {
             return Err("animation request count policy exceeded".into());
@@ -169,6 +184,27 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .get(request.tree)
                 .ok_or("tree index out of range")?;
             let track = tree.key_track(&bytes, request.node, request.sequence)?;
+            let rig_node = if let Some(rig) = &rig {
+                let rig_tree = rig
+                    .trees
+                    .get(request.tree)
+                    .ok_or("rig tree index out of range")?;
+                if rig_tree.nodes.len() != tree.nodes.len()
+                    || !rig_tree.nodes.iter().zip(&tree.nodes).all(|(a, b)| {
+                        a.label == b.label && a.parent == b.parent && a.node_type == b.node_type
+                    })
+                {
+                    return Err("animation/rig node correspondence differs".into());
+                }
+                Some(
+                    rig_tree
+                        .nodes
+                        .get(request.node as usize)
+                        .ok_or("rig node index out of range")?,
+                )
+            } else {
+                None
+            };
             work += track.key_frames.len();
             if work > 1_000_000 {
                 return Err("animation sample work policy exceeded".into());
@@ -176,19 +212,35 @@ fn run() -> Result<(), Box<dyn Error>> {
             let result = gdl_core::animation::sample_channels(&track, request.frame);
             let sample = match result {
                 Ok(values) => {
-                    serde_json::json!({"values":values,"bits":values.map(f32::to_bits),"error":null})
+                    if let Some(node) = rig_node {
+                        match gdl_core::transform::local_transform(
+                            values,
+                            node.initial_position,
+                            track.transform_flags,
+                        ) {
+                            Ok((matrix, scale)) => {
+                                serde_json::json!({"values":values,"bits":values.map(f32::to_bits),"matrix":matrix,
+                            "matrix_bits":matrix.map(f32::to_bits),"scale":scale,"scale_bits":scale.map(f32::to_bits),"error":null})
+                            }
+                            Err(e) => {
+                                serde_json::json!({"values":null,"bits":null,"matrix":null,"matrix_bits":null,"error":e.to_string()})
+                            }
+                        }
+                    } else {
+                        serde_json::json!({"values":values,"bits":values.map(f32::to_bits),"error":null})
+                    }
                 }
                 Err(e) => serde_json::json!({"values":null,"bits":null,"error":e.to_string()}),
             };
             outcomes.push(serde_json::json!({"request":request,"sample":sample}));
         }
-        let report = serde_json::json!({"source_sha256":hash(&bytes),"requests_sha256":hash(&requests_raw),
-            "scope":"fresh channels; limited guarded/RZ arithmetic; spacing1..255; clip clocks/blending/mirror/matrices/events excluded",
+        let report = serde_json::json!({"source_sha256":hash(&bytes),"requests_sha256":hash(&requests_raw),"rig_sha256":rig_bytes.as_ref().map(|b|hash(b)),
+            "scope":"fresh channels and optional local matrices; finite guarded/RZ arithmetic; spacing1..255; clocks/blending/mirror/world transforms/events excluded",
             "outcomes":outcomes});
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&args[3])?;
+            .open(&args[if transforms { 4 } else { 3 }])?;
         serde_json::to_writer_pretty(&mut file, &report)?;
         file.write_all(b"\n")?;
         return Ok(());
@@ -310,7 +362,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);

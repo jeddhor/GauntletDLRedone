@@ -21,7 +21,7 @@ replaced by a plausible gameplay rule or generated asset.
 | Damage/enemy rules | Local original-symbol functions exported | Controlled encounter scenarios; minimize first divergence |
 | Reference stepping transport | Xvfb F10 verifies one vblank per step; paused PINE reads repeat | Tie captures to actual guest function/update edges; verify debugger sample |
 | Reference scenario coverage | Full-heap reload guard; idle/movement/attack-state/one-key schedules repeat | Recover complete attack events and transition/game-save scenarios |
-| Animation numeric policy | Native finite numeric/channel subset matches walking/attack keys and2,011 evaluated records | Recover matrices and animation clocks/blending/mirror/events; exceptional numeric domains and long interpolation gaps remain |
+| Animation numeric policy | Native finite numeric/channel subset matches walking/attack keys and2,011 evaluated records | Local matrices now match2,170 observations; recover world/VU composition and animation clocks/blending/mirror/events; exceptional numeric domains and long interpolation gaps remain |
 | Native saves/campaign/co-op/audio | Not implemented | Follow dependencies M10–M18; no release-scope claims yet |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 

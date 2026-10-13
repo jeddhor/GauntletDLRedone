@@ -24,11 +24,69 @@ struct SceneSource {
     table: TextureTable,
     textures: Vec<u8>,
     hashes: Vec<String>,
+    rig: Option<RigSource>,
 }
 struct Placement {
     index: u32,
     label: String,
-    position: Vec3,
+    transform: Mat4,
+}
+struct RigSource {
+    animations: Animations,
+    bytes: Vec<u8>,
+}
+#[derive(Resource, Default)]
+struct RigPlayback {
+    sequence: usize,
+    frame: f32,
+    playing: bool,
+}
+#[derive(Component)]
+struct RigNode(u32);
+#[derive(Component)]
+struct AnimationHud;
+
+fn rig_pose(source: &RigSource, sequence: usize, frame: f32) -> Result<Vec<Mat4>, Box<dyn Error>> {
+    let tree = &source.animations.trees[0];
+    let mut locals = Vec::new();
+    for node in &tree.nodes {
+        if node.node_type != 1 {
+            return Err("pose inspector supports skeletal nodes only".into());
+        }
+        let track = tree.key_track(&source.bytes, node.index, sequence as u32)?;
+        let channels = gdl_core::animation::sample_channels(&track, frame)?;
+        let (matrix, scale) = gdl_core::transform::local_transform(
+            channels,
+            node.initial_position,
+            track.transform_flags,
+        )?;
+        locals.push(Mat4::from_cols_array(&matrix) * Mat4::from_scale(Vec3::from_array(scale)));
+    }
+    // Presentation composition only: source local matrices are qualified;
+    // these host products are not accepted VU/world-transform arithmetic.
+    let mut worlds = vec![None; locals.len()];
+    for index in 0..locals.len() {
+        let mut chain = Vec::new();
+        let mut current = Some(index);
+        while let Some(i) = current {
+            if worlds[i].is_some() {
+                break;
+            }
+            chain.push(i);
+            current = usize::try_from(tree.nodes[i].parent).ok();
+        }
+        while let Some(i) = chain.pop() {
+            let parent = usize::try_from(tree.nodes[i].parent)
+                .ok()
+                .map_or(Mat4::IDENTITY, |p| worlds[p].unwrap());
+            let world = parent * locals[i];
+            if !world.is_finite() {
+                return Err("non-finite presentation transform".into());
+            }
+            worlds[i] = Some(world);
+        }
+    }
+    Ok(worlds.into_iter().map(Option::unwrap).collect())
 }
 #[derive(Resource)]
 struct InspectionCamera {
@@ -185,7 +243,8 @@ fn setup(
                     Name::new(format!("world:{}:{}", node.index, node.label)),
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material.clone()),
-                    Transform::from_translation(node.position),
+                    Transform::from_matrix(node.transform),
+                    RigNode(node.index),
                 ));
                 placed += 1;
             }
@@ -210,14 +269,15 @@ fn setup(
     println!("Nodes without a model definition (groups/unknown semantics): {unmatched:?}");
     let center = (source.min + source.max) * 0.5;
     let extent = source.max - source.min;
+    let fit_distance = extent.length() * if source.rig.is_some() { 1.8 } else { 1.4 };
     commands.insert_resource(InspectionCamera {
         target: center,
         overview: center,
         yaw: 0.0,
         pitch: 0.8,
         // Fit the source bounding sphere inside the default 45-degree view.
-        distance: extent.length() * 1.4,
-        overview_distance: extent.length() * 1.4,
+        distance: fit_distance,
+        overview_distance: fit_distance,
         detail: source.detail,
         detail_distance: source.detail_distance,
     });
@@ -237,10 +297,90 @@ fn setup(
         },
     ));
     commands.spawn((Text2d::new(format!(
-        "{} | STATIC DATA INSPECTOR | gameplay not implemented\nArrow keys: orbit   WASD: pan   Q/E: distance   P: detail   R: overview   Esc: close\nOpaque base textures + source vertex colors; double sided; lightmaps/GS blending unverified\n{placed} placed parts | {} unresolved bitmap records shown magenta\nOBJECTS {}  placement source {}",
-        source.label,unresolved_materials.len(),&source.hashes[0][..12],&source.hashes[1][..12])),
+        "{} | {} DATA INSPECTOR | gameplay not implemented\nArrow keys: orbit   WASD: pan   Q/E: distance   P: detail   R: overview   Esc: close\nOpaque base textures + source vertex colors; double sided; lightmaps/GS blending unverified\n{placed} placed parts | {} unresolved bitmap records shown magenta\nOBJECTS {}  placement source {}",
+        source.label,if source.rig.is_some() {"ANIMATION"} else {"STATIC"},unresolved_materials.len(),&source.hashes[0][..12],&source.hashes[1][..12])),
         TextFont {font_size:15.0,..default()},TextColor(Color::WHITE),Anchor::TOP_LEFT,
         Transform::from_xyz(-580.0,380.0,0.0)));
+    if source.rig.is_some() {
+        commands.spawn((
+            Text2d::new("Loading original animation channels..."),
+            TextFont {
+                font_size: 15.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            Anchor::TOP_LEFT,
+            Transform::from_xyz(-580.0, 280.0, 0.0),
+            AnimationHud,
+        ));
+    }
+}
+
+fn animate_rig(
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    source: Res<SceneSource>,
+    mut playback: ResMut<RigPlayback>,
+    mut nodes: Query<(&RigNode, &mut Transform)>,
+    mut hud: Query<&mut Text2d, With<AnimationHud>>,
+) {
+    let Some(rig) = &source.rig else {
+        return;
+    };
+    let clips = &rig.animations.trees[0].sequences;
+    if keys.just_pressed(KeyCode::PageUp) {
+        playback.sequence = (playback.sequence + 1) % clips.len();
+        playback.frame = 0.0;
+    }
+    if keys.just_pressed(KeyCode::PageDown) {
+        playback.sequence = (playback.sequence + clips.len() - 1) % clips.len();
+        playback.frame = 0.0;
+    }
+    let clip = &clips[playback.sequence];
+    if keys.just_pressed(KeyCode::Space) {
+        playback.playing = !playback.playing;
+    }
+    if keys.just_pressed(KeyCode::BracketRight) {
+        playback.frame = (playback.frame + 1.0).min(f32::from((clip.frames - 1).max(0)));
+    }
+    if keys.just_pressed(KeyCode::BracketLeft) {
+        playback.frame = (playback.frame - 1.0).max(0.0);
+    }
+    if playback.playing && clip.frames > 0 {
+        playback.frame = (playback.frame + time.delta_secs().min(0.1) * f32::from(clip.frame_rate))
+            % f32::from(clip.frames);
+    }
+    if !playback.is_changed() {
+        return;
+    }
+    match rig_pose(rig, playback.sequence, playback.frame) {
+        Ok(pose) => {
+            for (node, mut transform) in &mut nodes {
+                *transform = Transform::from_matrix(pose[node.0 as usize]);
+            }
+            if let Ok(mut text) = hud.single_mut() {
+                text.0 = format!(
+                    "Clip {} {} | frame {:.3}/{} | source rate {} | {}\nPgUp/PgDn: clip   [ / ]: frame   Space: diagnostic preview loop\nLocal matrices verified in measured clips; world composition/materials/playback clock unaccepted",
+                    clip.index,
+                    clip.label,
+                    playback.frame,
+                    clip.frames,
+                    clip.frame_rate,
+                    if playback.playing {
+                        "preview loop"
+                    } else {
+                        "paused pose"
+                    }
+                );
+            }
+        }
+        Err(e) => {
+            playback.playing = false;
+            if let Ok(mut text) = hud.single_mut() {
+                text.0 = format!("Unsupported pose: {e}");
+            }
+        }
+    }
 }
 
 fn controls(
@@ -324,18 +464,69 @@ fn bounded_read(path: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 fn run() -> Result<(), Box<dyn Error>> {
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
-    let rig = args.first().is_some_and(|a| a == "--rig");
+    let animated = args.first().is_some_and(|a| a == "--animate");
+    let rig = animated || args.first().is_some_and(|a| a == "--rig");
     if rig {
         args.remove(0);
     }
-    if args.len() != 4 {
-        return Err("Usage: gdl_scene OBJECTS.PS2 WORLDS.PS2 TEXDEF.PS2 TEXTURES.PS2\n       gdl_scene --rig OBJECTS.PS2 ANIM.PS2 TEXDEF.PS2 TEXTURES.PS2".into());
+    let mut playback = RigPlayback::default();
+    while args
+        .first()
+        .is_some_and(|a| a == "--clip" || a == "--frame")
+    {
+        if !animated || args.len() < 2 {
+            return Err("--clip/--frame require animation mode and a value".into());
+        }
+        let flag = args.remove(0);
+        let value = args.remove(0);
+        let text = value.to_str().ok_or("pose argument is not UTF-8")?;
+        if flag == "--clip" {
+            playback.sequence = text.parse()?;
+        } else {
+            playback.frame = text.parse()?;
+        }
+    }
+    if args.len() != if animated { 5 } else { 4 } {
+        return Err("Usage: gdl_scene OBJECTS.PS2 WORLDS.PS2 TEXDEF.PS2 TEXTURES.PS2\n       gdl_scene --rig OBJECTS.PS2 ANIM.PS2 TEXDEF.PS2 TEXTURES.PS2\n       gdl_scene --animate OBJECTS.PS2 RIG_ANIM.PS2 CLIP_ANIM.PS2 TEXDEF.PS2 TEXTURES.PS2".into());
     }
     let files: Vec<_> = args
         .iter()
         .map(|p| bounded_read(Path::new(p)))
         .collect::<Result<_, _>>()?;
     let objects = Objects::parse(&files[0])?;
+    let rig_source = if animated {
+        let animations = Animations::parse(&files[2])?;
+        let geometry_rig = Animations::parse(&files[1])?;
+        if animations.trees.len() != 1
+            || geometry_rig.trees.len() != 1
+            || animations.trees[0].sequences.is_empty()
+            || animations.trees[0].nodes.len() > 1024
+            || animations.trees[0].nodes.len() != geometry_rig.trees[0].nodes.len()
+            || !animations.trees[0]
+                .nodes
+                .iter()
+                .zip(&geometry_rig.trees[0].nodes)
+                .all(|(a, b)| a.label == b.label && a.parent == b.parent)
+        {
+            return Err("explicit clip/geometry rig correspondence is required".into());
+        }
+        let clip = animations.trees[0]
+            .sequences
+            .get(playback.sequence)
+            .ok_or("clip index out of range")?;
+        if !playback.frame.is_finite()
+            || playback.frame < 0.0
+            || playback.frame > f32::from((clip.frames - 1).max(0))
+        {
+            return Err("frame outside selected clip".into());
+        }
+        Some(RigSource {
+            animations,
+            bytes: files[2].clone(),
+        })
+    } else {
+        None
+    };
     let (placements, min, max, label, detail, detail_distance) = if rig {
         let animations = Animations::parse(&files[1])?;
         if animations.trees.len() != 1 {
@@ -343,6 +534,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let tree = &animations.trees[0];
         let translations = tree.initial_translations()?;
+        let pose = rig_source
+            .as_ref()
+            .map(|s| rig_pose(s, playback.sequence, playback.frame))
+            .transpose()?;
         let placements: Vec<_> = tree
             .nodes
             .iter()
@@ -353,7 +548,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     .chars()
                     .take(16)
                     .collect(),
-                position: Vec3::from_array(position),
+                transform: pose
+                    .as_ref()
+                    .map_or(Mat4::from_translation(Vec3::from_array(position)), |p| {
+                        p[node.index as usize]
+                    }),
             })
             .collect();
         let mut min = Vec3::splat(f32::INFINITY);
@@ -368,7 +567,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                 for part in &object.parts {
                     for strip in part.decode_integer_geometry()?.strips {
                         for vertex in strip.positions {
-                            let point = Vec3::from_array(vertex) + placement.position;
+                            let point = placement
+                                .transform
+                                .transform_point3(Vec3::from_array(vertex));
                             min = min.min(point);
                             max = max.max(point);
                         }
@@ -385,10 +586,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             placements,
             min,
             max,
-            format!(
-                "{} | translation-only rest hierarchy; animated pose unverified",
-                tree.label
-            ),
+            if animated {
+                format!("{} | original channel/matrix pose inspector", tree.label)
+            } else {
+                format!(
+                    "{} | translation-only rest hierarchy; animated pose unverified",
+                    tree.label
+                )
+            },
             center,
             distance,
         )
@@ -402,7 +607,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 Placement {
                     index: node.index,
                     label: node.label.clone(),
-                    position: Vec3::from_array(p.summed_position),
+                    transform: Mat4::from_translation(Vec3::from_array(p.summed_position)),
                 }
             })
             .collect();
@@ -423,26 +628,35 @@ fn run() -> Result<(), Box<dyn Error>> {
         label,
         detail,
         detail_distance,
-        table: TextureTable::parse(&files[2])?,
-        textures: files[3].clone(),
+        table: TextureTable::parse(&files[if animated { 3 } else { 2 }])?,
+        textures: files[if animated { 4 } else { 3 }].clone(),
         hashes: files
             .iter()
             .map(|b| format!("{:x}", Sha256::digest(b)))
             .collect(),
+        rig: rig_source,
     };
     App::new()
         .insert_resource(source)
+        .insert_resource(playback)
         .insert_resource(ClearColor(Color::srgb(0.035, 0.04, 0.05)))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Gauntlet PS2 native static scene inspector".into(),
-                resolution: (1200, 800).into(),
+        .add_plugins(
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: if animated {
+                        "Gauntlet PS2 native animation inspector"
+                    } else {
+                        "Gauntlet PS2 native static scene inspector"
+                    }
+                    .into(),
+                    resolution: (1200, 800).into(),
+                    ..default()
+                }),
                 ..default()
             }),
-            ..default()
-        }))
+        )
         .add_systems(Startup, setup)
-        .add_systems(Update, controls)
+        .add_systems(Update, (controls, animate_rig))
         .run();
     Ok(())
 }

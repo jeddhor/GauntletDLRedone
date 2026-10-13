@@ -44,7 +44,7 @@ impl Tree {
             .get(sequence as usize)
             .ok_or_else(|| r.error(self.file_offset as usize, "invalid sequence index"))?;
         let flags = info.transform_flags;
-        let known_flags = AXIS_FLAGS.iter().fold(0x6000, |v, bit| v | bit);
+        let known_flags = AXIS_FLAGS.iter().fold(0xe000, |v, bit| v | bit);
         if flags & !known_flags != 0
             || AXIS_FLAGS.iter().filter(|bit| flags & **bit != 0).count() != info.channels as usize
         {

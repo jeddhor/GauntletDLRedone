@@ -2,7 +2,8 @@
 
 Implementation follows [the master plan](Gauntlet_Dark_Legacy_PS2_Rust_Bevy_Master_Plan.md).
 The port is in development. Current native functionality is a bounded archive
-import/extraction tool, original-texture viewer and static original-level inspector. Gameplay has not
+import/extraction tool, original-texture and level inspectors, and a headless
+source-qualified animation sampler with a native pose inspector. Gameplay has not
 been implemented; the viewer is not a playable port.
 
 See [milestone coverage](docs/coverage.md), [current state](docs/state.md),
@@ -52,6 +53,7 @@ With the established local cache and naming report, launch the native viewer:
 python3 tools/python/run_viewer.py TITLE
 python3 tools/python/run_viewer.py --scene LEVELS/levelG1
 python3 tools/python/run_viewer.py --rig PLAYERS/SOR/YEL00
+python3 tools/python/run_viewer.py --animate PLAYERS/SOR/YEL00
 ```
 
 Left/Right select the source bitmap. A cycles source alpha, opaque RGB and an
@@ -115,3 +117,13 @@ The bounded native sampler matches measured Sorceress channels, including walkin
 and three attack clips. Matrix construction, playback clocks, transitions and
 events remain under recovery; this does not yet make the inspector animated or
 playable. See [animation evidence](docs/research/animation.md).
+
+The `--animate` inspector uses original clips and source-qualified local matrices.
+PgUp/PgDn select clips, brackets step frames, and Space toggles a labelled preview
+loop. The preview uses presentation time; original gameplay clocks/transitions,
+world/VU composition and materials remain unaccepted. It is not a playable game.
+
+```sh
+target/release/gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json
+python3 tools/python/compare_animation_poses.py --trace TRACE.json --animation-source ANIM.PS2 --rig-source INITIAL_POSITION_ANIM.PS2 --out private/reports/NEW_POSE_COMPARISON
+```
