@@ -73,6 +73,23 @@ pub fn mul_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     round_rz(f64::from(a) * f64::from(b))
 }
 
+/// Finite scalar division with nearest rounding, qualified for the reference's
+/// separately configured FPU division mode=0. Exceptional domains are rejected.
+pub fn div_rn(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
+    if (a != 0.0 && !a.is_normal()) || !b.is_normal() {
+        return Err(UnsupportedNumericDomain);
+    }
+    let exact = f64::from(a) / f64::from(b);
+    let result = exact as f32;
+    if !result.is_finite()
+        || (result != 0.0 && !result.is_normal())
+        || (result == 0.0 && exact != 0.0)
+    {
+        return Err(UnsupportedNumericDomain);
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +137,13 @@ mod tests {
         assert_eq!(mul_rz(-a, b).unwrap().to_bits(), 0xbfc0_0002);
         assert_eq!(mul_rz(-0.0, 1.0).unwrap().to_bits(), 0x8000_0000);
         assert!(mul_rz(f32::MIN_POSITIVE, 0.5).is_err());
+    }
+    #[test]
+    fn division_uses_the_separate_nearest_rounding_contract() {
+        assert_eq!(div_rn(1.0, 3.0).unwrap().to_bits(), 0x3eaa_aaab);
+        assert_eq!(div_rn(-1.0, 3.0).unwrap().to_bits(), 0xbeaa_aaab);
+        assert!(div_rn(1.0, 0.0).is_err());
+        assert!(div_rn(f32::INFINITY, 1.0).is_err());
+        assert!(div_rn(f32::MIN_POSITIVE, 2.0).is_err());
     }
 }

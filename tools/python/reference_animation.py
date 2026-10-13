@@ -98,9 +98,11 @@ def cache_probe(memory, profile):
                 raise ValueError('node matrix binding changed')
             local.append(dict(**pose, local_raw_hex=read(pointer, layout['local_capture_bytes']).hex()))
         return dict(animinfo_ee_address=anim_address, animinfo_raw_hex=info.hex(), caches=result, poses=local,
+                    clock_globals={name: read(profile['symbols'][name]['guest_address'],4).hex() for name in layout['global_symbols']},
                     source_sha256=metadata['source_sha256'],
                     scope='fixture-bound SOR caches, player AnimInfo and local node matrices; world/render transforms excluded')
     regions = [(anim_address, memory[anim_address:anim_address+64])]
+    regions.extend((profile['symbols'][name]['guest_address'], memory[profile['symbols'][name]['guest_address']:profile['symbols'][name]['guest_address']+4]) for name in layout['global_symbols'])
     for pose in poses:
         address = pose['runtime_node_ee_address']
         regions.append((address, memory[address:address+layout['runtime_node_size']]))

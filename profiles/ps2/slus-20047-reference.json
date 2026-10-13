@@ -167,6 +167,24 @@
       "section_index": 4,
       "size": 4,
       "type": 1
+    },
+    "ATime": {
+      "binding": 1,
+      "guest_address": 2160916,
+      "name": "ATime",
+      "section_index": 4,
+      "size": 4,
+      "type": 1
+    },
+    "AnimTimeScale": {
+      "binding": 0,
+      "guest_address": 2868128,
+      "name": "AnimTimeScale",
+      "section_index": 8,
+      "size": 0,
+      "type": 0,
+      "consumer_width_bytes": 4,
+      "evidence": "original symbol NOTYPE/size0; CalcAnimInfo LWC1 EE0x110168 and InitAnim LWC1 EE0x1103c8 establish scalar float32 width"
     }
   },
   "player_layout": {
@@ -237,6 +255,10 @@
     "matrix_bytes": 64,
     "scale_offset": 64,
     "local_capture_bytes": 80,
-    "evidence": "DoPlayerAction EE0x177c60/0x177c78 and call0x178c24 bind player+0x90 instance / +0x94 AnimInfo; DoAnimateTree and AnimateNode/DoAnimation derive runtime pointers and outputs; observed35-node graph matches main SOR parent/layout"
+    "evidence": "DoPlayerAction EE0x177c60/0x177c78 and call0x178c24 bind player+0x90 instance / +0x94 AnimInfo; DoAnimateTree and AnimateNode/DoAnimation derive runtime pointers and outputs; observed35-node graph matches main SOR parent/layout",
+    "global_symbols": [
+      "ATime",
+      "AnimTimeScale"
+    ]
   }
 }

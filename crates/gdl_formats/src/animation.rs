@@ -7,7 +7,7 @@ pub struct Sequence {
     pub index: u32,
     pub label: String,
     pub frames: i16,
-    pub frame_rate: i16,
+    pub timing_factor: i16,
     pub repeat: u16,
     pub flags: u16,
     pub raw: Vec<u8>,
@@ -138,15 +138,15 @@ impl Animations {
             let mut sequences = Vec::new();
             for (index, p) in (seqs.start..seqs.end).step_by(48).enumerate() {
                 let frames = r.i16(p + 32);
-                let rate = r.i16(p + 34);
-                if frames < 0 || rate <= 0 {
-                    return Err(r.error(p + 32, "invalid frame count/rate"));
+                let timing_factor = r.i16(p + 34);
+                if frames < 0 {
+                    return Err(r.error(p + 32, "negative frame count"));
                 }
                 sequences.push(Sequence {
                     index: index as u32,
                     label: r.label(p, 32),
                     frames,
-                    frame_rate: rate,
+                    timing_factor,
                     repeat: r.u16(p + 36),
                     flags: r.u16(p + 42),
                     raw: bytes[p..p + 48].to_vec(),
@@ -393,7 +393,7 @@ mod tests {
         let a = Animations::parse(&fixture()).unwrap();
         let t = &a.trees[0];
         assert_eq!(t.sequences[0].label, "READY");
-        assert_eq!(t.sequences[0].frame_rate, 30);
+        assert_eq!(t.sequences[0].timing_factor, 30);
         assert_eq!(t.nodes[0].parent, -1);
         assert_eq!(t.initial_translations().unwrap(), [[0.0, 1.0, 0.0]]);
         assert_eq!(t.sequence_infos[0].transform_flags, 0x4001);
@@ -499,5 +499,16 @@ mod tests {
         b[244..246].copy_from_slice(&0x1001u16.to_le_bytes());
         let a = Animations::parse(&b).unwrap();
         assert!(a.trees[0].key_track(&b, 0, 0).is_err());
+    }
+    #[test]
+    fn nonpositive_timing_factor_is_a_consumer_fallback_not_invalid_fps() {
+        for factor in [0i16, -1] {
+            let mut b = fixture();
+            b[142..144].copy_from_slice(&factor.to_le_bytes());
+            assert_eq!(
+                Animations::parse(&b).unwrap().trees[0].sequences[0].timing_factor,
+                factor
+            );
+        }
     }
 }

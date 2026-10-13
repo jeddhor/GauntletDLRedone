@@ -127,3 +127,15 @@ world/VU composition and materials remain unaccepted. It is not a playable game.
 target/release/gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json
 python3 tools/python/compare_animation_poses.py --trace TRACE.json --animation-source ANIM.PS2 --rig-source INITIAL_POSITION_ANIM.PS2 --out private/reports/NEW_POSE_COMPARISON
 ```
+
+Animation timing metadata uses `timing_factor`, not FPS: original InitAnim scales
+this value into a period. Clock-state experiments can be reproduced with:
+
+```sh
+target/release/gdl_tools anim-clock REQUESTS.json NEW_REPORT.json
+target/release/gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json
+python3 tools/python/compare_animation_clock.py --trace CLOCK_TRACE.json --metadata ANIMATION_METADATA.json --out private/reports/NEW_CLOCK_COMPARISON
+```
+
+The clock evaluator matches measured updates that stay within a clip; action
+transitions, caller restarts, events and complete game-loop timing remain open.

@@ -36,6 +36,22 @@ struct AnimationSampleRequest {
     sequence: u32,
     frame: f32,
 }
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClockRequest {
+    state: gdl_core::animation_clock::ClockState,
+    now: f32,
+    frames: i16,
+    anim_time_scale: f32,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClockStartRequest {
+    state: gdl_core::animation_clock::ClockState,
+    input: gdl_core::animation_clock::ClockInit,
+    evaluate: bool,
+    sampled: bool,
+}
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -153,6 +169,87 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "anim-clock-start" {
+        let raw = bounded_read(Path::new(&args[1]), 4 * 1024 * 1024)?;
+        let requests: Vec<ClockStartRequest> = serde_json::from_slice(&raw)?;
+        if requests.len() > 4096 {
+            return Err("clock start request policy exceeded".into());
+        }
+        let outcomes: Vec<_> = requests
+            .into_iter()
+            .map(|request| {
+                let result = (|| {
+                    let mut state =
+                        gdl_core::animation_clock::initialize(request.state, request.input)?;
+                    if request.evaluate {
+                        state = gdl_core::animation_clock::advance(
+                            state,
+                            request.input.now,
+                            request.input.frames,
+                            request.input.anim_time_scale,
+                        )?
+                        .state;
+                    }
+                    // Source DoAnimation's reset handshake, only requested when the
+                    // fixture proves tagged skeletal nodes were actually sampled.
+                    if request.sampled && state.reset_byte != 0 {
+                        state.reset_byte = 2;
+                    }
+                    Ok::<_, gdl_core::numeric::UnsupportedNumericDomain>(state)
+                })();
+                match result {
+                    Ok(state) => serde_json::json!({"request":request,"state":state,"error":null}),
+                    Err(e) => {
+                        serde_json::json!({"request":request,"state":null,"error":e.to_string()})
+                    }
+                }
+            })
+            .collect();
+        let report = serde_json::json!({"requests_sha256":hash(&raw),"outcomes":outcomes,
+            "scope":"valid-sequence InitAnim, optional CalcAnimInfo and source sampling reset handshake; requested action/sequence/blend inputs must be supplied, not predicted"});
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        return Ok(());
+    }
+    if args.len() == 3 && args[0] == "anim-clock" {
+        let raw = bounded_read(Path::new(&args[1]), 4 * 1024 * 1024)?;
+        let requests: Vec<ClockRequest> = serde_json::from_slice(&raw)?;
+        if requests.len() > 4096 {
+            return Err("clock request policy exceeded".into());
+        }
+        let outcomes: Vec<_> = requests
+            .into_iter()
+            .map(|request| {
+                let result = gdl_core::animation_clock::advance(
+                    request.state,
+                    request.now,
+                    request.frames,
+                    request.anim_time_scale,
+                );
+                match result {
+                    Ok(output) => {
+                        serde_json::json!({"request":request,"output":output,"error":null})
+                    }
+                    Err(e) => {
+                        serde_json::json!({"request":request,"output":null,"error":e.to_string()})
+                    }
+                }
+            })
+            .collect();
+        let report = serde_json::json!({"requests_sha256":hash(&raw),"outcomes":outcomes,
+            "scope":"finite CalcAnimInfo clock state; input/action transitions, InitAnim, sampling, events and game loop excluded"});
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        return Ok(());
+    }
     if (args.len() == 4 && args[0] == "anim-samples")
         || (args.len() == 5 && args[0] == "anim-transforms")
     {
@@ -362,7 +459,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);

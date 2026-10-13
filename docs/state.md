@@ -52,11 +52,11 @@ Verified this checkpoint:
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Twenty-five Rust parser/numeric/channel/transform tests and four Python transport/configuration/schedule tests pass.
+- Thirty-three Rust parser/numeric/channel/transform/clock tests and four Python transport/configuration/schedule tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
 - Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
-  Clip rates vary (10,12,15,24,30,45,60). YEL00 source entry 90 is bound to the
+  Timing factors vary (10,12,15,24,30,45,60); source InitAnim proves these scale period, not FPS. YEL00 source entry 90 is bound to the
   frozen loaded SOR_YEL blob at 0x9bb300, with 39 relocated/flag bytes differing.
   The metadata reader does not validate frame sampling or emit animation events.
   Fresh frame-zero reader follows original 32-bit bitmap alignment and reads
@@ -109,3 +109,19 @@ reference_trace.py releases held keys on failure. Run_viewer.py also requires th
 virtual session. README and baseline/geometry dossiers give commands and evidence
 limits. Keep this checkpoint current as formats/configurations change. Do not
 claim a complete port or native playable slice yet.
+
+Active follow-up after40e5a0e: sequence field formerly named frame_rate is now
+timing_factor, following InitAnim's original period conversion. The revised
+metadata/preview build and strict Clippy pass. CalcAnimInfo now has an independent
+headless ClockState evaluator with scalar RZ add/mul and separate nearest-rounded
+division. All13 modelled state fields match12 same-clip attack and16 walking
+updates byte for byte; walking clock captures reproduce. Caller restarts and
+action/clip changes are excluded and reported. Return codes are source-derived,
+not directly measured. Source ATime/AnimTimeScale globals are in probes/barriers.
+33 Rust tests pass; Python4 pass. Valid-sequence InitAnim is also implemented; initialization/evaluation plus
+DoAnimation reset handshake matches8 observed clip starts/restarts with supplied
+clip/start/zero-blend inputs. It does not predict player action choices. Clock
+edits are pending commit. Next qualify AnimateTree selection, capture walk-release
+blend and recover root/attachment/events. The first walk-release capture completes: movement stops atstep28, while
+   RUN1 continues; no blend was observed bystep36. A longer48-vblank capture is
+   now running. Source input-release latency/order remains to trace.

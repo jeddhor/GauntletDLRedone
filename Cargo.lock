@@ -2015,6 +2015,7 @@ name = "gdl_core"
 version = "0.1.0"
 dependencies = [
  "gdl_formats",
+ "serde",
 ]
 
 [[package]]

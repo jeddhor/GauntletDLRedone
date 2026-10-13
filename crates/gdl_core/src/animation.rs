@@ -6,6 +6,27 @@ use gdl_formats::{
 };
 use std::{error::Error, fmt};
 
+/// InitAnim's period conversion, not an assumption that a metadata field is FPS.
+/// `anim_time_scale` is a source clock input (1/30 in the measured fixture).
+pub fn frame_period(
+    timing_factor: i16,
+    playback_scale: f32,
+    anim_time_scale: f32,
+) -> Result<f32, UnsupportedNumericDomain> {
+    if playback_scale <= 0.0 || anim_time_scale <= 0.0 {
+        return Err(UnsupportedNumericDomain);
+    }
+    let scale = if timing_factor > 0 {
+        mul_rz(
+            mul_rz(f32::from(timing_factor), f32::from_bits(0x3d08_8889))?,
+            playback_scale,
+        )?
+    } else {
+        playback_scale
+    };
+    mul_rz(scale, anim_time_scale)
+}
+
 #[derive(Debug)]
 pub enum KeyError {
     Format(ParseError),
@@ -165,6 +186,17 @@ mod tests {
     use super::*;
     use gdl_formats::animation::{Sequence, SequenceInfo, Tree};
     #[test]
+    fn metadata_factor_scales_period_instead_of_frame_rate() {
+        let base = f32::from_bits(0x3d08_8889);
+        assert_eq!(frame_period(30, 1.0, base).unwrap(), base);
+        assert_eq!(frame_period(15, 1.0, base).unwrap(), base * 0.5);
+        assert_eq!(frame_period(30, 2.0, base).unwrap(), base * 2.0);
+        assert_eq!(frame_period(0, 1.0, base).unwrap(), base);
+        assert_eq!(frame_period(-1, 1.0, base).unwrap(), base);
+        assert!(frame_period(30, 0.0, base).is_err());
+        assert!(frame_period(30, f32::NAN, base).is_err());
+    }
+    #[test]
     fn exact_keys_accumulate_deltas_and_stop_before_later_invalid_data() {
         let tree = Tree {
             index: 0,
@@ -182,7 +214,7 @@ mod tests {
                 index: 0,
                 label: "TEST".into(),
                 frames: 33,
-                frame_rate: 30,
+                timing_factor: 30,
                 repeat: 0,
                 flags: 0,
                 raw: vec![],

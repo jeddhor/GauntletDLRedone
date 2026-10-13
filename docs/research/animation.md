@@ -21,8 +21,8 @@ versions and excessive counts. Input limit 64 MiB; 4,096 trees; aggregate
 with evaluated channel acceptance limited to the measured scenarios below.
 
 Actual SOR data: 35 nodes, 137 named clips and 4,795 skeletal sequence-info
-records. READY is 30 frames at rate 30; WALK1 is 12 at 30; WALK2 is 11 at 30.
-Other clips have rates 10,12,15,24,45,60. Frame count zero exists, including INIT,
+records. READY is30 frames with timing factor30; WALK1 is12 with factor30; WALK2 is11 with factor30.
+Other clips have timing factors10,12,15,24,45,60. Frame count zero exists, including INIT,
 and cannot be rejected as an arbitrary malformed clip. YEL00 has the same
 35-node hierarchy and geometry references but no local clips; animation data
 are a separate package. Nodes carry parent indices, initial translations,
@@ -201,3 +201,60 @@ at frame0 when scrubbed forward. Walking preview starts and pauses with Space.
 Final release build and workspace/all-target strict Clippy pass after these fixes.
 Automated GUI interaction was confined to the authenticated virtual display;
 completed native inspectors were closed. Reference PCSX2 remains paused/running.
+
+## Clock consumer correction in progress
+
+The field at sequence+0x22 was previously named frame_rate, based on external
+metadata convention. InitAnim at0x110394–0x1103b4 establishes a different
+contract: positive values multiply1/30 and player playback scale; nonpositive
+values fall back to playback scale. The result at AnimInfo+0x2c multiplies
+AnimTimeScale to produce a frame period. CalcAnimInfo takes its reciprocal.
+Native metadata now calls the raw signed halfword timing_factor and permits
+nonpositive fallback values. Old private reports and captures are retained with
+their original labels as earlier interpretations.
+
+In this fixture AnimTimeScale at0x2bc3a0 is0x3d088889 (1/30). Its ELF symbol is
+NOTYPE/size0; original LWC1 consumers establish float32 width, not symbol size.
+ATime is a four-byte ELF object at0x20f914. READY/WALK1 factors30 produce period
+1/30; THROW1R factor15 produces period1/60. The captured actor advances THROW1R
+by two frames per game update, consistent with this conversion. THROW1S can be
+interrupted before its declared seven frames finish, so action transitions must
+still be traced. Nominal viewer timing is being corrected; no gameplay duration
+or transition acceptance is inferred from this formula alone.
+
+The headless frame_period helper preserves source multiply order and rejects
+unverified zero/exceptional playback domains. Preview timing now uses its
+explicit fixture clock-scale input instead of treating the metadata halfword
+as FPS. Clock probes now include raw ATime/AnimTimeScale and include them in
+the reload barrier. Finish builds/comparisons and implement bounded CalcAnimInfo
+state evaluation next.
+
+Clock state follow-up: finite CalcAnimInfo is implemented in gdl_core separately
+from rendering and action transitions. It preserves13 fields, the reset/mode
+words, enabled/loop state, period scaling, source snap rules, blend time fraction,
+sequence-change rebase and original0/1/15 return codes. Same-clip/same-start-time
+pairs at changed AFrame match12/12 attack and16/16 walking states byte for byte.
+A/b walking traces reproduce all observations. Caller restarts/action changes
+are listed as exclusions and do not count as clock parity. Return codes were not
+directly captured; loop/freeze/zero-frame/blend branches have source and synthetic
+evidence, not full reference acceptance. Reports: sor-attack-clock-comparison-v1/
+and sor-walk-clock-comparison-v1[-v2]/. Thirty-three Rust tests and strict Clippy pass.
+
+Next implement and qualify InitAnim plus AnimateTree caller selection; recover
+player action transition/event inputs before asserting clip duration.
+
+Valid-sequence InitAnim initialization is now implemented separately. Supplied
+observed clip IDs, source header counts/factors, zero start/blend and player scale
+produce matching13-field states after CalcAnimInfo and the source DoAnimation
+reset handshake in8 start/restart cases (6 attack,2 walking). This validates
+initialization with known inputs, not the player's action-selection rules.
+Reports: sor-attack-clock-start-comparison-v2/ and
+sor-walk-clock-start-comparison-v2/. The invalid-sequence diagnostic/fallback
+branch is deliberately not accepted by the bounded helper. A walk-release
+schedule is the next actual reference test for nonzero transition blending.
+
+The initial walk-release schedule (Up24, then no keys12) did not yet reach an
+idle blend. The sampled control/movement remains Up throughstep26 and clears
+by28; position then holds while RUN1 continues to frame5 bystep36. Preserve this
+input-pipeline observation instead of assuming keyboard release and game input
+change occur on the same boundary. A longer idle segment is now being measured.

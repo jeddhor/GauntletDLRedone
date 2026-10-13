@@ -347,7 +347,14 @@ fn animate_rig(
         playback.frame = (playback.frame - 1.0).max(0.0);
     }
     if playback.playing && clip.frames > 0 {
-        playback.frame = (playback.frame + time.delta_secs().min(0.1) * f32::from(clip.frame_rate))
+        playback.frame = (playback.frame
+            + time.delta_secs().min(0.1)
+                / gdl_core::animation::frame_period(
+                    clip.timing_factor,
+                    1.0,
+                    f32::from_bits(0x3d08_8889),
+                )
+                .expect("validated positive preview period"))
             % f32::from(clip.frames);
     }
     if !playback.is_changed() {
@@ -360,12 +367,12 @@ fn animate_rig(
             }
             if let Ok(mut text) = hud.single_mut() {
                 text.0 = format!(
-                    "Clip {} {} | frame {:.3}/{} | source rate {} | {}\nPgUp/PgDn: clip   [ / ]: frame   Space: diagnostic preview loop\nLocal matrices verified in measured clips; world composition/materials/playback clock unaccepted",
+                    "Clip {} {} | frame {:.3}/{} | source timing factor {} | {}\nPgUp/PgDn: clip   [ / ]: frame   Space: diagnostic preview loop\nLocal matrices verified in measured clips; world composition/materials/playback clock unaccepted",
                     clip.index,
                     clip.label,
                     playback.frame,
                     clip.frames,
-                    clip.frame_rate,
+                    clip.timing_factor,
                     if playback.playing {
                         "preview loop"
                     } else {
