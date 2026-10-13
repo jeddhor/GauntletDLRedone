@@ -193,6 +193,20 @@
     "count": 4,
     "stride_bytes": 11008,
     "fields": {
+      "current_action": {
+        "offset_bytes": 480,
+        "type": "int32",
+        "consumer": "DoPlayerAction",
+        "consumer_ee_address": 1539112,
+        "evidence": "original LW EE0x177c70; action ID is distinct from mapped clip ID"
+      },
+      "requested_action": {
+        "offset_bytes": 484,
+        "type": "int32",
+        "consumer": "DoPlayerAction",
+        "consumer_ee_address": 1539112,
+        "evidence": "original LW EE0x177c74; producer and pre-call boundary still to trace"
+      },
       "position": {
         "offset_bytes": 80,
         "type": "float32x3",
@@ -255,6 +269,20 @@
     "matrix_bytes": 64,
     "scale_offset": 64,
     "local_capture_bytes": 80,
+    "action_map_player_offset": 488,
+    "action_map_capture_bytes": 1200,
+    "action_map_evidence": "DoPlayerAction EE0x177c68 constructs player+0x1e8; EE0x178aec..0x178af8 indexes eight-byte entries and reads mapped sequence word. 150 action IDs are covered by its original current-action jump table; second word is retained without semantic assertion.",
+    "action_context_fields": {
+      "class_word": 8,
+      "flags_130": 304,
+      "flags_134": 308,
+      "flags_138": 312,
+      "idle_counter_pair": 472,
+      "word_80c": 2060,
+      "flags_8ac": 2220,
+      "status_93c_pair": 2364
+    },
+    "action_context_evidence": "Four-byte raw captures at original DoPlayerAction operands. idle_counter_pair retains LH+0x1d8/+0x1da; status_93c_pair retains LHU+0x93c and unknown adjacent halfword. Broader semantic flag names are unassigned.",
     "evidence": "DoPlayerAction EE0x177c60/0x177c78 and call0x178c24 bind player+0x90 instance / +0x94 AnimInfo; DoAnimateTree and AnimateNode/DoAnimation derive runtime pointers and outputs; observed35-node graph matches main SOR parent/layout",
     "global_symbols": [
       "ATime",

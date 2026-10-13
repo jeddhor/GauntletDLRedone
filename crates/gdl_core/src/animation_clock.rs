@@ -1,4 +1,4 @@
-//! CalcAnimInfo state evaluation, separate from action transitions and rendering.
+//! Original animation clock and library selection, separate from player actions and rendering.
 //! Original finite arithmetic and integer state words are preserved explicitly.
 use crate::numeric::{
     UnsupportedNumericDomain, add_guarded_rz as add, div_rn as div, mul_rz as mul,
@@ -45,6 +45,109 @@ pub struct ClockInit {
     pub blend_duration: f32,
     pub now: f32,
     pub anim_time_scale: f32,
+}
+
+/// Fields read from an already validated original sequence header.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipTiming {
+    pub frames: i16,
+    pub timing_factor: i16,
+    pub repeat: u16,
+    pub flags: u16,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionInput {
+    pub sequence: u16,
+    pub mode: i32,
+    pub start_frame: i16,
+    pub blend_duration: f32,
+    pub playback_scale: f32,
+    pub now: f32,
+    pub anim_time_scale: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SelectionOutput {
+    pub state: ClockState,
+    /// AnimateTree's raw return mask. Root transfer (bit 8) is requested here,
+    /// not performed. DoAnimateTree/sampling and player consumers are separate.
+    pub return_flags: u32,
+    pub clock_return_codes: Vec<u32>,
+}
+
+/// AnimateTree's valid-sequence selection path (EE 0x110480). The caller supplies
+/// both source headers and requested inputs; this does not choose player actions.
+/// AnimCompressSetup's key-cache work and subsequent tree evaluation are excluded.
+pub fn select(
+    state: ClockState,
+    current: ClipTiming,
+    requested: ClipTiming,
+    input: SelectionInput,
+) -> Result<SelectionOutput, UnsupportedNumericDomain> {
+    let first = advance(state, input.now, current.frames, input.anim_time_scale)?;
+    let mut state = first.state;
+    let mut codes = vec![first.return_code];
+    let old_sequence = state.sequence;
+    let old_loop = state.loop_word;
+    let ended = state.mode_bits & 0xff == 0xff;
+    let changed = input.sequence != old_sequence;
+    let initialize_requested = match input.mode {
+        0 => ended && changed,
+        1 => ended,
+        2 => ended || changed,
+        _ => true,
+    };
+    let mut flags = 0;
+    let mut frames = current.frames;
+    if initialize_requested {
+        // The original pre-adjustment is overwritten by valid InitAnim's global
+        // ATime-based start calculation; preserve the operation order regardless.
+        let earliest = sub(state.last_time, f32::from_bits(0x3d08_8889))?;
+        if !ended || state.start_time < earliest {
+            state.start_time = earliest;
+        }
+        state = initialize(
+            state,
+            ClockInit {
+                sequence: input.sequence,
+                frames: requested.frames,
+                timing_factor: requested.timing_factor,
+                repeat: requested.repeat,
+                start_frame: input.start_frame,
+                enabled_word: 1,
+                playback_scale: input.playback_scale,
+                blend_duration: input.blend_duration,
+                now: input.now,
+                anim_time_scale: input.anim_time_scale,
+            },
+        )?;
+        frames = requested.frames;
+        flags = 1 | if current.flags & 1 != 0 { 8 } else { 0 };
+    }
+    if initialize_requested || first.return_code == 15 {
+        let next = advance(state, input.now, frames, input.anim_time_scale)?;
+        state = next.state;
+        codes.push(next.return_code);
+        if next.return_code == 15 {
+            let again = advance(state, input.now, frames, input.anim_time_scale)?;
+            state = again.state;
+            codes.push(again.return_code);
+        }
+    }
+    if flags != 0 && (ended || state.mode_bits & 0xff == 0xff) {
+        flags |= 2;
+    }
+    if ended && (old_loop != 0 || !changed) {
+        flags |= 4;
+    }
+    Ok(SelectionOutput {
+        state,
+        return_flags: flags,
+        clock_return_codes: codes,
+    })
 }
 
 /// InitAnim's valid-sequence branch. Asset callers must validate the requested
@@ -218,6 +321,96 @@ mod tests {
             period_scale: 1.0,
             last_time: 0.0,
         }
+    }
+    fn clip() -> ClipTiming {
+        ClipTiming {
+            frames: 4,
+            timing_factor: 30,
+            repeat: 0,
+            flags: 0,
+        }
+    }
+    fn selection(sequence: u16, mode: i32, now: f32) -> SelectionInput {
+        SelectionInput {
+            sequence,
+            mode,
+            start_frame: 0,
+            blend_duration: 0.0,
+            playback_scale: 1.0,
+            now,
+            anim_time_scale: 1.0,
+        }
+    }
+    #[test]
+    fn selection_modes_distinguish_interrupt_restart_and_wait() {
+        for (mode, ended, changed, expected) in [
+            (0, false, true, false),
+            (0, true, false, false),
+            (0, true, true, true),
+            (1, false, true, false),
+            (1, true, false, true),
+            (1, true, true, true),
+            (2, false, false, false),
+            (2, false, true, true),
+            (2, true, false, true),
+            (-1, false, false, true),
+            (3, false, false, true),
+        ] {
+            let output = select(
+                state(),
+                clip(),
+                clip(),
+                selection(u16::from(changed), mode, if ended { 4.0 } else { 1.0 }),
+            )
+            .unwrap();
+            assert_eq!(
+                output.return_flags & 1 != 0,
+                expected,
+                "mode={mode}, ended={ended}, changed={changed}"
+            );
+            assert_eq!(
+                output.state.frame,
+                if expected {
+                    0.0
+                } else if ended {
+                    3.0
+                } else {
+                    1.0
+                }
+            );
+        }
+    }
+    #[test]
+    fn library_loop_boundary_is_evaluated_again_without_reinitializing() {
+        let mut old = state();
+        old.loop_word = 1;
+        let current = ClipTiming {
+            repeat: 1,
+            ..clip()
+        };
+        let output = select(old, current, clip(), selection(0, 0, 4.0)).unwrap();
+        assert_eq!(output.clock_return_codes, [15, 1]);
+        assert_eq!(output.return_flags, 4);
+        assert_eq!(output.state.mode_bits, 0x100);
+        assert_eq!(output.state.frame, 0.0);
+        assert_eq!(output.state.start_time, 4.0);
+    }
+    #[test]
+    fn selection_flags_use_old_header_and_zero_frame_result() {
+        let old = ClipTiming { flags: 1, ..clip() };
+        let output = select(state(), old, clip(), selection(1, 2, 1.0)).unwrap();
+        assert_eq!(output.return_flags, 9);
+        let output = select(state(), clip(), old, selection(1, 2, 1.0)).unwrap();
+        assert_eq!(output.return_flags, 1);
+        let zero = ClipTiming {
+            frames: 0,
+            ..clip()
+        };
+        let output = select(state(), clip(), zero, selection(1, 2, 1.0)).unwrap();
+        assert_eq!(output.return_flags, 3);
+        assert_eq!(output.state.enabled_word, 0);
+        let restart = select(state(), clip(), clip(), selection(0, 1, 4.0)).unwrap();
+        assert_eq!(restart.return_flags, 7);
     }
     #[test]
     fn clock_snap_option_and_fast_period_have_distinct_behavior() {

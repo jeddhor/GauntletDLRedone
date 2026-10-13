@@ -134,11 +134,17 @@ this value into a period. Clock-state experiments can be reproduced with:
 ```sh
 target/release/gdl_tools anim-clock REQUESTS.json NEW_REPORT.json
 target/release/gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json
+target/release/gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json
+target/release/gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json
 python3 tools/python/compare_animation_clock.py --trace CLOCK_TRACE.json --metadata ANIMATION_METADATA.json --out private/reports/NEW_CLOCK_COMPARISON
+python3 tools/python/compare_player_animation.py --trace ACTION_TRACE.json --animation-source ANIM.PS2 --out private/reports/NEW_ACTION_COMPARISON
 ```
 
-The clock evaluator matches measured updates that stay within a clip; action
-transitions, caller restarts, events and complete game-loop timing remain open.
+The bounded player animation chooser matches measured walking, stopping and
+throw transitions with original requested actions supplied. It predicts selected
+actions/clips and clock states for supported source branches. Pad/action
+production, gameplay events and complete game-loop timing remain open. See
+[animation research](docs/research/animation.md) for bounds and evidence.
 
 `anim-samples`/`anim-transforms` requests can optionally include
 `"transition":{"from":[nine prior channels],"fraction":F,"mirror":false}`.

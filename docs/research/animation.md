@@ -290,3 +290,61 @@ and resets the sampling marker. All137 SOR header flag words at sequence+0x26
 are zero, so this path is not exercised by the selected source clips. General
 root-motion, moving-object and other-character cases remain open. Thirty-four
 Rust tests and strict Clippy pass after transition support.
+
+## Library selection and bounded player action inputs
+
+Native animation_clock::select follows AnimateTree EE0x110480–0x1106a0,
+including its initial CalcAnimInfo call, selection modes, repeated clock evaluation
+at loop boundaries and raw return mask. Mode0 initializes only at an ended clip
+with a different requested clip; mode1 initializes at an ended clip; mode2 also
+interrupts when clip IDs differ. Other modes request initialization unconditionally.
+The ended predicate is the low mode byte being0xff after the initial evaluation.
+Root-transfer bit8 comes from the OLD sequence header+0x26, not the new header.
+Key-cache setup, actual root transfer and tree evaluation are separate consumers.
+Return masks/codes have source and synthetic evidence; they were not directly
+captured as function return values.
+
+Player action IDs are independent of clip IDs. Original DoPlayerAction reads
+current/requested actions at player+0x1e0/+0x1e4 and maps its selected action through
+eight-byte records at+0x1e8. The map's second word remains raw. Source PActionDesc
+labels and the frozen SOR map bind actions17/18 to WALK1/2 (clips8/9),19/20 to
+RUN1/2 (clips10/11),91/92 to THROW1S (clip106),95 to THROW1 (clip107), and97 to
+THROW1R (clip108). Do not use a clip ID as a player action enum.
+
+player_animation::choose implements the inspected ordinary READY, WALK1/2,
+RUN1/2 and throw start/release/recovery branches. Accepted current actions are
+0,17–20,91–92,95–98; accepted requested actions are0,17–20,91–92. Other branches
+fail explicitly. READY idle-counter variants above the smaller source thresholds
+and powered ready variants are also unsupported. The raw PlayerAttackType
+classifier is recovered separately; its category does not imply damage or a hit.
+The chooser models source loop override BEFORE CalcAnimInfo, source playback
+scale precedence, and the only nonzero blend literal0x3d8888b5. InitAnim can then
+replace the loop word with the requested clip header's repeat word.
+
+Both walking-release and attack action/context traces reproduce every sample
+a/b. Native choose + source-bound action map + AnimateTree + tagged-node sampling
+reset handshake matches ALL13 clock fields, current action and attack category:
+24/24 walking-release updates and18/18 attack updates, in both repetitions.
+No observed game-update pair is excluded from these supported scenarios; alternate
+vblank observations without an AFrame change are listed separately. Reports:
+sor-walk-release-player-animation-v1/[-v2/] and
+sor-attack-player-animation-v1/[-v2/]. Forty-one Rust tests, four Python tests and
+strict workspace/all-target Clippy pass (native-player-selection-* logs).
+
+These comparisons supply the original post-update REQUESTED action as the
+producer input; they do not predict it from a PCSX2 key press or claim an exact
+pre-call breakpoint. Prior-frame raw context and animation state are supplied;
+the action map is required unchanged across each pair. Native selected actions,
+clip choice, mode, blend, restart and state are computed. compare_player_animation.py
+preserves raw trace/source identities, requests, outcomes and first divergence.
+All four DoPlayerAction jump tables used to qualify cases match original ELF and
+frozen RAM bytes (player-action-jump-tables-v1.json); target listings, source hashes
+and offsets are retained. Additional exports are in ghidra-player-action-selection/.
+
+Direct original JAL/LW candidate inventory identifies PlayerMotion as the ordinary
+DoPlayerAction caller and a PlayerStartMissile caller. PlayerMotion and do_players
+are now exported in ghidra-player-motion-events/; PlayerStartMissile and related
+consumers are in ghidra-player-event-consumers/. PlayerUpdateAtts updates player
+attributes; it is not evidence of a skeletal attachment function. Event word+0x8d8
+is modified and consumed after DoPlayerAction, so clock return codes are insufficient
+to establish attack windows. Recover that consumer before native event acceptance.

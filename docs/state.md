@@ -13,7 +13,7 @@ ghidra-emotionengine-reloaded checkout.
 Current milestone work: M03 repeatable baseline, M05 material proof, M06 static
 geometry, M07 metadata and M09 clock/input experiments. M00–M02 complete; stock debugger scalar,
 FP, three-operand MULT, VU and 128-bit load/store samples agree. M04 extraction is complete, with first-package
-binding; individual runtime lookups remain to trace. Native gameplay animation clocks/transitions, gameplay,
+binding; individual runtime lookups remain to trace. Native gameplay,
 collision response, saves and campaign remain unimplemented. See docs/coverage.md.
 
 User-selected fixture: Yellow Sorceress, The Poison Fields, profile PELE. Verified
@@ -52,7 +52,7 @@ Verified this checkpoint:
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Thirty-four Rust parser/numeric/channel/transform/clock tests and four Python transport/configuration/schedule tests pass.
+- Forty-one Rust parser/numeric/channel/transform/clock/selection tests and four Python transport/configuration/schedule tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
 - Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
@@ -72,7 +72,7 @@ Verified this checkpoint:
   records byte for byte. Both new schedules reproduce all observations. All137
   clips decode76,542 keys. Local matrices/scales also match all35 frozen nodes and2,170 walking/attack
   records; main SOR initial translations are source-bound, unlike30 YEL00 values.
-  World/VU composition, clocks/blending/mirror/events remain open.
+  World/VU composition, mirror/events remain open.
   New gdl_core has no Bevy/emulator dependency. See animation.md for scope.
 - Stock GS dump framing now reads 1,806 events and records raw TEXA/ALPHA/TEST
   writes (private/reports/poison-fields-gs-registers-v1.json). Material binding
@@ -110,33 +110,31 @@ virtual session. README and baseline/geometry dossiers give commands and evidenc
 limits. Keep this checkpoint current as formats/configurations change. Do not
 claim a complete port or native playable slice yet.
 
-Active follow-up after40e5a0e: sequence field formerly named frame_rate is now
-timing_factor, following InitAnim's original period conversion. The revised
-metadata/preview build and strict Clippy pass. CalcAnimInfo now has an independent
-headless ClockState evaluator with scalar RZ add/mul and separate nearest-rounded
-division. All13 modelled state fields match12 same-clip attack and16 walking
-updates byte for byte; walking clock captures reproduce. Caller restarts and
-action/clip changes are excluded and reported. Return codes are source-derived,
-not directly measured. Source ATime/AnimTimeScale globals are in probes/barriers.
-34 Rust tests pass; Python4 pass. Valid-sequence InitAnim is also implemented; initialization/evaluation plus
-DoAnimation reset handshake matches8 observed clip starts/restarts with supplied
-clip/start/zero-blend inputs. It does not predict player action choices. Clock
-edits are pending commit. Next qualify AnimateTree selection, capture walk-release
-blend and recover root/attachment/events. The first walk-release capture completes: movement stops atstep28, while
-   RUN1 continues; no blend was observed bystep36. A longer48-vblank capture is
-   now running. Source input-release latency/order remains to trace.
+Current selection follow-up (2026-10-13):
 
-Blend follow-up after8cb8019: Up24/idle24 now reaches READY transition atvblank42
-with blend fraction0.5. The entire49-sample trace reproduces a/b. Native
-transition channels plus local matrices/scales match1,715/1,715 observed poses
-(each trace), including all35 nodes during blending. InitAnim/CalcAnimInfo with
-source DoPlayerAction duration literal0x3d8888b5 matches all13 clock fields for
-that nonzero transition. Inputs/old caches/clip choice remain supplied evidence;
-player action-selection rules are not yet implemented. 34 Rust tests and strict
-workspace/all-target Clippy pass. Current uncommitted files: animation.rs,
-gdl_tools main.rs and compare_animation_poses.py plus these evidence docs.
-Next qualify AnimateTree selection and root-motion/attachments, then original
-world/VU composition and collision. All137 SOR source header+0x26 flag words are
-zero, so the AnimFixPos root-transfer path is not exercised by these SOR clips.
-Source GetPlayerDMotion consumes controls/facing; do not treat pose translation
-channels as movement without tracing their actual consumer.
+- InitAnim, CalcAnimInfo and AnimateTree valid-sequence selection are native in
+  gdl_core, independent of Bevy/emulator. Timing metadata is timing_factor, a
+  period scale, not FPS. All13 clock fields match28 earlier same-clip updates,
+  eight supplied start/restart cases and the nonzero READY blend.
+- Transition channels/local matrices match all1,715 poses in each49-sample
+  walk-release repetition, including35/35 blended nodes. Source literal
+  0x3d8888b5 is retained. Mirror/world/VU composition remain unaccepted.
+- New bounded player_animation chooser distinguishes action IDs from clip IDs,
+  predicts ordinary READY/WALK/RUN/throw selection, and rejects unsupported
+  branches. Requested actions are supplied from the original producer, not
+  generated by native input. With source-bound action mapping, native selection
+  and all13 clock fields/current action/attack category match24 walking-release
+  and18 attack updates, both a/b. All sample records reproduce exactly.
+- Source DoPlayerAction jump tables match ELF/frozen RAM. PlayerMotion and
+  do_players caller exports identify event-word+0x8d8 consumers and the direct
+  PlayerStartMissile call. PlayerUpdateAtts means attributes, not attachments.
+- Forty-one Rust tests, four Python tests and strict workspace/all-target Clippy
+  pass. Logs native-player-selection-tests-v2.log and
+  native-player-selection-clippy-v3.log. Native CLI build passes.
+- All137 SOR sequence header+0x26 flags are zero, so AnimFixPos root-transfer
+  is not exercised by these clips. Pose translation is not player movement.
+
+Next: trace PlayerMotion's requested-action production/event-word handling and
+PlayerStartMissile timeline, then world/VU/attachment proof and original collision
+queries. Reference remains paused in Xvfb; native inspectors are closed. No user
+question/test is pending. Latest edits should be committed through git-local.sh.
