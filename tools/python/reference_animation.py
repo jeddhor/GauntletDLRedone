@@ -106,6 +106,8 @@ def cache_probe(memory, profile):
     regions = [(anim_address, memory[anim_address:anim_address+64])]
     action_map = player+layout['action_map_player_offset']
     regions.append((action_map, memory[action_map:action_map+layout['action_map_capture_bytes']]))
+    regions.extend((player+offset, memory[player+offset:player+offset+4])
+                   for offset in layout['action_context_fields'].values())
     regions.extend((profile['symbols'][name]['guest_address'], memory[profile['symbols'][name]['guest_address']:profile['symbols'][name]['guest_address']+4]) for name in layout['global_symbols'])
     for pose in poses:
         address = pose['runtime_node_ee_address']

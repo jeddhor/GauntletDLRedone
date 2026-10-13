@@ -348,3 +348,42 @@ consumers are in ghidra-player-event-consumers/. PlayerUpdateAtts updates player
 attributes; it is not evidence of a skeletal attachment function. Event word+0x8d8
 is modified and consumed after DoPlayerAction, so clock return codes are insufficient
 to establish attack windows. Recover that consumer before native event acceptance.
+
+## Ordinary Sorceress throw-request timeline
+
+Native consume_events now implements a bounded event-word path separately from
+the animation clock. Source DoPlayerAction's exit from actions95/96 ORs0x100 into
+player+0x8d8 (EE0x178d5c–0x178d64); entry into actions91/92 ORs1. PlayerMotion
+records Time into+0x8d4 for bit1, then clears the low byte. Pending bits0xff00
+enter the GetAttackDir/PlayerStartMissile call path at EE0x14bf10–0x14bf50. Its
+ordinary charge input clamps ((Time - recorded start) - literal0x3e8a3d71) to
+zero/literal0x3dcccccd. The call result is ignored by this caller. It clears
+pending bits0xff00 and sets0x10000000 after the call; the ordinary no-weapon
+branch clears that marker on the next update. This is a missile REQUEST marker,
+not proof of a created projectile, collision, hit or damage.
+
+Accepted event domain is class word6, word+0x720 zero, word+0x80c below4,
+flags+0x138 bits0x480 clear and prior event word containing only0x10000000.
+Source action and selection bounds still apply. Special event/charge consumers
+are explicit errors. Projectile creation, attack direction/origin geometry,
+animation of attachments, damage, sounds and other DoPlayerAction writes are
+not implemented by this helper. Native event requests retain source flags,
+charge, power scale and origin mode; the runtime does not yet consume them.
+
+The complete attack-event b/c captures reproduce every sample. Native prediction
+matches all13 animation clock fields/current action/category AND event word and
+throw-start timestamp in18/18 game updates, twice. Throw-start timestamps update
+at vblanks2/24; request markers occur at14/36 and clear next update. Predicted
+ordinary request charge is zero here; nonzero saturation has synthetic coverage.
+No request arguments or guest function returns were directly breakpoint-captured.
+Walking-release additionally matches24/24 states/event words/timestamps and emits
+no missile request. Reports: sor-attack-events-v1/[-v2/] and
+sor-walk-release-events-v1/. The earlier attack-events-a trace lacks word+0x720;
+retain it as incomplete context, not event acceptance evidence.
+
+reference_animation's reload barrier now also checks every captured action context
+field against frozen RAM. Public comparison enables this subset with --events.
+Forty-two Rust tests, four Python tests and strict workspace/all-target Clippy
+pass; logs native-player-events-tests-v1.log/native-player-events-clippy-v1.log.
+M07 remains partial because world/VU composition, attachments, other characters,
+reverse/mirror paths and complete gameplay event semantics remain open.

@@ -279,7 +279,13 @@
       "flags_138": 312,
       "idle_counter_pair": 472,
       "word_80c": 2060,
+      "word_720": 1824,
       "flags_8ac": 2220,
+      "word_8d0": 2256,
+      "time_8d4": 2260,
+      "event_word_8d8": 2264,
+      "counter_8e0": 2272,
+      "status_938_pair": 2360,
       "status_93c_pair": 2364
     },
     "action_context_evidence": "Four-byte raw captures at original DoPlayerAction operands. idle_counter_pair retains LH+0x1d8/+0x1da; status_93c_pair retains LHU+0x93c and unknown adjacent halfword. Broader semantic flag names are unassigned.",

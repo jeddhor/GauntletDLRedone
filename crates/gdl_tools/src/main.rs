@@ -78,6 +78,7 @@ struct PlayerAnimationRequest {
     now: f32,
     anim_time_scale: f32,
     sampled: bool,
+    events: Option<gdl_core::player_animation::ActionEventInput>,
 }
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -237,8 +238,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     output.state.reset_byte = 2;
                 }
                 let current_action = if output.return_flags != 0 { chosen.action } else { request.context.current_action };
+                let events = request.events.map(|input|
+                    gdl_core::player_animation::consume_events(request.context, chosen, output.return_flags, input)
+                ).transpose()?;
                 Ok(serde_json::json!({"selection":chosen,"animation":output,"current_action":current_action,
-                    "attack_type":gdl_core::player_animation::attack_type(current_action)}))
+                    "attack_type":gdl_core::player_animation::attack_type(current_action),"events":events}))
             })();
             match result {
                 Ok(output) => serde_json::json!({"request":request,"output":output,"error":null}),
@@ -246,7 +250,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         }).collect();
         let report = serde_json::json!({"source_sha256":hash(&source),"requests_sha256":hash(&raw),"outcomes":outcomes,
-            "scope":"bounded DoPlayerAction animation-input branches + valid AnimateTree/clock and optional sampling reset handshake; requested action producer, gameplay side effects, world/root transforms and combat events excluded"});
+            "scope":"bounded DoPlayerAction animation-input branches + valid AnimateTree/clock, optional sampling handshake and ordinary Sorceress event-word/missile-request timing; requested action producer, projectile creation/hits, other gameplay side effects and world/root transforms excluded"});
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)

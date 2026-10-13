@@ -31,6 +31,96 @@ pub struct ActionSelection {
     pub playback_scale: f32,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionEventInput {
+    pub event_word: u32,
+    pub throw_start_time: f32,
+    pub now: f32,
+    pub class_word: u32,
+    pub word_720: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct MissileRequest {
+    pub flags: u32,
+    pub charge: f32,
+    pub power_scale: f32,
+    pub origin_mode: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ActionEventOutput {
+    pub event_word: u32,
+    pub throw_start_time: f32,
+    /// Source call request only. Native projectile creation, GetAttackDir,
+    /// collision, damage and PlayerStartMissile's success result are excluded.
+    pub missile_request: Option<MissileRequest>,
+}
+
+/// Ordinary Sorceress event-word subset of DoPlayerAction -> PlayerMotion.
+/// Input state is sampled before the update; output is after the inspected
+/// consumption path. Special powers/weapon effects fail rather than disappearing.
+pub fn consume_events(
+    context: ActionContext,
+    chosen: ActionSelection,
+    library_return_flags: u32,
+    input: ActionEventInput,
+) -> Result<ActionEventOutput, UnsupportedActionBranch> {
+    if input.class_word != 6
+        || input.word_720 != 0
+        || context.word_80c >= 4
+        || context.flags_138 & 0x480 != 0
+        || input.event_word & !0x1000_0000 != 0
+        || !input.now.is_finite()
+        || !input.throw_start_time.is_finite()
+        || !matches!(context.current_action, 0 | 17..=20 | 91..=92 | 95..=98)
+        || !matches!(chosen.action, 0 | 17..=20 | 91..=92 | 95..=98)
+    {
+        return Err(UnsupportedActionBranch);
+    }
+    let mut word = input.event_word;
+    let mut throw_start_time = input.throw_start_time;
+    if library_return_flags != 0 {
+        if matches!(context.current_action, 95..=96) {
+            word |= 0x100; // Original release-exit branch EE0x178d5c.
+        }
+        if matches!(chosen.action, 91..=92) {
+            word |= 1; // Original start-entry branch EE0x178e6c.
+        }
+    }
+    // Previous launch visual bit is consumed before this update's new request.
+    // The ordinary no-weapon/no-power bypass reaches EE0x14ba40 directly.
+    word &= !0x1000_0000;
+    if word & 1 != 0 {
+        throw_start_time = input.now; // PlayerMotion EE0x14bdc0/0x14bdc4.
+    }
+    word &= !0xff;
+    let missile_request = if word & 0xff00 != 0 {
+        let sub = crate::numeric::sub_guarded_rz;
+        let charge = sub(input.now, throw_start_time)
+            .and_then(|elapsed| sub(elapsed, f32::from_bits(0x3e8a_3d71)))
+            .map_err(|_| UnsupportedActionBranch)?;
+        let charge = charge.clamp(0.0, f32::from_bits(0x3dcc_cccd));
+        // The call's result is ignored here by the source caller. This marker
+        // proves a request, never that a projectile or hit was produced.
+        word = (word & !0xff00) | 0x1000_0000;
+        Some(MissileRequest {
+            flags: context.flags_130,
+            charge,
+            power_scale: 1.0,
+            origin_mode: 1,
+        })
+    } else {
+        None
+    };
+    Ok(ActionEventOutput {
+        event_word: word,
+        throw_start_time,
+        missile_request,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsupportedActionBranch;
 impl std::fmt::Display for UnsupportedActionBranch {
@@ -244,5 +334,53 @@ mod tests {
         assert_eq!(choose(input).unwrap().playback_scale, 0.75);
         input.status_93c = 0x10;
         assert_eq!(choose(input).unwrap().playback_scale, 1.0);
+    }
+    #[test]
+    fn throw_event_request_is_on_release_exit_and_prior_marker_is_consumed() {
+        let input = ActionEventInput {
+            event_word: 0,
+            throw_start_time: 10.0,
+            now: 11.0,
+            class_word: 6,
+            word_720: 0,
+        };
+        let start_context = context(0, 92, 0.0);
+        let start =
+            consume_events(start_context, choose(start_context).unwrap(), 1, input).unwrap();
+        assert_eq!(start.throw_start_time, 11.0);
+        assert!(start.missile_request.is_none());
+        let release_context = context(95, 92, 2.0);
+        let request =
+            consume_events(release_context, choose(release_context).unwrap(), 3, input).unwrap();
+        assert_eq!(request.event_word, 0x10000000);
+        assert_eq!(
+            request.missile_request.unwrap().charge.to_bits(),
+            0x3dcccccd
+        );
+        let recovery_context = context(97, 92, 0.0);
+        let consumed = consume_events(
+            recovery_context,
+            choose(recovery_context).unwrap(),
+            0,
+            ActionEventInput {
+                event_word: request.event_word,
+                ..input
+            },
+        )
+        .unwrap();
+        assert_eq!(consumed.event_word, 0);
+        assert!(consumed.missile_request.is_none());
+        assert!(
+            consume_events(
+                start_context,
+                choose(start_context).unwrap(),
+                1,
+                ActionEventInput {
+                    word_720: 1,
+                    ..input
+                }
+            )
+            .is_err()
+        );
     }
 }

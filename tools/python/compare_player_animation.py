@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--trace', type=pathlib.Path, required=True)
     parser.add_argument('--animation-source', type=pathlib.Path, required=True)
     parser.add_argument('--out', type=pathlib.Path, required=True)
+    parser.add_argument('--events', action='store_true', help='compare ordinary Sorceress event-word/start-time subset; projectile creation and hits excluded')
     args = parser.parse_args()
     if args.out.exists() or not args.out.resolve().is_relative_to(pathlib.Path('private').resolve()):
         raise ValueError('choose a new private output directory')
@@ -61,6 +62,14 @@ def main():
         targets.append(dict(step=after['step'], state=b,
                             current_action=new['current_action']['values'][0],
                             attack_type=new['attack_state_word']['values'][0]))
+        if args.events:
+            requests[-1]['events'] = dict(event_word=word('event_word_8d8'),
+                throw_start_time=struct.unpack('<f',bytes.fromhex(raw_context['time_8d4']))[0],
+                now=after['observation']['scalars']['Time']['float32'],
+                class_word=word('class_word'), word_720=word('word_720'))
+            c = after['animation']['action_context']
+            targets[-1]['events'] = dict(event_word=struct.unpack('<I',bytes.fromhex(c['event_word_8d8']))[0],
+                throw_start_time=struct.unpack('<f',bytes.fromhex(c['time_8d4']))[0])
     args.out.mkdir(parents=True)
     request_path, native_path = args.out/'requests.json', args.out/'native.json'
     request_path.write_text(json.dumps(requests, indent=2, allow_nan=False)+'\n')
@@ -82,14 +91,22 @@ def main():
             for field in ('current_action', 'attack_type'):
                 if output[field] != target[field]:
                     differences[field] = dict(actual=output[field], expected=target[field])
+            if args.events:
+                for field,value in target['events'].items():
+                    actual = output['events'][field]
+                    equal = struct.pack('<f', actual) == struct.pack('<f', value) if isinstance(value,float) else actual == value
+                    if not equal:
+                        differences['events.'+field] = dict(actual=actual,expected=value)
         else:
             differences['error'] = outcome['error']
         results.append(dict(step=target['step'], byte_equal=not differences,
                             differences=differences,
+                            missile_request=output['events']['missile_request'] if output and output['events'] else None,
                             return_flags=output['animation']['return_flags'] if output else None))
     report = dict(schema_version=1, source_profile=trace['source_profile'],
                   fixture_sha256=trace['fixture_sha256'], source_sha256=source_hash,
                   scope=__doc__.strip(), return_flags_evidence='source-derived, not directly captured',
+                  event_scope='event word and throw-start time compared; missile requests source-derived; projectile creation, positions, successful launches and hits excluded' if args.events else None,
                   count=len(results), equal_count=sum(r['byte_equal'] for r in results), skipped=skipped,
                   first_divergence=next((r for r in results if not r['byte_equal']), None), results=results)
     (args.out/'comparison.json').write_text(json.dumps(report, indent=2, allow_nan=False)+'\n')

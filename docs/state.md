@@ -52,7 +52,7 @@ Verified this checkpoint:
   exactly one vblank. In this fixture AFrame advances every second vblank with
   SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
   every sampled byte. Cross schedules do not yet establish actual attack events.
-- Forty-one Rust parser/numeric/channel/transform/clock/selection tests and four Python transport/configuration/schedule tests pass.
+- Forty-two Rust parser/numeric/channel/transform/clock/selection tests and four Python transport/configuration/schedule tests pass.
   Release scene build and strict workspace/all-target Clippy pass. Native
   overview/close-view captures remain under private/reference/captures/.
 - Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
@@ -128,7 +128,7 @@ Current selection follow-up (2026-10-13):
 - Source DoPlayerAction jump tables match ELF/frozen RAM. PlayerMotion and
   do_players caller exports identify event-word+0x8d8 consumers and the direct
   PlayerStartMissile call. PlayerUpdateAtts means attributes, not attachments.
-- Forty-one Rust tests, four Python tests and strict workspace/all-target Clippy
+- Forty-two Rust tests, four Python tests and strict workspace/all-target Clippy
   pass. Logs native-player-selection-tests-v2.log and
   native-player-selection-clippy-v3.log. Native CLI build passes.
 - All137 SOR sequence header+0x26 flags are zero, so AnimFixPos root-transfer
@@ -137,4 +137,16 @@ Current selection follow-up (2026-10-13):
 Next: trace PlayerMotion's requested-action production/event-word handling and
 PlayerStartMissile timeline, then world/VU/attachment proof and original collision
 queries. Reference remains paused in Xvfb; native inspectors are closed. No user
-question/test is pending. Latest edits should be committed through git-local.sh.
+question/test is pending. Animation selection is committed as0112f2d. Event edits are pending commit.
+
+Event follow-up: consume_events implements ordinary class6/no-weapon throw start,
+release-exit request and pending-marker consumption. Attack b/c traces reproduce;
+all18 updates match clock/action/category plus event word and start timestamp.
+Request markers atvblanks14/36 follow start timestamps at2/24; charge is zero in
+this scenario. Walking-release matches24 updates and emits no missile request.
+Reports sor-attack-events-v1/[-v2/] and sor-walk-release-events-v1/. Forty-two Rust
+and four Python tests pass; strict Clippy passes (native-player-events-* logs).
+No native projectile, direction/origin, damage, audio or attachment consumer yet.
+Action context is now included in the frozen reload barrier. Continue world/VU
+composition and attachment/event source qualification; native inspectors remain
+closed and reference remains paused in Xvfb.

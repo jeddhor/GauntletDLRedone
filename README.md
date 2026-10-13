@@ -146,6 +146,10 @@ actions/clips and clock states for supported source branches. Pad/action
 production, gameplay events and complete game-loop timing remain open. See
 [animation research](docs/research/animation.md) for bounds and evidence.
 
+Add `--events` to the player comparison for the bounded ordinary Sorceress
+throw-request timeline. This compares the event word and start timestamp; native
+projectile creation, successful launches and hits remain unimplemented.
+
 `anim-samples`/`anim-transforms` requests can optionally include
 `"transition":{"from":[nine prior channels],"fraction":F,"mirror":false}`.
 The pose comparator supplies these observed values for nonzero reference blends.
