@@ -75,7 +75,7 @@ python3 tools/python/catalog_assets.py
 
 The reference emulator uses its own private configuration and copied BIOS. It
 is a development dependency only. Do not use the texture viewer to infer native
-combat/campaign support. Gameplay, animation, collision, saves, co-op and release
+combat/campaign support. Gameplay, full animation acceptance, collision, saves, co-op and release
 qualification follow the remaining master-plan gates.
 
 For global PINE setup and a saved-state-preserving reference launch, see
@@ -114,9 +114,9 @@ python3 tools/python/compare_animation_keys.py --trace TRACE.json --key-dir KEY_
 ```
 
 The bounded native sampler matches measured Sorceress channels, including walking
-and three attack clips. Matrix construction, playback clocks, transitions and
-events remain under recovery; this does not yet make the inspector animated or
-playable. See [animation evidence](docs/research/animation.md).
+and three attack clips. Source-qualified local matrices, clocks, bounded transitions and ordinary throw
+request timing now have reference comparisons. Renderer scale/world integration
+and complete events remain under recovery; the inspector is not playable. See [animation evidence](docs/research/animation.md).
 
 The `--animate` inspector uses original clips and source-qualified local matrices.
 PgUp/PgDn select clips, brackets step frames, and Space toggles a labelled preview
@@ -161,3 +161,20 @@ for the controlled-input distinction and current comparison limits.
 The pose comparator supplies these observed values for nonzero reference blends.
 Recorded walk-release blending now matches every local matrix/scale output; this
 still does not predict actions or establish complete event timing.
+
+
+Ordinary logical motion-intent/run-delay timer research can be reproduced with:
+
+```sh
+target/release/gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json
+python3 tools/python/compare_motion_code.py --trace MOTION_TRACE.json --out private/reports/NEW_MOTION_COMPARISON
+```
+
+This bounded helper takes original logical controls and prior player context.
+It predicts stored motion code and timer; native pad polling, requested-action
+mapping, displacement and collision remain unimplemented. See
+[clock/input evidence](docs/research/clock.md) for bounds and repeated comparisons.
+
+Project work is paused at the user's request as of 2026-10-13. The
+[pause checkpoint](docs/state.md) records exact progress, current passing checks,
+preserved reference state and the next steps to take when work resumes.

@@ -100,6 +100,7 @@ def cache_probe(memory, profile):
         return dict(animinfo_ee_address=anim_address, animinfo_raw_hex=info.hex(), caches=result, poses=local,
                     action_map_raw_hex=read(player+layout['action_map_player_offset'], layout['action_map_capture_bytes']).hex(),
                     action_context={name: read(player+offset,4).hex() for name,offset in layout['action_context_fields'].items()},
+                    action_globals={name: read(profile['symbols'][name]['guest_address'],4).hex() for name in layout['action_global_symbols']},
                     clock_globals={name: read(profile['symbols'][name]['guest_address'],4).hex() for name in layout['global_symbols']},
                     source_sha256=metadata['source_sha256'],
                     scope='fixture-bound SOR caches, player AnimInfo and local node matrices; world/render transforms excluded')
@@ -108,6 +109,8 @@ def cache_probe(memory, profile):
     regions.append((action_map, memory[action_map:action_map+layout['action_map_capture_bytes']]))
     regions.extend((player+offset, memory[player+offset:player+offset+4])
                    for offset in layout['action_context_fields'].values())
+    regions.extend((profile['symbols'][name]['guest_address'], memory[profile['symbols'][name]['guest_address']:profile['symbols'][name]['guest_address']+4])
+                   for name in layout['action_global_symbols'])
     regions.extend((profile['symbols'][name]['guest_address'], memory[profile['symbols'][name]['guest_address']:profile['symbols'][name]['guest_address']+4]) for name in layout['global_symbols'])
     for pose in poses:
         address = pose['runtime_node_ee_address']

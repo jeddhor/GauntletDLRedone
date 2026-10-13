@@ -12,10 +12,10 @@ Content denominators remain provisional and do not indicate reachability.
 | M03 Reference baseline | Partial | Durable fixture, frozen/live/heap reload checks, stock debugger and Xvfb stepping; repeated idle/movement/attack-state/key-pickup schedules agree. Full attack-event, transition and game-save scenarios remain |
 | M04 Archive | Extraction complete; gate partial | 2,915/2,915 entries validated and independently compared; all retained; runtime WorldDir binds first-level package to entries 2194–2198; individual lookup trace completion remains |
 | M05 Texture/material proof | Partial | Complete observed metadata scan; six base color families; title/environment/character pixels rendered diagnostically. Formats 130/146, TEXA/GS materials, mipmaps and representative fidelity comparisons remain |
-| M06 Geometry/first scene | Partial | All first-level integer packets independently agree; world nodes read; native terrain viewer runs; glTF imports 930 nodes in Blender. Header triangle discrepancies, original transforms/materials and static character remain |
+| M06 Geometry/first scene | Partial | All first-level integer packets independently agree; world nodes read; native terrain viewer runs; glTF imports 930 nodes in Blender. Header triangle discrepancies, original transforms/materials and renderer/character fidelity remain |
 | M07 Rig/animation | Partial investigation | Bounded metadata and fresh frame-zero readers; loaded SOR_YEL binding; native rest-hierarchy inspection. 76,542 source keys decoded; walking/attack key caches and2,011 evaluated channel records match. All35 frozen local matrices,2,170 walking/attack local poses and1,715 walk-release/blend poses match. Native bounded player animation selection matches42 game updates with original requested actions supplied; world composition, mirror flags, action production and full events remain; ordinary Sorceress request timing/event word matches18 attack +24 walking updates; source-order world helper matches two natural translation calls and one controlled bone-chain call |
 | M08 Level/collision | Investigation leads | World/collision schemas and original-symbol functions; native verified queries pending |
-| M09 Clock/input | Partial investigation | Repeatable vblank-stepped idle/movement fixture; one update per two vblanks observed locally. Native animation clock matches28 same-clip update states; metadata factor/period conversion recovered. Full update order, input edges, game-mode cadence and RNG consumer contract remain |
+| M09 Clock/input | Partial investigation | Repeatable vblank-stepped idle/movement fixture; one update per two vblanks observed locally. Native animation clock matches28 same-clip update states; metadata factor/period conversion recovered. Bounded logical motion intent/run-delay timer matches24 walking +18 attack updates, each repeated, with original control records supplied. Native pad polling, requested-action mapping/displacement, full update order, input edges, game-mode cadence and RNG consumer contract remain |
 | M10 Movement/camera | Not implemented | Depends on accepted animation, collision and clock/input |
 | M11 Combat/enemy/pickups | Not implemented | Original attack/damage functions identified; reference scenarios and implementation pending |
 | M12 Playable slice | Not implemented | Proposed target: Yellow Sorceress / The Poison Fields, original-data encounter and transition/save |
@@ -26,17 +26,22 @@ Content denominators remain provisional and do not indicate reachability.
 | M17 Audio/UI completion | Not implemented | Source resources preserved; audiovisual/event mapping pending |
 | M18 Saves/migrations | Not implemented | Native durable save/recovery contract pending |
 | M19 Enhancements | Deferred | Fidelity prerequisites not accepted |
-| M20 Platform/performance QA | Not reached | Linux texture-viewer smoke only; Windows and gameplay performance untested |
+| M20 Platform/performance QA | Not reached | Linux asset-inspector smoke only; Windows and gameplay performance untested |
 | M21 Release/importer | Not reached | No qualified gameplay package or fresh-install supported-revision importer |
 
 The private catalog includes 61 dictionary-labelled WORLDS.PS2 records, 643
 OBJECTS.PS2 records, 651 ANIM.PS2 records and other families. These are observed
 archive entries, not a declaration of 61 campaign areas or complete asset support.
 
-Checks actually performed: forty-five Rust parser/numeric/channel/transform/clock/selection tests, five Python transport/configuration/schedule/display-identity tests,
+Checks actually performed: 46 Rust parser/numeric/channel/transform/clock/selection/motion-intent tests, five Python transport/configuration/schedule/display-identity tests,
 all-entry independent archive comparison, complete native texture-metadata scan,
 byte-for-byte comparison of all 15 native title PNG pixel buffers,
 repeated disc/ELF manifests, release builds and strict Clippy checks, native
 window/input/alpha-mode visual smoke, native static scene captures, all-packet
 independent geometry comparison, reference startup and repeatable original scene.
 No unavailable fixture is counted as passing gameplay fidelity.
+
+Paused at user request on 2026-10-13. Exact artifacts, passing check logs, corrected
+historical verification claims, environment state and ordered resume steps are in
+[state.md](state.md). M07 and M09 remain partial; no new gate is closed by the
+motion-intent helper.

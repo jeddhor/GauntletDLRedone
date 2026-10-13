@@ -397,4 +397,8 @@ binding; their results are unchanged. A synthetic metadata fixture gives the two
 words different values, and the selector's old-header flag tests still pass.
 Old private metadata reports retain their original labels/raw bytes. Latest
 attack and walk event comparisons remain18/18 and24/24 with corrected binding
-(sor-attack-events-v3/ and sor-walk-release-events-v2/). 45 Rust tests pass.
+(sor-attack-events-v3/ and sor-walk-release-events-v2/). Current checkpoint: 46 Rust tests pass after fixing a synthetic Sequence fixture
+that still used the renamed flags field. The initial header-change test/Clippy
+logs failed; an earlier combined-shell pass claim was incorrect. Verified logs:
+native-motion-code-tests-v3.log and native-motion-code-clippy-v3.log. Failed
+historical logs remain preserved; see state.md.

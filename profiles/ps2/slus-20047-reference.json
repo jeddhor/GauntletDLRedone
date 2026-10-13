@@ -185,6 +185,14 @@
       "type": 0,
       "consumer_width_bytes": 4,
       "evidence": "original symbol NOTYPE/size0; CalcAnimInfo LWC1 EE0x110168 and InitAnim LWC1 EE0x1103c8 establish scalar float32 width"
+    },
+    "BossType": {
+      "binding": 1,
+      "guest_address": 2478788,
+      "name": "BossType",
+      "section_index": 4,
+      "size": 4,
+      "type": 1
     }
   },
   "player_layout": {
@@ -290,13 +298,19 @@
       "event_word_8d8": 2264,
       "counter_8e0": 2272,
       "status_938_pair": 2360,
-      "status_93c_pair": 2364
+      "status_93c_pair": 2364,
+      "walking_timer_874": 2164,
+      "motion_code_1dc": 476,
+      "state_934_pair": 2356
     },
     "action_context_evidence": "Four-byte raw captures at original DoPlayerAction operands. idle_counter_pair retains LH+0x1d8/+0x1da; status_93c_pair retains LHU+0x93c and unknown adjacent halfword. Broader semantic flag names are unassigned.",
     "evidence": "DoPlayerAction EE0x177c60/0x177c78 and call0x178c24 bind player+0x90 instance / +0x94 AnimInfo; DoAnimateTree and AnimateNode/DoAnimation derive runtime pointers and outputs; observed35-node graph matches main SOR parent/layout",
     "global_symbols": [
       "ATime",
       "AnimTimeScale"
+    ],
+    "action_global_symbols": [
+      "BossType"
     ]
   }
 }

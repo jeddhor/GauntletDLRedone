@@ -78,9 +78,16 @@ and action context passed the frozen reload barrier. Two subsequent vblank steps
 were verified (poison-fields-after-world-probe-restore-v1.json). Reference remains
 paused on Xvfb. Native inspectors remain closed.
 
-Forty-five Rust tests, five Python tests, release tools build and strict
+At the paused checkpoint, 46 Rust tests, five Python tests, a release workspace build and strict
 workspace/all-target Clippy pass. The native world helper remains an experiment;
 renderer composition, actor transforms, scale inheritance, attachment binding,
 mirror/reverse paths and broad numeric/pose coverage are still open. Next trace
 the renderer's actual matrix/scale traversal and GetPlayerDMotion/collision
 consumers rather than claiming M07 complete from these function samples.
+
+Verification correction: the initial post-header-change test fixture still used
+Sequence.flags. Failed native-world-tests-v2.log/native-world-clippy-v2.log were
+previously misreported through combined-shell status. The fixture is fixed;
+separate successful native-motion-code-tests-v3.log and -clippy-v3.log plus
+paused-checkpoint-build.log and paused-checkpoint-python-tests.log establish the
+current result. No new world-function observation was added by this correction.

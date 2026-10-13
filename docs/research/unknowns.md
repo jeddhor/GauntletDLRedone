@@ -10,18 +10,18 @@ replaced by a plausible gameplay rule or generated asset.
 | Runtime code overlays | DVP payloads and IRX modules inventoried | Trace runtime file/module requests and address reuse |
 | First slice lookup trace | Frozen/live WorldDir=levels/levelG1 binds entries 2194–2198 | Confirm each original loader request and external dependencies |
 | Material/color pipeline | Title RGB/orientation plausible; raw alpha preserved | Compare upload flags, blend equations, known transparent/background pixels |
-| Five remaining pixel formats | Records retained; numeric inventory known | Recover each upload/consumer and compare distinctive samples |
+| Remaining alpha-only pixel formats | Six base color families decoded; formats 130/146 remain unresolved | Recover upload/consumer semantics and compare distinctive samples |
 | Mipmap semantics | Raw counts/metadata retained | Decode sizes/layouts and compare native/reference LOD selections |
 | Original geometry | All 1,729 G1 integer packets independently agree; native terrain viewer runs | Resolve 62 triangle-count discrepancies, original transform/winding and material consumers |
 | Animation/rig | 35-node SOR tree, 137 clips, frame-zero reader and native rest-hierarchy inspector | Local channels/matrices/blending and bounded player animation choice now compare exactly; world helper compares two natural translations and one controlled bone chain; recover render scales, attachments and full events |
 | Animation cache words | 35 live caches matched to SOR; +0xc-as-clip-ID assumption contradicted | Trace frame/data indexing consumers before using cache fields as comparison output |
-| Collision and navigation | Local WorldCollide and player wall functions identified | Recover precise query inputs/outputs before native response implementation |
-| Update/input cadence | Clock/player-control disassembly exported | Guest-update-boundary captures, vblank/tick deltas, input-edge experiments |
+| Collision and navigation | WorldCollide/wall/item/player functions identified; PlayerCollidePlayers returns a player slot, not a floor result | Bind activity+0xfc; qualify precise query inputs/outputs and reused PlayerMotion s4 meanings before native response |
+| Update/input cadence | Fixture updates every two vblanks; bounded clock and logical code/run-delay timer match42 updates, repeated, with original controls supplied | Recover native input edges/polling, requested-action mapping, full update order and other mode cadence |
 | RNG reproducibility | Main loop reseeds using CPU time in static path | Observe actual seed calls and consumers with frame/timing context |
 | Damage/enemy rules | Local original-symbol functions exported | Controlled encounter scenarios; minimize first divergence |
 | Reference stepping transport | Xvfb F10 verifies one vblank per step; paused PINE reads repeat | Tie captures to actual guest function/update edges; verify debugger sample |
 | Reference scenario coverage | Full-heap reload guard; idle/movement/attack-state/one-key schedules repeat | Recover complete attack events and transition/game-save scenarios |
-| Animation numeric policy | Native finite numeric/channel subset matches walking/attack keys and2,011 evaluated records | Local matrices now match2,170 observations; bounded animation selection matches42 updates; recover world/VU composition, mirror and events; exceptional numeric domains and long interpolation gaps remain |
+| Animation numeric policy | Native finite numeric/channel subset matches walking/attack keys and2,011 evaluated records | Local matrices now match2,170 observations; bounded animation selection matches42 updates; world helper has three qualified calls; recover render scale/attachments, mirror and remaining events; exceptional numeric domains and long interpolation gaps remain |
 | Native saves/campaign/co-op/audio | Not implemented | Follow dependencies M10–M18; no release-scope claims yet |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 
@@ -29,3 +29,8 @@ External data consultation cannot establish PS2 offsets or behavior without loca
 verification. Four unnamed archive entries remain after two new hash/name matches;
 the original six are all retained by stable identity. Some contain development text
 which is data only and must not be executed.
+
+Work paused at user request on 2026-10-13. The exact ordered resume queue and
+current evidence/log paths are in [state.md](../state.md). The immediate producer
+gap is native requested-action and displacement recovery; original libm sinf/cosf
+are distinct from animation ffSin/ffCos. No user input is pending.

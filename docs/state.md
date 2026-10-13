@@ -1,185 +1,195 @@
-# Current development checkpoint
+# Paused development checkpoint — 2026-10-13
 
-Objective: complete the supplied PS2-to-native Rust/Bevy master plan milestone
-by milestone. User authorizes continued implementation and reference use.
-Single-agent sequential work. No external commercial images/leaked symbols.
-PCSX2 source is read-only research; native code remains separate MIT code.
+Work is paused at the user's request. This checkpoint finishes the current bounded
+motion-intent experiment and records the resume point. Do not start new project
+work until the user asks to resume. No question, approval or manual test is pending.
 
-Source profile: profiles/ps2/slus-20047.json. Input identities remain unchanged.
-Root .git is session-reserved; history uses private/source-control.git through
-tools/git-local.sh. Never stage retail data, private/, user .vscode/ or the user's
-ghidra-emotionengine-reloaded checkout.
+The target remains the supplied PS2-to-native Rust/Bevy master plan, M00–M21,
+with standalone Linux and Windows gameplay. There is no native playable encounter
+or complete port. Existing Bevy applications are original-asset inspectors;
+headless core helpers implement only the qualified subsets below.
 
-Current milestone work: M03 repeatable baseline, M05 material proof, M06 static
-geometry, M07 metadata and M09 clock/input experiments. M00–M02 complete; stock debugger scalar,
-FP, three-operand MULT, VU and 128-bit load/store samples agree. M04 extraction is complete, with first-package
-binding; individual runtime lookups remain to trace. Native gameplay,
-collision response, saves and campaign remain unimplemented. See docs/coverage.md.
+## Exact position in the plan
 
-User-selected fixture: Yellow Sorceress, The Poison Fields, profile PELE. Verified
-state private/reference/captures/poison-fields-original.p2s has SHA-256
-cc9b835f2d061bfc8a7950fb75b7a621d4e7217738a3aebcfb58609171a27399.
-It is copied to private emulator slot 1. Never overwrite the preserved original.
-WorldDir=levels/levelG1 binds entries 2194–2198. Four player records, position,
-collision position and health have instruction-derived offsets in the revision
-reference profile. Activity flags and class-ID interpretation remain open.
+M00–M02 are complete. M03 is a partial repeatable reference baseline. M04 archive
+extraction is complete, but individual runtime resource lookup proof remains open.
+M05 materials and M06 geometry remain partial. M07 is the active rig/animation
+milestone; verified local poses, clocks, selection and a bounded world helper do
+not close its renderer/scale/attachment/event gates. M08 has source investigation
+leads and no accepted native collision queries. M09 has verified bounded clock
+and logical motion-intent helpers, without a complete simulation/input contract.
+M10–M18 gameplay/campaign/co-op/audio/UI/save gates remain unimplemented. M19 is
+deferred; M20 platform QA and M21 release qualification have not been reached.
+See [the acceptance ledger](coverage.md) for every milestone and remaining gate.
 
-The user requested Xvfb to avoid competing for desktop control. All automated
-GUI work now uses virtual_display.py, held by xvfb-run in the recorded private
-session. Helpers require it and refuse desktop fallback. The user allows desktop
-presentation for necessary manual tests. Do not send desktop keyboard/mouse input.
-Xvfb selects Mesa software presentation while PCSX2 keeps software GS; document
-backend changes. PINE works, default slot 28011. Reference operations require
-host namespace/socket access. Current PID/display/authority are in ignored
-private/reports/reference.pid and private/reference/xvfb-session.json. Query window
-IDs within that virtual session. Processes can outlive tool sessions; inspect first.
+## Source identities and preserved reference
 
-Verified this checkpoint:
+Profile: `profiles/ps2/slus-20047.json`, ID `ps2-slus-20047-fb47d40667df`.
+Runtime offsets/guards: `profiles/ps2/slus-20047-reference.json`.
 
-- 56 disc files, 8,836 symbols / 3,584 named original functions.
-- 2,915 archive outcomes independently agree; 651 texture tables / 33,227 records
-  read. Six base color families implemented; two alpha-only formats remain open.
-  CT16 colors use GS channel shifts; its alpha selector is explicitly diagnostic,
-  not an accepted TEXA/material-alpha conversion.
-- All 1,729 Poison Fields integer packets independently agree, 944 unique vertex
-  counts match, source radii fit, 1,360 world nodes / 3,461 collisions retained.
-  62 declared triangle counts differ; do not force a match.
-- Native gdl_scene renders 1,706 placed parts with original base textures.
-  Diagnostic opaque/unlit/double-sided materials remain explicit. Static alpha
-  edges, lightmaps, scene transforms and VU/GS assembly remain unaccepted.
-  Static glTF exports 930 placements and imports into Blender's empty scene.
-- Frozen and paused state observations match after reload. Xvfb F10 advances
-  exactly one vblank. In this fixture AFrame advances every second vblank with
-  SPF=1/30. Two idle, Up, diagonal Up+Right and mapped Cross(K) schedules reproduce
-  every sampled byte. Cross schedules do not yet establish actual attack events.
-- Forty-five Rust parser/numeric/channel/transform/clock/selection tests and five Python transport/configuration/schedule tests pass.
-  Release scene build and strict workspace/all-target Clippy pass. Native
-  overview/close-view captures remain under private/reference/captures/.
-- Animation metadata: SOR has 35 nodes, 137 clips and 4,795 skeletal info records.
-  Timing factors vary (10,12,15,24,30,45,60); source InitAnim proves these scale period, not FPS. YEL00 source entry 90 is bound to the
-  frozen loaded SOR_YEL blob at 0x9bb300, with 39 relocated/flag bytes differing.
-  The metadata reader does not validate frame sampling or emit animation events.
-  Fresh frame-zero reader follows original 32-bit bitmap alignment and reads
-  4,795 records. Native rest-hierarchy inspector shows 19 placed character parts.
-  A runtime-cache comparison incorrectly treated +0xc as a clip ID; original
-  and corrected reports are preserved. Resolve active clip/descriptor before
-  accepting any cache comparison; do not adjust channels to hide this mismatch.
-  Candidate slot0 AnimInfo at +0x94 identifies READY/frame11. Guarded toward-zero
-  addition experiments reproduce 20 isolated deltas and 28 READY lower-key caches
-  byte for byte. Ordinary IEEE and simple RZ variants remain as failed evidence.
-  Native key accumulation and fresh channel sampling now match116 READY key
-  observations,1,542 walking keys,2,356 attack keys and2,011 evaluated channel
-  records byte for byte. Both new schedules reproduce all observations. All137
-  clips decode76,542 keys. Local matrices/scales also match all35 frozen nodes and2,170 walking/attack
-  records; main SOR initial translations are source-bound, unlike30 YEL00 values.
-  World/VU composition, mirror/events remain open.
-  New gdl_core has no Bevy/emulator dependency. See animation.md for scope.
-- Stock GS dump framing now reads 1,806 events and records raw TEXA/ALPHA/TEST
-  writes (private/reports/poison-fields-gs-registers-v1.json). Material binding
-  remains open. Xvfb captures require exposing the window; an occluded reference
-  capture was black, while the exposed original game rendered correctly.
-- One original key pickup reproduces: Right40/Down26 vblank schedule; keys at
-  player+0x1a14 change0→1 at step50. Source GrabPowerup's key branch is exported.
-  The segmented input tool is bounded to120 vblanks. Reload now compares the
-  full animation pool to frozen RAM, because paused status can occur during
-  asynchronous memory restoration. The key schedule is unchanged with this guard.
+- ISO: 620,447,744 bytes; SHA-256
+  `fb47d40667dfd5b51ffdf2cf7030a3737510b0c4f29dada2a953cb34c65545f2`.
+- SLUS_200.47: SHA-256
+  `69056dc6969c3740a82422ecdf7f771b19b26e20aff208d620c6efec66a3d527`.
+- WAD.BIN: SHA-256
+  `e047a4e060c2372407bd6e00c380602dcddeadb0f31637ba88630a8c029da946`.
+- User fixture: Yellow Sorceress, The Poison Fields, profile PELE;
+  `WorldDir=levels/levelG1`, archive entries 2194–2198.
+- Preserved original: `private/reference/captures/poison-fields-original.p2s`;
+  SHA-256 `cc9b835f2d061bfc8a7950fb75b7a621d4e7217738a3aebcfb58609171a27399`.
+  Copied slot 1: `private/reference/config/PCSX2/sstates/SLUS-20047 (15030637).01.p2s`.
+  Frozen RAM: `private/reference/captures/poison-fields-snapshot/eeMemory.bin`.
+  Never overwrite the original or copied slot 1.
 
-Animation exports are now in private/reports/ghidra-animation. Player/clock
-exports remain in ghidra-player/ghidra-clock. Inspect original instructions before
-accepting decompiler layouts. PlayerAttacking reads a signed state at player+0x8c8;
-this field is now bound and two 36-vblank Cross traces agree. Enum meanings and
-event timing still need validation. The loop reseeds RNG from
-guest CPU time; short schedules agree, but RNG consumers/replay scope remain open.
+The source, BIOS and saves remain unchanged. All retail assets/captures/reports
+stay in ignored `private/`. Root `.git` is session-reserved; source history is in
+`private/source-control.git`, accessed using `bash tools/git-local.sh ...`.
+User directories `.vscode/` and `ghidra-emotionengine-reloaded/` are untracked and
+must remain untouched. The user's `pcsx2/` checkout is a separate research source.
 
-Next useful actions:
+## Implemented and measured
 
-0. Native --animate inspector now builds and renders coherent READY/WALK1/IDLE1
-   poses in Xvfb; frame stepping, clip selection and preview toggles work. Attack frame2 also renders. Zero-frame INIT
-   and preview-toggle checks pass. Add source metadata/bone/attachment inspection, then continue
-   original world/VU composition and gameplay clock/transition recovery.
+- Disc/ELF: 56 files, 8,836 symbols and 3,584 named original functions inventoried.
+  All 2,915 archive outcomes independently agree; unknown bytes/identities retained.
+- Assets: 651 texture tables / 33,227 records read; six base color families decoded.
+  Formats 130/146 and original GS/TEXA/material-alpha binding remain open. GS dump
+  reader retains 1,806 events. CT16 alpha selection is still diagnostic.
+- G1 scene: 1,729 integer packets independently agree, 944 vertex counts match;
+  1,360 world nodes / 3,461 collisions retained. Native diagnostic viewer places
+  1,706 parts; glTF imports 930 placements into Blender. Sixty-two declared
+  triangle-count discrepancies, original transforms/materials and collision
+  semantics remain unresolved.
+- SOR animation: 35 nodes, 137 clips, 4,795 skeletal records; all 76,542 keys
+  decode. Measured key caches: 116 READY, 1,542 walking and 2,356 attack observations;
+  2,011 evaluated channel records agree byte for byte. Main SOR initial positions
+  bind to all 35 live nodes; 30 YEL00 initial positions differ and are not substituted.
+- Local transforms: all 35 frozen nodes and 2,170 walking/attack local pose records
+  match. Each repeated 49-sample walk-release trace has 1,715 matching local poses,
+  including nonzero READY blending. Mirror/reverse paths remain unaccepted.
+- Native clock: InitAnim, CalcAnimInfo and bounded AnimateTree selection retain
+  original source order and numeric policy. Timing factor scales period, not FPS.
+  All 13 clock fields agree in 28 same-clip updates, eight supplied initialization
+  cases, and measured nonzero blending.
+- Bounded native player animation selection agrees in 24 walking-release and
+  18 attack updates, each repeated. Original requested actions are supplied;
+  native pad-to-requested-action production is not implemented. Action IDs and
+  clip IDs have distinct source-bound mappings.
+- Ordinary class-6/no-weapon throw event helper agrees on event word/start timestamp
+  in 18 attack and 24 walking updates, repeated. Starts occur at vblanks 2/24;
+  missile request markers at 14/36. This predicts requests, not actual projectile
+  creation, hit, damage, direction/origin or sound. Measured charge here is zero.
+- Source-order GetWorldMat/MulMat4 helper matches 64 output bytes in two natural
+  translation calls, one with observed return 0. A deliberately substituted live
+  bone argument, with eight nontrivial ancestors, matches 64 bytes and return 0.
+  This controlled probe is not natural renderer/attachment evidence. Case 002
+  missed its return stop and is excluded. Render scale inheritance is not recovered.
+- Latest bounded logical motion-intent helper matches stored code and run-delay
+  timer in 24 walking updates twice and 18 attack updates twice. It consumes
+  original logical control records and prior player context, not keyboard input.
+  Run intent 13 is downgraded to 8 while prior timer is below literal 0x3dcccccd;
+  first full run code occurs at vblank 8. Attack code 15 resets the timer. Actual
+  displacement, requested-action mapping, camera and collision remain unimplemented.
 
-1. Extend source-linked attack/animation probes and repeat event schedules;
-   establish pickup/transition/save scenarios without inventing rules.
-2. Resolve geometry transforms/counts/materials using source consumers and the
-   independently inspectable glTF export.
-3. Recover the selected character package, rig and actual idle/attack clips from
-   the original-function exports. Continue bounded consumer experiments.
+Latest comparison artifacts: `private/reports/sor-walk-motion-code-v1/` and `-v2/`
+(24/24 each), `sor-attack-motion-code-v1/` and `-v2/` (18/18 each).
+Complete walking raw traces are `poison-fields-walk-motion-code-b.json` and `-c.json`;
+attack raw traces are `poison-fields-attack-motion-code-a.json` and `-b.json`.
+Walking `-a.json` lacks the later state-934 context and is incomplete evidence.
+Corrected header binding event reports: `sor-attack-events-v3/` (18/18) and
+`sor-walk-release-events-v2/` (24/24). No divergence in these qualified subsets;
+the next unknown is native requested-action/displacement production.
 
-reference_trace.py releases held keys on failure. Run_viewer.py also requires the
-virtual session. README and baseline/geometry dossiers give commands and evidence
-limits. Keep this checkpoint current as formats/configurations change. Do not
-claim a complete port or native playable slice yet.
+The sequence words are now distinct: `root_transfer_flags` at +0x26 and
+`frame_order_flags` at +0x2a. Both are zero in all 137 SOR clips, so earlier SOR
+observations could not detect the old binding error. Synthetic distinct-word
+coverage checks the corrected binding. Root transfer is not exercised by SOR.
 
-Current selection follow-up (2026-10-13):
+## Verification at this checkpoint
 
-- InitAnim, CalcAnimInfo and AnimateTree valid-sequence selection are native in
-  gdl_core, independent of Bevy/emulator. Timing metadata is timing_factor, a
-  period scale, not FPS. All13 clock fields match28 earlier same-clip updates,
-  eight supplied start/restart cases and the nonzero READY blend.
-- Transition channels/local matrices match all1,715 poses in each49-sample
-  walk-release repetition, including35/35 blended nodes. Source literal
-  0x3d8888b5 is retained. Mirror/world/VU composition remain unaccepted.
-- New bounded player_animation chooser distinguishes action IDs from clip IDs,
-  predicts ordinary READY/WALK/RUN/throw selection, and rejects unsupported
-  branches. Requested actions are supplied from the original producer, not
-  generated by native input. With source-bound action mapping, native selection
-  and all13 clock fields/current action/attack category match24 walking-release
-  and18 attack updates, both a/b. All sample records reproduce exactly.
-- Source DoPlayerAction jump tables match ELF/frozen RAM. PlayerMotion and
-  do_players caller exports identify event-word+0x8d8 consumers and the direct
-  PlayerStartMissile call. PlayerUpdateAtts means attributes, not attachments.
-- Forty-five Rust tests, five Python tests and strict workspace/all-target Clippy
-  pass. Logs native-player-selection-tests-v2.log and
-  native-player-selection-clippy-v3.log. Native CLI build passes.
-- All137 SOR sequence header+0x26 flags are zero, so AnimFixPos root-transfer
-  is not exercised by these clips. Pose translation is not player movement.
+Pinned Rust 1.93.1 / Bevy 0.18.1; checks are offline, locked, release builds.
+All commands completed successfully, checked separately:
 
-Next: trace PlayerMotion's requested-action production/event-word handling and
-PlayerStartMissile timeline, then world/VU/attachment proof and original collision
-queries. Reference remains paused in Xvfb; native inspectors are closed. No user
-question/test is pending. Animation selection is committed as0112f2d. Event implementation is committed ase5cfe08.
+- Rust workspace tests: 46 passing (27 core + 19 formats); other targets/doc tests
+  have zero tests. Log: `private/reports/native-motion-code-tests-v3.log`.
+- Strict workspace/all-targets Clippy: passing; log
+  `private/reports/native-motion-code-clippy-v3.log`.
+- Final whole-workspace release build: passing; log
+  `private/reports/paused-checkpoint-build.log`.
+- Python unittest discovery: 5 passing; log
+  `private/reports/paused-checkpoint-python-tests.log`.
 
-Event follow-up: consume_events implements ordinary class6/no-weapon throw start,
-release-exit request and pending-marker consumption. Attack b/c traces reproduce;
-all18 updates match clock/action/category plus event word and start timestamp.
-Request markers atvblanks14/36 follow start timestamps at2/24; charge is zero in
-this scenario. Walking-release matches24 updates and emits no missile request.
-Reports sor-attack-events-v1/[-v2/] and sor-walk-release-events-v1/. Forty-five Rust
-and five Python tests pass; strict Clippy passes (native-player-events-* logs).
-No native projectile, direction/origin, damage, audio or attachment consumer yet.
-Action context is now included in the frozen reload barrier. Continue world/VU
-composition and attachment/event source qualification; native inspectors remain
-closed and reference remains paused in Xvfb.
+Earlier combined-shell output masked a stale test fixture that still used the
+renamed `Sequence.flags` field. That fixture is fixed and checks rerun separately.
+The earlier 45-test/pass claim for `native-world-tests-v2.log` and
+`native-world-clippy-v2.log` was incorrect; those failed historical logs are
+retained, as are `native-motion-code-tests-v1.log` and `-clippy-v1.log`.
+They are not passing evidence. Current logs above supersede those claims.
 
-World follow-up: native world_transform preserves original GetWorldMat parent
-order/flag4 branching and MulMat4 VU product/add order and W input writes. New
-finite ordinary add_rz is separate from scalar EE guarded addition. Two natural
-CreateDynobjGrid calls match64-byte outputs; one also matches observed return0.
-A controlled a0 substitution using source-bound live SOR node13 LEFTU#0 with
-8 ancestors matches64 bytes and return0; it is NOT a natural gameplay/render call.
-Case002 missed its return stop and remains excluded/input-only. Dossier:
-docs/research/world-transforms.md; raw cases world-breakpoint-case-001/003/
-004-controlled-bone/. Bone parent chains contain38 boxes, including3 actor/global
-ancestors beyond the35-node rig. Renderer/scale/attachment consumers remain open.
+To use the installed pinned toolchain without rustup home writes:
 
-Diagnostic breakpoint removed; copied fixture restored with full frozen heap/
-pose/context guard and two verified vblanks. No guest memory/register edits remain.
-Native inspectors closed; stock debugger remains open, with no breakpoints.
-Xvfb wrapper exited/reparented the holder during this turn. Actual Xvfb PID2638848,
-display/auth arguments and start-time were verified; virtual_display now binds
-that identity, keeping desktop fallback refused. Source guard test passes.
-45 Rust tests/5 Python tests and strict Clippy pass (native-world-* logs).
-World/guard edits await commit; next trace actual scale/render traversal and
-GetPlayerDMotion/collision consumers. No user question or test is pending.
+```sh
+export PATH=$HOME/.rustup/toolchains/1.93.1-x86_64-unknown-linux-gnu/bin:$PATH
+cargo test --offline --release --locked --workspace
+cargo clippy --offline --release --locked --workspace --all-targets -- -D warnings
+cargo build --offline --release --locked --workspace
+python3 -m unittest discover -s tools/python -p 'test_*.py'
+```
 
-Review correction: metadata flags at+0x2a separated as frame_order_flags from
-root_transfer_flags at+0x26. Native ClipTiming now explicitly receives root flags.
-Both words zero in all137 SOR clips; latest event comparisons remain18/18+24/24.
-Distinct-word parser fixture adds a regression (45 total Rust tests). Full release
-workspace build passes, plus strict Clippy (native-world-build-v3.log,
-native-world-tests-v2.log, native-world-clippy-v2.log).
-GetPlayerDMotion is an action-intent classifier, not displacement arithmetic:
-ordinary idle/magnitude/attack branches return codes used by PlayerMotion. That
-caller downgrades run code13 to walk code8 while+0x874 timer is below its source
-threshold, then maps codes to requested actions. Capture this timer/code next;
-actual displacement/collision remains separate. World edits still await commit.
+## Environment left for resumption
+
+All automated GUI work used authenticated Xvfb, never the user's Wayland desktop.
+PCSX2 is stock `/usr/games/pcsx2-qt`, 2.6.3+dfsg-1build1; private configuration,
+software GS, PINE default slot 28011. Session identities are recorded in
+`private/reports/reference.pid` and `private/reference/xvfb-session.json`.
+Last verified virtual display: :191, server PID 2638848, authority
+`/tmp/xvfb-run.V25bts/Xauthority`; holder PID 2638858. The exited wrapper left
+server/holder reparented. The guard now checks actual Xvfb executable/display/auth
+arguments and PID start ticks; it still refuses desktop fallback. Inspect fresh
+identities before reuse rather than assuming these PIDs persist.
+
+Last observed reference state is paused after the repeated 36-vblank K attack
+schedule, with keys released. The diagnostic world probe's a0 substitution was
+cleared by reloading the unchanged copied fixture; the full frozen globals/heap/
+pose/action-context barrier and two verified vblanks passed afterward
+(`poison-fields-after-world-probe-restore-v1.json`). No guest edit remains.
+Stock debugger remains open with all diagnostic breakpoints removed
+(`debugger-world-probe-cleanup-v1.png`). Native inspectors are closed. Final build
+and checks have finished; no further experiment is running from this checkpoint.
+Reference/Xvfb may remain idle; original/copy saves are preserved for reuse.
+
+## Exact next steps when the user resumes
+
+1. Read this file, coverage, clock, animation, world-transforms and unknowns.
+   Inspect surviving Xvfb/PCSX2 identities; reload the preserved copied fixture
+   using the full frozen barrier before new bounded schedules. Never overwrite
+   originals. No user manual test is presently required.
+2. Recover PlayerMotion's requested-action producer and actual displacement.
+   Source exports: `private/reports/ghidra-player-motion-events/001480a8-PlayerMotion.txt`,
+   `ghidra/001448e0-GetPlayerDMotion.txt`, and `ghidra-movement-support/`.
+   GetPlayerDMotion is logical intent. Keep motion codes, action IDs and clip IDs
+   distinct. PlayerCollidePlayers at 0x146030 returns another player slot or -1;
+   it is not a floor query. Its filters read other player +0xfc activity 1/4 and
+   +0x93c bit 0x20. The fixture's activity words are [1,0,0,0], but a runtime
+   activity-field capture binding is still pending. PlayerMotion reuses s4 with
+   another meaning from 0x1495fc; do not carry the earlier slot meaning forward.
+   Movement's libm sinf 0x1e7350 / cosf 0x1e7160 differ from animation ffSin/ffCos;
+   recover their range reduction/kernels and relevant statistics/scale inputs.
+3. Qualify original floor/wall/item/player query contracts with bounded input/output
+   fixtures, raw flags and original instructions. Implement accepted headless
+   queries for M08 before claiming collision-aware native movement.
+4. Qualify renderer matrix/scale traversal, actor ancestors, attachments,
+   reverse/mirror and remaining event consumers for M07. Change viewer world-pose
+   integration only after evidence; its cached host matrix products/decomposition
+   and scale handling currently remain diagnostic.
+5. Close M05 original material/GS/TEXA/alpha formats 130/146 and hand-glow dependency;
+   resolve M06's 62 triangle discrepancies and transform/material fidelity.
+6. Complete M09 input edges/update order/RNG; build M10 native movement/camera/replay,
+   M11 real missiles/enemy/damage/pickups and M12 original-data encounter with exit
+   and native durable progress. No collision or gameplay substitute closes a gate.
+7. Continue M13–M21 campaign/progression/content/bosses, co-op, audio/UI, saves,
+   enhancements only after fidelity, Windows/Linux QA and fresh-install release.
+
+Source checkpoints before this pause: `e8896f3` selection, `3517cd9` ordinary throw
+requests, `ad798e1` world helper/header separation. The following checkpoint commit
+contains the motion-intent/timer helper, stale fixture correction and these pause
+notes. Find it with `bash tools/git-local.sh log -1 --oneline`.
