@@ -371,6 +371,19 @@
       "flags_8b0": 2224,
       "attack_state_8c8": 2248
     },
-    "evidence": "PlayerMotion EE0x148178..0x148880: camera yaw atan2f(MboxWinPtr+0x90,+0x98)+pi, control +0x1c/+0x20, player +0x124/+0x964/+0x96c/+0x830/+0x838/+0x848..0x850/+0x8b0/+0x8c8; request stored +0x860..+0x868 before PlayerCollideItems. EE0x14c134..0x14c178 copies position to +0x854 and adds final displacement. EE0x14c288..0x14c340 turns +0x86c by SPF*0x417b53d1*+0x968. Entire 0x2b00 record retained raw; meanings beyond these instruction consumers are not asserted."
+    "evidence": "PlayerMotion EE0x148178..0x148880: camera yaw atan2f(MboxWinPtr+0x90,+0x98)+pi, control +0x1c/+0x20, player +0x124/+0x964/+0x96c/+0x830/+0x838/+0x848..0x850/+0x8b0/+0x8c8; request stored +0x860..+0x868 before PlayerCollideItems. EE0x14c134..0x14c178 copies position to +0x854 and adds final displacement. EE0x14c288..0x14c340 turns +0x86c by SPF*0x417b53d1*+0x968. Entire 0x2b00 record retained raw; meanings beyond these instruction consumers are not asserted.",
+    "vu0_blocks": [
+      {
+        "name": "fqdist_operands",
+        "ee_address": 2760640,
+        "bytes": 16
+      },
+      {
+        "name": "fqdist_result",
+        "ee_address": 2760608,
+        "bytes": 16
+      }
+    ],
+    "vu0_blocks_evidence": "fqdist EE0x1d6b90 stores f12/f13 to 0x2a1fc0/+4, LQC2 vf16 from 0x2a1fc0, VCALLMS 0x44, SQC2 vf16 to 0x2a1fa0 and returns its x lane. VU0 micro pc68..75 (fixture vu0MicroMem.bin): MUL.xy vf16,vf16,vf16; ADDy.x vf16,vf16,vf16y; SQRT Q,vf16x; WAITQ; ADDq.x vf16,vf00,Q; B to pc6; E bit at pc7. Blocks hold the most recent call from any caller at a paused vblank."
   }
 }

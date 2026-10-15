@@ -113,6 +113,23 @@ pub fn div_rn(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     Ok(result)
 }
 
+/// Square root rounded toward zero, as configured PCSX2 microVU SQRT executes
+/// SSE sqrtss under the VU0 MXCSR (Roundmode 3). Finite nonnegative normal
+/// operands and zero only; the negative-operand flag path is not modelled.
+pub fn sqrt_rz(a: f32) -> Result<f32, UnsupportedNumericDomain> {
+    if a != 0.0 && (a.is_sign_negative() || !a.is_normal()) {
+        return Err(UnsupportedNumericDomain);
+    }
+    let exact = f64::from(a);
+    // f64 sqrt is correctly rounded; truncation can overshoot only when the f64
+    // result lands on an f32 value above the true root, detected exactly below.
+    let mut root = round_rz(exact.sqrt())?;
+    if f64::from(root) * f64::from(root) > exact {
+        root = f32::from_bits(root.to_bits() - 1);
+    }
+    Ok(root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +194,20 @@ mod tests {
         assert_eq!(mul_rz(-a, b).unwrap().to_bits(), 0xbfc0_0002);
         assert_eq!(mul_rz(-0.0, 1.0).unwrap().to_bits(), 0x8000_0000);
         assert!(mul_rz(f32::MIN_POSITIVE, 0.5).is_err());
+    }
+    #[test]
+    fn square_root_truncates_and_never_exceeds_the_true_root() {
+        assert_eq!(sqrt_rz(4.0).unwrap(), 2.0);
+        assert_eq!(sqrt_rz(2.0).unwrap().to_bits(), 0x3fb504f3);
+        assert_eq!(sqrt_rz(0.0).unwrap(), 0.0);
+        for bits in [0x3f800001u32, 0x40000000, 0x3e99999a, 0x7f7fffff] {
+            let a = f32::from_bits(bits);
+            let r = sqrt_rz(a).unwrap();
+            let next = f32::from_bits(r.to_bits() + 1);
+            assert!(f64::from(r).powi(2) <= f64::from(a) && f64::from(next).powi(2) > f64::from(a));
+        }
+        assert!(sqrt_rz(-1.0).is_err());
+        assert!(sqrt_rz(f32::from_bits(1)).is_err());
     }
     #[test]
     fn division_uses_the_separate_nearest_rounding_contract() {

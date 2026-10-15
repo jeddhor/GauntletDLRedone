@@ -126,11 +126,37 @@ the observed values and return code, not yet single-stepped). Up+Right was
 repeated: the after-floor frame and player record are identical in two runs.
 
 So these divergences are FloorCollide world-geometry outcomes, not items, players,
-walls or camera limits. Native reproduction needs FloorCollide 0x11ec58 and its
-collision data. PlayerCollideFloor and the PlayerMotion slope rescale (0x148e30)
-also call fqdist 0x1d6b90, which runs **VU0 microprogram `vcallms 0x44`** on
-(x, z) staged at 0x2a1fc0. That microcode must be recovered before fqdist can be
-reproduced natively; it is a gameplay-relevant vector-unit dependency.
+walls or camera limits. FloorCollide 0x11ec58 is a thin wrapper: it sweeps a
+vertical segment at the target x/z through WorldCollide 0x11e160 with the player's
+collision radius (+0x828, 1.5 here), CheckFlags 7/0x17 and normal-Y bounds
+0x3f000000..0x40000000, which is why a contact can lie horizontally off the
+target. WorldCollide drives NextGrid/WorldObjCollide (→ CTriListCollide,
+MulBodyVecMat4)/WorldDynCollide and vector helpers; exports are in
+private/reports/ghidra-world-collide/ and ghidra-floor-collide/.
+
+## fqdist: a gameplay VU0 microprogram
+
+fqdist 0x1d6b90 stores (x, z) at 0x2a1fc0, loads vf16, runs VCALLMS 0x44 and
+returns the x lane stored at 0x2a1fa0. The microcode comes from the preserved
+state's vu0MicroMem.bin (SHA-256 ece54c93…2f21; extracted privately to
+private/reference/captures/poison-fields-vu/). Decoded against the PCSX2 VU
+opcode tables, pc 68..76 are: MUL.xy vf16,vf16,vf16; ADDy.x vf16,vf16,vf16y;
+three NOPs; SQRT Q,vf16x; WAITQ; ADDq.x vf16,vf00,Q with lower B −70 (to pc 6);
+NOP delay. pc 7 carries the E bit. Pinned PCSX2 v2.6.3 runs VU0 microcode under
+VU0FPCR (configured Roundmode 3), and its SQRT is SSE sqrtss after a sign test.
+
+Native `gdl_core::vu0::fqdist` = sqrt_rz(add_rz(mul_rz(x,x), mul_rz(z,z))) and
+also returns the y lane (z²). Because the staging blocks keep the last call's
+operands and full vf16 result at every paused vblank, the movement capture now
+retains both blocks (profile movement_layout.vu0_blocks, included in the reload
+barrier). compare_fqdist.py over six re-captured direction traces:
+**15/15 distinct operand pairs byte-equal in x, y, z and w lanes (198 samples)**,
+including fqdist(1.5999994, 0) = 1.5999993 (both steps truncate) and both
+floor-adjusted displacements. Report: private/reports/fqdist-comparison-v3/.
+The six re-captures reproduce the earlier traces' player records exactly.
+Caller identity of each staged call is not established; coverage is limited to
+these operand magnitudes. Other microprograms (pc 0..5 with I-bit immediates
+such as π) are not decoded.
 
 Procedure hazard found: key releases sent while the debugger window had focus
 did not reach PCSX2's input, leaving Up/Right held. The resulting
@@ -141,8 +167,8 @@ reloaded through the barrier (`poison-fields-after-motion-stage-probes-v1.json`)
 
 ## Remaining gaps
 
-Not native yet: keyboard/pad → PlayerControl production, FloorCollide and the
-other collision/push stages, fqdist's VU0 microprogram, camera limit and camera
+Not native yet: keyboard/pad → PlayerControl production, FloorCollide/
+WorldCollide and the other collision/push stages, camera limit and camera
 update, requested-action mapping, knockback, special actions/codes, the
 facing-matrix rebuild (CreateYPRMatrix) and movement for other characters or
 areas. The request helper is an M09/M10 component, not native movement.

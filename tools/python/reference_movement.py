@@ -23,6 +23,9 @@ def movement_probe(memory, profile):
     if not camera or camera % 16 or camera+camera_bytes > RAM_SIZE:
         raise ValueError('invalid frozen camera pointer')
     globals_ = {name: symbols[name]['guest_address'] for name in layout['global_symbols']}
+    blocks = {b['name']: (b['ee_address'], b['bytes']) for b in layout.get('vu0_blocks', [])}
+    if any(a % 16 or n != 16 for a, n in blocks.values()):
+        raise ValueError('VU0 staging blocks must be aligned quadwords')
 
     def chunks(read, address, size):
         return b''.join(read(address+o, min(2048, size-o)) for o in range(0, size, 2048))
@@ -36,6 +39,7 @@ def movement_probe(memory, profile):
                     control_raw_hex=read(control['guest_address'], control['size']).hex(),
                     camera_ee_address=camera, camera_raw_hex=read(camera, camera_bytes).hex(),
                     globals={name: read(address, 4).hex() for name, address in globals_.items()},
+                    vu0_blocks={name: read(a, n).hex() for name, (a, n) in blocks.items()},
                     scope='raw slot-0 player record, controls, camera block and PlayerMotion globals')
 
     # The reload barrier reads at most 2048 bytes per request.
@@ -43,4 +47,5 @@ def movement_probe(memory, profile):
     regions += [(control['guest_address'], memory[control['guest_address']:control['guest_address']+control['size']]),
                (camera, memory[camera:camera+camera_bytes])]
     regions.extend((address, memory[address:address+4]) for address in globals_.values())
+    regions.extend((a, memory[a:a+n]) for a, n in blocks.values())
     return capture, regions

@@ -101,6 +101,11 @@ must remain untouched. The user's `pcsx2/` checkout is a separate research sourc
   and Up+Right vblank 4 were adjusted by a later non-wall stage (first collision
   divergences). Reports: `private/reports/sor-motion-request-*-v2/`; raw traces
   `poison-fields-move-*.json`. Dossier: research/movement.md.
+- Debugger stops place both position adjustments in PlayerCollideFloor's return-2
+  pullback to FloorCollide's contact (`motion-stage-probe-*-v1/`).
+- fqdist's VU0 microprogram (pc 68..75, decoded from the fixture's VU0 micro
+  memory) is native in gdl_core/vu0.rs with toward-zero VU mul/add/sqrt; 15/15
+  distinct live operand/result pairs match in all lanes (`fqdist-comparison-v3/`).
 
 Motion-code comparison artifacts: `private/reports/sor-walk-motion-code-v1/` and `-v2/`
 (24/24 each), `sor-attack-motion-code-v1/` and `-v2/` (18/18 each).
@@ -119,16 +124,18 @@ coverage checks the corrected binding. Root transfer is not exercised by SOR.
 ## Verification at this checkpoint
 
 Pinned Rust 1.93.1 / Bevy 0.18.1; checks are offline, locked, release builds.
-Each command was run separately on 2026-10-15 and exited 0:
+Each command was run separately on 2026-10-15 after the fqdist work and exited 0:
 
-- Rust workspace tests: 51 passing (32 core + 19 formats); other targets/doc
-  tests have zero tests. Log: `private/reports/native-motion-request-tests-v2.log`.
-- Strict workspace/all-targets Clippy: `native-motion-request-clippy-v2.log`.
-  (v1 failed on one indexed loop, fixed; v1 logs are retained, not passing evidence.)
-- Whole-workspace release build: `native-motion-request-build-v1.log`.
-- Python unittest discovery: 5 passing; `native-motion-request-python-tests-v1.log`.
-- On resume (2026-10-14), the prior 46 Rust / 5 Python results were rerun and
-  confirmed before changes: `resume-2026-10-14-tests.log`.
+- Rust workspace tests: 53 passing (34 core + 19 formats); log
+  `private/reports/native-fqdist-tests-v2.log`.
+- Strict workspace/all-targets Clippy: `native-fqdist-clippy-v2.log` (v1 failed on
+  one boolean-simplification lint, fixed; retained, not passing evidence).
+- Whole-workspace release build: `native-fqdist-build-v2.log`.
+- Python unittest discovery: 5 passing; `native-fqdist-python-tests-v2.log`.
+- With the final binary: motion request/facing 112/112 (`sor-motion-request-*-v3/`)
+  and fqdist 15/15 (`fqdist-comparison-v3/`).
+- Earlier this session: `native-motion-request-*` logs; on resume the prior
+  46 Rust / 5 Python results were confirmed (`resume-2026-10-14-tests.log`).
 
 The libm/motion-request Rust tests are synthetic. Fidelity evidence is the
 owned-data comparisons above; none of them substitutes for collision or gameplay.
@@ -183,9 +190,11 @@ symbols (MboxWinPtr, QuestItemState, BossActive, WldBtm).
    pullbacks to FloorCollide's contact point (floor object "G1#109"); see
    research/movement.md. Next recover FloorCollide 0x11ec58 (and WorldCollide
    0x11e160 if called), the world-collision record layout it reads, and the binding
-   from runtime floor objects to parsed WORLDS.PS2 nodes by name. Recover fqdist's
-   VU0 microprogram (vcallms 0x44 on data staged at 0x2a1fc0) from the uploaded
-   microcode. Validate with bounded debugger stops like motion-stage-probe-*.
+   from runtime floor objects to parsed WORLDS.PS2 nodes by name. FloorCollide is
+   a vertical radius sweep through WorldCollide → NextGrid/WorldObjCollide/
+   CTriListCollide/WorldDynCollide (exports in private/reports/ghidra-world-collide/).
+   fqdist's VU0 microprogram is native and matches 15/15 live results. Validate
+   collision with bounded debugger stops like motion-stage-probe-*.
 3. Implement accepted headless floor queries (M08) before composing
    request → final displacement → position natively.
 4. Recover PlayerControls 0x105718 pad → control record production (angles,
