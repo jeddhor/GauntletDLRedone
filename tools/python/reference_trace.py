@@ -51,6 +51,10 @@ def main():
     parser.add_argument('--schedule', type=pathlib.Path, help='JSON list of bounded steps/keys segments')
     parser.add_argument('--animation', action='store_true', help='capture fixture-qualified SOR animation cache records')
     parser.add_argument('--movement', action='store_true', help='capture raw slot-0 player record, controls and camera block')
+    parser.add_argument('--leave-held', action='store_true',
+                        help='diagnostic: keep final keys held after the last step for a following debugger stop. '
+                             'Release them with keyup while the render window has focus; releases delivered to '
+                             'the debugger window leave PCSX2 input stale (observed 2026-10-15)')
     parser.add_argument('--out', type=pathlib.Path, required=True)
     args = parser.parse_args()
     segments = schedule_segments(args.schedule, args.steps, args.keys)
@@ -169,6 +173,9 @@ def main():
                 json.dump(report, file, indent=2, allow_nan=False)
                 file.write('\n')
             print(f'{len(step_keys)} verified vblank steps; schedule={segments}')
+            if args.leave_held:
+                print(f'keys intentionally left held: {held}')
+                held.clear()
         finally:
             for key in reversed(held):
                 xdo('keyup', key)

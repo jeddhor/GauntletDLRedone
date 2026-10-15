@@ -163,7 +163,13 @@ block and movement globals. Traces only press keys and read memory; no guest
 writes or saves. Last observed reference state: paused after the Down+Left
 schedule with keys released. Originals and copied slot 1 are unchanged.
 
-Tooling changes: `tools/ghidra/ExportResearch.java` accepts `@ADDRESS` entries for
+Debugger probes (2026-10-15) used three execute breakpoints, now **disabled** but
+still listed in the stock debugger. Afterwards input was cleared via the render
+window and the fixture reloaded through the barrier; the reference is paused
+2 idle vblanks after reload. Key releases must target the render window.
+
+Tooling changes: `reference_frame_capture.py` (read-only debugger-stop frames),
+`reference_trace.py --leave-held`; `tools/ghidra/ExportResearch.java` accepts `@ADDRESS` entries for
 label-only helpers; `reference_trace.py --movement`; new `reference_movement.py`
 and `compare_motion_request.py`; profile `movement_layout` and four ELF-verified
 symbols (MboxWinPtr, QuestItemState, BossActive, WldBtm).
@@ -173,15 +179,15 @@ symbols (MboxWinPtr, QuestItemState, BossActive, WldBtm).
 1. Read this file, coverage, movement, clock, animation, world-transforms and
    unknowns. Inspect surviving Xvfb/PCSX2 identities; reload the preserved copied
    fixture with the full barrier before new schedules. Never overwrite originals.
-2. Explain the two preserved collision divergences (Left vblank 18, Up+Right
-   vblank 4). Wall object +0x8a0 is zero in both. Candidates in source order after
-   the request: PlayerCollideItems 0x146348, PlayerCollidePlayers 0x146030 (returns
-   a slot or -1; filters +0xfc activity 1/4 and +0x93c bit 0x20), PlayerCollideFloor
-   0x145218, CameraLimitPlayerDpos 0x1a2428, item re-check/ModifyPlayerDpos 0x147b68,
-   PlayerCollideEnemies. Use bounded debugger stops or raw captures of the stack
-   displacement to locate the adjusting stage; do not approximate it.
-3. Qualify those query contracts and implement accepted headless queries (M08)
-   before composing request → final displacement → position natively.
+2. Done 2026-10-15: both collision divergences are PlayerCollideFloor return-2
+   pullbacks to FloorCollide's contact point (floor object "G1#109"); see
+   research/movement.md. Next recover FloorCollide 0x11ec58 (and WorldCollide
+   0x11e160 if called), the world-collision record layout it reads, and the binding
+   from runtime floor objects to parsed WORLDS.PS2 nodes by name. Recover fqdist's
+   VU0 microprogram (vcallms 0x44 on data staged at 0x2a1fc0) from the uploaded
+   microcode. Validate with bounded debugger stops like motion-stage-probe-*.
+3. Implement accepted headless floor queries (M08) before composing
+   request → final displacement → position natively.
 4. Recover PlayerControls 0x105718 pad → control record production (angles,
    magnitude, held/edge words), then the facing-matrix rebuild (CreateYPRMatrix)
    and camera update, toward M10 replay.

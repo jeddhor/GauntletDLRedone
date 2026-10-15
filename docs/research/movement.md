@@ -97,12 +97,52 @@ a Clippy-only refactor).
   displacement. These are the first collision divergences for M08 and are not
   approximated.
 
+## Locating the two adjusted updates (stock debugger stops)
+
+Method: reload the copied fixture through the full barrier, hold the schedule's
+keys for the preceding vblanks (`reference_trace.py --leave-held`; the prefix is
+compared with the original trace), then use stock-debugger execute breakpoints
+before PlayerCollideWalls (0x148c48), before PlayerCollideFloor (0x148cd8) and
+after it (0x148ce0). `reference_frame_capture.py` reads PlayerMotion's live frame
+(sp from the inspected screenshot), the player record and named globals by PINE,
+after checking the loaded PlayerMotion bytes against the ELF. Registers come
+only from retained screenshots. Artifacts: private/reports/motion-stage-probe-
+upright-v1/ and motion-stage-probe-left-v1/.
+
+| Update | dpos before walls / before floor | Walls (s4) | Floor (v0) | dpos after floor |
+| --- | --- | --- | --- | --- |
+| Up+Right vblank 4 | request, unchanged | 0 | 2 | (−0.240409, 0, −0.064413) |
+| Left vblank 18 | request, unchanged | 0 | 2 | (0.214021, 0, −0.129353) |
+
+PlayerCollidePlayers returned −1 and PlayerCollideItems returned 0 in both. The
+floor object +0x89c is 0x11f7c78; its loaded record begins with the name
+"G1#109" (next record "G1FLOOR_LINE#1"), so it can be bound to parsed world
+nodes by name. `player_floor_col` +0x30 holds FloorCollide's contact point; for
+Up+Right it equals the final position bit for bit, and for Left it equals it
+within a few z ulps after the scalar position add. Both updates take
+PlayerCollideFloor's "pull target back to the floor contact, re-query, return 2"
+path (decompiler view at the dpos subtraction before LAB_00145844; inferred from
+the observed values and return code, not yet single-stepped). Up+Right was
+repeated: the after-floor frame and player record are identical in two runs.
+
+So these divergences are FloorCollide world-geometry outcomes, not items, players,
+walls or camera limits. Native reproduction needs FloorCollide 0x11ec58 and its
+collision data. PlayerCollideFloor and the PlayerMotion slope rescale (0x148e30)
+also call fqdist 0x1d6b90, which runs **VU0 microprogram `vcallms 0x44`** on
+(x, z) staged at 0x2a1fc0. That microcode must be recovered before fqdist can be
+reproduced natively; it is a gameplay-relevant vector-unit dependency.
+
+Procedure hazard found: key releases sent while the debugger window had focus
+did not reach PCSX2's input, leaving Up/Right held. The resulting
+`poison-fields-probe-left-pre18-a.json` diverged at step 2 (control angle 3π/4)
+and is retained as invalid input evidence. Releases must target the render window.
+After the probes, all breakpoints were disabled, input cleared and the fixture
+reloaded through the barrier (`poison-fields-after-motion-stage-probes-v1.json`).
+
 ## Remaining gaps
 
-Not native yet: keyboard/pad → PlayerControl production, collision and push
-stages, camera limit and camera update, requested-action mapping, knockback,
-special actions/codes, the facing-matrix rebuild (CreateYPRMatrix) and
-movement for other characters or areas. The request helper is therefore an
-M09/M10 component, not native movement. Next: recover PlayerCollideItems/
-Players/Walls/Floor and CameraLimitPlayerDpos contracts starting from the two
-preserved divergences, then pad production in PlayerControls 0x105718.
+Not native yet: keyboard/pad → PlayerControl production, FloorCollide and the
+other collision/push stages, fqdist's VU0 microprogram, camera limit and camera
+update, requested-action mapping, knockback, special actions/codes, the
+facing-matrix rebuild (CreateYPRMatrix) and movement for other characters or
+areas. The request helper is an M09/M10 component, not native movement.
