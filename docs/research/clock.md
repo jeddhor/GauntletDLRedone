@@ -101,7 +101,6 @@ movement must not silently reuse animation trigonometry.
 
 M09 remains partial: native pad polling/mapping/edges, requested-action producer,
 actual displacement/collision/camera, complete update order and RNG remain open.
-The user paused project work on2026-10-13; do not start the next experiment until
-asked to resume. Current checks:46 Rust tests,5 Python tests, strict Clippy and
-release workspace build pass. Exact current logs and historical failed-log
-correction are in ../state.md.
+Work resumed 2026-10-14. The displacement request and facing turn that consume
+this code are now recovered for the ordinary path; see movement.md. Current
+check results and logs are in ../state.md.

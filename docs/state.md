@@ -1,8 +1,8 @@
-# Paused development checkpoint — 2026-10-13
+# Development checkpoint — 2026-10-15
 
-Work is paused at the user's request. This checkpoint finishes the current bounded
-motion-intent experiment and records the resume point. Do not start new project
-work until the user asks to resume. No question, approval or manual test is pending.
+Work resumed on 2026-10-14 in a new agent session after the 2026-10-13 pause.
+This checkpoint records the PlayerMotion request/facing milestone and the resume
+point. No question, approval or manual user test is pending.
 
 The target remains the supplied PS2-to-native Rust/Bevy master plan, M00–M21,
 with standalone Linux and Windows gameplay. There is no native playable encounter
@@ -18,7 +18,8 @@ milestone; verified local poses, clocks, selection and a bounded world helper do
 not close its renderer/scale/attachment/event gates. M08 has source investigation
 leads and no accepted native collision queries. M09 has verified bounded clock
 and logical motion-intent helpers, without a complete simulation/input contract.
-M10–M18 gameplay/campaign/co-op/audio/UI/save gates remain unimplemented. M19 is
+M10 has a qualified pre-collision request/facing component and original libm
+trigonometry, not native movement. M11–M18 gates remain unimplemented. M19 is
 deferred; M20 platform QA and M21 release qualification have not been reached.
 See [the acceptance ledger](coverage.md) for every milestone and remaining gate.
 
@@ -90,14 +91,25 @@ must remain untouched. The user's `pcsx2/` checkout is a separate research sourc
   first full run code occurs at vblank 8. Attack code 15 resets the timer. Actual
   displacement, requested-action mapping, camera and collision remain unimplemented.
 
-Latest comparison artifacts: `private/reports/sor-walk-motion-code-v1/` and `-v2/`
+- PlayerMotion's ordinary pre-collision displacement request (+0x860..+0x868)
+  and facing turn (+0x86c) are native (gdl_core/player_motion.rs), using native
+  reconstructions of the executable's fdlibm-structured atan2f/atanf/sinf/cosf
+  (gdl_core/libm.rs) over the qualified scalar FPU subset. They match 112/112
+  updates byte for byte across Up (twice, raw-identical), Down, Left, Right,
+  Up+Right and Down+Left, including a turn decided by rounding at the π wrap.
+  Diagnostic: position + request reproduces 110/112 positions; Left vblank 18
+  and Up+Right vblank 4 were adjusted by a later non-wall stage (first collision
+  divergences). Reports: `private/reports/sor-motion-request-*-v2/`; raw traces
+  `poison-fields-move-*.json`. Dossier: research/movement.md.
+
+Motion-code comparison artifacts: `private/reports/sor-walk-motion-code-v1/` and `-v2/`
 (24/24 each), `sor-attack-motion-code-v1/` and `-v2/` (18/18 each).
 Complete walking raw traces are `poison-fields-walk-motion-code-b.json` and `-c.json`;
 attack raw traces are `poison-fields-attack-motion-code-a.json` and `-b.json`.
 Walking `-a.json` lacks the later state-934 context and is incomplete evidence.
 Corrected header binding event reports: `sor-attack-events-v3/` (18/18) and
-`sor-walk-release-events-v2/` (24/24). No divergence in these qualified subsets;
-the next unknown is native requested-action/displacement production.
+`sor-walk-release-events-v2/` (24/24). No divergence in these qualified subsets.
+The open producers are requested-action mapping and the collision stages after the request.
 
 The sequence words are now distinct: `root_transfer_flags` at +0x26 and
 `frame_order_flags` at +0x2a. Both are zero in all 137 SOR clips, so earlier SOR
@@ -107,23 +119,23 @@ coverage checks the corrected binding. Root transfer is not exercised by SOR.
 ## Verification at this checkpoint
 
 Pinned Rust 1.93.1 / Bevy 0.18.1; checks are offline, locked, release builds.
-All commands completed successfully, checked separately:
+Each command was run separately on 2026-10-15 and exited 0:
 
-- Rust workspace tests: 46 passing (27 core + 19 formats); other targets/doc tests
-  have zero tests. Log: `private/reports/native-motion-code-tests-v3.log`.
-- Strict workspace/all-targets Clippy: passing; log
-  `private/reports/native-motion-code-clippy-v3.log`.
-- Final whole-workspace release build: passing; log
-  `private/reports/paused-checkpoint-build.log`.
-- Python unittest discovery: 5 passing; log
-  `private/reports/paused-checkpoint-python-tests.log`.
+- Rust workspace tests: 51 passing (32 core + 19 formats); other targets/doc
+  tests have zero tests. Log: `private/reports/native-motion-request-tests-v2.log`.
+- Strict workspace/all-targets Clippy: `native-motion-request-clippy-v2.log`.
+  (v1 failed on one indexed loop, fixed; v1 logs are retained, not passing evidence.)
+- Whole-workspace release build: `native-motion-request-build-v1.log`.
+- Python unittest discovery: 5 passing; `native-motion-request-python-tests-v1.log`.
+- On resume (2026-10-14), the prior 46 Rust / 5 Python results were rerun and
+  confirmed before changes: `resume-2026-10-14-tests.log`.
 
-Earlier combined-shell output masked a stale test fixture that still used the
-renamed `Sequence.flags` field. That fixture is fixed and checks rerun separately.
-The earlier 45-test/pass claim for `native-world-tests-v2.log` and
-`native-world-clippy-v2.log` was incorrect; those failed historical logs are
-retained, as are `native-motion-code-tests-v1.log` and `-clippy-v1.log`.
-They are not passing evidence. Current logs above supersede those claims.
+The libm/motion-request Rust tests are synthetic. Fidelity evidence is the
+owned-data comparisons above; none of them substitutes for collision or gameplay.
+
+Historical corrections remain: earlier combined-shell output masked a stale
+fixture; failed `native-world-*-v2.log` and `native-motion-code-*-v1.log` are
+retained and are not passing evidence.
 
 To use the installed pinned toolchain without rustup home writes:
 
@@ -139,57 +151,45 @@ python3 -m unittest discover -s tools/python -p 'test_*.py'
 
 All automated GUI work used authenticated Xvfb, never the user's Wayland desktop.
 PCSX2 is stock `/usr/games/pcsx2-qt`, 2.6.3+dfsg-1build1; private configuration,
-software GS, PINE default slot 28011. Session identities are recorded in
-`private/reports/reference.pid` and `private/reference/xvfb-session.json`.
-Last verified virtual display: :191, server PID 2638848, authority
-`/tmp/xvfb-run.V25bts/Xauthority`; holder PID 2638858. The exited wrapper left
-server/holder reparented. The guard now checks actual Xvfb executable/display/auth
-arguments and PID start ticks; it still refuses desktop fallback. Inspect fresh
-identities before reuse rather than assuming these PIDs persist.
+software GS, PINE default slot 28011. Session identities: `private/reports/reference.pid`
+and `private/reference/xvfb-session.json`. On 2026-10-15 the reference (PID 2643374)
+was still running on Xvfb :191 (server PID 2638848). An unrelated Xvfb using
+`-displayfd`, started 2026-10-14 11:09, is not part of this project and was not
+touched. Inspect identities before reuse rather than assuming these PIDs persist.
 
-Last observed reference state is paused after the repeated 36-vblank K attack
-schedule, with keys released. The diagnostic world probe's a0 substitution was
-cleared by reloading the unchanged copied fixture; the full frozen globals/heap/
-pose/action-context barrier and two verified vblanks passed afterward
-(`poison-fields-after-world-probe-restore-v1.json`). No guest edit remains.
-Stock debugger remains open with all diagnostic breakpoints removed
-(`debugger-world-probe-cleanup-v1.png`). Native inspectors are closed. Final build
-and checks have finished; no further experiment is running from this checkpoint.
-Reference/Xvfb may remain idle; original/copy saves are preserved for reuse.
+Each movement trace reloaded the unchanged copied slot-1 fixture through the full
+barrier, which now also includes the entire slot-0 player record, controls, camera
+block and movement globals. Traces only press keys and read memory; no guest
+writes or saves. Last observed reference state: paused after the Down+Left
+schedule with keys released. Originals and copied slot 1 are unchanged.
 
-## Exact next steps when the user resumes
+Tooling changes: `tools/ghidra/ExportResearch.java` accepts `@ADDRESS` entries for
+label-only helpers; `reference_trace.py --movement`; new `reference_movement.py`
+and `compare_motion_request.py`; profile `movement_layout` and four ELF-verified
+symbols (MboxWinPtr, QuestItemState, BossActive, WldBtm).
 
-1. Read this file, coverage, clock, animation, world-transforms and unknowns.
-   Inspect surviving Xvfb/PCSX2 identities; reload the preserved copied fixture
-   using the full frozen barrier before new bounded schedules. Never overwrite
-   originals. No user manual test is presently required.
-2. Recover PlayerMotion's requested-action producer and actual displacement.
-   Source exports: `private/reports/ghidra-player-motion-events/001480a8-PlayerMotion.txt`,
-   `ghidra/001448e0-GetPlayerDMotion.txt`, and `ghidra-movement-support/`.
-   GetPlayerDMotion is logical intent. Keep motion codes, action IDs and clip IDs
-   distinct. PlayerCollidePlayers at 0x146030 returns another player slot or -1;
-   it is not a floor query. Its filters read other player +0xfc activity 1/4 and
-   +0x93c bit 0x20. The fixture's activity words are [1,0,0,0], but a runtime
-   activity-field capture binding is still pending. PlayerMotion reuses s4 with
-   another meaning from 0x1495fc; do not carry the earlier slot meaning forward.
-   Movement's libm sinf 0x1e7350 / cosf 0x1e7160 differ from animation ffSin/ffCos;
-   recover their range reduction/kernels and relevant statistics/scale inputs.
-3. Qualify original floor/wall/item/player query contracts with bounded input/output
-   fixtures, raw flags and original instructions. Implement accepted headless
-   queries for M08 before claiming collision-aware native movement.
-4. Qualify renderer matrix/scale traversal, actor ancestors, attachments,
-   reverse/mirror and remaining event consumers for M07. Change viewer world-pose
-   integration only after evidence; its cached host matrix products/decomposition
-   and scale handling currently remain diagnostic.
-5. Close M05 original material/GS/TEXA/alpha formats 130/146 and hand-glow dependency;
-   resolve M06's 62 triangle discrepancies and transform/material fidelity.
-6. Complete M09 input edges/update order/RNG; build M10 native movement/camera/replay,
-   M11 real missiles/enemy/damage/pickups and M12 original-data encounter with exit
-   and native durable progress. No collision or gameplay substitute closes a gate.
-7. Continue M13–M21 campaign/progression/content/bosses, co-op, audio/UI, saves,
-   enhancements only after fidelity, Windows/Linux QA and fresh-install release.
+## Exact next steps
 
-Source checkpoints before this pause: `e8896f3` selection, `3517cd9` ordinary throw
-requests, `ad798e1` world helper/header separation. The following checkpoint commit
-contains the motion-intent/timer helper, stale fixture correction and these pause
-notes. Find it with `bash tools/git-local.sh log -1 --oneline`.
+1. Read this file, coverage, movement, clock, animation, world-transforms and
+   unknowns. Inspect surviving Xvfb/PCSX2 identities; reload the preserved copied
+   fixture with the full barrier before new schedules. Never overwrite originals.
+2. Explain the two preserved collision divergences (Left vblank 18, Up+Right
+   vblank 4). Wall object +0x8a0 is zero in both. Candidates in source order after
+   the request: PlayerCollideItems 0x146348, PlayerCollidePlayers 0x146030 (returns
+   a slot or -1; filters +0xfc activity 1/4 and +0x93c bit 0x20), PlayerCollideFloor
+   0x145218, CameraLimitPlayerDpos 0x1a2428, item re-check/ModifyPlayerDpos 0x147b68,
+   PlayerCollideEnemies. Use bounded debugger stops or raw captures of the stack
+   displacement to locate the adjusting stage; do not approximate it.
+3. Qualify those query contracts and implement accepted headless queries (M08)
+   before composing request → final displacement → position natively.
+4. Recover PlayerControls 0x105718 pad → control record production (angles,
+   magnitude, held/edge words), then the facing-matrix rebuild (CreateYPRMatrix)
+   and camera update, toward M10 replay.
+5. M07 renderer matrix/scale traversal, attachments, mirror/reverse and event
+   consumers; M05/M06 material/GS/TEXA and triangle discrepancies.
+6. M09 input edges/update order/RNG; M11 missiles/enemy/damage/pickups; M12 slice.
+7. M13–M21 only after their dependencies, as in the master plan.
+
+Source checkpoints: `ad798e1` world helper, `a0cb2fb` motion intent and pause.
+The following commit contains the libm/request/facing work and this checkpoint;
+find it with `bash tools/git-local.sh log -1 --oneline`.

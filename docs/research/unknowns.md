@@ -15,8 +15,9 @@ replaced by a plausible gameplay rule or generated asset.
 | Original geometry | All 1,729 G1 integer packets independently agree; native terrain viewer runs | Resolve 62 triangle-count discrepancies, original transform/winding and material consumers |
 | Animation/rig | 35-node SOR tree, 137 clips, frame-zero reader and native rest-hierarchy inspector | Local channels/matrices/blending and bounded player animation choice now compare exactly; world helper compares two natural translations and one controlled bone chain; recover render scales, attachments and full events |
 | Animation cache words | 35 live caches matched to SOR; +0xc-as-clip-ID assumption contradicted | Trace frame/data indexing consumers before using cache fields as comparison output |
-| Collision and navigation | WorldCollide/wall/item/player functions identified; PlayerCollidePlayers returns a player slot, not a floor result | Bind activity+0xfc; qualify precise query inputs/outputs and reused PlayerMotion s4 meanings before native response |
-| Update/input cadence | Fixture updates every two vblanks; bounded clock and logical code/run-delay timer match42 updates, repeated, with original controls supplied | Recover native input edges/polling, requested-action mapping, full update order and other mode cadence |
+| Collision and navigation | WorldCollide/wall/item/player functions identified; PlayerCollidePlayers returns a player slot, not a floor result. Request +0x860 equals final displacement in 110/112 measured updates; Left vblank 18 and Up+Right vblank 4 were adjusted with wall object +0x8a0 zero | Trace which item/player/enemy/camera stage adjusted those two updates; bind activity+0xfc; qualify query inputs/outputs before native response |
+| Update/input cadence | Fixture updates every two vblanks; bounded clock and logical code/run-delay timer match42 updates; native request/facing match112 updates over eight control angles, with original controls supplied | Recover PlayerControls pad→control production, input edges, requested-action mapping, full update order and other mode cadence |
+| Movement trigonometry | Original fdlibm-structured atan2f/atanf/sinf/cosf implemented natively from instructions; exercised through112 request/facing matches | Large-argument reduction 0x1eb4a0, exceptional/subnormal domains, direct function probes if a later divergence implicates libm |
 | RNG reproducibility | Main loop reseeds using CPU time in static path | Observe actual seed calls and consumers with frame/timing context |
 | Damage/enemy rules | Local original-symbol functions exported | Controlled encounter scenarios; minimize first divergence |
 | Reference stepping transport | Xvfb F10 verifies one vblank per step; paused PINE reads repeat | Tie captures to actual guest function/update edges; verify debugger sample |
@@ -30,7 +31,5 @@ verification. Four unnamed archive entries remain after two new hash/name matche
 the original six are all retained by stable identity. Some contain development text
 which is data only and must not be executed.
 
-Work paused at user request on 2026-10-13. The exact ordered resume queue and
-current evidence/log paths are in [state.md](../state.md). The immediate producer
-gap is native requested-action and displacement recovery; original libm sinf/cosf
-are distinct from animation ffSin/ffCos. No user input is pending.
+Resumed 2026-10-14 by a new agent session. The current resume queue and log paths
+are in [state.md](../state.md); movement evidence is in [movement.md](movement.md).

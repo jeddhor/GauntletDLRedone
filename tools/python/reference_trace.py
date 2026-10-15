@@ -50,6 +50,7 @@ def main():
     parser.add_argument('--keys', nargs='*', choices=KEYS, default=[])
     parser.add_argument('--schedule', type=pathlib.Path, help='JSON list of bounded steps/keys segments')
     parser.add_argument('--animation', action='store_true', help='capture fixture-qualified SOR animation cache records')
+    parser.add_argument('--movement', action='store_true', help='capture raw slot-0 player record, controls and camera block')
     parser.add_argument('--out', type=pathlib.Path, required=True)
     args = parser.parse_args()
     segments = schedule_segments(args.schedule, args.steps, args.keys)
@@ -110,6 +111,11 @@ def main():
                 from reference_animation import cache_probe
                 capture_animation, pose_regions = cache_probe(memory, profile)
                 regions.extend(pose_regions)
+            capture_movement = None
+            if args.movement:
+                from reference_movement import movement_probe
+                capture_movement, movement_regions = movement_probe(memory, profile)
+                regions.extend(movement_regions)
             # PINE queues the load asynchronously; wait for all fixture fields.
             pine.request(b'\x0a\x01')
             deadline = time.monotonic()+5
@@ -123,6 +129,8 @@ def main():
             samples = [dict(step=0, observation=observation)]
             if capture_animation:
                 samples[0]['animation'] = capture_animation(read)
+            if capture_movement:
+                samples[0]['movement'] = capture_movement(read)
             for step, wanted in enumerate(step_keys, start=1):
                 for key in list(held):
                     if key not in wanted:
@@ -150,6 +158,8 @@ def main():
                 samples.append(dict(step=step, held_keys=list(wanted), observation=observation))
                 if capture_animation:
                     samples[-1]['animation'] = capture_animation(read)
+                if capture_movement:
+                    samples[-1]['movement'] = capture_movement(read)
             report = dict(schema_version=2, source_profile=source['profile_id'], fixture_sha256=fixture_hash,
                           launch=launch, transport='Xvfb keyboard F10 + paused PINE; one verified vblank per step',
                           alignment='emulator vblank boundary, not a guaranteed guest-update edge',

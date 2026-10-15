@@ -175,6 +175,17 @@ It predicts stored motion code and timer; native pad polling, requested-action
 mapping, displacement and collision remain unimplemented. See
 [clock/input evidence](docs/research/clock.md) for bounds and repeated comparisons.
 
-Project work is paused at the user's request as of 2026-10-13. The
-[pause checkpoint](docs/state.md) records exact progress, current passing checks,
-preserved reference state and the next steps to take when work resumes.
+PlayerMotion's ordinary pre-collision displacement request and facing turn,
+using native reconstructions of the executable's own atan2f/sinf/cosf, can be
+reproduced from a raw `--movement` reference trace:
+
+```sh
+python3 tools/python/reference_trace.py --schedule SCHEDULE.json --movement --out private/reports/NEW_TRACE.json
+python3 tools/python/compare_motion_request.py --trace private/reports/NEW_TRACE.json --out private/reports/NEW_REQUEST_COMPARISON
+```
+
+The request is the value stored before collision stages; it is not native
+movement. See [movement evidence](docs/research/movement.md).
+
+The [current checkpoint](docs/state.md) records exact progress, passing checks,
+preserved reference state and ordered next steps.

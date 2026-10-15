@@ -30,7 +30,9 @@ public class ExportResearch extends GhidraScript {
                 monitor.checkCancelled();
                 Function f = iter.next(); functions++;
                 symbols.println(f.getEntryPoint()+"\t"+f.getName()+"\t"+f.getPrototypeString(false,false)+"\t"+f.getSymbol().getSource());
-                if (!wanted.contains(f.getName())) continue;
+                // "@00123456" selects an exact entry point for label-only helpers
+                // such as gcc2_compiled.; it never guesses a name for that entry.
+                if (!wanted.contains(f.getName()) && !wanted.contains("@"+f.getEntryPoint())) continue;
                 String safe = f.getName().replaceAll("[^A-Za-z0-9_]", "_");
                 try (PrintWriter file = new PrintWriter(new File(out, f.getEntryPoint()+"-"+safe+".txt"), StandardCharsets.UTF_8)) {
                     file.println("Language: "+currentProgram.getLanguageID());

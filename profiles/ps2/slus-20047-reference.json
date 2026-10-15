@@ -193,6 +193,38 @@
       "section_index": 4,
       "size": 4,
       "type": 1
+    },
+    "MboxWinPtr": {
+      "binding": 1,
+      "guest_address": 2757968,
+      "name": "MboxWinPtr",
+      "section_index": 4,
+      "size": 4,
+      "type": 1
+    },
+    "QuestItemState": {
+      "binding": 1,
+      "guest_address": 2351632,
+      "name": "QuestItemState",
+      "section_index": 4,
+      "size": 4,
+      "type": 1
+    },
+    "BossActive": {
+      "binding": 1,
+      "guest_address": 2478480,
+      "name": "BossActive",
+      "section_index": 4,
+      "size": 4,
+      "type": 1
+    },
+    "WldBtm": {
+      "binding": 1,
+      "guest_address": 2351644,
+      "name": "WldBtm",
+      "section_index": 4,
+      "size": 4,
+      "type": 1
     }
   },
   "player_layout": {
@@ -312,5 +344,33 @@
     "action_global_symbols": [
       "BossType"
     ]
+  },
+  "movement_layout": {
+    "player_record_capture_bytes": 11008,
+    "camera_pointer_symbol": "MboxWinPtr",
+    "camera_capture_bytes": 160,
+    "global_symbols": [
+      "SPF",
+      "QuestItemState",
+      "BossType",
+      "BossActive",
+      "WldBtm"
+    ],
+    "fields": {
+      "matrix": 32,
+      "position": 80,
+      "previous_position": 2132,
+      "displacement_request": 2144,
+      "facing": 2156,
+      "speed_124": 292,
+      "scale_964": 2404,
+      "turn_968": 2408,
+      "scale_96c": 2412,
+      "velocity_830": 2096,
+      "knockback_848": 2120,
+      "flags_8b0": 2224,
+      "attack_state_8c8": 2248
+    },
+    "evidence": "PlayerMotion EE0x148178..0x148880: camera yaw atan2f(MboxWinPtr+0x90,+0x98)+pi, control +0x1c/+0x20, player +0x124/+0x964/+0x96c/+0x830/+0x838/+0x848..0x850/+0x8b0/+0x8c8; request stored +0x860..+0x868 before PlayerCollideItems. EE0x14c134..0x14c178 copies position to +0x854 and adds final displacement. EE0x14c288..0x14c340 turns +0x86c by SPF*0x417b53d1*+0x968. Entire 0x2b00 record retained raw; meanings beyond these instruction consumers are not asserted."
   }
 }

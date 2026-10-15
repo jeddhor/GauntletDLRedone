@@ -204,6 +204,57 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "motion-request" {
+        #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
+        #[serde(deny_unknown_fields)]
+        struct Step {
+            request: gdl_core::player_motion::MotionRequestInput,
+            forward_40: f32,
+            forward_48: f32,
+            turn_968: f32,
+            position_50: [f32; 3],
+        }
+        let raw = bounded_read(Path::new(&args[1]), 4 * 1024 * 1024)?;
+        let steps: Vec<Step> = serde_json::from_slice(&raw)?;
+        if steps.len() > 4096 {
+            return Err("motion request policy exceeded".into());
+        }
+        let outcomes: Vec<_> = steps
+            .into_iter()
+            .map(|step| {
+                let result = gdl_core::player_motion::motion_request(step.request).and_then(|output| {
+                    let facing = gdl_core::player_motion::facing_turn(gdl_core::player_motion::FacingInput {
+                        forward_40: step.forward_40,
+                        forward_48: step.forward_48,
+                        target: output.direction,
+                        turn_968: step.turn_968,
+                        spf: step.request.spf,
+                    })?;
+                    // Diagnostic: EE 0x14c14c's scalar add if the request were the
+                    // final displacement; collision stages are not evaluated.
+                    let mut position = [0.0f32; 3];
+                    for ((out, base), delta) in position.iter_mut().zip(step.position_50).zip(output.request) {
+                        *out = gdl_core::numeric::add_guarded_rz(base, delta)?;
+                    }
+                    Ok(serde_json::json!({"request_output":output,"facing":facing,"position_if_request_final":position}))
+                });
+                match result {
+                    Ok(output) => serde_json::json!({"input":step,"output":output,"error":null}),
+                    Err(e) => serde_json::json!({"input":step,"output":null,"error":e.to_string()}),
+                }
+            })
+            .collect();
+        let report = serde_json::json!({"requests_sha256":hash(&raw),"outcomes":outcomes,
+            "scope":"ordinary PlayerMotion pre-collision displacement request (+0x860..+0x868) and facing turn (+0x86c); collision, pushes, camera limits, final displacement, pad polling and requested-action mapping excluded"});
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "motion-code" {
         let raw = bounded_read(Path::new(&args[1]), 4 * 1024 * 1024)?;
         let requests: Vec<gdl_core::player_input::MotionCodeInput> = serde_json::from_slice(&raw)?;
@@ -677,7 +728,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);

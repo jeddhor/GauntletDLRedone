@@ -12,6 +12,14 @@ project is not clean-room: the following pinned research was consulted.
 - [GameCube decompilation](https://github.com/sabishii-bit/Gauntlet-Dark-Legacy-Decompilation/tree/4fdf0492d5d828b16ee1a961c17bf855a8d2668f), documentation/tree inspection only; no blanket code-license assumption. External leaked Xbox symbol definitions were not imported.
 - [Emotion Engine: Reloaded](https://github.com/chaoticgd/ghidra-emotionengine-reloaded), Apache-2.0. Separate local analysis module; the tested release identity is in docs/toolchain.md.
 - [PCSX2](https://github.com/PCSX2/pcsx2), GPL-3.0-or-later source notices. Separate reference application and read-only source investigation; no native-runtime linkage or source modifications. Pinned v2.6.3 iFPU.cpp and VUops/microVU Upper/Macro/Misc arithmetic paths were consulted to design independently written finite scalar/VU arithmetic models; no emulator source was transplanted. Stock debugger experiments and their controlled-input scope are recorded in the research dossiers.
+- fdlibm-derived libm in the original SLUS_200.47 executable (Sun Microsystems
+  fdlibm notice, as carried by newlib's float `e_atan2f`/`s_atanf`/`k_sinf`/`k_cosf`/`e_rem_pio2f`).
+  `gdl_core::libm` was written from the reviewed EE instruction listings and the
+  ELF's own constant words/tables, so its algorithm structure is fdlibm's. No
+  newlib/fdlibm source file was copied or inspected for this work. The fdlibm
+  notice is understood (unverified upstream claim) to permit use, copying,
+  modification and distribution with the notice preserved; obtain and verify
+  the exact notice text and include it in release notices at M21.
 - [Bevy v0.18.1](https://github.com/bevyengine/bevy/tree/v0.18.1), MIT OR Apache-2.0; native desktop dependency and API/example research.
 
 Direct Cargo dependencies: flate2 (MIT OR Apache-2.0), serde/serde_json (MIT OR
