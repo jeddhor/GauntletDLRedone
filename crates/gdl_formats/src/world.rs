@@ -89,6 +89,22 @@ pub struct World {
     pub grid: CollisionGrid,
     pub item_definitions: Vec<ItemDefinition>,
     pub items: Vec<ItemInstance>,
+    /// Locator list (header +0x5c offset, +0x58 count; 0x1c bytes each),
+    /// read by AddLocatorInstList 0x150ac8 from the loaded header copy.
+    pub locators: Vec<Locator>,
+}
+/// One locator: kind 1/2 transmitter, 3/4 attention transmitter, 5 milestone,
+/// 6 boss, 7 player start, 8/10 lookout, 9 trigger camera.
+#[derive(Debug, Serialize)]
+pub struct Locator {
+    pub index: u32,
+    pub kind: u8,
+    pub byte_01: u8,
+    pub id: i16,
+    pub position: [f32; 3],
+    /// +0x10..+0x18; AddLocatorInstList reads +0x14 as the start yaw.
+    pub rotation: [f32; 3],
+    pub raw: Vec<u8>,
 }
 #[derive(Debug, Serialize)]
 pub struct Placement {
@@ -197,6 +213,19 @@ impl World {
                 raw: bytes[p..p + 60].to_vec(),
             });
         }
+        let located = r.table(r.u32(0x5c), r.u32(0x58), 0x1c, 120)?;
+        let mut locators = Vec::new();
+        for (index, p) in located.step_by(0x1c).enumerate() {
+            locators.push(Locator {
+                index: index as u32,
+                kind: bytes[p],
+                byte_01: bytes[p + 1],
+                id: r.i16(p + 2),
+                position: r.xyz(p + 4)?,
+                rotation: r.xyz(p + 0x10)?,
+                raw: bytes[p..p + 0x1c].to_vec(),
+            });
+        }
         Ok(Self {
             raw_header: bytes[..120].to_vec(),
             min,
@@ -206,6 +235,7 @@ impl World {
             grid,
             item_definitions,
             items,
+            locators,
         })
     }
     fn grid(r: &Reader) -> Result<CollisionGrid, ParseError> {

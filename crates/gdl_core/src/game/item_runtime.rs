@@ -624,6 +624,10 @@ impl Game {
         let r = self.items.records[slot].clone();
         let sub_ = self.items.definitions[r.definition()].subtype();
         if sub_ == 0x32 {
+            // ProcessItems case 9, subtype 0x32: idle until a player touched it.
+            if r.u32_(0xf4) == 0 {
+                return Ok(());
+            }
             return unsupported("wave exit (subtype 0x32, SaveStage)");
         }
         let mut alive = 0u32;
@@ -746,7 +750,49 @@ impl Game {
                     self.delete_item(slot, false);
                 }
             }
-            0x28 | 0x31 | 0x33 | 0x34 | 0x35 => return unsupported("falling/flying rocks (type 10)"),
+            0x28 | 0x31 | 0x33 | 0x34 | 0x35 => {
+                // 0x33 first consults DoRockFly/DidRockFly (both 0 in the
+                // fixture; only boss scripts change them, not ported).
+                if r.u16_(0xd8) & 1 == 0 {
+                    return Ok(());
+                }
+                if sub_ == 0x33 {
+                    return unsupported("flying rock (DoRockFly)");
+                }
+                let rot = &self.items.tables.rand_rot_216;
+                let (f29, f27) = (rot[!slot & 7], rot[slot & 7]);
+                let m: [f32; 12] = std::array::from_fn(|k| r.f32_(0x10 + 4 * k));
+                let mut ypr = extract_ypr(&m)?;
+                let spf = self.globals.spf;
+                let (k, dv) = match sub_ {
+                    0x31 => (f32::from_bits(0x3e32_b8c3), 1.0),
+                    0x35 => (f32::from_bits(0x3c8e_fa36), 2.0),
+                    _ => (f32::from_bits(0x3eb2_b8c3), 2.0),
+                };
+                let vy = sub(r.f32_(0xfc), dv)?;
+                ypr[0] = add(mul(mul(f27, k)?, spf)?, ypr[0])?;
+                ypr[2] = add(mul(mul(f29, k)?, spf)?, ypr[2])?;
+                let nm = super::enemy_ai::create_ypr_matrix(ypr)?;
+                let rr = &mut self.items.records[slot];
+                rr.set_f32(0xfc, vy);
+                for (row, v) in nm.iter().take(3).enumerate() {
+                    for (col, x) in v.iter().take(3).enumerate() {
+                        rr.set_f32(0x10 + 16 * row + 4 * col, *x);
+                    }
+                }
+                let p = [
+                    add(mul(rr.f32_(0xf8), spf)?, rr.f32_(0x40))?,
+                    add(mul(rr.f32_(0xfc), spf)?, rr.f32_(0x44))?,
+                    add(mul(rr.f32_(0x100), spf)?, rr.f32_(0x48))?,
+                ];
+                for (c, v) in p.iter().enumerate() {
+                    rr.set_f32(0x40 + 4 * c, *v);
+                }
+                crate::items::ItemWorld::update_offsets(rr)?;
+                if p[1] < sub(self.globals.world_bottom, 200.0)? {
+                    self.delete_item(slot, false);
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -1017,4 +1063,27 @@ impl Game {
         Ok(())
     }
 
+}
+
+/// ExtractYPR 0x1d6950: (pitch, yaw, roll) from matrix rows (12 floats).
+pub fn extract_ypr(m: &[f32; 12]) -> R<[f32; 3]> {
+    use crate::libm::{atan2f, cosf};
+    if sub(1.0, m[9].abs())?.abs() < f32::from_bits(0x38d1_b717) {
+        let yaw = atan2f(-m[2], m[0])?;
+        let pitch = if 0.0 < m[9] { f32::from_bits(0x3fc9_0fdb) } else { f32::from_bits(0xbfc9_0fdb) };
+        return Ok([pitch, yaw, 0.0]);
+    }
+    let roll = atan2f(-m[1], m[5])?;
+    let c = cosf(roll)?;
+    let (pitch, yaw) = if c == 0.0 {
+        if 0.0 < roll {
+            (atan2f(m[9], -m[1])?, atan2f(m[6], -m[4])?)
+        } else {
+            (atan2f(m[9], m[1])?, atan2f(-m[6], m[4])?)
+        }
+    } else {
+        let k = crate::numeric::div_rn(m[5], c)?;
+        (atan2f(m[9], k)?, atan2f(crate::numeric::div_rn(m[8], k)?, crate::numeric::div_rn(m[10], k)?)?)
+    };
+    Ok([pitch, yaw, roll])
 }

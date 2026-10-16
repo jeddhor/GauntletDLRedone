@@ -134,6 +134,8 @@ pub struct ItemTables {
     /// 4-byte generator names written by the temple/hell overrides (0x2a81d0/8).
     pub generator_name_5: [u8; 4],
     pub generator_name_6: [u8; 4],
+    /// rand_rot.216 EE 0x234380 (static local, 8 floats): rock spin rates.
+    pub rand_rot_216: [f32; 8],
 }
 
 fn words(bytes: &[u8]) -> Vec<i32> {
@@ -175,6 +177,10 @@ impl ItemTables {
                 .collect(),
             generator_name_5: name4(0x2a_81d0)?,
             generator_name_6: name4(0x2a_81d8)?,
+            rand_rot_216: {
+                let b = elf.read(0x23_4380, 32)?;
+                std::array::from_fn(|k| f32::from_le_bytes(b[4 * k..4 * k + 4].try_into().unwrap()))
+            },
         })
     }
 }

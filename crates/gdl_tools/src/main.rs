@@ -366,6 +366,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             _ => None,
         };
+        if let (Some(d), true) = (driver.as_mut(), 0 < level) {
+            // Later levels: enter at the start locator (get_player_pos path).
+            let loc = world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("no start locator")?;
+            game.place_player_start(0, &mut d.sim, loc.position, loc.rotation[1]).map_err(|e| e.to_string())?;
+            d.sim.current_action = 0;
+            d.sim.requested_action = 0;
+        }
         let mut script: Vec<u32> = Vec::new();
         if let Some(sc) = opts.get("script") {
             for part in sc.split(',') {

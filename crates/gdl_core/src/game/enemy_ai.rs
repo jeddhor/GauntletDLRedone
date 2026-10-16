@@ -1,6 +1,6 @@
 //! Per-frame enemy behaviour: do_enemies 0x13b510, find_closest_player
 //! 0x137340, enemy_attack_control 0x13a998, enemy_knockback_control 0x13ad98,
-//! enemy_ai_control 0x13b208, do_ai 0x1424f0, move_logic05/06/07
+//! enemy_ai_control 0x13b208, do_ai 0x1424f0, move_logic00 0x142100, move_logic02/04 0x141d30/0x141928, move_logic05/06/07, move_logic18 0x13e7f8
 //! (0x141578/0x1411c8/0x140d70), set_enemy_trans 0x13c4b8, turn_enemy(_ang)
 //! 0x13c7b8/0x13c5e0, do_enemy_move 0x143990, do_enemy_collide 0x143568,
 //! EnemyCollideWalls 0x142ff8, EnemyCollideFloor 0x143120, DoEnemyItemCollide
@@ -8,7 +8,7 @@
 //! RequestEnemyAction 0x177a08, DoEnemyAction 0x1793f8, InitActions 0x177a88,
 //! CreateYPRMatrix 0x1d6660 with ffsin/ffcos 0x1d6d18/0x1d6ea0, get_yaw
 //! 0x168b68, FixAngle 0x1d6328, check_vacancy 0x13c9e0, FastWallCollide
-//! 0x11ed90, DeadEnd 0x13be90, blocked07 0x141120, EnemyWorldDamage 0x142e90.
+//! 0x11ed90, DeadEnd 0x13be90, blocked00 0x142438, blocked07 0x141120, EnemyWorldDamage 0x142e90.
 //!
 //! Visibility (MBWorldSphereVisible) is a camera query; until the camera is
 //! simulated natively it is supplied per enemy by the caller (`visible`).
@@ -366,10 +366,30 @@ impl Game {
         }
     }
 
+    /// blocked00 0x142438: count dead ends; after nine, reverse and double
+    /// the turn direction, facing the target when it exceeds 2.
+    fn blocked00(&mut self, i: usize) {
+        let c = self.enemies[i].i16_(0x378) + 1;
+        self.enemies[i].set_i16(0x378, c);
+        self.dead_end(i, if self.enemies[i].i32_(0x368).abs() < 3 { 5 } else { 0x3c });
+        if 8 < self.enemies[i].i16_(0x378) {
+            let old = self.enemies[i].i32_(0x368);
+            let new = old.wrapping_mul(-2);
+            self.enemies[i].set_i32(0x368, new);
+            self.enemies[i].set_i16(0x378, 0);
+            if 2 < new.abs() {
+                let f = self.faceang;
+                self.enemies[i].set_f32(0x260, f);
+                self.enemies[i].set_f32(0x258, f);
+            }
+        }
+    }
+
     fn blocked(&mut self, i: usize, logic: i16, short: i32, long: i32) -> R<()> {
         match logic {
             7 => self.blocked07(i, short, long),
-            0 | 8 | 10 | 0x14 => return unsupported(format!("blocked handler for logic {logic}")),
+            0 => self.blocked00(i),
+            8 | 10 | 0x14 => return unsupported(format!("blocked handler for logic {logic}")),
             _ => self.dead_end(i, 0x14),
         }
         Ok(())
@@ -604,15 +624,217 @@ impl Game {
         self.do_enemy_move(i)
     }
 
+    /// move_logic00: chase the target, probing up to nine angoff00 offsets
+    /// (turn direction +0x368) for a vacant step each brain period.
+    fn move_logic00(&mut self, i: usize) -> R<()> {
+        let t = self.enemies[i].i32_(e::TYPE);
+        let fw = self.fwrdval[t as usize];
+        if self.found_suicide_bomber(i)? {
+            self.enemies[i].set_i16(e::LOGIC, 0x18);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(0x2f2) == 0 || self.enemies[i].i16_(0x288) < 0 {
+            self.enemies[i].set_i16(e::LOGIC, ((i & 1) + 5) as i16);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let timer = self.enemies[i].i32_(0x36c);
+        let choose = timer < 1 || {
+            let left = timer - self.globals.vb_elapsed;
+            self.enemies[i].set_i32(0x36c, left);
+            left < 1
+        };
+        if choose {
+            let mut x = self.get_face_ang(i, true)?;
+            self.faceang = x;
+            let k = f32::from_bits(0x3d0e_fa36);
+            let mut n = 0usize;
+            loop {
+                let off = *self.angoff00.get(n).ok_or_else(|| super::Unsupported("angoff00 index".into()))?;
+                x = if self.enemies[i].i32_(0x368) < 1 { sub(x, off)? } else { add(x, off)? };
+                x = wrap(x)?;
+                let rec = &self.enemies[i];
+                let mut probe = [rec.f32_(0x40), add(add(rec.f32_(e::WIDTH), f32::from_bits(0x3dcc_cccd))?, rec.f32_(0x44))?, rec.f32_(0x48)];
+                probe[0] = add(mul(sinf(x)?, fw)?, probe[0])?;
+                probe[2] = add(mul(cosf(x)?, fw)?, probe[2])?;
+                let cur = self.ef(i, 0x260);
+                let prev = self.ef(i, 0x264);
+                let d = wrap(sub(x, cur)?)?;
+                let settled = sub(cur, prev)?.abs() <= k || k < sub(x, prev)?.abs();
+                if settled && d.abs() < f32::from_bits(0x4046_d3f2) && self.check_vacancy(probe, i)? != 0 {
+                    break;
+                }
+                n += 1;
+                if 8 < n {
+                    break;
+                }
+            }
+            let chosen = if n < 9 {
+                self.enemies[i].set_i16(0x378, n as i16);
+                x
+            } else {
+                self.faceang
+            };
+            let cur = self.enemies[i].u32_(0x260);
+            self.enemies[i].set_u32(0x264, cur);
+            self.enemies[i].set_f32(0x260, chosen);
+        }
+        let h = self.ef(i, 0x260);
+        self.set_enemy_trans(1.0, h, i)?;
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)
+    }
+
+    /// move_logic18: suicide bomber — wait until close (stage 0), wind up
+    /// (stage 1, action 9 → 4), then run weaving at 1.5× and explode on
+    /// reaching a player or after 240 vblanks.
+    fn move_logic18(&mut self, i: usize) -> R<()> {
+        let t0 = self.enemies[i].i32_(0x36c);
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let f = self.get_face_ang(i, true)?;
+        self.enemies[i].set_f32(0x260, f);
+        let vb = self.globals.vb_elapsed;
+        let stage = self.enemies[i].i16_(0x32a);
+        let mut run = stage == 2;
+        if stage == 1 {
+            if 0 <= self.enemies[i].i16_(0x288) && self.enemies[i].i32_(0xe0) != 4 {
+                let c = self.enemies[i].i32_(0x330) - vb;
+                self.enemies[i].set_i32(0x330, c);
+                if c < 1 {
+                    self.request_enemy_action(i, 9);
+                }
+            }
+            if self.enemies[i].i32_(0xe0) == 4 {
+                self.enemies[i].set_i16(0x32a, stage + 1);
+                self.audio("AudioSuicideYell", None, i as i32);
+                run = true;
+            }
+        } else if stage != 2 && 0 <= self.enemies[i].i16_(0x288) && self.ef(i, 0x290) <= self.ef(i, 0x314) {
+            self.enemies[i].set_i16(0x32a, stage + 1);
+            self.enemies[i].set_i32(0x330, 0x3c);
+            self.enemies[i].set_i32(0x334, 0);
+        }
+        if run {
+            let c = self.enemies[i].i32_(0x334) + vb;
+            self.enemies[i].set_i32(0x334, c);
+            if self.enemies[i].i16_(0x2f2) == 0 || self.enemies[i].i16_(0x288) < 0 {
+                self.enemies[i].set_i16(e::LOGIC, ((i & 1) + 5) as i16);
+                return self.do_ai(i);
+            }
+            let mut timer = self.enemies[i].i32_(0x36c);
+            let mut skip_trans = false;
+            if self.enemies[i].i16_(0x212) == 2 {
+                if 0 < timer {
+                    timer -= vb;
+                    self.enemies[i].set_i32(0x36c, timer);
+                } else {
+                    timer = 0;
+                    self.enemies[i].set_i32(0x36c, 0);
+                }
+            }
+            if timer < 1 {
+                self.enemies[i].set_i32(0x36c, 0);
+            } else {
+                let k = self.enemies[i].i32_(0x338);
+                let mut off = 0.0;
+                if k < 0x10 {
+                    off = *self.offset_step5.get(k as usize).ok_or_else(|| super::Unsupported("offset_step5 index".into()))?;
+                    self.enemies[i].set_i32(0x338, k + 1);
+                    self.enemies[i].set_i32(0x36c, 0);
+                }
+                let h = wrap(add(off, self.ef(i, 0x260))?)?;
+                self.enemies[i].set_f32(0x260, h);
+                if 0 < self.enemies[i].i32_(0x36c) && sub(h, self.ef(i, 0x268))?.abs() < f32::from_bits(0x3dd6_7750) {
+                    skip_trans = true;
+                } else {
+                    self.enemies[i].set_i32(0x36c, 0);
+                }
+            }
+            if !skip_trans {
+                let h = self.ef(i, 0x260);
+                self.set_enemy_trans(1.5, h, i)?;
+            }
+        }
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)?;
+        if self.enemies[i].i16_(0x294) != 0 {
+            self.enemies[i].set_i32(0x36c, 0);
+        }
+        if 240.0 <= self.enemies[i].i32_(0x334) as f32 || 0 <= self.enemies[i].i32_(0x298) {
+            self.suicide_bomber_index = -1;
+            self.damage_enemy(f32::from_bits(0x4479_c000), i, -2, 1, None, None, 0)?;
+        } else if t0 < 1 && 0 < self.enemies[i].i32_(0x36c) {
+            let h = self.enemies[i].u32_(0x260);
+            self.enemies[i].set_u32(0x268, h);
+            self.enemies[i].set_i32(0x338, 0);
+        }
+        Ok(())
+    }
+
+    /// move_logic02 (+45°, then logic 4) and move_logic04 (−45°, then
+    /// logic 2): face the target player, else step the heading every
+    /// brain period; after four steps switch to the sibling logic.
+    fn move_logic_diag(&mut self, i: usize, clockwise: bool, sibling: i16) -> R<()> {
+        let eighth = f32::from_bits(0x3f49_0fdb);
+        if self.found_suicide_bomber(i)? {
+            self.enemies[i].set_i16(e::LOGIC, 0x18);
+            return self.do_ai(i);
+        }
+        if 0 <= self.enemies[i].i16_(0x288) && self.ef(i, 0x28c) <= 8.0 {
+            self.enemies[i].set_i16(e::LOGIC, 0);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let timer = self.enemies[i].i32_(0x36c);
+        if 0 < timer {
+            let left = timer - self.globals.vb_elapsed;
+            self.enemies[i].set_i32(0x36c, left);
+            if left < 1 {
+                let h0 = self.ef(i, 0x260);
+                let h = wrap(if clockwise { add(h0, eighth)? } else { sub(h0, eighth)? })?;
+                self.enemies[i].set_f32(0x260, h);
+                let c = self.enemies[i].i32_(0x370) + 1;
+                self.enemies[i].set_i32(0x370, c);
+                if 4 <= c {
+                    self.enemies[i].set_i32(0x370, 0);
+                    self.enemies[i].set_i16(e::LOGIC, sibling);
+                    self.enemies[i].set_i16(0x326, sibling);
+                    self.enemies[i].set_i32(0x388, 4);
+                }
+            }
+        }
+        if let Ok(p) = usize::try_from(self.enemies[i].i32_(0x298)) {
+            let y = get_yaw(self.players[p].v3(0x50), self.enemies[i].v3(0x40))?;
+            self.enemies[i].set_f32(0x260, y);
+        }
+        let h = self.ef(i, 0x260);
+        self.set_enemy_trans(1.0, h, i)?;
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)
+    }
+
     /// do_ai: clear the move vector and run the enemy's logic.
     pub fn do_ai(&mut self, i: usize) -> R<()> {
         for o in [0x224, 0x228, 0x22c] {
             self.enemies[i].set_u32(o, 0);
         }
         match self.enemies[i].i16_(e::LOGIC) {
+            0 => self.move_logic00(i)?,
+            2 => self.move_logic_diag(i, true, 4)?,
+            4 => self.move_logic_diag(i, false, 2)?,
             5 => self.move_logic_wander(i, -HALF_PI)?,
             6 => self.move_logic_wander(i, HALF_PI)?,
             7 => self.move_logic07(i)?,
+            0x12 => self.move_logic18(i)?,
             l if (0..0x20).contains(&l) => return unsupported(format!("move_logic{l:02}")),
             _ => self.kill_enemy(i)?,
         }
@@ -986,7 +1208,8 @@ impl Game {
             if fqdist(rec.f32_(0x224), rec.f32_(0x22c))?.0 < 0.01 {
                 match logic {
                     7 => self.blocked07(i, 10, 0x3c),
-                    0 | 8 | 10 | 0x14 => return unsupported(format!("blocked handler for logic {logic}")),
+                    0 => self.blocked00(i),
+                    8 | 10 | 0x14 => return unsupported(format!("blocked handler for logic {logic}")),
                     _ => self.dead_end(i, 0x14),
                 }
                 self.enemies[i].set_i16(0x212, 1);

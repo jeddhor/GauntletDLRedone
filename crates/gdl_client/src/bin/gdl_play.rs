@@ -42,8 +42,6 @@ struct Library {
 
 #[derive(Resource)]
 struct Sources {
-    level: Package,
-    world: World,
     character: Package,
     clips: Animations,
     clip_bytes: Vec<u8>,
@@ -55,6 +53,41 @@ struct Sources {
 
 #[derive(Resource, Default)]
 struct Libraries(HashMap<String, Library>);
+
+/// One playable level of the realm (config entry).
+struct LevelSource {
+    name: String,
+    worlds: std::path::PathBuf,
+    package: Value,
+}
+
+/// Inputs to (re)build the native game for a level; the current geometry.
+#[derive(Resource)]
+struct Session {
+    elf_bytes: Vec<u8>,
+    wdata_bytes: Vec<u8>,
+    /// Start-state JSON (v5); later levels replace player 0 and CurLevel.
+    start: Value,
+    levels: Vec<LevelSource>,
+    current: usize,
+    world: World,
+    level: Package,
+    sim_start: PlayerSim,
+    action_map: Vec<[i64; 2]>,
+    clip_timings: Vec<gdl_core::animation_clock::ClipTiming>,
+    /// (enemy type, package prefix, ANIM.PS2 path).
+    monster_paths: Vec<(i32, String, String)>,
+    /// ANIM.PS2 path by package name (ITEMS, WEAPONS, POWERUPS).
+    anim_paths: HashMap<String, String>,
+    /// Seconds left on the level-complete banner, then the next level loads.
+    banner: Option<(f32, String)>,
+    /// Pending level index to build after the banner.
+    next: Option<usize>,
+    finished: Option<String>,
+}
+
+#[derive(Component)]
+struct LevelEntity;
 
 /// Per monster package: tree label → sequence index → frame object labels.
 #[derive(Resource, Default)]
@@ -144,7 +177,7 @@ fn enemy_frames(pkg: &Package) -> HashMap<String, Vec<Vec<String>>> {
     let mut out = HashMap::new();
     let Some(anim) = &pkg.anim else { return out };
     for tree in &anim.trees {
-        if tree.nodes.len() != 1 || tree.nodes[0].node_type != 2 {
+        if !tree.nodes.iter().any(|n| n.node_type == 2) {
             continue;
         }
         let mut stems: Vec<(String, Vec<(u32, String)>)> = Vec::new();
@@ -191,6 +224,7 @@ fn enemy_frames(pkg: &Package) -> HashMap<String, Vec<Vec<String>>> {
 fn setup(
     mut commands: Commands,
     sources: Res<Sources>,
+    session: Res<Session>,
     sim: Res<Sim>,
     presentation: Res<Presentation>,
     mut libraries: ResMut<Libraries>,
@@ -200,23 +234,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let root = commands.spawn((Transform::from_scale(MIRROR), Visibility::default(), MirrorRoot)).id();
-    let level = &sources.level;
-    let (cache, unknown, _) = gdl_client::materials_for(&level.objects, &level.table, &level.textures, &mut images, &mut materials, true);
-    let (parts, _) = gdl_client::object_meshes(&level.objects, &cache, &unknown, &mut meshes);
-    let names: HashMap<_, _> = level.objects.definitions.iter().map(|d| (d.label.as_str(), d.object_index as u32)).collect();
-    if let Ok(placements) = sources.world.placements() {
-        for p in placements {
-            let node = &sources.world.nodes[p.node_index as usize];
-            if let Some(list) = names.get(node.label.as_str()).and_then(|i| parts.get(i)) {
-                for (mesh, material) in list {
-                    let child = commands
-                        .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::from_translation(Vec3::from_array(p.summed_position))))
-                        .id();
-                    commands.entity(root).add_child(child);
-                }
-            }
-        }
-    }
+    spawn_level(&mut commands, root, &session, sim.game.items.records.len(), &mut meshes, &mut images, &mut materials);
     let character = &sources.character;
     let (cache, unknown, _) = gdl_client::materials_for(&character.objects, &character.table, &character.textures, &mut images, &mut materials, true);
     let (parts, _) = gdl_client::object_meshes(&character.objects, &cache, &unknown, &mut meshes);
@@ -240,12 +258,6 @@ fn setup(
             frames.0.insert(name.clone(), enemy_frames(pkg));
         }
     }
-    for (kind, n) in [(SlotKind::Enemy, 25), (SlotKind::Item, sim.game.items.records.len()), (SlotKind::Effect, 64)] {
-        for index in 0..n {
-            let e = commands.spawn((Slot { kind, index, key: None }, Transform::default(), Visibility::Hidden)).id();
-            commands.entity(root).add_child(e);
-        }
-    }
     commands.spawn((
         Camera3d::default(),
         Tonemapping::None,
@@ -264,6 +276,96 @@ fn setup(
     ));
 }
 
+/// Level geometry (original translation-only placements) and entity slots.
+fn spawn_level(
+    commands: &mut Commands,
+    root: Entity,
+    session: &Session,
+    item_count: usize,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let level = &session.level;
+    let (cache, unknown, _) = gdl_client::materials_for(&level.objects, &level.table, &level.textures, images, materials, true);
+    let (parts, _) = gdl_client::object_meshes(&level.objects, &cache, &unknown, meshes);
+    let names: HashMap<_, _> = level.objects.definitions.iter().map(|d| (d.label.as_str(), d.object_index as u32)).collect();
+    if let Ok(placements) = session.world.placements() {
+        for p in placements {
+            let node = &session.world.nodes[p.node_index as usize];
+            if let Some(list) = names.get(node.label.as_str()).and_then(|i| parts.get(i)) {
+                for (mesh, material) in list {
+                    let child = commands
+                        .spawn((
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(material.clone()),
+                            Transform::from_translation(Vec3::from_array(p.summed_position)),
+                            LevelEntity,
+                        ))
+                        .id();
+                    commands.entity(root).add_child(child);
+                }
+            }
+        }
+    }
+    for (kind, n) in [(SlotKind::Enemy, 25), (SlotKind::Item, item_count), (SlotKind::Effect, 64)] {
+        for index in 0..n {
+            let e = commands.spawn((Slot { kind, index, key: None }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
+            commands.entity(root).add_child(e);
+        }
+    }
+}
+
+/// Build the native game for level `idx`; later levels carry player 0's
+/// record and are entered at the level's start locator (get_player_pos).
+fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::record::Record>) -> Result<(Game, PlayerDriver), Box<dyn Error>> {
+    let elf = gdl_formats::elf::Elf::parse(&session.elf_bytes)?;
+    let wdata = gdl_formats::wdata::WorldData::parse(&session.wdata_bytes)?;
+    let mut start = session.start.clone();
+    if let Some(r) = carry {
+        start["players"][0] = Value::String(r.0.iter().map(|b| format!("{b:02x}")).collect());
+        start["globals"]["cur_level"] = Value::from(idx as i64);
+    }
+    let start: setup::StartState = serde_json::from_value(start)?;
+    let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
+    for (t, prefix, path) in &session.monster_paths {
+        let anim = Animations::parse(&gdl_client::bounded_read(Path::new(path))?)?;
+        setup::enemy_trees(&mut enemy_anims, *t, prefix, &anim);
+    }
+    let anim = |pkg: &str| -> Result<Animations, Box<dyn Error>> {
+        let path = session.anim_paths.get(pkg).ok_or_else(|| format!("{pkg} anim path"))?;
+        Ok(Animations::parse(&gdl_client::bounded_read(Path::new(path))?)?)
+    };
+    let items_anim = anim("ITEMS")?;
+    let mut item_anims = HashMap::new();
+    for (k, t) in items_anim.trees.iter().enumerate() {
+        item_anims.insert(t.label.clone(), setup::clips_of(&items_anim, k));
+    }
+    let weapons = anim("WEAPONS")?;
+    let powerups = anim("POWERUPS")?;
+    let effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &weapons, &powerups)?;
+    let mut game = Game::new_level(setup::LevelInputs {
+        world: &session.world,
+        wdata: &wdata,
+        level: idx,
+        elf: &elf,
+        start,
+        enemy_anims,
+        item_anims,
+        effect_tables,
+    })?;
+    let tables = tables_from_elf(&elf)?;
+    let mut sim = session.sim_start.clone();
+    if carry.is_some() {
+        let loc = session.world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("level has no player start locator")?;
+        game.place_player_start(0, &mut sim, loc.position, loc.rotation[1]).map_err(|e| e.to_string())?;
+        sim.current_action = 0;
+        sim.requested_action = 0;
+    }
+    let driver = PlayerDriver::new(sim, tables, session.action_map.clone(), session.clip_timings.clone());
+    Ok((game, driver))
+}
+
 fn keyboard_levels(keys: &ButtonInput<KeyCode>) -> u32 {
     let any = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
     let mut levels = direction_levels(
@@ -279,8 +381,8 @@ fn keyboard_levels(keys: &ButtonInput<KeyCode>) -> u32 {
     levels
 }
 
-fn simulate(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>) {
-    if sim.error.is_some() {
+fn simulate(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>, session: Res<Session>) {
+    if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() {
         return;
     }
     let levels = keyboard_levels(&keys);
@@ -387,7 +489,7 @@ fn present_world(
                     *vis = Visibility::Hidden;
                     continue;
                 };
-                let tree = format!("{pkg}{level}");
+                let tree = setup::enemy_desc(pkg, level);
                 let seq = anim.clock.sequence as usize;
                 let list = frames.0.get(pkg).and_then(|m| m.get(&tree)).and_then(|s| s.get(seq));
                 let label = list.and_then(|l| {
@@ -521,6 +623,7 @@ type CameraQuery<'w, 's> = Query<'w, 's, &'static mut Transform, (With<FollowCam
 #[allow(clippy::too_many_arguments)]
 fn present_player(
     sim: Res<Sim>,
+    session: Res<Session>,
     sources: Res<Sources>,
     presentation: Res<Presentation>,
     mut body: BodyQuery,
@@ -567,14 +670,15 @@ fn present_player(
             .count();
         let health = p.f32_(0x1a10);
         text.0 = format!(
-            "INTERIM PLAYTEST (not the M12 slice) - Yellow Sorceress, The Poison Fields\n\
-             Arrows/WASD: move   Space/K: throw   Esc: quit\n\
+            "INTERIM PLAYTEST - Yellow Sorceress - The Poison Fields, level {}\n\
+             Arrows/WASD: move   Space/K: throw   stand still in the exit portal to leave   Enter: continue after death   F9: debug skip level   Esc: quit\n\
              HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}   EXP +{}   KILLS {}\n\
              enemies active {}   generators standing {}   missiles thrown {}\n\
              {}\n\
              Native: item/enemy/generator/missile/damage/pickup systems, movement + collision\n\
              Interim/presentation: start state from your save, player action map + clip clock, camera, unlit materials,\n\
-             enemy frame objects, item rest poses, no audio, no exp/levels, no potions/magic, no exit{}{}",
+             enemy frame objects, item rest poses, no audio, no exp/levels, no potions/magic, no boss{}{}",
+            session.levels[session.current].name,
             health,
             p.i32_(0x1a20),
             p.i32_(0x1a14),
@@ -584,7 +688,15 @@ fn present_player(
             live,
             generators,
             sim.driver.missiles_started,
-            if health <= 0.0 { "*** YOU DIED (Esc to quit) ***".to_string() } else { sim.last_event.clone() },
+            if let Some(f) = &session.finished {
+                format!("*** {f} ***")
+            } else if let Some((_, b)) = &session.banner {
+                format!("*** {b} ***")
+            } else if health <= 0.0 {
+                "*** YOU DIED - press Enter to continue (interim) ***".to_string()
+            } else {
+                sim.last_event.clone()
+            },
             sim.error.as_ref().map_or(String::new(), |e| format!("\nSIMULATION STOPPED: {e}")),
             g.log.unsupported.keys().next().map_or(String::new(), |k| format!("\nfirst unported path hit: {k}")),
         );
@@ -610,12 +722,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         attention: vec3(&pr["attention_offset_810"])?,
     };
     let action_map: Vec<[i64; 2]> = serde_json::from_value(pr["action_map"].clone())?;
-    let elf_bytes = gdl_client::bounded_read(&p("elf")?)?;
-    let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
-    let world = World::parse(&gdl_client::bounded_read(&p("worlds")?)?)?;
-    let wdata = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&p("wdata")?)?)?;
-    let start: setup::StartState = serde_json::from_slice(&gdl_client::bounded_read(&p("game_start")?)?)?;
-    let level = load_package(&cfg["level"])?;
     let character = load_package(&cfg["character"])?;
     let rig = Animations::parse(&gdl_client::bounded_read(&p("character_rig")?)?)?;
     let clip_bytes = gdl_client::bounded_read(&p("character_clips")?)?;
@@ -624,32 +730,53 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Err("character rig and clip trees must correspond".into());
     }
     let mut packages = HashMap::new();
+    let mut anim_paths = HashMap::new();
     for (name, v) in cfg["packages"].as_object().ok_or("config packages")? {
         packages.insert(name.clone(), load_package(v)?);
+        if let Some(a) = v["anim"].as_str() {
+            anim_paths.insert(name.clone(), a.to_string());
+        }
     }
     let mut monsters = HashMap::new();
-    let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
+    let mut monster_paths = Vec::new();
     for m in cfg["monsters"].as_array().ok_or("config monsters")? {
         let t = m["type"].as_i64().ok_or("monster type")? as i32;
         let name = m["package"].as_str().ok_or("monster package")?.to_string();
-        let anim = packages.get(&name).and_then(|p| p.anim.as_ref()).ok_or("monster package anim")?;
-        setup::enemy_trees(&mut enemy_anims, t, &name, anim);
+        let path = anim_paths.get(&name).ok_or("monster package anim")?.clone();
+        monster_paths.push((t, name.clone(), path));
         monsters.insert(t, name);
     }
-    let items_anim = packages.get("ITEMS").and_then(|p| p.anim.as_ref()).ok_or("ITEMS anim")?;
-    let mut item_anims = HashMap::new();
-    for (k, t) in items_anim.trees.iter().enumerate() {
-        item_anims.insert(t.label.clone(), setup::clips_of(items_anim, k));
+    let mut levels = Vec::new();
+    for l in cfg["levels"].as_array().ok_or("config levels")? {
+        levels.push(LevelSource {
+            name: l["name"].as_str().ok_or("level name")?.to_string(),
+            worlds: l["worlds"].as_str().ok_or("level worlds")?.into(),
+            package: l["level"].clone(),
+        });
     }
-    let weapons = packages.get("WEAPONS").and_then(|p| p.anim.as_ref()).ok_or("WEAPONS anim")?;
-    let powerups = packages.get("POWERUPS").and_then(|p| p.anim.as_ref()).ok_or("POWERUPS anim")?;
-    let effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, weapons, powerups)?;
-    let game = Game::new_level(setup::LevelInputs { world: &world, wdata: &wdata, level: 0, elf: &elf, start, enemy_anims, item_anims, effect_tables })?;
-    let tables = tables_from_elf(&elf)?;
-    let driver = PlayerDriver::new(player, tables, action_map, setup::clips_of(&clips, 0));
+    let first = levels.first().ok_or("no levels")?;
+    let session = Session {
+        elf_bytes: gdl_client::bounded_read(&p("elf")?)?,
+        wdata_bytes: gdl_client::bounded_read(&p("wdata")?)?,
+        start: serde_json::from_slice(&gdl_client::bounded_read(&p("game_start")?)?)?,
+        world: World::parse(&gdl_client::bounded_read(&first.worlds)?)?,
+        level: load_package(&first.package)?,
+        levels,
+        current: 0,
+        sim_start: player,
+        action_map,
+        clip_timings: setup::clips_of(&clips, 0),
+        monster_paths,
+        anim_paths,
+        banner: None,
+        next: None,
+        finished: None,
+    };
+    let (game, driver) = build_game(&session, 0, None)?;
     App::new()
-        .insert_resource(Sources { level, world, character, clips, clip_bytes, rig, packages, monsters })
+        .insert_resource(Sources { character, clips, clip_bytes, rig, packages, monsters })
         .insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new() })
+        .insert_resource(session)
         .insert_resource(presentation)
         .init_resource::<Libraries>()
         .init_resource::<EnemyFrames>()
@@ -665,9 +792,90 @@ fn run() -> Result<(), Box<dyn Error>> {
         }))
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, simulate)
-        .add_systems(Update, (present_world, present_sparks, present_player))
+        .add_systems(Update, (advance_level, present_world, present_sparks, present_player).chain())
         .run();
     Ok(())
+}
+
+/// Level complete → banner → next level (exit destination wave), or the
+/// end of the playable realm. Enter continues after death (interim).
+#[allow(clippy::too_many_arguments)]
+fn advance_level(
+    mut commands: Commands,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut session: ResMut<Session>,
+    mut sim: ResMut<Sim>,
+    old: Query<Entity, With<LevelEntity>>,
+    root: Query<Entity, With<MirrorRoot>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if keys.just_pressed(KeyCode::Enter) && sim.game.players[0].f32_(0x1a10) <= 0.0 {
+        // INTERIM continue: restore the start-state health and play on.
+        let start_health = session.start["players"][0]
+            .as_str()
+            .and_then(|h| h.get(0x1a10 * 2..0x1a10 * 2 + 8))
+            .and_then(|h| u32::from_str_radix(h, 16).ok())
+            .map(|v| f32::from_bits(v.swap_bytes()));
+        if let Some(h) = start_health {
+            let p = &mut sim.game.players[0];
+            p.set_f32(0x1a10, h);
+            p.set_i32(0xfc, 1);
+            sim.last_event = "continued (interim: start health restored)".into();
+        }
+    }
+    if keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
+        // DEBUG: act as if the exit portal (destination: next level) was used.
+        sim.game.level_done = Some(0x700 | (session.current as i32 + 1));
+    }
+    if session.banner.is_none()
+        && session.finished.is_none()
+        && let Some(wave) = sim.game.level_done.take()
+    {
+        let world = wave >> 8;
+        let level = (wave & 0xff) as usize;
+        let name = session.levels[session.current].name.clone();
+        if world == 7 && level < session.levels.len() {
+            session.next = Some(level);
+            session.banner = Some((3.0, format!("{name} COMPLETE - entering {}", session.levels[level].name)));
+        } else {
+            session.finished = Some(format!(
+                "{name} COMPLETE. The exit leads to wave {wave:#x}; that level (boss/hub) is not ported yet. Thanks for testing! (Esc to quit)"
+            ));
+        }
+    }
+    let Some((left, text)) = session.banner.clone() else { return };
+    let left = left - time.delta_secs();
+    if 0.0 < left {
+        session.banner = Some((left, text));
+        return;
+    }
+    session.banner = None;
+    let Some(idx) = session.next.take() else { return };
+    let loaded = (|| -> Result<(), Box<dyn Error>> {
+        session.world = World::parse(&gdl_client::bounded_read(&session.levels[idx].worlds)?)?;
+        session.level = load_package(&session.levels[idx].package)?;
+        Ok(())
+    })();
+    let carry = sim.game.players[0].clone();
+    match loaded.and_then(|_| build_game(&session, idx, Some(&carry))) {
+        Ok((game, mut driver)) => {
+            driver.missiles_started = sim.driver.missiles_started;
+            sim.game = game;
+            sim.driver = driver;
+            session.current = idx;
+            for e in &old {
+                commands.entity(e).despawn();
+            }
+            if let Ok(root) = root.single() {
+                let n = sim.game.items.records.len();
+                spawn_level(&mut commands, root, &session, n, &mut meshes, &mut images, &mut materials);
+            }
+        }
+        Err(e) => sim.error = Some(format!("loading level {}: {e}", session.levels[idx].name)),
+    }
 }
 
 fn main() {

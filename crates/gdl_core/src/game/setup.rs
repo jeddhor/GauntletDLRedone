@@ -76,11 +76,24 @@ pub fn clips_of(anim: &Animations, tree: usize) -> Vec<ClipTiming> {
         .collect()
 }
 
-/// Enemy trees "<NAME><level>" from a MONSTERS/<NAME>/ANIM.PS2 package.
+/// EnemyDesc 0x136ff8 level suffixes 4..7: offset_step5[level + 0x94]
+/// (ELF bytes at 0x22d858 = "ABSF"); other levels print as numbers.
+pub const LEVEL_LETTERS: &[u8; 4] = b"ABSF";
+
+/// EnemyDesc(type, level) tree label: "<PREFIX><level>" (level 0 → 1).
+pub fn enemy_desc(prefix: &str, level: i32) -> String {
+    let l = if level == 0 { 1 } else { level };
+    if (4..=7).contains(&l) {
+        format!("{prefix}{}", LEVEL_LETTERS[(l - 4) as usize] as char)
+    } else {
+        format!("{prefix}{l}")
+    }
+}
+
+/// Enemy trees EnemyDesc(type, level) from a MONSTERS/<NAME>/ANIM.PS2 package.
 pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animations) {
     for (k, tree) in anim.trees.iter().enumerate() {
-        let Some(rest) = tree.label.strip_prefix(prefix) else { continue };
-        let Ok(level) = rest.parse::<i32>() else { continue };
+        let Some(level) = (1..=7).find(|&l| enemy_desc(prefix, l) == tree.label) else { continue };
         let labels: Vec<(String, i16)> = tree
             .sequences
             .iter()
@@ -182,8 +195,11 @@ impl Game {
         };
         let grid = DynGrid::new(inp.world.min, inp.world.max, s.extra.max_enemy_radius, s.extra.max_item_radius)?;
         let item_count = loaded.world.records.len();
+        let mut globals = s.globals.clone();
+        // GauntWorldInit 0x162e90: WldBtm = world min y − 4.5.
+        globals.world_bottom = crate::numeric::sub_guarded_rz(inp.world.min[1], 4.5)?;
         let mut game = Game {
-            globals: s.globals.clone(),
+            globals,
             level: level.raw.clone(),
             players,
             enemies: enemies::new_enemy_records(),
@@ -202,6 +218,8 @@ impl Game {
             did_action: false,
             fwrdval: vec![0.0; 34],
             angoff07: floats("angoff07")?,
+            angoff00: floats("angoff00")?,
+            offset_step5: floats("offset_step5")?,
             enemy_action_priority: ints("e_actpri")?,
             faceang: 0.0,
             frame_main: 0,
@@ -220,6 +238,7 @@ impl Game {
             effects: super::effects::Effects::new(inp.effect_tables),
             boss_crit_inst: s.extra.boss_crit_inst,
             target_cone_mode: s.extra.target_cone_mode,
+            level_done: None,
             log: FrameLog::default(),
         };
         for slot in 0..item_count {

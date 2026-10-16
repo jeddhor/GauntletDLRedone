@@ -58,16 +58,20 @@ def main():
             out['anim'] = str(paths[3])
         return out
 
-    worlds, wdata, rig, clips = resolve(['LEVELS/LEVELG1/WORLDS.PS2', 'WDATA/TOWN.WAD',
-                                         'PLAYERS/SOR/YEL00/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2'])
+    wdata, rig, clips = resolve(['WDATA/TOWN.WAD', 'PLAYERS/SOR/YEL00/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2'])
+    # The Poison Fields levels G1-G4 (WDATA/TOWN.WAD records 0-3); G5 is the boss level.
+    levels = [dict(name=f'G{n}', worlds=str(resolve([f'LEVELS/LEVELG{n}/WORLDS.PS2'])[0]),
+                   level=package(f'LEVELS/LEVELG{n}', anim=False)) for n in range(1, 5)]
     config = dict(
-        sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), worlds=str(worlds), wdata=str(wdata),
-        level=package('LEVELS/LEVELG1', anim=False), character=package('PLAYERS/SOR/YEL00', anim=False),
+        sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), wdata=str(wdata), levels=levels,
+        character=package('PLAYERS/SOR/YEL00', anim=False),
         character_rig=str(rig), character_clips=str(clips),
-        packages=dict(ZOM=package('MONSTERS/ZOM'), MAG=package('MONSTERS/MAG'), ITEMS=package('ITEMS/LEVELG'),
+        packages=dict(ZOM=package('MONSTERS/ZOM'), MAG=package('MONSTERS/MAG'), GHO=package('MONSTERS/GHO'),
+                      ITEMS=package('ITEMS/LEVELG'),
                       POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), SFXYEL=package('PLAYERS/SOR/SFXYEL')),
-        # Enemy types of The Poison Fields (GetEnemyTypes for town "G", level 0).
-        monsters=[dict(type=13, package='ZOM'), dict(type=12, package='MAG')])
+        # Enemy types of The Poison Fields (GetEnemyTypes, town "G" levels 0-3;
+        # prefixes from the ELF enemy_table).
+        monsters=[dict(type=13, package='ZOM'), dict(type=12, package='MAG'), dict(type=20, package='GHO')])
     CONFIG.write_text(json.dumps(config, indent=1) + '\n')
     env = os.environ.copy()
     if args.virtual:

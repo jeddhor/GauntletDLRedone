@@ -161,6 +161,10 @@ pub struct Game {
     pub fwrdval: Vec<f32>,
     /// angoff07 0x22d910 (8 floats) and e_actpri 0x23f950 (33 ints).
     pub angoff07: Vec<f32>,
+    /// angoff00 (move_logic00 probe offsets).
+    pub angoff00: Vec<f32>,
+    /// offset_step5 0x22d7c0 (move_logic18 weave offsets, first 16 floats).
+    pub offset_step5: Vec<f32>,
     pub enemy_action_priority: Vec<i32>,
     /// faceang 0x2c166c and frame_main 0x220110.
     pub faceang: f32,
@@ -183,6 +187,8 @@ pub struct Game {
     /// BossCritInst 0x25d2c0 and the targeting-cone global 0x21edcc.
     pub boss_crit_inst: i32,
     pub target_cone_mode: i32,
+    /// Destination wave (world << 8 | level) once a player finished do_exit.
+    pub level_done: Option<i32>,
     pub log: setup::FrameLog,
 }
 
