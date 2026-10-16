@@ -128,6 +128,17 @@ struct RigNode(usize);
 struct FollowCamera;
 #[derive(Component)]
 struct Hud;
+/// Centered banner text (title, pause, death, level complete).
+#[derive(Component)]
+struct Banner;
+
+/// Front-end state: title prompt, pause, diagnostics toggle (F1).
+#[derive(Resource, Default)]
+struct Ui {
+    started: bool,
+    paused: bool,
+    details: bool,
+}
 #[derive(Component)]
 struct Slot {
     kind: SlotKind,
@@ -279,6 +290,14 @@ fn setup(
         Transform::from_xyz(-620.0, 430.0, 0.0),
         Hud,
     ));
+    commands.spawn((
+        Text2d::new(String::new()),
+        TextFont { font_size: 30.0, ..default() },
+        TextColor(Color::srgb(1.0, 0.9, 0.4)),
+        Anchor::CENTER,
+        Transform::from_xyz(0.0, 40.0, 0.0),
+        Banner,
+    ));
 }
 
 /// Level geometry (original translation-only placements) and entity slots.
@@ -387,8 +406,16 @@ fn keyboard_levels(keys: &ButtonInput<KeyCode>) -> u32 {
     levels
 }
 
-fn simulate(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>, session: Res<Session>, presentation: Res<Presentation>, mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>) {
-    if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() {
+#[allow(clippy::too_many_arguments)]
+fn simulate(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut sim: ResMut<Sim>,
+    session: Res<Session>,
+    presentation: Res<Presentation>,
+    ui: Res<Ui>,
+    mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
+) {
+    if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started || ui.paused {
         return;
     }
     let levels = keyboard_levels(&keys);
@@ -701,7 +728,9 @@ fn present_player(
     mut body: BodyQuery,
     mut nodes: NodeQuery,
     mut camera: CameraQuery,
-    mut hud: Query<&mut Text2d, With<Hud>>,
+    mut hud: Query<&mut Text2d, (With<Hud>, Without<Banner>)>,
+    mut banner: Query<&mut Text2d, (With<Banner>, Without<Hud>)>,
+    ui: Res<Ui>,
     keys: Res<ButtonInput<KeyCode>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -730,9 +759,27 @@ fn present_player(
     if let Ok(mut t) = camera.single_mut() {
         *t = Transform::from_translation(eye * MIRROR).looking_to(forward * MIRROR, up * MIRROR);
     }
+    let g = &sim.game;
+    let p = &g.players[0];
+    let health = p.f32_(0x1a10);
+    if let Ok(mut text) = banner.single_mut() {
+        text.0 = if !ui.started {
+            "GAUNTLET: DARK LEGACY\nnative reconstruction - interim playtest\n\nYellow Sorceress - The Poison Fields\n\nPress Enter to start".to_string()
+        } else if let Some(f) = &session.finished {
+            f.clone()
+        } else if let Some((_, b)) = &session.banner {
+            b.clone()
+        } else if let Some(e) = &sim.error {
+            format!("SIMULATION STOPPED\n{e}")
+        } else if health <= 0.0 {
+            "YOU DIED\npress Enter to continue".to_string()
+        } else if ui.paused {
+            "PAUSED (P)".to_string()
+        } else {
+            String::new()
+        };
+    }
     if let Ok(mut text) = hud.single_mut() {
-        let g = &sim.game;
-        let p = &g.players[0];
         let live = g.enemies.iter().filter(|e| matches!(e.i32_(0xc8), 1 | 6)).count();
         let generators = g
             .items
@@ -740,39 +787,36 @@ fn present_player(
             .iter()
             .filter(|r| r.active() && g.items.definitions[r.definition()].kind() == 3 && r.u8_(0xf6) != 0)
             .count();
-        let health = p.f32_(0x1a10);
-        text.0 = format!(
-            "INTERIM PLAYTEST - Yellow Sorceress - The Poison Fields, level {}\n\
-             Arrows/WASD: move   Space/K: throw   E/L: potion magic   stand still in the exit portal to leave   Enter: continue after death   F9: debug skip level   Esc: quit\n\
-             HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}   LEVEL {}   EXP {}   KILLS {}\n\
-             enemies active {}   generators standing {}   missiles thrown {}\n\
+        let mut t = format!(
+            "YELLOW SORCERESS   level {}   exp {}\n\
+             HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}\n\
+             The Poison Fields {}   kills {}   enemies {}   generators {}\n\
              {}\n\
-             Native: item/enemy/generator/missile/damage/pickup/sound-cue systems, movement + collision\n\
-             Interim/presentation: start state from your save, player action map + clip clock, camera, unlit materials,\n\
-             enemy frame objects, item rest poses, original sounds/music (approximate mixing), magic has no animation, combat stats not re-derived on level up, no boss{}{}",
-            session.levels[session.current].name,
+             move: arrows/WASD   throw: Space/K   potion: E/L   pause: P   details: F1   quit: Esc",
+            p.i32_(0x2ac0),
+            p.i32_(0x1a1c),
             health,
             p.i32_(0x1a20),
             p.i32_(0x1a14),
             p.i32_(0x1a18),
-            p.i32_(0x2ac0),
-            p.i32_(0x1a1c),
+            session.levels[session.current].name,
             sim.kills,
             live,
             generators,
-            sim.driver.missiles_started,
-            if let Some(f) = &session.finished {
-                format!("*** {f} ***")
-            } else if let Some((_, b)) = &session.banner {
-                format!("*** {b} ***")
-            } else if health <= 0.0 {
-                "*** YOU DIED - press Enter to continue (interim) ***".to_string()
-            } else {
-                sim.last_event.clone()
-            },
-            sim.error.as_ref().map_or(String::new(), |e| format!("\nSIMULATION STOPPED: {e}")),
-            g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),
+            sim.last_event,
         );
+        if ui.details {
+            t.push_str(&format!(
+                "\n\nINTERIM PLAYTEST (not the M12 slice). missiles thrown {}\n\
+                 Native: item/enemy/generator/missile/damage/pickup/magic/exp/exit/sound-cue systems, movement + collision\n\
+                 Interim/presentation: start state from your save, player action map + clip clock, camera, unlit materials,\n\
+                 enemy frame objects, item rest poses, approximate audio mixing, magic without animation, no melee, no boss\n\
+                 Enter after death: interim continue   F9: debug skip to next level{}",
+                sim.driver.missiles_started,
+                g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),
+            ));
+        }
+        text.0 = t;
     }
 }
 
@@ -883,9 +927,25 @@ fn run() -> Result<(), Box<dyn Error>> {
         }))
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, simulate)
-        .add_systems(Update, (advance_level, present_world, present_sparks, present_player).chain())
+        .init_resource::<Ui>()
+        .add_systems(Update, (ui_input, advance_level, present_world, present_sparks, present_player).chain())
         .run();
     Ok(())
+}
+
+fn ui_input(keys: Res<ButtonInput<KeyCode>>, mut ui: ResMut<Ui>) {
+    if !ui.started {
+        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+            ui.started = true;
+        }
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyP) {
+        ui.paused = !ui.paused;
+    }
+    if keys.just_pressed(KeyCode::F1) {
+        ui.details = !ui.details;
+    }
 }
 
 /// Level complete → banner → next level (exit destination wave), or the

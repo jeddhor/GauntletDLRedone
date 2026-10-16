@@ -6,12 +6,16 @@
 archive identity, then runs the native game simulation (research/gameplay.md)
 for the Yellow Sorceress in The Poison Fields, levels G1–G4.
 
-Controls: arrows/WASD move, Space/K throw, E/L use a potion (magic), stand
-still in the exit portal to leave the level, Enter continues after death
+Controls: Enter starts from the title prompt; arrows/WASD move, Space/K
+throw, E/L use a potion (magic), P pauses, F1 toggles the diagnostics block,
+stand still in the exit portal to leave the level, Enter continues after death
 (interim: restores the start-state health), F9 debug-skips to the next level,
-Esc quits. The HUD shows health, gold, keys, potions, level, experience,
-kills, active enemies, standing generators and the first log note or
-unported path.
+Esc quits. The HUD shows level, experience, health, gold, keys, potions,
+kills, active enemies and standing generators; F1 adds the interim labels and
+any unported path hit.
+
+Audio: original sound effects, announcer lines and level music play through
+ALSA (research/audio.md); mixing is approximate. `--virtual` runs are silent.
 
 Start: G1 uses the state exported from the preserved save
 (`export_game_state.py` v6 + `export_start_state.py` v2). Later levels carry the
