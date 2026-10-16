@@ -183,6 +183,14 @@ impl CollisionWorld {
         })
     }
 
+    /// PlayerCollideWalls increments the hit triangle's CheckNum stamp so the
+    /// following query (whose counter is one higher) skips that triangle.
+    pub fn bump_check(&mut self, triangle: usize) {
+        if let Some(stamp) = self.check.get_mut(triangle) {
+            *stamp = stamp.wrapping_add(1);
+        }
+    }
+
     /// FloorCollide 0x11ec58: vertical segment at `position` from y+top to
     /// y+bottom, CheckFlags 7 or 0x17, normal-y 0.5..2.0, object mask 0x23c.
     pub fn floor_collide(
@@ -567,7 +575,7 @@ fn vnormalize(v: V3) -> R<(V3, f32)> {
 }
 
 /// NormalVector 0x1d5d50 (in place); returns the length.
-fn normal_vector(v: &mut V3) -> R<f32> {
+pub(crate) fn normal_vector(v: &mut V3) -> R<f32> {
     let xz = fqdist(v[0], v[2])?.0;
     let len = fqdist(xz, v[1])?.0;
     let scale = if len <= 0.0 { 1.0 } else { div_rn(1.0, len)? };

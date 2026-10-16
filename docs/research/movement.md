@@ -165,6 +165,29 @@ and is retained as invalid input evidence. Releases must target the render windo
 After the probes, all breakpoints were disabled, input cleared and the fixture
 reloaded through the barrier (`poison-fields-after-motion-stage-probes-v1.json`).
 
+## Native displacement with static collision
+
+gdl_core/player_collision.rs composes, per update: UpdateObjColOffset 0x103208
+(collision position = position + WorldVector(offset +0x81c, matrix), run by
+do_players before PlayerMotion; the stored +0x70 lags one update and must not be
+used directly), the request, PlayerCollideWalls (PlayerWallCollide: CheckFlags 7,
+|ny| ≤ 0x3f5db22d, mask 0x13a; SlideAlongWall; stamp bump of the hit triangle,
+×0.95 retry, normal-dot < 0.5 stop), PlayerCollideFloor (all branches including
+the pull-back and step-ahead re-queries), PlayerMotion's floor-height dy (clamped
+at SPF×−16), the slope rescale and the position add. The +0x0c000000/+0x20000000
+floor gate uses file flags; the loader's added bits never form that combination
+in level G1. compare_displacement.py chains native motion-code → request →
+displacement from each pre-update record and compares the post-update record:
+**96/96 updates byte-equal in position +0x50, floor height +0x88c and wall object
++0x8a0** across six direction traces, including both pull-backs (floor results:
+71 × 1, 18 × 0, 7 × 2; walls never hit). Report:
+private/reports/displacement-comparison-v3/.
+
+Not covered: item/player/enemy contacts, CameraLimitPlayerDpos (camera system),
+PlayerNewFloor slope factor and moving floors, transporters/exits, wall hits
+(SlideAlongWall and the retry are transcribed but unexercised), water, no-floor
+and closed-loop multi-update simulation (matrix rebuild, +0x89c tracking).
+
 ## Remaining gaps
 
 Not native yet: keyboard/pad → PlayerControl production, FloorCollide/

@@ -16,17 +16,8 @@ import subprocess
 from compare_animation_keys import bounded_json
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--trace', type=pathlib.Path, required=True)
-    parser.add_argument('--out', type=pathlib.Path, required=True)
-    args = parser.parse_args()
-    if args.out.exists() or not args.out.resolve().is_relative_to(pathlib.Path('private').resolve()):
-        raise ValueError('choose a new private case directory')
-    trace = bounded_json(args.trace)
-    profile = bounded_json(pathlib.Path('profiles/ps2/slus-20047.json'))
-    if trace['source_profile'] != profile['profile_id'] or not 1 <= len(trace['samples']) <= 121:
-        raise ValueError('trace source/count differs')
+def build(trace):
+    """Per-update native inputs and observed outputs from a raw movement trace."""
     codes, steps, targets, skipped = [], [], [], []
     for before, after in zip(trace['samples'], trace['samples'][1:]):
         if before['observation']['scalars']['AFrame'] == after['observation']['scalars']['AFrame']:
@@ -60,6 +51,21 @@ def main():
                           position_50=list(struct.unpack_from('<3f', old, 0x50))))
         targets.append(dict(step=after['step'], request=new[0x860:0x86c].hex(), facing=new[0x86c:0x870].hex(),
                             position_before=old[0x50:0x5c], position_after=new[0x50:0x5c]))
+    return codes, steps, targets, skipped
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--trace', type=pathlib.Path, required=True)
+    parser.add_argument('--out', type=pathlib.Path, required=True)
+    args = parser.parse_args()
+    if args.out.exists() or not args.out.resolve().is_relative_to(pathlib.Path('private').resolve()):
+        raise ValueError('choose a new private case directory')
+    trace = bounded_json(args.trace)
+    profile = bounded_json(pathlib.Path('profiles/ps2/slus-20047.json'))
+    if trace['source_profile'] != profile['profile_id'] or not 1 <= len(trace['samples']) <= 121:
+        raise ValueError('trace source/count differs')
+    codes, steps, targets, skipped = build(trace)
     args.out.mkdir(parents=True)
     code_path, code_native = args.out/'code-requests.json', args.out/'code-native.json'
     code_path.write_text(json.dumps(codes, indent=2, allow_nan=False)+'\n')

@@ -47,6 +47,8 @@ pub struct MotionRequestOutput {
     /// f21 for sinf/cosf, and f23, the facing target, on this accepted path.
     pub direction: f32,
     pub request: [f32; 3],
+    /// f22: magnitude scale × +0x124 × SPF × +0x964 (used by the slope rescale).
+    pub speed: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +133,7 @@ pub fn motion_request(i: MotionRequestInput) -> Result<MotionRequestOutput, Unsu
         camera_yaw,
         direction,
         request: [clamp(x, limit), y, clamp(z, limit)],
+        speed,
     })
 }
 

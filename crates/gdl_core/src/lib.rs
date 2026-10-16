@@ -5,6 +5,7 @@ pub mod collision;
 pub mod libm;
 pub mod numeric;
 pub mod player_animation;
+pub mod player_collision;
 pub mod player_input;
 pub mod player_motion;
 pub mod transform;

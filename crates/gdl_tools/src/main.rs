@@ -204,6 +204,83 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 4 && args[0] == "player-displacement" {
+        // player-displacement WORLDS.PS2 STEPS.json NEW_REPORT.json
+        #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
+        #[serde(deny_unknown_fields)]
+        struct Step {
+            request: gdl_core::player_motion::MotionRequestInput,
+            matrix: [[f32; 3]; 3],
+            collision_offset_81c: [f32; 3],
+            offset_flags_84: u32,
+            position: [f32; 3],
+            radius_828: f32,
+            height_82c: f32,
+            floor_y_88c: f32,
+            floor_object_89c: Option<usize>,
+            flags_8ac: u32,
+            word_100: i32,
+            y_54: f32,
+            wall_object_8a0: Option<usize>,
+        }
+        let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let mut world = gdl_core::collision::CollisionWorld::from_world(&gdl_formats::world::World::parse(&raw)?)?;
+        let raw_steps = bounded_read(Path::new(&args[2]), 4 * 1024 * 1024)?;
+        let steps: Vec<Step> = serde_json::from_slice(&raw_steps)?;
+        if steps.len() > 4096 {
+            return Err("displacement request policy exceeded".into());
+        }
+        let mut outcomes = Vec::new();
+        for step in steps {
+            let result = (|| -> Result<serde_json::Value, Box<dyn Error>> {
+                let request = gdl_core::player_motion::motion_request(step.request)?;
+                let mut state = gdl_core::player_collision::PlayerFloorState {
+                    floor_y_88c: step.floor_y_88c,
+                    floor_object_89c: step.floor_object_89c,
+                    flags_8ac: step.flags_8ac,
+                    word_100: step.word_100,
+                    y_54: step.y_54,
+                    wall_object_8a0: step.wall_object_8a0,
+                };
+                let out = gdl_core::player_collision::player_displacement(
+                    &mut world,
+                    gdl_core::player_collision::DisplacementInput {
+                        matrix: step.matrix,
+                        collision_offset_81c: step.collision_offset_81c,
+                        offset_flags_84: step.offset_flags_84,
+                        position: step.position,
+                        request: request.request,
+                        speed: request.speed,
+                        radius_828: step.radius_828,
+                        height_82c: step.height_82c,
+                        flags_8b0: step.request.flags_8b0,
+                        current_action: step.request.current_action_1e0,
+                        spf: step.request.spf,
+                        world_bottom: step.request.world_bottom,
+                    },
+                    &mut state,
+                )?;
+                Ok(serde_json::json!({"displacement_bits":out.displacement.map(f32::to_bits),
+                    "position_bits":out.position.map(f32::to_bits),"wall_result":out.wall_result,
+                    "floor_result":out.floor_result,"floor_y_bits":state.floor_y_88c.to_bits(),
+                    "floor_object":state.floor_object_89c,"wall_object":state.wall_object_8a0}))
+            })();
+            outcomes.push(match result {
+                Ok(v) => serde_json::json!({"input":step,"output":v,"error":null}),
+                Err(e) => serde_json::json!({"input":step,"output":null,"error":e.to_string()}),
+            });
+        }
+        let report = serde_json::json!({"worlds_sha256":hash(&raw),"steps_sha256":hash(&raw_steps),"outcomes":outcomes,
+            "scope":"request + static walls/floor/floor-height/slope + position add; items, players, enemies, camera limit, moving floors and transporters excluded"});
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[3])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if (args.len() == 3 || args.len() == 4) && args[0] == "collision-query" {
         // collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]
         #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
@@ -830,7 +907,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json\n       gdl_tools vu0-fqdist FQDIST_REQUESTS.json NEW_REPORT.json\n       gdl_tools collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json\n       gdl_tools vu0-fqdist FQDIST_REQUESTS.json NEW_REPORT.json\n       gdl_tools collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]\n       gdl_tools player-displacement WORLDS.PS2 STEPS.json NEW_REPORT.json".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);
