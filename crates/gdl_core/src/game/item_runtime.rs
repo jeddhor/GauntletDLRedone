@@ -925,6 +925,7 @@ impl Game {
             let tf = self.items.objects[o].word_14 >> 8;
             // Bridge/trap/elevator audio cues are presentation; +0x17 mirrors +0x16.
             self.items.objects[o].byte_17 = b16;
+            self.items.object_exclusion[o] = 0;
             let flags = self.items.objects[o].flags_10;
             let moving;
             if flags & 0x800 != 0 {
@@ -933,6 +934,7 @@ impl Game {
                 // Fade objects: visibility byte +0x35 and alpha (presentation).
                 let shown = if tf & 0x20 == 0 { b16 & 0xf == 0 } else { b16 & 0x2f != 0 };
                 self.items.object_visible[o] = shown;
+                self.items.object_exclusion[o] = if shown { -1 } else { 0 };
                 moving = false;
             } else if flags & 0x200_0000 == 0 {
                 if tf & 8 != 0 || on < 2 {
@@ -993,6 +995,9 @@ impl Game {
                 w.flags_10 |= 0x30_0000;
                 w.byte_16 &= 0xef;
                 continue;
+            }
+            if moving && tf & 8 == 0 {
+                self.items.object_exclusion[o] = 1;
             }
             let f = &mut self.items.objects[o];
             if moving {

@@ -223,6 +223,8 @@ pub struct ItemWorld {
     /// and the +0x35 visibility byte of fade objects.
     pub object_node_y: Vec<f32>,
     pub object_visible: Vec<bool>,
+    /// Runtime +0x35 exclusion byte (ProcessItemWobjs rewrites it for wobjs).
+    pub object_exclusion: Vec<i8>,
     /// MaxItems = instances + 500 (AddItemInstList).
     pub max_items: usize,
     pub world_has_gates: i32,
@@ -298,6 +300,7 @@ impl ItemWorld {
             max_items: world.items.len() + 500,
             object_node_y: collision.objects.iter().map(|o| o.position[1]).collect(),
             object_visible: vec![true; collision.objects.len()],
+            object_exclusion: collision.objects.iter().map(|o| o.exclusion).collect(),
             world_has_gates: 0,
             rune_item: None,
             rune_pos: [0.0; 3],

@@ -1036,7 +1036,7 @@ impl Game {
         let mut check = !moving && self.enemies[i].u32_(0x2a0) == 0;
         if !moving && !check {
             let s = self.enemies[i].u32_(0x2a0) as usize - 1;
-            if 0.0 <= item_coll_sub(&self.items, &env, s, from, to, None, r, h)? {
+            if 0.0 <= item_coll_sub(&self.items, &mut self.collision, &env, s, from, to, None, r, h)? {
                 item = Some(s);
             }
         }
@@ -1053,7 +1053,7 @@ impl Game {
                 self.enemies[i].set_i32(0x340, v.min(0x1e));
             }
             item = match found {
-                Some(s) if 0.0 <= item_coll_sub(&self.items, &env, s, from, to, None, r, h)? => Some(s),
+                Some(s) if 0.0 <= item_coll_sub(&self.items, &mut self.collision, &env, s, from, to, None, r, h)? => Some(s),
                 _ => None,
             };
         }

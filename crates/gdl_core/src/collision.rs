@@ -44,6 +44,8 @@ pub struct CollisionObject {
     pub radius: f32,
     pub exclusion: i8,
     pub first_triangle: i32,
+    /// +0x36: triangle count of a dynamic (offset/matrix) object.
+    pub triangle_count: i16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +61,13 @@ pub struct Triangle {
 pub struct CollisionWorld {
     pub objects: Vec<CollisionObject>,
     pub triangles: Vec<Triangle>,
+    /// Objects with flags 0x1000/0x1000000 (WorldDynCollide candidates).
+    pub dynamic: Vec<usize>,
+    /// Runtime +0x10 flags and +0x35 exclusion bytes, kept by the game.
+    pub runtime_flags: Vec<u32>,
+    pub runtime_exclusion: Vec<i8>,
+    /// Node translation y of root offset objects driven by item wobjs.
+    pub node_y: Vec<Option<f32>>,
     grid: CollisionGrid,
     min_x: f32,
     min_z: f32,
@@ -75,6 +84,8 @@ pub struct Hit {
     pub triangle: usize,
     pub distance: f32,
     pub position: V3,
+    /// World matrix of a dynamic object hit (rows, translation); None for static.
+    pub matrix: Option<[[f32; 4]; 4]>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -164,12 +175,26 @@ impl CollisionWorld {
                 radius: node.radius,
                 exclusion: raw[0x35] as i8,
                 first_triangle: i32::from_le_bytes(raw[0x38..0x3c].try_into().unwrap()),
+                triangle_count: i16::from_le_bytes([raw[0x36], raw[0x37]]),
             });
         }
         let triangles = world.collisions.iter().map(Triangle::from_record).collect();
         let header = &world.raw_header;
         let cell = f32::from_le_bytes(header[60..64].try_into().unwrap());
+        let dynamic = objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.flags & (0x100_0000 | 0x1000) != 0 && 0 <= o.first_triangle && 0 < o.triangle_count)
+            .map(|(i, _)| i)
+            .collect();
+        let runtime_flags = objects.iter().map(|o| o.flags).collect();
+        let runtime_exclusion = objects.iter().map(|o| o.exclusion).collect();
+        let node_y = vec![None; objects.len()];
         Ok(Self {
+            dynamic,
+            runtime_flags,
+            runtime_exclusion,
+            node_y,
             objects,
             triangles,
             min_x: world.min[0],
@@ -338,8 +363,166 @@ impl CollisionWorld {
                 }
             }
         }
-        // WorldDynCollide would run here; the native subset has no dynamic grid.
+        self.dyn_collide(&ctx, &mut found)?;
         Ok((found, state))
+    }
+
+    /// ItemObjectCol's collide: transform from/to into the frame (rows `m`,
+    /// translation `t`), test `count` triangles from `first` (CheckFlags 0,
+    /// normal-y -0.5..2.0) and return the world contact and normal.
+    #[allow(clippy::too_many_arguments)]
+    pub fn local_list_collide(&mut self, r: f32, first: i32, count: i16, from: V3, to: V3, m: [V3; 3], t: V3) -> R<Option<(V3, V3)>> {
+        let (lo, hi) = if from[1] < to[1] { (sub(from[1], r)?, add(r, to[1])?) } else { (sub(to[1], r)?, add(r, from[1])?) };
+        self.check_counter += 1;
+        if self.check_counter > 0xff {
+            self.check_counter = 1;
+        }
+        let body = |v: V3| -> R<V3> {
+            let q = [sub(v[0], t[0])?, sub(v[1], t[1])?, sub(v[2], t[2])?];
+            let row = |k: usize| -> R<f32> { Ok(add(add(mul(q[0], m[k][0])?, mul(q[1], m[k][1])?)?, mul(q[2], m[k][2])?)?) };
+            Ok([row(0)?, row(1)?, row(2)?])
+        };
+        let (lf, ll) = (body(from)?, body(to)?);
+        let scale = |y: f32| -> R<i32> { Ok(trunc(mul(mul(sub(y, t[1])?, m[1][1])?, 64.0)?) as i16 as i32) };
+        let (ymin, ymax) = (scale(lo)?, scale(hi)?);
+        let mut dir = [sub(ll[0], lf[0])?, sub(ll[1], lf[1])?, sub(ll[2], lf[2])?];
+        let length = normal_vector(&mut dir)?;
+        let q = Query {
+            radius: r,
+            first: lf,
+            last: ll,
+            check_flags: 0,
+            min_normal_y: -0.5,
+            max_normal_y: 2.0,
+            object_mask: 0,
+            exclusion_mask: 0,
+        };
+        // CTriListCollide's metric uses ColDirVec, the world direction.
+        let mut wdir = [sub(to[0], from[0])?, sub(to[1], from[1])?, sub(to[2], from[2])?];
+        normal_vector(&mut wdir)?;
+        let c = Ctx { q, dir: wdir, length, min_y: lo, max_y: hi, start_x: 0.0, start_z: 0.0, end_x: 0.0, end_z: 0.0, check_num: self.check_counter as u8 as i8 };
+        let _ = dir;
+        let list: Vec<i16> = (0..count.max(0)).collect();
+        let (d, hit) = self.tri_list_collide(&c, first, &list, ymin, ymax, false)?;
+        if d < 0.0 {
+            return Ok(None);
+        }
+        let (tri, local) = hit.ok_or(UnsupportedCollision("hit without triangle"))?;
+        let world = |v: V3, with_t: bool| -> R<V3> {
+            let col = |k: usize| -> R<f32> {
+                let mut acc = mul(m[0][k], v[0])?;
+                acc = add_rz(acc, mul(m[1][k], v[1])?)?;
+                acc = add_rz(acc, mul(m[2][k], v[2])?)?;
+                if with_t {
+                    acc = add_rz(acc, t[k])?;
+                }
+                Ok(acc)
+            };
+            Ok([col(0)?, col(1)?, col(2)?])
+        };
+        let n = crate::player_collision::world_vector(self.triangles[tri].normal, &m).map_err(|_| UnsupportedCollision("WorldVector domain"))?;
+        Ok(Some((world(local, true)?, n)))
+    }
+
+    /// World matrix of an object at its rest pose: identity rotation (world
+    /// animations are not ported) and node translation; root offset objects
+    /// take the item-driven y.
+    pub fn object_matrix(&self, o: usize) -> R<[[f32; 4]; 4]> {
+        let ob = &self.objects[o];
+        let local_t = match (ob.parent, self.node_y[o]) {
+            (None, Some(y)) => [ob.position[0], y, ob.position[2]],
+            _ => ob.position,
+        };
+        let t = match ob.parent {
+            Some(p) if self.objects[o].flags & 0x100_0000 != 0 => {
+                let pm = self.object_matrix(p)?;
+                [add_rz(local_t[0], pm[3][0])?, add_rz(local_t[1], pm[3][1])?, add_rz(local_t[2], pm[3][2])?]
+            }
+            _ => local_t,
+        };
+        Ok([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [t[0], t[1], t[2], 1.0]])
+    }
+
+    /// WorldDynCollide/WorldObjCollide for dynamic objects. Candidates are all
+    /// dynamic objects instead of the dyngrid cells; WorldObjCollide's own
+    /// segment-sphere rejection is applied as in the original.
+    fn dyn_collide(&mut self, c: &Ctx, found: &mut Collision) -> R<()> {
+        for k in 0..self.dynamic.len() {
+            let o = self.dynamic[k];
+            let flags = self.runtime_flags[o];
+            let mut excl = self.runtime_exclusion[o];
+            if let Some(p) = self.objects[o].parent {
+                excl |= self.runtime_exclusion[p];
+            }
+            if c.q.object_mask & flags == 0 || i32::from(excl) & c.q.exclusion_mask != 0 || flags & 0x1000_0000 != 0 {
+                continue;
+            }
+            let m = self.object_matrix(o)?;
+            let p = [m[3][0], m[3][1], m[3][2]];
+            let first = c.q.first;
+            let d = [sub(p[0], first[0])?, sub(p[1], first[1])?, sub(p[2], first[2])?];
+            let t = add(add(mul(d[0], c.dir[0])?, mul(d[1], c.dir[1])?)?, mul(d[2], c.dir[2])?)?;
+            let rr = add(c.q.radius, self.objects[o].radius)?;
+            if add(rr, c.length)? < t || t < -rr {
+                continue;
+            }
+            let e = [
+                sub(p[0], add(mul(t, c.dir[0])?, first[0])?)?,
+                sub(p[1], add(mul(t, c.dir[1])?, first[1])?)?,
+                sub(p[2], add(mul(t, c.dir[2])?, first[2])?)?,
+            ];
+            if mul(rr, rr)? <= add(add(mul(e[0], e[0])?, mul(e[1], e[1])?)?, mul(e[2], e[2])?)? {
+                continue;
+            }
+            let body = |v: V3| -> R<V3> {
+                let q = [sub(v[0], m[3][0])?, sub(v[1], m[3][1])?, sub(v[2], m[3][2])?];
+                let row = |r: usize| -> R<f32> { Ok(add(add(mul(q[0], m[r][0])?, mul(q[1], m[r][1])?)?, mul(q[2], m[r][2])?)?) };
+                Ok([row(0)?, row(1)?, row(2)?])
+            };
+            let offset_only = flags & 0x100_0000 == 0 && flags & 1 != 0;
+            let (lf, ll, ymin, ymax) = if offset_only {
+                (
+                    [sub(first[0], m[3][0])?, sub(first[1], m[3][1])?, sub(first[2], m[3][2])?],
+                    [sub(c.q.last[0], m[3][0])?, sub(c.q.last[1], m[3][1])?, sub(c.q.last[2], m[3][2])?],
+                    sub(c.min_y, m[3][1])?,
+                    sub(c.max_y, m[3][1])?,
+                )
+            } else {
+                (body(first)?, body(c.q.last)?, mul(sub(c.min_y, m[3][1])?, m[1][1])?, mul(sub(c.max_y, m[3][1])?, m[1][1])?)
+            };
+            let local_q = Query { first: lf, last: ll, ..c.q };
+            let lc = Ctx { q: local_q, ..*c };
+            let list: Vec<i16> = (0..self.objects[o].triangle_count).collect();
+            let (distance, hit) = self.tri_list_collide(
+                &lc,
+                self.objects[o].first_triangle,
+                &list,
+                trunc(mul(ymin, 64.0)?),
+                trunc(mul(ymax, 64.0)?),
+                flags & 0x40 != 0,
+            )?;
+            if distance < 0.0 {
+                continue;
+            }
+            let (triangle, local) = hit.ok_or(UnsupportedCollision("hit without triangle"))?;
+            let position = if offset_only {
+                [add(local[0], m[3][0])?, add(local[1], m[3][1])?, add(local[2], m[3][2])?]
+            } else {
+                // MulVec4Mat4 (VU0 under EE rounding).
+                let col = |c_: usize| -> R<f32> {
+                    let mut acc = mul(m[0][c_], local[0])?;
+                    acc = add_rz(acc, mul(m[1][c_], local[1])?)?;
+                    acc = add_rz(acc, mul(m[2][c_], local[2])?)?;
+                    Ok(add_rz(acc, m[3][c_])?)
+                };
+                [col(0)?, col(1)?, col(2)?]
+            };
+            let slot = if flags & 0x200 != 0 { &mut found.water } else { &mut found.solid };
+            if distance < slot.map_or(w(0x6258d727), |h| h.distance) {
+                *slot = Some(Hit { object: o, triangle, distance, position, matrix: Some(m) });
+            }
+        }
+        Ok(())
     }
 
     fn object_collide(
@@ -361,7 +544,8 @@ impl CollisionWorld {
             return Ok(());
         }
         if object.flags & (0x100_0000 | 0x1000) != 0 {
-            return Err(UnsupportedCollision("matrix or offset world object"));
+            // Dynamic objects are not in the static grid; WorldDynCollide handles them.
+            return Ok(());
         }
         let p = object.position;
         let first = c.q.first;
@@ -386,7 +570,7 @@ impl CollisionWorld {
             let slot = if object.flags & 0x200 != 0 { &mut found.water } else { &mut found.solid };
             // Both start at 1e21 (col_dist and water_col +0x40 initialisation).
             if distance < slot.map_or(w(0x6258d727), |h| h.distance) {
-                *slot = Some(Hit { object: index, triangle, distance, position });
+                *slot = Some(Hit { object: index, triangle, distance, position, matrix: None });
             }
         }
         Ok(())
@@ -429,6 +613,10 @@ impl CollisionWorld {
             let Some((d, hit)) = tested else {
                 continue;
             };
+            if c.q.check_flags & 0x20 != 0 {
+                // TriLineCol queries stop at the first hit.
+                return Ok((0.0, Some((index, hit))));
+            }
             let mut metric = if c.q.check_flags & 0x10 != 0 && d != 0.0 {
                 mul(d, w(0x461c4000))?
             } else {

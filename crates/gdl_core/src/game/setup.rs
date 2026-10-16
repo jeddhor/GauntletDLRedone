@@ -281,6 +281,7 @@ impl Game {
         self.globals.time += spf;
         self.globals.atime += spf;
         self.globals.itime = (self.globals.time * 1000.0) as i32;
+        self.sync_collision();
         if let Err(e) = self.setup_dyn_grid() {
             self.log.note("world_update", &e);
         }
@@ -303,6 +304,17 @@ impl Game {
         }
     }
 
+    /// Copy the item system's runtime object state into the collision world.
+    pub fn sync_collision(&mut self) {
+        for o in 0..self.collision.objects.len() {
+            self.collision.runtime_flags[o] = self.items.objects[o].flags_10;
+            self.collision.runtime_exclusion[o] = self.items.object_exclusion[o];
+        }
+        for w in &self.items.wobjs {
+            self.collision.node_y[w.object] = Some(self.items.object_node_y[w.object]);
+        }
+    }
+
     /// The pickup part of PlayerMotion/do_players for the interim player:
     /// PlayerCollideItems at the new position, then GrabPowerup.
     pub fn player_pickups(&mut self, player: usize, from: V3) -> R<()> {
@@ -316,7 +328,7 @@ impl Game {
             if crate::item_collision::player_skip_item(&self.items, &self.items.records[slot]) {
                 continue;
             }
-            let d = crate::item_collision::item_coll_sub(&self.items, &env, slot, from, to, None, r, h)?;
+            let d = crate::item_collision::item_coll_sub(&self.items, &mut self.collision, &env, slot, from, to, None, r, h)?;
             if d < 0.0 {
                 continue;
             }

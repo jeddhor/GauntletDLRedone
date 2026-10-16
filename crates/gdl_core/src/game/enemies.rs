@@ -778,7 +778,7 @@ impl Game {
             if self.skip_item(slot) {
                 continue;
             }
-            let d = item_coll_sub(&self.items, &env, slot, from, to, out.as_deref_mut(), r, h)?;
+            let d = item_coll_sub(&self.items, &mut self.collision, &env, slot, from, to, out.as_deref_mut(), r, h)?;
             if 0.0 <= d && d < best {
                 best = d;
                 found = Some(slot);

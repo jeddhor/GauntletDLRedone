@@ -97,6 +97,18 @@ impl DynGrid {
     }
 }
 
+/// ItemObjectCol 0x157510: the segment against the item's own triangles
+/// (instance +4 first, +6 count) in item space; contact point and normal in world.
+fn item_object_col(collision: &mut crate::collision::CollisionWorld, r: &ItemRecord, from: V3, to: V3, radius: f32) -> R<Option<(V3, V3)>> {
+    let first = r.i16_(0xd4);
+    if first < 0 {
+        return Err(crate::items::UnsupportedItem("ItemObjectCol without triangles (FatalErrorC)".into()));
+    }
+    let m = r.matrix();
+    let t = r.position();
+    Ok(collision.local_list_collide(radius, i32::from(first), r.i16_(0xd6), from, to, m, t)?)
+}
+
 /// NormalVector2D: normalise x/z in place (y = 0), returning the length.
 pub fn normal_vector_2d(v: &mut V3) -> R<f32> {
     let (d, _) = fqdist(v[0], v[2])?;
@@ -143,6 +155,7 @@ fn row(r: &ItemRecord, o: usize) -> V3 {
 #[allow(clippy::too_many_arguments)]
 pub fn item_coll_sub(
     items: &ItemWorld,
+    collision: &mut crate::collision::CollisionWorld,
     env: &CollideEnv,
     slot: usize,
     from: V3,
@@ -227,11 +240,15 @@ pub fn item_coll_sub(
     }
     let (m0, m2) = (row(r, 0x10), row(r, 0x30));
     let (half0, half2) = (d.f32_(0x14), d.f32_(0x18));
+    let mut contact = None;
     let hit = match shape {
         2 => fqdist(dist, e[1])?.0 <= outer,
         1 => true,
         3 => dot_xz(e, m0)?.abs() <= add(radius, half0)? && dot_xz(e, m2)?.abs() <= add(radius, half2)?,
-        4 => return Err(crate::items::UnsupportedItem("ItemObjectCol (shape 4) not yet ported".into())),
+        4 => {
+            contact = item_object_col(collision, r, from, pos, radius)?;
+            contact.is_some()
+        }
         _ => false,
     };
     if !hit {
@@ -279,6 +296,17 @@ pub fn item_coll_sub(
     let Some(o) = out else {
         return Ok(dist);
     };
+    if shape == 4 {
+        // ItemObjectCol's contact point and world normal (x/z) push the position out.
+        let (cp, n) = contact.unwrap();
+        let k = add(add(mul(sub(cp[0], pos[0])?, n[0])?, mul(sub(cp[2], pos[2])?, n[2])?)?, radius)?;
+        *o = pos;
+        if 0.0 < k {
+            o[0] = add(mul(k, n[0])?, pos[0])?;
+            o[2] = add(mul(k, n[2])?, pos[2])?;
+        }
+        return Ok(dist);
+    }
     if shape == 3 {
         let ep = [sub(pos[0], ip[0])?, 0.0, sub(pos[2], ip[2])?];
         let f3 = dot_xz(ep, m0)?;
