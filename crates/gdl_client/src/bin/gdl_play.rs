@@ -727,7 +727,7 @@ fn present_player(
                 sim.last_event.clone()
             },
             sim.error.as_ref().map_or(String::new(), |e| format!("\nSIMULATION STOPPED: {e}")),
-            g.log.unsupported.keys().next().map_or(String::new(), |k| format!("\nfirst unported path hit: {k}")),
+            g.log.unsupported.keys().next().map_or(String::new(), |k| format!("\nfirst log note / unported path: {k}")),
         );
     }
 }

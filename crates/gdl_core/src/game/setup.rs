@@ -104,6 +104,34 @@ pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animat
     }
 }
 
+/// GauntWorldInit 0x162e38's LoadEnemy loop for the level's GetEnemyTypes:
+/// types other than 0x1d, below 0x20 (critters 0x20..0x2c excluded), get
+/// enemy_loaded = their subtype and a model when a tree package was supplied
+/// (LoadModel success is assumed from that); genfx is 1 for loaded types
+/// (InitEffects; observed for every G1 type). When the captured G1 table is
+/// for the same level, any disagreement is reported in the frame log.
+fn derive_enemy_load(types: &crate::level::EnemyTypes, anims: &EnemyAnimData, captured: &enemies::EnemyLoad, note: &mut Option<String>) -> enemies::EnemyLoad {
+    let n = captured.model.len();
+    let mut out = enemies::EnemyLoad { model: vec![-1; n], loaded: vec![0; n], genfx: vec![0; n] };
+    for (k, &t) in types.kind.iter().enumerate() {
+        if t < 0 || t == 0x1d || (0x20..=0x2c).contains(&t) || n <= t as usize {
+            continue;
+        }
+        if anims.trees.keys().any(|(tt, _)| *tt == t) {
+            out.model[t as usize] = 0x100 + k as i32;
+            out.genfx[t as usize] = 1;
+        }
+        out.loaded[t as usize] = types.subtype[k];
+    }
+    let differ: Vec<usize> = (0..n)
+        .filter(|&t| (0 <= out.model[t]) != (0 <= captured.model[t]) || out.loaded[t] != captured.loaded[t] || out.genfx[t] != captured.genfx[t])
+        .collect();
+    if !differ.is_empty() {
+        *note = Some(format!("derived enemy_load differs from the captured G1 table for types {differ:?} (no package supplied, or another level)"));
+    }
+    out
+}
+
 /// A fresh animation clock that the first AnimateTree selection initialises.
 pub fn fresh_clock() -> ClockState {
     ClockState {
@@ -196,6 +224,7 @@ impl Game {
         };
         let grid = DynGrid::new(inp.world.min, inp.world.max, s.extra.max_enemy_radius, s.extra.max_item_radius)?;
         let item_count = loaded.world.records.len();
+        let mut load_note = None;
         let mut globals = s.globals.clone();
         // GauntWorldInit 0x162e90: WldBtm = world min y − 4.5.
         globals.world_bottom = crate::numeric::sub_guarded_rz(inp.world.min[1], 4.5)?;
@@ -210,7 +239,7 @@ impl Game {
             rng: Rand::new(s.extra.vb_counter),
             events: Vec::new(),
             enemy_tables: enemies::EnemyTables::from_elf(inp.elf)?,
-            enemy_load: s.enemy_load.clone(),
+            enemy_load: derive_enemy_load(&types, &inp.enemy_anims, &s.enemy_load, &mut load_note),
             no_enemy_slot: false,
             stop_time: s.extra.stop_time,
             boss_is_dying: s.extra.boss_is_dying,
@@ -248,6 +277,9 @@ impl Game {
             if let Some(clips) = inp.item_anims.get(&name) {
                 game.item_anims[slot] = Some(ItemAnim { clock: fresh_clock(), clips: clips.clone(), current: 0 });
             }
+        }
+        if let Some(n) = load_note {
+            game.log.unsupported.insert(n, 0);
         }
         game.update_camera(&s.camera);
         Ok(game)
