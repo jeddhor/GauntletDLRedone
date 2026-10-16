@@ -252,6 +252,62 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() == 7 && args[0] == "item-records" {
+        // item-records WORLDS.PS2 WDATA.wad LEVEL SLUS_200.47 SESSION.json NEW_REPORT.json
+        let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let world = gdl_formats::world::World::parse(&raw)?;
+        let wraw = bounded_read(Path::new(&args[2]), 4 * 1024 * 1024)?;
+        let wdata = gdl_formats::wdata::WorldData::parse(&wraw)?;
+        let index: usize = args[3].to_str().ok_or("level index")?.parse()?;
+        let level = wdata.levels.get(index).ok_or("level index out of range")?;
+        let elf_raw = bounded_read(Path::new(&args[4]), 64 * 1024 * 1024)?;
+        let elf = gdl_formats::elf::Elf::parse(&elf_raw)?;
+        let session: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[5]), 1024 * 1024)?)?;
+        let int = |k: &str| -> Result<i64, Box<dyn std::error::Error>> {
+            session[k].as_i64().ok_or_else(|| format!("session field {k}").into())
+        };
+        let cur_world = int("cur_world")? as i32;
+        let world_kind = if cur_world == 0xd { 0xd } else { 0 };
+        let types = gdl_core::level::enemy_types(&wdata, level, world_kind, int("mode_950")? as i32)?;
+        let session = gdl_core::items::ItemSession {
+            multipliers: level.multipliers_cc,
+            enemy_kind: types.kind,
+            gen_kind: types.gen_kind,
+            boss_type: int("boss_type")? as i32,
+            cur_world,
+            num_virtual_players: int("num_virtual_players")? as i32,
+            game_mode: int("game_mode")? as u32,
+            global_958: int("global_958")? as i32,
+            global_970: int("global_970")? as i32,
+            random_item_num: int("random_item_num")? as u32,
+            golem_statue_anim: int("golem_statue_anim")? != 0,
+            death_statue_anim: int("death_statue_anim")? != 0,
+            critter_3_loaded: int("critter_3_loaded")? != 0,
+            critter_7_loaded: int("critter_7_loaded")? != 0,
+        };
+        let tables = gdl_core::items::ItemTables::from_elf(&elf)?;
+        let mut collision = gdl_core::collision::CollisionWorld::from_world(&world)?;
+        let seed = int("rng_seed")? as u32;
+        let loaded = gdl_core::items::load_items(&world, &mut collision, tables, session, seed)?;
+        let w = &loaded.world;
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let report = serde_json::json!({
+            "worlds_sha256":hash(&raw),"wdata_sha256":hash(&wraw),"elf_sha256":hash(&elf_raw),
+            "records":w.records.iter().map(|r| hex(&r.0)).collect::<Vec<_>>(),
+            "outcome":loaded.outcome.iter().map(|o| match o { Ok(s) => serde_json::json!({"slot":s}), Err(e) => serde_json::json!({"error":e}) }).collect::<Vec<_>>(),
+            "definitions":w.definitions.iter().map(|d| hex(&d.0)).collect::<Vec<_>>(),
+            "wobjs":w.wobjs.iter().map(|o| serde_json::json!({"object":o.object,"inity":o.inity.to_bits(),"y":o.y.to_bits(),
+                "starty":o.starty.to_bits(),"endy":o.endy.to_bits(),"snd":o.snd.to_bits()})).collect::<Vec<_>>(),
+            "objects":w.objects.iter().map(|o| [o.flags_10, u32::from(o.word_14), u32::from(o.byte_16), u32::from(o.byte_17)]).collect::<Vec<_>>(),
+            "world_has_gates":w.world_has_gates,"max_level_coins":loaded.max_level_coins,"random_calls":loaded.random_calls,
+            "rune_item":w.rune_item,"quest_item":w.quest_item,
+            "scope":"native AddItemInstList through PlaceItem; presentation bytes zero; ProcessItemWobjs not applied; rand seeded from rng_seed (values not comparable)"});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[6])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "place-items" {
         // place-items WORLDS.PS2 NEW_REPORT.json — PlaceItem 0x153068 heights.
         let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
