@@ -979,6 +979,13 @@ impl Game {
         Ok(n)
     }
 
+    pub fn player_damaged_enemy_pub(&mut self, p: usize, i: usize, prior: i32, result: i32, attack: bool) -> R<()> {
+        self.player_damaged_enemy(p, i, prior, result, attack)
+    }
+    pub fn player_damaged_item_pub(&mut self, p: usize, slot: usize, destroyed: bool) -> R<()> {
+        self.player_damaged_item(p, slot, destroyed)
+    }
+
     /// PlayerDamagedEnemy(player, enemy, prior state, result, attack).
     fn player_damaged_enemy(&mut self, p: usize, i: usize, prior: i32, result: i32, attack: bool) -> R<()> {
         let t = self.enemies[i].i32_(e::TYPE);

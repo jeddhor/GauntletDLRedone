@@ -810,7 +810,7 @@ fn present_player(
                 "\n\nINTERIM PLAYTEST (not the M12 slice). missiles thrown {}\n\
                  Native: item/enemy/generator/missile/damage/pickup/magic/exp/exit/sound-cue systems, movement + collision\n\
                  Interim/presentation: start state from your save, player action map + clip clock, camera, unlit materials,\n\
-                 enemy frame objects, item rest poses, approximate audio mixing, magic without animation, no melee, no boss\n\
+                 enemy frame objects, item rest poses, approximate audio mixing, magic without animation, melee holds the player still, no boss\n\
                  Enter after death: interim continue   F9: debug skip to next level{}",
                 sim.driver.missiles_started,
                 g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),

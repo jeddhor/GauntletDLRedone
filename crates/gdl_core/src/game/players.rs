@@ -43,6 +43,27 @@ pub struct PlayerDriver {
     /// INTERIM: magic button edge this update (the original raises the
     /// +0x8d8 0x20000 event from the magic action's animation).
     pub magic_pressed: bool,
+    /// (previous, new) action of this update's presentation transition.
+    pub transition: Option<(u32, u32)>,
+}
+
+/// DoPlayerAction 0x177c28 exit switch (previous action) → +0x8d8 bits, for
+/// the melee/area attack actions.
+pub fn exit_bits(action: u32) -> u32 {
+    match action {
+        0x21 | 0x3e | 0x3f | 0x40 | 0x43 | 0x45 => 4,
+        0x27..=0x29 | 0x2c | 0x2d | 0x30 | 0x31 | 0x34 | 0x35 | 0x38 | 0x39 | 0x3c | 0x4f | 0x50 => 2,
+        0x52 => 8,
+        _ => 0,
+    }
+}
+
+/// DoPlayerAction entry switch (new action): attack start bit 1.
+pub fn entry_bits(action: u32) -> u32 {
+    match action {
+        0x20 | 0x21 | 0x27..=0x29 | 0x2c | 0x2d | 0x30 | 0x31 | 0x34 | 0x35 | 0x38 | 0x39 | 0x3c | 0x3e | 0x3f | 0x40 | 0x43 | 0x45 | 0x4f | 0x50 | 0x52 => 1,
+        _ => 0,
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -70,6 +91,7 @@ impl PlayerDriver {
             missiles_started: 0,
             event_error: None,
             magic_pressed: false,
+            transition: None,
         }
     }
 
@@ -78,8 +100,12 @@ impl PlayerDriver {
         let sim = &mut self.sim;
         let anim = &mut self.anim;
         let frames = self.clips.get(anim.clip).map_or(1.0, |c| f32::from(c.frames.max(1)));
-        let mut choose_now = sim.requested_action != anim.requested;
+        // INTERIM: melee actions run to the end of their clip before a new
+        // request is taken (DoPlayerAction's attack branches are not ported).
+        let locked = exit_bits(anim.action) != 0;
+        let mut choose_now = sim.requested_action != anim.requested && !locked;
         let mut ended = false;
+        self.transition = None;
         if !choose_now {
             let timing = self.clips.get(anim.clip).map_or(30, |c| c.timing_factor);
             let period = crate::animation::frame_period(timing, 1.0, sim.spf).unwrap_or(sim.spf);
@@ -108,6 +134,9 @@ impl PlayerDriver {
             let chosen = choose(context).ok();
             let action = chosen.map_or(sim.requested_action, |s| s.action);
             let changed = action != anim.action;
+            if changed || ended {
+                self.transition = Some((anim.action, action));
+            }
             if changed {
                 anim.frame = 0.0;
             }
@@ -146,8 +175,17 @@ impl Game {
         let edges = levels & !d.previous_levels;
         d.previous_levels = levels;
         let from = self.players[p].v3(0x50);
-        let report = d.sim.step(&mut self.collision, &d.tables, levels, edges).map_err(|e| Unsupported(e.to_string()))?;
-        d.last = Some(report);
+        if exit_bits(d.anim.action) == 0 {
+            let report = d.sim.step(&mut self.collision, &d.tables, levels, edges).map_err(|e| Unsupported(e.to_string()))?;
+            d.last = Some(report);
+            if d.sim.requested_action == 0x5c {
+                d.sim.requested_action = self.attack_request(p, d.sim.facing)?;
+            }
+        } else {
+            // INTERIM: the player stands still while a melee action plays
+            // (the attack's own motion/requested-action logic is not ported).
+            d.sim.requested_action = 0;
+        }
         self.sync_player_record(p, &d.sim)?;
         // PlayerMotion EE 0x14a0..: +0x884 cleared before PlayerCollideItems.
         self.players[p].set_u32(0x884, 0);
@@ -157,7 +195,19 @@ impl Game {
         if std::mem::take(&mut d.magic_pressed) {
             self.use_potion(p)?;
         }
-        let Some((context, chosen, library)) = d.advance() else { return Ok(()) };
+        let selection = d.advance();
+        if let Some((old, new)) = d.transition {
+            let bits = exit_bits(old) | entry_bits(new);
+            if bits & 1 != 0 {
+                d.throw_start_time = self.globals.time;
+            }
+            if bits & 0xfe != 0 {
+                let yaw = d.sim.facing;
+                let facing = [sinf(yaw)?, 0.0, cosf(yaw)?];
+                self.player_melee(p, bits, facing)?;
+            }
+        }
+        let Some((context, chosen, library)) = selection else { return Ok(()) };
         let input = ActionEventInput {
             event_word: d.event_word,
             throw_start_time: d.throw_start_time,
@@ -203,6 +253,131 @@ impl Game {
         let pos = self.players[p].v3(0x50);
         self.start_magic(1.0, p, pos, colour, 0)?;
         self.players[p].set_u16(0x92e, 0x80);
+        Ok(())
+    }
+
+    /// PlayerMotion's attack-code decision (EE 0x14a5a8..0x14a6c0, case 0xf)
+    /// for the ordinary no-power player: target within reach + 1 → melee
+    /// 0x27 (0x52 against a small enemy), otherwise the throw 0x5c. The
+    /// moving mid-range dash (0x3e) is not taken (stick input not modelled).
+    fn attack_request(&mut self, p: usize, yaw: f32) -> R<u32> {
+        let pl = &self.players[p];
+        if pl.u32_(0x138) & 0xf070 != 0 || pl.u32_(0x130) & 0x1010_0000 != 0 {
+            return Ok(0x5c);
+        }
+        let facing = [sinf(yaw)?, 0.0, cosf(yaw)?];
+        let origin = pl.v3(0x70);
+        let reach = pl.f32_(0x828);
+        let mut target = -1;
+        let mut item = pl.u32_(0x880).checked_sub(1).map(|v| v as usize);
+        let mut dir = [0.0; 3];
+        let d = self.player_get_target(p, origin, facing, &mut dir, &mut target, &mut item)?;
+        let close = d < add(reach, 1.0)?;
+        let small = usize::try_from(target)
+            .ok()
+            .filter(|&t| t < 0x10000)
+            .is_some_and(|t| (self.enemies[t].f32_(super::enemies::e::HALF_HEIGHT) <= 2.0 || self.globals.enemy_shrink < 1.0) && d < add(reach, 2.0).unwrap_or(0.0));
+        Ok(if close {
+            if small { 0x52 } else { 0x27 }
+        } else {
+            0x5c
+        })
+    }
+
+    /// PlayerMotion's melee consumption (EE 0x14b9xx..0x14bdb0): damage the
+    /// target in reach with the class melee damage (+0x118).
+    fn player_melee(&mut self, p: usize, bits: u32, facing: [f32; 3]) -> R<()> {
+        let mul = crate::numeric::mul_rz;
+        let mut damage = self.players[p].f32_(0x118);
+        let mut flags = self.players[p].u32_(0x130);
+        let origin = self.players[p].v3(0x70);
+        let mut target = -1;
+        let mut item = self.players[p].u32_(0x880).checked_sub(1).map(|v| v as usize);
+        let mut dir = [0.0; 3];
+        let d = self.player_get_target(p, origin, facing, &mut dir, &mut target, &mut item)?;
+        let enemy = usize::try_from(target).ok().filter(|&t| t < 0x10000);
+        if bits & 0xf0 != 0 {
+            return super::unsupported("power melee (event bits 0xf0)");
+        }
+        if bits & 4 != 0 {
+            damage = add(damage, damage)?;
+            flags |= 0x10;
+        } else if bits & 8 != 0 && enemy.is_some_and(|e| self.enemies[e].f32_(super::enemies::e::HALF_HEIGHT) <= 2.0) {
+            flags |= 0x20;
+        }
+        let r = self.players[p].f32_(0x828);
+        let reach = if bits & 2 == 0 { add(r, 2.0)? } else { add(add(r, 1.0)?, 1.0)? };
+        let ahead = add(r, 2.0)?;
+        let pos = origin;
+        let hit = [add(mul(ahead, facing[0])?, pos[0])?, add(mul(ahead, facing[1])?, pos[1])?, add(mul(ahead, facing[2])?, pos[2])?];
+        if reach <= d {
+            return Ok(());
+        }
+        match enemy {
+            Some(e) => {
+                let to = self.enemies[e].v3(super::enemies::e::COLLISION);
+                if self.fast_wall_collide(pos, to, 0)?.is_none() {
+                    let res = self.player_damage_enemy(damage, 0.0, p, e, flags, Some(hit), true)?;
+                    if 2.0 < self.enemies[e].f32_(super::enemies::e::HALF_HEIGHT) {
+                        let v = self.players[p].i32_(0x90c) + if res != 0 { 3 } else { 1 };
+                        self.players[p].set_i32(0x90c, v);
+                        self.players[p].set_f32(0x910, self.globals.time);
+                    }
+                }
+            }
+            None => {
+                if let Some(it) = item {
+                    self.player_damage_item(damage, p, it, flags)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// PlayerDamageEnemy 0x147070(damage, cooldown, player, enemy, flags, hit, attack).
+    #[allow(clippy::too_many_arguments)]
+    pub fn player_damage_enemy(&mut self, damage: f32, cooldown: f32, p: usize, e: usize, flags: u32, hit: Option<[f32; 3]>, attack: bool) -> R<i32> {
+        let mul = crate::numeric::mul_rz;
+        let slot = 0x2cc + 4 * p;
+        if 0.0 < cooldown && self.globals.time < self.enemies[e].f32_(slot) {
+            return Ok(-1);
+        }
+        let mut dmg = if damage == 0.0 { self.players[p].f32_(0x118) } else { damage };
+        if self.players[p].u32_(0x138) & 0x100 != 0 {
+            dmg = add(dmg, dmg)?;
+        }
+        let f = self.players[p].v3(0x40);
+        let mut k = mul(dmg, f32::from_bits(0x3d4c_cccd))?;
+        if 2.0 < k {
+            k = 2.0;
+        }
+        let knock = [f[0], k, f[2]];
+        let prior = self.enemies[e].i32_(super::enemies::e::STATE);
+        let mut res = -1;
+        if 0.0 < self.enemies[e].f32_(super::enemies::e::HEALTH) && (prior == 1 || prior == 6) {
+            res = self.damage_enemy(dmg, e, p as i32, flags, hit, Some(knock), 1)?;
+        }
+        if 0 <= res {
+            self.player_damaged_enemy_pub(p, e, prior, res, attack)?;
+        }
+        if 0.0 < cooldown {
+            self.enemies[e].set_f32(slot, add(cooldown, self.globals.time)?);
+        }
+        Ok(res)
+    }
+
+    /// PlayerDamageItem 0x1472e8(damage, player, item, flags).
+    pub fn player_damage_item(&mut self, damage: f32, p: usize, it: usize, flags: u32) -> R<()> {
+        let dmg = if damage == 0.0 { self.players[p].f32_(0x118) } else { damage };
+        let d = self.damage_item(dmg, it, flags, p as i32)?;
+        if 0.0 <= d {
+            self.player_damaged_item_pub(p, it, d == 0.0)?;
+            let def = &self.items.definitions[self.items.records[it].definition()];
+            if def.kind() == 10 && def.i32_(0x28) as u8 == 0 {
+                self.help(0x14, p);
+            }
+            self.did_action = true;
+        }
         Ok(())
     }
 

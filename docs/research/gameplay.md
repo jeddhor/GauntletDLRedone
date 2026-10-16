@@ -36,6 +36,11 @@ closure; the interim player driver), ProcessEffects.
   missile/blast-vs-player paths of ProcessEffects; Random 0x1d6b00.
 - SuicideExplosion (worlds 7/0xb): POISONEXP1 blast, radius 7.5, damage
   level_data+0xbc × 50, flags 0x2b (hits players, enemies, items).
+- Melee: PlayerMotion's attack decision (target within reach + 1 → action
+  0x27, small enemy → 0x52, else the throw 0x5c), DoPlayerAction's exit/entry
+  event bits for attack actions, PlayerMotion's melee consumption,
+  PlayerDamageEnemy 0x147070 and PlayerDamageItem 0x1472e8. Interim: the
+  player stands still during a melee clip and the clip runs to its end.
 - Magic: start_magic mode 0 → StartMagicFX (MagicEffects 0x2407a0) through the
   blast mode; DamageColor; randpottype (start state v6).
 - Experience: AddExp, ModifyExp, LevelToExp, PlayerUpdateAtts attribute words.
@@ -75,6 +80,5 @@ killing nearby zombies and a generator.
 ## Not ported (known)
 
 Critters (GENERAL/GOLEM/GAR/DEATH), shield reflection,
-blocked08/10/20, move_logic 03/08–17/19–27 except those listed, bosses,
-melee/PlayerDamageEnemy, turbo powers, shields, transporters' destinations,
+blocked08/10/20, move_logic 03/08–17/19–27 except those listed, bosses, power/turbo melee (event bits 0xf0), dash attack 0x3e, turbo powers, shields, transporters' destinations,
 wave exits (SaveStage), audio, camera logic, save/load, co-op.
