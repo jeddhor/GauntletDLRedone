@@ -11,4 +11,4 @@ gdl_core = { path = "../gdl_core" }
 gdl_formats = { path = "../gdl_formats" }
 sha2.workspace = true
 serde_json.workspace = true
-cpal = "=0.15.3"
+alsa = "=0.9.1"

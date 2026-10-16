@@ -33,7 +33,7 @@
   does (InitNameAudio names, SetEnemyAudio from the level's ENMY names, SNDS),
   AudioSFX3 volume × AudioVolMul. AudioPlayerPain and AudioPlayerEatSFX consume
   RandInt(4) as the original does.
-- `gdl_client::audio`: cpal mixer (presentation): sample chains at VAG rates,
+- `gdl_client::audio`: ALSA mixer thread (presentation): sample chains at VAG rates,
   loops, queued voice lines, music loop. Pan, ducking, voice stealing and the
   SPU envelope/pitch are approximations.
 

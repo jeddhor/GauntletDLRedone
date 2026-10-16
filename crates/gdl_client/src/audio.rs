@@ -1,4 +1,5 @@
-//! Native audio output for the playtest: a small mixer on a cpal stream.
+//! Native audio output for the playtest: a small mixer on an ALSA PCM
+//! (Linux; the Windows backend belongs to M20 platform work).
 //!
 //! Sound IDs (bank << 16 | call) resolve through AUDATPS2.ROM to a VBK bank;
 //! a call plays its sample chain in order (0x4000/0x2000 loop markers loop
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 const MAX_VOICES: usize = 24;
+const OUT_RATE: u32 = 48_000;
 
 /// A parsed bank with its decoded samples.
 type LoadedBank = (Vbk, Vec<Arc<Vec<i16>>>);
@@ -106,62 +108,21 @@ pub struct AudioOut {
     bank_paths: HashMap<String, PathBuf>,
     stream_paths: HashMap<String, PathBuf>,
     banks: HashMap<usize, Option<LoadedBank>>,
-    _stream: Option<cpal::Stream>,
+    _stream: Option<std::thread::JoinHandle<()>>,
     pub status: String,
 }
 
 impl AudioOut {
     pub fn new(rom: AudioRom, bank_paths: HashMap<String, PathBuf>, stream_paths: HashMap<String, PathBuf>) -> Self {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-        let mixer = Arc::new(Mutex::new(Mixer { music_gain: 0.5, ..Default::default() }));
+        let mixer = Arc::new(Mutex::new(Mixer { music_gain: 0.5, out_rate: OUT_RATE, ..Default::default() }));
         let mut status = String::from("audio: no output device");
         let silent = std::env::var_os("GDL_NO_AUDIO").is_some();
         if silent {
             status = "audio: disabled (GDL_NO_AUDIO)".into();
         }
-        let stream = (|| -> Option<cpal::Stream> {
-            if silent {
-                return None;
-            }
-            let host = cpal::default_host();
-            let device = host.default_output_device()?;
-            let config = device.default_output_config().ok()?;
-            let format = config.sample_format();
-            let cfg: cpal::StreamConfig = config.into();
-            let channels = cfg.channels as usize;
-            mixer.lock().ok()?.out_rate = cfg.sample_rate.0;
-            let m = mixer.clone();
-            let err = |e| eprintln!("audio stream error: {e}");
-            let stream = match format {
-                cpal::SampleFormat::F32 => device
-                    .build_output_stream(&cfg, move |d: &mut [f32], _| m.lock().map_or((), |mut m| m.render(d, channels)), err, None)
-                    .ok()?,
-                cpal::SampleFormat::I16 => {
-                    let mut buf = Vec::new();
-                    device
-                        .build_output_stream(
-                            &cfg,
-                            move |d: &mut [i16], _| {
-                                buf.resize(d.len(), 0.0);
-                                if let Ok(mut m) = m.lock() {
-                                    m.render(&mut buf, channels);
-                                }
-                                for (o, s) in d.iter_mut().zip(&buf) {
-                                    *o = (*s * 32767.0) as i16;
-                                }
-                            },
-                            err,
-                            None,
-                        )
-                        .ok()?
-                }
-                _ => return None,
-            };
-            stream.play().ok()?;
-            Some(stream)
-        })();
+        let stream = if silent { None } else { start_alsa(mixer.clone()) };
         if stream.is_some() {
-            status = "audio: on".into();
+            status = "audio: on (ALSA)".into();
         }
         Self { mixer, rom, bank_paths, stream_paths, banks: HashMap::new(), _stream: stream, status }
     }
@@ -253,4 +214,43 @@ impl AudioOut {
             m.music = Some((pcm, ads.rate, ads.channels, 0.0));
         }
     }
+}
+
+/// Open the default ALSA device (S16 stereo, 48 kHz) and feed it from the
+/// mixer on a background thread. Returns None when no device is available.
+fn start_alsa(mixer: Arc<Mutex<Mixer>>) -> Option<std::thread::JoinHandle<()>> {
+    use alsa::pcm::{Access, Format, HwParams, PCM};
+    let pcm = PCM::new("default", alsa::Direction::Playback, false).ok()?;
+    {
+        let hw = HwParams::any(&pcm).ok()?;
+        hw.set_channels(2).ok()?;
+        hw.set_rate(OUT_RATE, alsa::ValueOr::Nearest).ok()?;
+        hw.set_format(Format::s16()).ok()?;
+        hw.set_access(Access::RWInterleaved).ok()?;
+        hw.set_buffer_size_near(4096).ok()?;
+        pcm.hw_params(&hw).ok()?;
+    }
+    let rate = pcm.hw_params_current().ok()?.get_rate().ok()?;
+    if let Ok(mut m) = mixer.lock() {
+        m.out_rate = rate;
+    }
+    std::thread::Builder::new()
+        .name("gdl-audio".into())
+        .spawn(move || {
+            let Ok(io) = pcm.io_i16() else { return };
+            let mut f = vec![0f32; 1024 * 2];
+            let mut out = vec![0i16; 1024 * 2];
+            loop {
+                if let Ok(mut m) = mixer.lock() {
+                    m.render(&mut f, 2);
+                }
+                for (o, s) in out.iter_mut().zip(&f) {
+                    *o = (*s * 32767.0) as i16;
+                }
+                if io.writei(&out).is_err() {
+                    let _ = pcm.prepare();
+                }
+            }
+        })
+        .ok()
 }
