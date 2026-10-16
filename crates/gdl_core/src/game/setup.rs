@@ -93,6 +93,10 @@ pub fn enemy_desc(prefix: &str, level: i32) -> String {
 
 /// Enemy trees EnemyDesc(type, level) from a MONSTERS/<NAME>/ANIM.PS2 package.
 pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animations) {
+    for tree in &anim.trees {
+        let s = tree.sequences.first();
+        data.other_trees.insert((t, tree.label.clone()), (s.map_or(0, |s| s.frames), s.map_or(0, |s| s.timing_factor)));
+    }
     for (k, tree) in anim.trees.iter().enumerate() {
         let Some(level) = (1..=7).find(|&l| enemy_desc(prefix, l) == tree.label) else { continue };
         let labels: Vec<(String, i16)> = tree

@@ -30,6 +30,12 @@ closure; the interim player driver), ProcessEffects.
   MissileCollideEnemy, WeaponWall/ItemCollide, SfxSkipItem, DamageItem
   (generator levels), ProcessEffects missile mode and the area (blast) mode for
   enemies and items.
+- Enemy missiles: shoot_missile, EnemyStartMissile (EnemyMissileInfo
+  0x24de80, trees "<PREFIX>_ARROW/BOMB/FBALL" per InitEnemyMissiles; a missing
+  tree returns no missile as Errorf does), MissileCollidePlayer and the
+  missile/blast-vs-player paths of ProcessEffects; Random 0x1d6b00.
+- SuicideExplosion (worlds 7/0xb): POISONEXP1 blast, radius 7.5, damage
+  level_data+0xbc × 50, flags 0x2b (hits players, enemies, items).
 - Magic: start_magic mode 0 → StartMagicFX (MagicEffects 0x2407a0) through the
   blast mode; DamageColor; randpottype (start state v6).
 - Experience: AddExp, ModifyExp, LevelToExp, PlayerUpdateAtts attribute words.
@@ -68,7 +74,7 @@ killing nearby zombies and a generator.
 
 ## Not ported (known)
 
-Critters (GENERAL/GOLEM/GAR/DEATH), enemy missiles and MissileCollidePlayer,
+Critters (GENERAL/GOLEM/GAR/DEATH), shield reflection,
 blocked08/10/20, move_logic 03/08–17/19–27 except those listed, bosses,
 melee/PlayerDamageEnemy, turbo powers, shields, transporters' destinations,
 wave exits (SaveStage), audio, camera logic, save/load, co-op.

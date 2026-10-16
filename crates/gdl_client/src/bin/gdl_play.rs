@@ -571,6 +571,15 @@ fn present_world(
                         *vis = Visibility::Hidden;
                         continue;
                     }
+                    Visual::EnemyMissile { t, kind } => {
+                        let Some(pkg) = sources.monsters.get(&t) else {
+                            *vis = Visibility::Hidden;
+                            continue;
+                        };
+                        let key = format!("{pkg}_{}", g.effects.tables.enemy_missile_desc[kind as usize]);
+                        let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_parts(&sources, &libs, pkg, &key));
+                        (Some(key), parts, tf)
+                    }
                 }
             }
         };
@@ -585,6 +594,23 @@ fn present_world(
             slot.key = key;
         }
     }
+}
+
+/// A package tree's nodes at their initial positions (presentation).
+fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Model {
+    let (Some(p), Some(lib)) = (sources.packages.get(pkg), libs.0.get(pkg)) else { return Vec::new() };
+    let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == label)) else { return Vec::new() };
+    let mut out = Vec::new();
+    for node in &tree.nodes {
+        if node.label.starts_with("CF") {
+            continue;
+        }
+        let l: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
+        if let Some(parts) = lib.by_label.get(&l) {
+            out.push((Vec3::from_array(node.initial_position), parts.clone()));
+        }
+    }
+    out
 }
 
 /// The Yellow Sorceress missile tree (SFXYEL WEAP_TW_Y) at rest pose.

@@ -886,7 +886,10 @@ impl Game {
         rec.set_i32(e::STATE, 8);
         rec.set_i16(0x212, killer);
         if rec.i16_(e::LOGIC) == 0x12 {
-            return unsupported("suicide bomber explosion (SuicideExplosion)");
+            let pos = self.enemies[i].v3(e::COLLISION);
+            let dmg = mul(self.level_f32(0xbc), 50.0)?;
+            self.suicide_explosion(dmg, pos)?;
+            self.audio("AudioSuicideBomb", None, i as i32);
         }
         self.uncouple_enemy(i);
         Ok(())

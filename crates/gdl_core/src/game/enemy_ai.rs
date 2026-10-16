@@ -167,6 +167,9 @@ pub type EnemyTree = (Vec<ClipTiming>, Vec<(i32, i32)>);
 pub struct EnemyAnimData {
     /// (type, level) → (clip timings by sequence index, action table 33 × (index, +0x20)).
     pub trees: std::collections::HashMap<(i32, i32), EnemyTree>,
+    /// (type, tree label) of other trees in the type's package, e.g.
+    /// "ZOM_ARROW" (InitEnemyMissiles matches "<PREFIX>_<desc>").
+    pub other_trees: std::collections::HashMap<(i32, String), (i16, i16)>,
 }
 
 /// InitActions: action names (EE 0x23f8c8 list) → sequence index and +0x20 word.
@@ -871,8 +874,11 @@ impl Game {
     fn enemy_attack_control(&mut self, i: usize) -> R<()> {
         let logic = self.enemies[i].u16_(e::LOGIC);
         let ev = self.enemies[i].u32_(0x2e4);
-        if (logic.wrapping_sub(0x1c) < 3 && ev & 0xf != 0) || (logic == 0x1f && ev & 2 != 0) {
-            return unsupported("enemy missile attack (shoot_missile)");
+        if ((logic.wrapping_sub(0x1c) < 3 && ev & 0xf != 0) || (logic == 0x1f && ev & 2 != 0)) && self.enemies[i].i32_(0x298) < 0 {
+            let target = self.missile_target(i)?;
+            let from = self.enemies[i].v3(e::COLLISION);
+            self.shoot_missile(i, target, from)?;
+            self.enemies[i].and_u32(0x2e4, 0xffff_fff0);
         }
         let hit = self.enemies[i].i16_(0x2e0);
         if 0 <= hit && self.enemies[i].u32_(0x2e4) & 0xf != 0 {
@@ -931,9 +937,27 @@ impl Game {
             self.enemies[i].set_i16(0x2e0, -1);
         }
         if self.enemies[i].u32_(0x2e4) & 0x10 != 0 {
-            return unsupported("enemy missile (shoot_missile, flag 0x10)");
+            let target = self.missile_target(i)?;
+            let from = self.enemies[i].v3(e::COLLISION);
+            self.shoot_missile(i, target, from)?;
+            self.enemies[i].set_i32(0x330, 1);
+            self.enemies[i].and_u32(0x2e4, 0xffff_ffef);
         }
         Ok(())
+    }
+
+    /// enemy_attack_control's aim point: the +0x288 target player's +0x70,
+    /// else 20 units ahead along the +0x258 heading.
+    fn missile_target(&self, i: usize) -> R<V3> {
+        let rec = &self.enemies[i];
+        match usize::try_from(rec.i16_(0x288)) {
+            Ok(p) => Ok(self.players[p].v3(0x70)),
+            Err(_) => {
+                let c = rec.v3(e::COLLISION);
+                let h = rec.f32_(0x258);
+                Ok([add(mul(sinf(h)?, 20.0)?, c[0])?, c[1], add(mul(cosf(h)?, 20.0)?, c[2])?])
+            }
+        }
     }
 
     /// enemy_knockback_control.

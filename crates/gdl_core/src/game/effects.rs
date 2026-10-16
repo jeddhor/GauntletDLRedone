@@ -98,6 +98,8 @@ pub enum Visual {
     Missile { player: usize },
     /// EffectHeaders[index].
     Header(usize),
+    /// EnemyMissileTree[type][kind] ("<PREFIX>_ARROW/BOMB/FBALL").
+    EnemyMissile { t: i32, kind: u8 },
 }
 
 /// Static ELF tables read by the missile code.
@@ -114,6 +116,10 @@ pub struct EffectTables {
     pub headers: Vec<Option<EffectHeader>>,
     /// MagicEffects 0x2407a0: EffectHeaders index by potion colour (0..4).
     pub magic_effects: [i32; 5],
+    /// EnemyMissileInfo 0x24de80: 28 types × 3 kinds × 12 words.
+    pub enemy_missile_info: Vec<[u32; 12]>,
+    /// EnemyMissileDesc 0x24de68: "ARROW", "BOMB", "FBALL".
+    pub enemy_missile_desc: [String; 3],
 }
 
 impl EffectTables {
@@ -153,7 +159,14 @@ impl EffectTables {
         }
         let m = words(elf.object("MagicEffects")?);
         let magic_effects: [i32; 5] = std::array::from_fn(|k| m.get(k).copied().unwrap_or(0) as i32);
-        Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects })
+        let em = words(elf.object("EnemyMissileInfo")?);
+        let enemy_missile_info = em.chunks_exact(12).map(|c| c.try_into().unwrap()).collect();
+        let d = elf.object("EnemyMissileDesc")?;
+        let enemy_missile_desc = std::array::from_fn(|k| {
+            let raw = &d[8 * k..8 * k + 8];
+            String::from_utf8_lossy(&raw[..raw.iter().position(|&b| b == 0).unwrap_or(8)]).into_owned()
+        });
+        Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects, enemy_missile_info, enemy_missile_desc })
     }
 }
 
@@ -416,7 +429,7 @@ impl Game {
     /// StartMissile(speed, damage, owner, position, direction, flags, info,
     /// tree, index, node flags).
     #[allow(clippy::too_many_arguments)]
-    fn start_missile(&mut self, speed: f32, damage: f32, owner: i32, position: V3, dir: V3, flags: u32, info: &[u32; 12], index: i32, sfx_flags: u32) -> R<usize> {
+    fn start_missile(&mut self, speed: f32, damage: f32, owner: i32, position: V3, dir: V3, flags: u32, info: &[u32; 12], index: i32, sfx_flags: u32, visual: Visual) -> R<usize> {
         let fl = |k: usize| f32::from_bits(info[k]);
         let mut time = 3.0;
         let mut sound = info[11];
@@ -452,8 +465,7 @@ impl Game {
         if fl(5) == 0.0 && fl(6) == 0.0 && fl(7) == 0.0 {
             f |= 0x2_0000;
         }
-        let player = usize::try_from(owner - 1).map_err(|_| Unsupported("enemy missile tree".into()))?;
-        let i = self.start_fx_tree(time, Visual::Missile { player }, 0, 0, Some(position), f as u32 | 0x100_0000)?;
+        let i = self.start_fx_tree(time, visual, 0, 0, Some(position), f as u32 | 0x100_0000)?;
         let mut radius = fl(3);
         if flags & 0x200_0000 != 0 {
             radius = mul(radius, f32::from_bits(0x3fe6_6666))?;
@@ -570,7 +582,7 @@ impl Game {
             if (class == 2 || class == 6) && flags & 0xf != 0 {
                 return unsupported("WeapThrowFx weapon-powerup throw effect");
             }
-            let slot = self.start_missile(speed, damage, player as i32 + 1, start, d, flags, &info, k, 0)?;
+            let slot = self.start_missile(speed, damage, player as i32 + 1, start, d, flags, &info, k, 0, Visual::Missile { player })?;
             let mut scale = 1.0;
             if 1.0 < power {
                 scale = mul(power, 1.0)?;
@@ -1238,6 +1250,162 @@ impl Game {
         Ok(())
     }
 
+    /// Random 0x1d6b00: (rand() & 0x7fff) × x / 32767.
+    fn random(&mut self, x: f32) -> R<f32> {
+        let r = (self.rng.rand() & 0x7fff) as f32;
+        Ok(div(mul(r, x)?, 32767.0)?)
+    }
+
+    /// shoot_missile 0x13a8b0(enemy, target, from): kind by logic.
+    pub fn shoot_missile(&mut self, i: usize, target: V3, from: V3) -> R<()> {
+        let logic = self.enemies[i].u16_(e::LOGIC);
+        let kind = match logic {
+            0x1c | 0x1d => 2,
+            0x10 | 0x17 => 0,
+            0x11 | 0x1a => 1,
+            _ => 2,
+        };
+        if self.enemy_start_missile(i, target, from, kind)? {
+            self.audio(if kind == 0 { "AudioEnemyShootArrow" } else { "AudioEnemyShootFireball" }, None, i as i32);
+        }
+        Ok(())
+    }
+
+    /// EnemyStartMissile 0x1901f0(enemy, target, from, kind).
+    fn enemy_start_missile(&mut self, i: usize, target: V3, from: V3, kind: usize) -> R<bool> {
+        let t = self.enemies[i].i32_(e::TYPE);
+        let info = *self
+            .effects
+            .tables
+            .enemy_missile_info
+            .get(t as usize * 3 + kind)
+            .ok_or_else(|| Unsupported(format!("EnemyMissileInfo type {t}")))?;
+        let prefix = self.items.tables.enemy_table.iter().find(|(tt, _)| *tt == t).map(|(_, n)| String::from_utf8_lossy(n).to_uppercase());
+        let label = prefix.map(|p| format!("{p}_{}", self.effects.tables.enemy_missile_desc[kind]));
+        if !label.is_some_and(|l| self.enemy_anim_data.other_trees.contains_key(&(t, l))) {
+            return Ok(false); // Errorf: no missile tree for this type/kind.
+        }
+        let fl = |k: usize| f32::from_bits(info[k]);
+        let speed = mul(fl(2), self.level_f32(0xc4))?;
+        let inv = div(1.0, speed)?;
+        let mut d = v_sub(target, from)?;
+        if kind == 2 {
+            normal_vector(&mut d)?;
+        } else {
+            let lift = if kind == 1 { -5.5 } else { -3.5 };
+            let r = self.random(5.0)?;
+            let lift = add(lift, mul(sub(r, 2.5)?, self.level_f32(0xc8))?)?;
+            calc_target_dir(speed, inv, fl(8), lift, &mut d)?;
+        }
+        if d[1] < 0.0 {
+            d[1] = 0.0;
+        }
+        let mut flat = d;
+        normal_vector_2d(&mut flat)?;
+        let fwd = self.enemies[i].v3(0x30);
+        if dot_xz(flat, fwd)? < f32::from_bits(0x3f34_fdf4) {
+            return Ok(false);
+        }
+        let mut flags = self.enemies[i].u32_(0xd8);
+        let mut sfx = 0u32;
+        let mut origin = from;
+        let mut cc: f32 = if kind == 2 { 0.0 } else { 2.5 };
+        let mut absolute = false;
+        match t {
+            7 | 0x18 if kind == 2 => {
+                origin[1] = add(from[1], 1.5)?;
+                absolute = true;
+            }
+            0xd if kind == 0 => cc = 1.0,
+            0xe if kind == 2 => cc = 1.0,
+            0xe | 4 if kind == 0 => {
+                origin[1] = add(from[1], 1.5)?;
+                absolute = true;
+            }
+            0x11 => {
+                cc = 2.0;
+                origin[0] = add(add(d[0], d[0])?, origin[0])?;
+                origin[2] = add(add(d[2], d[2])?, origin[2])?;
+            }
+            0x17 if kind == 0 => cc = 0.0,
+            0x17 if kind == 1 => {
+                cc = 0.0;
+                origin[0] = sub(origin[0], mul(d[0], 2.5)?)?;
+                origin[2] = sub(origin[2], mul(d[2], 2.5)?)?;
+            }
+            0x1b => {
+                sfx = 0x800_0000;
+                flags |= 0x10_0000;
+                cc = 0.0;
+            }
+            _ => {}
+        }
+        if !absolute {
+            origin[1] = add(cc, from[1])?;
+        }
+        let start = [add(mul(d[0], 3.0)?, origin[0])?, add(mul(d[1], 3.0)?, origin[1])?, add(mul(d[2], 3.0)?, origin[2])?];
+        if self.weapon_wall_collide(fl(3), origin, start)?.0.is_some() {
+            return Ok(false);
+        }
+        if self.weapon_item_collide(fl(3), origin, start, false, -1)?.is_some() {
+            return Ok(false);
+        }
+        let mut damage = fl(1);
+        if self.globals.enemy_shrink < 1.0 {
+            damage = mul(damage, 0.5)?;
+        }
+        if kind == 0 {
+            flags |= 0x2_0000;
+        }
+        if kind == 2 {
+            flags |= 0x4_0000;
+        }
+        self.start_missile(speed, damage, 0, start, d, flags, &info, 0, sfx, Visual::EnemyMissile { t, kind: kind as u8 })?;
+        Ok(true)
+    }
+
+    /// SuicideExplosion 0x17e938(damage, position) for CurWorld 7/0xb:
+    /// POISONEXP1 (0x19) blast, radius 7.5, flags 0x2b, damage flags 0x800.
+    pub fn suicide_explosion(&mut self, damage: f32, position: V3) -> R<()> {
+        if self.globals.cur_world != 7 && self.globals.cur_world != 0xb {
+            return unsupported("SuicideExplosion outside worlds 7/0xb");
+        }
+        let h = self.effects.tables.headers.get(0x19).copied().flatten().ok_or_else(|| Unsupported("POISONEXP1 header".into()))?;
+        let i = self.start_fx_tree(0.0, Visual::Header(0x19), h.frames, h.timing, Some(position), 0x2b)?;
+        let r = self.fx_mut(i);
+        r.set_u32(fx::KIND, 0x19);
+        r.set_f32(fx::GRAVITY, 0.0);
+        r.set_f32(fx::RADIUS, 0.0);
+        r.set_i16(fx::HIT_FX, 0);
+        r.set_u32(fx::HIT_SOUND, 4);
+        r.set_u32(fx::WALL_SOUND, 0);
+        r.set_f32(fx::DAMAGE, damage);
+        r.set_u32(fx::DAMAGE_FLAGS, 0x800);
+        r.set_f32(fx::BLAST, 7.5);
+        r.set_f32(fx::FADE, 0.0);
+        r.set_i16(fx::OWNER, 0);
+        if let Some(n) = self.effects.nodes[i].as_mut() {
+            n.position[1] = sub(n.position[1], 1.0)?;
+        }
+        Ok(())
+    }
+
+    /// MissileCollidePlayer 0x190880(radius, from, to): first active player hit.
+    fn missile_collide_player(&self, r: f32, from: V3, to: V3) -> R<Option<(usize, V3)>> {
+        for k in 0..4 {
+            let pl = &self.players[k];
+            if pl.i32_(0xfc) != 1 {
+                continue;
+            }
+            let w = add(r, pl.f32_(0x828))?;
+            let h = add(r, pl.f32_(0x82c))?;
+            if let Some(c) = super::enemies::line_cylinder_collide(pl.v3(0x70), from, to, w, h, false)? {
+                return Ok(Some((k, c)));
+            }
+        }
+        Ok(None)
+    }
+
     /// The missile subset of ProcessEffects.
     pub fn process_effects(&mut self) -> R<()> {
         if self.globals.paused != 0 || self.globals.help != 0 {
@@ -1369,7 +1537,92 @@ impl Game {
         let mut out;
         let flags = self.fx(i).u32_(fx::FLAGS);
         if flags & 1 != 0 {
-            return unsupported("effect vs player collision (MissileCollidePlayer)");
+            if mode == 0 {
+                let r = if flags & 0x200 != 0 { 0.01 } else { radius };
+                if let Some((k, p)) = self.missile_collide_player(r, from, to)? {
+                    let left = sub(self.fx(i).f32_(fx::DURATION), age)?;
+                    if k as i32 == owner_raw as i32 - 1 {
+                        if 0.2 < left {
+                            result = -1;
+                        }
+                    } else if flags & 0x200 != 0 {
+                        if 0.1 < left {
+                            result = -1;
+                        }
+                    } else if self.players[k].u32_(0x134) & 0x102_0000 != 0 {
+                        return unsupported("missile reflected by a player shield");
+                    } else {
+                        let mut dir = self.fx(i).v3(fx::VELOCITY);
+                        normal_vector(&mut dir)?;
+                        let mut res = 0;
+                        if self.players[k].f32_(0x8c0) <= time {
+                            let pain = flags & 0x2000 == 0;
+                            let df = self.fx(i).u32_(fx::DAMAGE_FLAGS) | if pain { 0 } else { 0x80 };
+                            res = self.damage_player(if pain { damage } else { 0.0 }, k, i32::from(pain), df, Some(dir))?;
+                            if 0xfff < owner_raw {
+                                return unsupported("CritterDamagedPlayer");
+                            }
+                            if 2.0 < damage {
+                                self.players[k].set_f32(0x8c0, add(cool, time)?);
+                            }
+                        }
+                        if pierce == 0 {
+                            to = p;
+                            moved = true;
+                        } else if self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0x20_0000 != 0 && 0 <= self.fx(i).i16_(fx::HIT_FX) && 2.0 < damage {
+                            return unsupported("piercing missile hit effect on a player");
+                        }
+                        result = if res != 0 { 3 } else { 2 };
+                    }
+                }
+                if pierce != 0 {
+                    result = 0;
+                }
+            } else if 0.0 < radius && flags & 0x200 == 0 {
+                let mut df = self.fx(i).u32_(fx::DAMAGE_FLAGS);
+                if damage < 5.0 {
+                    df = df & 0xffff_fe8f | 0x100_0000;
+                }
+                for k in 0..4 {
+                    let pl = &self.players[k];
+                    if pl.i32_(0xfc) != 1 || time < pl.f32_(0x8c0) || k as i32 == owner_raw as i32 - 1 {
+                        continue;
+                    }
+                    let mut v = v_sub(pl.v3(0x70), to)?;
+                    if add(radius, pl.f32_(0x82c))? < v[1].abs() {
+                        continue;
+                    }
+                    let dist = normal_vector_2d(&mut v)?;
+                    let w = pl.f32_(0x828);
+                    if add(radius, w)? < dist {
+                        continue;
+                    }
+                    if 10.0 < dist {
+                        return unsupported("ItemLineCollide for a distant blast");
+                    }
+                    let mut cone = self.fx(i).f32_(fx::CONE);
+                    if -1.0 < cone {
+                        if dist < mul(add(radius, w)?, f32::from_bits(0x3e99_999a))? {
+                            cone = mul(cone, f32::from_bits(0x3f59_999a))?;
+                        }
+                        if dot_xz(v, fwd)? < cone {
+                            continue;
+                        }
+                    }
+                    let push = [mul(v[0], 0.25)?, 0.0, mul(v[2], 0.25)?];
+                    self.damage_player(damage, k, 1, df, Some(push))?;
+                    if 0xfff < owner_raw {
+                        return unsupported("CritterDamagedPlayer");
+                    }
+                    if self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0x800 == 0 {
+                        if 2.0 < damage {
+                            self.players[k].set_f32(0x8c0, add(cool, time)?);
+                        }
+                    } else {
+                        self.players[k].set_f32(0x8c0, add(time, 0.5)?);
+                    }
+                }
+            }
         }
         if flags & 8 != 0 {
             if mode == 0 {
