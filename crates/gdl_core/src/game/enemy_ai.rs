@@ -714,7 +714,8 @@ impl Game {
             }
             if self.enemies[i].i32_(0xe0) == 4 {
                 self.enemies[i].set_i16(0x32a, stage + 1);
-                self.audio("AudioSuicideYell", None, i as i32);
+                let pos = self.enemies[i].v3(e::ATTENTION);
+                self.sfx3(0x37, pos, 0xe0, 0x34)?;
                 run = true;
             }
         } else if stage != 2 && 0 <= self.enemies[i].i16_(0x288) && self.ef(i, 0x290) <= self.ef(i, 0x314) {
@@ -913,11 +914,11 @@ impl Game {
                 }
                 let mut pain = 1;
                 if (small && t != 0x1f) || t == 2 || t == 8 || t == 0xb {
-                    self.audio("AudioEnemyBite", None, t);
+                    self.audio_enemy_bite(i)?;
                     pain = 0;
                 } else if (t as u32).wrapping_sub(4) < 2 || t == 10 {
                     let level = self.enemies[i].i16_(0x21a);
-                    self.audio("AudioPlayerHit", Some(p), if level < 2 { 4 } else { 3 });
+                    self.audio_player_hit(p, if level < 2 { 4 } else { 3 });
                     pain = 0;
                 }
                 if flags & 0x130 == 0 {

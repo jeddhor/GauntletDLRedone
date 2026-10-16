@@ -165,7 +165,7 @@ impl Game {
                             self.help(0x11, idx);
                         }
                         self.give_gold(idx, gold);
-                        self.audio("AudioPickup", Some(idx), 0);
+                        self.audio_pickup(idx);
                         self.got_it(idx, 1, gold);
                         self.expire_item(slot, 8);
                         let o = p::STATS + 0x1c * self.players[player].u32_(p::CHARACTER) as usize;
@@ -193,7 +193,7 @@ impl Game {
                         }
                         return Ok(1);
                     }
-                    self.audio("AudioOpenChest", None, 0);
+                    self.sfx3(0x2c, r.v3(0x60), 0x7f, 0x40)?;
                     let rr = &mut self.items.records[slot];
                     rr.set_u16(0xd8, rr.u16_(0xd8) | 1);
                     rr.set_u8(0xdf, idx as u8);
@@ -277,7 +277,7 @@ impl Game {
                 if self.use_key(player) {
                     let rr = &mut self.items.records[slot];
                     rr.set_u16(0xd8, rr.u16_(0xd8) | 1);
-                    self.audio("AudioDoor", None, subtype);
+                    self.audio_door(r.v3(0x60), subtype)?;
                     0
                 } else {
                     self.help(1, idx);
@@ -297,7 +297,8 @@ impl Game {
                     if self.globals.cur_world == 3 && subtype == 1 && def.name() == b"FLAMEH" {
                         sound = 6;
                     }
-                    self.audio("AudioDamageTile", Some(idx), sound);
+                    let at = self.players[player].v3(0x50);
+                    self.audio_damage_tile(at, sound);
                     let t = add(mul((i32::from(r.i16_(0xda)) + 1) as f32, f32::from_bits(0x3d08_8889))?, self.globals.time)?;
                     self.players[player].set_f32(p::HAZARD_TIME, t);
                     self.help(0x15, idx);
@@ -314,7 +315,11 @@ impl Game {
                     if r.u16_(0xd8) & 1 != 0 {
                         return Ok(0);
                     }
-                    self.audio(if subtype == 0x31 { "AudioLeafFall" } else { "AudioRockFall" }, None, 0);
+                    if subtype == 0x31 {
+                        self.audio_leaf_fall(r.v3(0x40))?;
+                    } else {
+                        self.audio_rock_fall(r.v3(0x40))?;
+                    }
                     let rr = &mut self.items.records[slot];
                     rr.set_u16(0xd8, rr.u16_(0xd8) | 1);
                     0
@@ -375,7 +380,9 @@ impl Game {
         if chest_subtype == 0x2c {
             let rr = &mut self.items.records[chest];
             rr.set_u16(0xd8, rr.u16_(0xd8) | 0x40);
-            self.audio("AudioTimeBomb", None, 0);
+            if self.sounds.rom.is_some() {
+                self.events.push(Event::Sound { id: 0x2d, position: None, volume: 0xe0, priority: 0x14, queue: false });
+            }
             return Ok(());
         }
         if dk == 1 && ds == 2 && 2 <= c.i16_(0x100) {
@@ -436,7 +443,7 @@ impl Game {
         let amount = r.i32_(0xf4);
         let stolen = |g: &mut Game, df: i8| {
             if 0 <= df && df as usize != idx {
-                g.audio("AudioPlayerStolen", None, 0);
+                g.audio_player_stolen(idx);
             }
         };
         let mut expire = false;
@@ -447,7 +454,7 @@ impl Game {
                 let o = p::STATS + 0x1c * self.players[player].u32_(p::CHARACTER) as usize;
                 let v = self.players[player].i32_(o);
                 self.players[player].set_i32(o, amount.wrapping_add(v));
-                self.audio("AudioPickupGold", Some(idx), amount);
+                self.audio_pickup_gold(idx, amount)?;
                 self.got_it(idx, def.subtype(), amount);
                 self.players[player].set_u16(p::STATUS_934, 1);
                 if self.globals.cur_world == 0xc {
@@ -473,7 +480,7 @@ impl Game {
                         self.help(if gates == 0 { 2 } else { 8 }, idx);
                         self.players[player].set_i32(p::KEYS, take + keys);
                         self.items.records[slot].set_i32(0xf4, amount - take);
-                        self.audio("AudioKey", Some(idx), 0);
+                        self.audio_key(idx);
                         self.got_it(idx, def.subtype(), amount - take);
                         self.players[player].set_u16(p::STATUS_934, 1);
                     }
@@ -481,7 +488,7 @@ impl Game {
                     self.help(if gates == 0 { 2 } else { 8 }, idx);
                     self.players[player].set_i32(p::KEYS, keys + amount);
                     stolen(self, df);
-                    self.audio("AudioKey", Some(idx), 0);
+                    self.audio_key(idx);
                     self.got_it(idx, def.subtype(), amount);
                     self.players[player].set_u16(p::STATUS_934, 1);
                     expire = true;
@@ -511,12 +518,12 @@ impl Game {
                 self.got_it(idx, def.subtype(), food as i32);
                 if food < 0.0 {
                     self.players[player].set_u16(p::STATUS_934, 3);
-                    self.audio("AudioPlayerPoison", Some(idx), 0);
+                    self.audio_player_poison(idx);
                 } else {
                     self.players[player].set_u16(p::STATUS_934, 1);
                     let n = def.name();
                     let which = if n == b"PINEAPPLE" { 3 } else if n == b"APPLE" { 1 } else if n == b"BANANA" { 2 } else { 0 };
-                    self.audio("AudioPlayerEatSFX", Some(idx), which);
+                    self.audio_player_eat_sfx(idx, which)?;
                 }
                 expire = true;
             }
@@ -542,7 +549,7 @@ impl Game {
                 }
                 self.help(7, idx);
                 stolen(self, df);
-                self.audio("AudioPickup", Some(idx), 0);
+                self.audio_pickup(idx);
                 self.got_it(idx, def.subtype(), 0);
                 self.players[player].set_u16(p::STATUS_934, 1);
                 expire = true;
@@ -556,7 +563,7 @@ impl Game {
                 if let Some(h) = powerup_help(def.subtype(), flags) {
                     self.help(h, idx);
                 }
-                self.audio("AudioPickupSpecial", Some(idx), def.subtype());
+                self.audio_pickup_special(idx, def.subtype(), flags);
                 self.got_it(idx, def.subtype(), 0);
                 self.players[player].set_u16(p::STATUS_934, 1);
                 expire = true;

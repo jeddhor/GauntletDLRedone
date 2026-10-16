@@ -1,7 +1,8 @@
 //! Per-world gameplay WAD (wdata/*.wad): MB container (MBSetupWad 0x1d3f38 /
 //! MBGetFromWad 0x1d4008) with tagged chunks consumed by LoadWorldData
 //! 0x161b98: LEVL (0x10c-byte level records), ENMY (24-byte enemy entries) and
-//! CAMS/AUDS/SNDS/MAPS/BCAM/WRLD retained raw until their consumers are recovered.
+//! SNDS (world sounds), AUDS (stage audio); CAMS/MAPS/BCAM/WRLD retained raw until
+//! their consumers are recovered.
 use crate::{binary::Reader, wad::ParseError};
 use serde::Serialize;
 
@@ -37,11 +38,39 @@ pub struct EnemyEntry {
     pub raw: Vec<u8>,
 }
 
+/// SNDS world sound (0x18 bytes): name, id (−1 until AudioFindSound),
+/// volume and priority words (PlayWorldSound 0x15c4f0).
+#[derive(Debug, Clone, Serialize)]
+pub struct WorldSound {
+    pub name: String,
+    pub id: i32,
+    pub volume: i16,
+    pub priority: i16,
+    pub raw: Vec<u8>,
+}
+
+/// AUDS stage record (0x3c bytes): bank name, enter sound, music stream,
+/// areas and parts per area (AudioLoadStage 0x15caf8, BGPlayStream 0x15c7a0).
+#[derive(Debug, Clone, Serialize)]
+pub struct StageAudio {
+    pub bank: String,
+    pub word_10: i16,
+    pub enter_sound: i16,
+    pub word_14: i32,
+    pub stream: String,
+    pub areas: i16,
+    pub word_2a: i16,
+    pub parts: Vec<i16>,
+    pub raw: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WorldData {
     pub chunks: Vec<Chunk>,
     pub levels: Vec<LevelRecord>,
     pub enemies: Vec<EnemyEntry>,
+    pub sounds: Vec<WorldSound>,
+    pub stages: Vec<StageAudio>,
 }
 
 impl WorldData {
@@ -108,7 +137,37 @@ impl WorldData {
                 return Err(r.error(0, "level enemy index outside ENMY"));
             }
         }
-        Ok(Self { chunks, levels, enemies })
+        let mut sounds = Vec::new();
+        if let Some(c) = find("SNDS") {
+            let range = r.table(c.offset, c.count, 0x18, 8)?;
+            for p in range.step_by(0x18) {
+                sounds.push(WorldSound {
+                    name: r.label(p, 16),
+                    id: r.i32(p + 0x10),
+                    volume: r.i16(p + 0x14),
+                    priority: r.i16(p + 0x16),
+                    raw: bytes[p..p + 0x18].to_vec(),
+                });
+            }
+        }
+        let mut stages = Vec::new();
+        if let Some(c) = find("AUDS") {
+            let range = r.table(c.offset, c.count, 0x3c, 8)?;
+            for p in range.step_by(0x3c) {
+                stages.push(StageAudio {
+                    bank: r.label(p, 16),
+                    word_10: r.i16(p + 0x10),
+                    enter_sound: r.i16(p + 0x12),
+                    word_14: r.i32(p + 0x14),
+                    stream: r.label(p + 0x18, 16),
+                    areas: r.i16(p + 0x28),
+                    word_2a: r.i16(p + 0x2a),
+                    parts: (0..8).map(|k| r.i16(p + 0x2c + 2 * k)).collect(),
+                    raw: bytes[p..p + 0x3c].to_vec(),
+                });
+            }
+        }
+        Ok(Self { chunks, levels, enemies, sounds, stages })
     }
 }
 

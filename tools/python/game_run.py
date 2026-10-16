@@ -29,17 +29,18 @@ def main():
     a = ap.parse_args()
     names = [f'LEVELS/LEVELG{a.level}/WORLDS.PS2', 'WDATA/TOWN.WAD', 'ITEMS/LEVELG/ANIM.PS2', 'MONSTERS/ZOM/ANIM.PS2',
              'MONSTERS/MAG/ANIM.PS2', 'MONSTERS/GHO/ANIM.PS2', 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2',
-             'PLAYERS/SOR/ANIM/ANIM.PS2']
-    w, wd, ia, zom, mag, gho, wp, pw, clips = resolve(names)
+             'PLAYERS/SOR/ANIM/ANIM.PS2', 'AUDIO/AUDATPS2.ROM']
+    w, wd, ia, zom, mag, gho, wp, pw, clips, rom = resolve(names)
     cmd = ['target/release/gdl_tools', 'game-run', str(w), str(wd), str(a.level - 1), str(ELF), GAME_START, str(ia),
            str(a.frames), a.report, f'13={zom}:ZOM', f'12={mag}:MAG', f'20={gho}:GHO', f'weapons={wp}',
-           f'powerups={pw}']
+           f'powerups={pw}', f'rom={rom}']
     if a.script:
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
     if a.potions:
         cmd += [f'potions={a.potions}']
     subprocess.run(cmd, check=True)
     r = json.loads(pathlib.Path(a.report).read_text())
+    print('sounds', len(r.get('sounds', [])), r.get('sounds', [])[:6])
     for u in r['unsupported']:
         print('UNSUPPORTED', u)
     for smp in r['samples']:

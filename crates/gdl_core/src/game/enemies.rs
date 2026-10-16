@@ -889,7 +889,7 @@ impl Game {
             let pos = self.enemies[i].v3(e::COLLISION);
             let dmg = mul(self.level_f32(0xbc), 50.0)?;
             self.suicide_explosion(dmg, pos)?;
-            self.audio("AudioSuicideBomb", None, i as i32);
+            self.sfx3(0x38, pos, 0xe0, 0x32)?;
         }
         self.uncouple_enemy(i);
         Ok(())
@@ -1003,7 +1003,10 @@ impl Game {
                 self.enemies[i].set_f32(e::HEALTH, 0.0);
             } else if st == 6 {
                 if sound != 0 {
-                    self.audio("AudioEnemyWeaponHit", None, t);
+                    {
+                        let pos = self.enemies[i].v3(e::POSITION);
+                        self.sfx3(0x3c, pos, 0x7f, 0x78)?;
+                    }
                 }
                 let c = self.enemies[i].i16_(0x2e8).wrapping_sub(1);
                 self.enemies[i].set_i16(0x2e8, c);
@@ -1012,7 +1015,10 @@ impl Game {
                 }
                 self.enemies[i].set_i32(e::STATE, 1);
                 if sound != 0 {
-                    self.audio("AudioDeathShatter", None, 0);
+                    {
+                        let pos = self.enemies[i].v3(e::POSITION);
+                        self.sfx(0x67, Some(pos), 0xe0, 0xd);
+                    }
                 }
                 // SetEnemyObj(…, 1) swaps the statue model; matrix preserved.
                 self.enemy_update_offsets(i)?;
@@ -1036,7 +1042,10 @@ impl Game {
                 return Ok(0);
             }
             if sound != 0 {
-                self.audio("AudioDeathDies", None, 0);
+                {
+                    let pos = self.enemies[i].v3(e::POSITION);
+                    self.sfx(0x65, Some(pos), 0x7f, 0x16);
+                }
             }
             self.enemy_dies(i, player as i16)?;
             kill_stat(self);
@@ -1117,7 +1126,7 @@ impl Game {
         let health = self.enemies[i].f32_(e::HEALTH);
         if 0.0 < health {
             if sound != 0 {
-                self.audio("AudioEnemyHurt", None, sound);
+                self.audio_enemy_hurt(i, sound)?;
             }
             if f & 0x100_0000 == 0 && t != self.globals.boss_type {
                 if let Some(h) = hit.filter(|_| 4.0 <= self.enemies[i].f32_(e::HALF_HEIGHT)) {
@@ -1136,9 +1145,9 @@ impl Game {
         }
         if sound != 0 {
             if logic == 0x12 {
-                self.audio("AudioSuicideYellKill", None, 0);
+                self.events.push(super::Event::StopSound { id: 0x37 });
             }
-            self.audio("AudioEnemyDies", None, sound);
+            self.audio_enemy_dies(i, sound)?;
         }
         self.enemy_dies(i, player as i16)?;
         kill_stat(self);

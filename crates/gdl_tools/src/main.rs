@@ -204,6 +204,25 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "audio-inspect" {
+        // audio-inspect FILE(.VBK|.ADS|AUDATPS2.ROM) NEW_REPORT.json: tables + decoded lengths.
+        let b = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let report = if b.starts_with(b"VBNK") {
+            let v = gdl_formats::audio::Vbk::parse(&b)?;
+            let lens: Vec<_> = (0..v.samples.len()).map(|k| v.decode(&b, k).map(|p| p.len())).collect::<Result<_, _>>()?;
+            serde_json::json!({"bank":v,"decoded_samples":lens})
+        } else if b.starts_with(b"SShd") {
+            let a = gdl_formats::audio::Ads::parse(&b)?;
+            let pcm = a.decode(&b);
+            let peak = pcm.iter().map(|s| i32::from(*s).abs()).max().unwrap_or(0);
+            serde_json::json!({"stream":a,"frames":pcm.len() / a.channels as usize,"peak":peak})
+        } else {
+            serde_json::json!({"rom":gdl_formats::audio::AudioRom::parse(&b)?})
+        };
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &serde_json::json!({"source_sha256":hash(&b),"report":report}))?;
+        return Ok(());
+    }
     if args.len() == 2 && args[0] == "anim-trees" {
         // anim-trees ANIM.PS2: tree labels with sequence label/frames/timing (stdout).
         let anim = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;
@@ -353,7 +372,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         };
         let effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &anim_of("weapons")?, &anim_of("powerups")?)?;
         let mut game = gdl_core::game::Game::new_level(gdl_core::game::setup::LevelInputs {
-            world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, effect_tables })?;
+            world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, effect_tables,
+            audio_rom: match opts.get("rom") {
+                Some(p) => Some(gdl_formats::audio::AudioRom::parse(&bounded_read(Path::new(p), 4 * 1024 * 1024)?)?),
+                None => None,
+            } })?;
         // Optional scripted player: sim=START_SIM.json clips=SOR_CLIPS.PS2 script=LEVELS_HEX:UPDATES,...
         let mut driver = match (opts.get("sim"), opts.get("script")) {
             (Some(sim_path), Some(_)) => {
@@ -410,8 +433,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "driver":driver.as_ref().map(|d| serde_json::json!({"anim":d.anim,"missiles":d.missiles_started,"event_error":d.event_error,"event_word":d.event_word}))}));
             }
         }
-        let events: Vec<String> = game.events.iter().filter(|e| !matches!(e, gdl_core::game::Event::Audio { .. })).take(400).map(|e| format!("{e:?}")).collect();
-        let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,
+        let sounds: Vec<String> = game.events.iter().filter(|e| matches!(e, gdl_core::game::Event::Sound { .. })).take(200).map(|e| format!("{e:?}")).collect();
+        let events: Vec<String> = game.events.iter().filter(|e| !matches!(e, gdl_core::game::Event::Audio { .. } | gdl_core::game::Event::Sound { .. })).take(400).map(|e| format!("{e:?}")).collect();
+        let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,"sounds":sounds,
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
             "potions_override":opts.get("potions")});

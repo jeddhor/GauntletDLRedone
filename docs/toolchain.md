@@ -59,3 +59,13 @@ No Python packages were installed for the standard-library research scripts.
 Pillow is used only for independent local image inspection. Record its version
 alongside any future publication-quality image comparisons. No mutable latest
 dependency is part of the build.
+
+## Audio output dependency (2026-10-16)
+
+`gdl_client` adds `cpal = "=0.15.3"` (with its locked transitive crates
+`alsa 0.9.1`, `alsa-sys 0.3.1`, `dasp_sample 0.11.0`) for native audio
+output in the interim playtest. The crates were already present in the local
+Cargo registry cache and resolve with `--offline`; Cargo.lock records them.
+Bevy's own audio stack (bevy_audio/rodio) is not in the offline cache and was
+not added. Automated `--virtual` runs set `GDL_NO_AUDIO=1` so tests never play
+on the host's speakers. No previously recorded comparison depends on this.

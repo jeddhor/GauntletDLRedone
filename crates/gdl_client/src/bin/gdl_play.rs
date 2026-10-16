@@ -8,7 +8,8 @@
 //! cutout, rest-state follow camera, item models at their tree rest pose,
 //! enemy per-frame objects chosen by a frame-count match of object stems to
 //! sequences (the OANIM channel is not decoded), missiles drawn with the
-//! SFXYEL WEAP_TW_Y rest pose, hit sparks as short glows, no audio.
+//! SFXYEL WEAP_TW_Y rest pose, hit sparks as short glows. Audio: original
+//! banks and music through gdl_client::audio (approximate mixing).
 use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*, sprite::Anchor};
 use gdl_core::{
     controls::{direction_levels, tables_from_elf},
@@ -81,6 +82,7 @@ struct Session {
     monster_paths: Vec<(i32, String, String)>,
     /// ANIM.PS2 path by package name (ITEMS, WEAPONS, POWERUPS).
     anim_paths: HashMap<String, String>,
+    audio_rom: Option<gdl_formats::audio::AudioRom>,
     /// Seconds left on the level-complete banner, then the next level loads.
     banner: Option<(f32, String)>,
     /// Pending level index to build after the banner.
@@ -356,6 +358,7 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
         enemy_anims,
         item_anims,
         effect_tables,
+        audio_rom: session.audio_rom.clone(),
     })?;
     let tables = tables_from_elf(&elf)?;
     let mut sim = session.sim_start.clone();
@@ -384,7 +387,7 @@ fn keyboard_levels(keys: &ButtonInput<KeyCode>) -> u32 {
     levels
 }
 
-fn simulate(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>, session: Res<Session>) {
+fn simulate(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>, session: Res<Session>, presentation: Res<Presentation>, mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>) {
     if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() {
         return;
     }
@@ -403,6 +406,21 @@ fn simulate(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>, session: Res<
     sim.updates += 1;
     let new: Vec<Event> = sim.game.events.drain(before..).collect();
     sim.game.events.clear();
+    let me = Vec3::from_array(sim.driver.sim.position);
+    let right = presentation.basis[0];
+    for e in &new {
+        if let Some(a) = audio.as_mut() {
+            match e {
+                Event::Sound { id, position, volume, priority, queue } => {
+                    // Presentation pan: offset along the camera's right axis.
+                    let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
+                    a.play(*id, *volume, pan, *priority, *queue);
+                }
+                Event::StopSound { id } => a.stop(*id),
+                _ => {}
+            }
+        }
+    }
     for e in new {
         match e {
             Event::Exp { amount, .. } => sim.exp += i64::from(amount),
@@ -729,9 +747,9 @@ fn present_player(
              HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}   LEVEL {}   EXP {}   KILLS {}\n\
              enemies active {}   generators standing {}   missiles thrown {}\n\
              {}\n\
-             Native: item/enemy/generator/missile/damage/pickup systems, movement + collision\n\
+             Native: item/enemy/generator/missile/damage/pickup/sound-cue systems, movement + collision\n\
              Interim/presentation: start state from your save, player action map + clip clock, camera, unlit materials,\n\
-             enemy frame objects, item rest poses, no audio, magic has no animation, combat stats not re-derived on level up, no boss{}{}",
+             enemy frame objects, item rest poses, original sounds/music (approximate mixing), magic has no animation, combat stats not re-derived on level up, no boss{}{}",
             session.levels[session.current].name,
             health,
             p.i32_(0x1a20),
@@ -753,7 +771,7 @@ fn present_player(
                 sim.last_event.clone()
             },
             sim.error.as_ref().map_or(String::new(), |e| format!("\nSIMULATION STOPPED: {e}")),
-            g.log.unsupported.keys().next().map_or(String::new(), |k| format!("\nfirst log note / unported path: {k}")),
+            g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),
         );
     }
 }
@@ -810,6 +828,15 @@ fn run() -> Result<(), Box<dyn Error>> {
         });
     }
     let first = levels.first().ok_or("no levels")?;
+    let audio_cfg = &cfg["audio"];
+    let audio_rom = match audio_cfg["rom"].as_str() {
+        Some(p) => Some(gdl_formats::audio::AudioRom::parse(&gdl_client::bounded_read(Path::new(p))?)?),
+        None => None,
+    };
+    let paths = |k: &str| -> HashMap<String, std::path::PathBuf> {
+        audio_cfg[k].as_object().map_or(HashMap::new(), |m| m.iter().filter_map(|(n, v)| Some((n.to_uppercase(), v.as_str()?.into()))).collect())
+    };
+    let audio = audio_rom.clone().map(|rom| gdl_client::audio::AudioOut::new(rom, paths("banks"), paths("streams")));
     let session = Session {
         elf_bytes: gdl_client::bounded_read(&p("elf")?)?,
         wdata_bytes: gdl_client::bounded_read(&p("wdata")?)?,
@@ -823,12 +850,21 @@ fn run() -> Result<(), Box<dyn Error>> {
         clip_timings: setup::clips_of(&clips, 0),
         monster_paths,
         anim_paths,
+        audio_rom,
         banner: None,
         next: None,
         finished: None,
     };
     let (game, driver) = build_game(&session, 0, None)?;
-    App::new()
+    let mut audio = audio;
+    if let (Some(a), Some(stage)) = (audio.as_mut(), game.sounds.stage.as_ref()) {
+        a.music(&stage.stream_name(0, 0));
+    }
+    let mut app = App::new();
+    if let Some(a) = audio {
+        app.insert_non_send_resource(a);
+    }
+    app
         .insert_resource(Sources { character, clips, clip_bytes, rig, packages, monsters })
         .insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false })
         .insert_resource(session)
@@ -866,6 +902,7 @@ fn advance_level(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
 ) {
     if keys.just_pressed(KeyCode::Enter) && sim.game.players[0].f32_(0x1a10) <= 0.0 {
         // INTERIM continue: restore the start-state health and play on.
@@ -917,6 +954,12 @@ fn advance_level(
     let carry = sim.game.players[0].clone();
     match loaded.and_then(|_| build_game(&session, idx, Some(&carry))) {
         Ok((game, mut driver)) => {
+            if let Some(a) = audio.as_mut() {
+                a.stop_all();
+                if let Some(stage) = game.sounds.stage.as_ref() {
+                    a.music(&stage.stream_name(0, 0));
+                }
+            }
             driver.missiles_started = sim.driver.missiles_started;
             sim.game = game;
             sim.driver = driver;

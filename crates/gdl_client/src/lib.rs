@@ -2,6 +2,8 @@
 //! interim playtest. Material choices are explicitly diagnostic: unlit, opaque,
 //! double sided, base textures with source vertex colours; lightmaps and GS
 //! blending are not applied.
+pub mod audio;
+
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},

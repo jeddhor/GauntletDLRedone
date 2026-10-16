@@ -13,6 +13,7 @@ pub mod players;
 pub mod progress;
 pub mod record;
 pub mod setup;
+pub mod sound;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
 use crate::item_collision::DynGrid;
@@ -120,8 +121,12 @@ pub enum Event {
     Help { id: i32, player: usize },
     /// add_got_it(player, kind, amount): HUD pickup notice.
     GotIt { player: usize, kind: i32, amount: i32 },
-    /// Audio* calls, by original function name.
+    /// Audio* calls, by original function name (cues not yet transcribed).
     Audio { cue: &'static str, player: Option<usize>, arg: i32 },
+    /// A sound request (AudioSFX/SFX2/SFX3/queue): ID = bank << 16 | call.
+    Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, queue: bool },
+    /// AudioSuicideYellKill-style stop of every playing instance of an ID.
+    StopSound { id: i32 },
     /// Expired item (ExpireItem 0x1537b0) with its fade mode.
     ItemExpired { slot: usize, mode: i32 },
     Vibrate { player: usize, strength: i32, time: i32 },
@@ -194,6 +199,7 @@ pub struct Game {
     pub level_done: Option<i32>,
     /// randpottype 0x221540: rotating colour for untyped potions.
     pub randpottype: i32,
+    pub sounds: sound::SoundTables,
     pub log: setup::FrameLog,
 }
 

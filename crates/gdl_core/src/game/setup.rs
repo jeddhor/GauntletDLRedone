@@ -166,6 +166,8 @@ pub struct LevelInputs<'a> {
     /// Item animation trees by definition name.
     pub item_anims: HashMap<String, Vec<ClipTiming>>,
     pub effect_tables: super::effects::EffectTables,
+    /// AUDIO/AUDATPS2.ROM; None disables sound events.
+    pub audio_rom: Option<gdl_formats::audio::AudioRom>,
 }
 
 /// Per-enemy (visible, near-visible) query.
@@ -274,6 +276,25 @@ impl Game {
             target_cone_mode: s.extra.target_cone_mode,
             level_done: None,
             randpottype: s.extra.randpottype,
+            sounds: {
+                let slots: Vec<(i32, i32, String)> = (0..8)
+                    .map(|k| {
+                        let name = types.data[k].and_then(|d| inp.wdata.enemies.get(d)).map_or(String::new(), |e| e.name.clone());
+                        (types.kind[k], types.subtype[k], name)
+                    })
+                    .collect();
+                let snds: Vec<(String, i16, i16)> = inp.wdata.sounds.iter().map(|w| (w.name.clone(), w.volume, w.priority)).collect();
+                let stage = inp.wdata.stages.get(inp.level).map(|a| super::sound::Stage {
+                    bank: a.bank.clone(),
+                    word_10: a.word_10,
+                    enter_sound: a.enter_sound,
+                    stream: a.stream.clone(),
+                    areas: a.areas,
+                    word_2a: a.word_2a,
+                    parts: a.parts.clone(),
+                });
+                super::sound::SoundTables::new(inp.elf, inp.audio_rom, &slots, g.boss_type, &snds, stage)?
+            },
             log: FrameLog::default(),
         };
         for slot in 0..item_count {

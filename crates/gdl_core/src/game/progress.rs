@@ -51,7 +51,7 @@ impl Game {
         }
         if changed != 0 {
             if n < 0 {
-                self.audio("AudioGainedLevel", Some(p), -1);
+                self.audio_gained_level(p, -1);
             } else if 0 < n {
                 self.help(0x22, p);
                 let h = add(self.players[p].f32_(0x1a10), 100.0)?;

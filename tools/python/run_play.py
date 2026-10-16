@@ -38,6 +38,18 @@ def resolve(targets):
     return paths
 
 
+def audio_config():
+    """AUDATPS2.ROM, every AUDIO/*.VBK bank and STREAMS/*.ADS music, by verified identity."""
+    proposed = json.loads(pathlib.Path('private/reports/wad-independent.json').read_text())
+    names = sorted({n.upper() for e in proposed['entries'] for n in e['proposed_names']})
+    banks = [n for n in names if n.startswith('AUDIO/') and n.endswith('.VBK')]
+    streams = [n for n in names if n.startswith('STREAMS/') and n.endswith('.ADS')]
+    rom, = resolve(['AUDIO/AUDATPS2.ROM'])
+    return dict(rom=str(rom),
+                banks={n[6:-4]: str(p) for n, p in zip(banks, resolve(banks))},
+                streams={n[8:]: str(p) for n, p in zip(streams, resolve(streams))})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--virtual', action='store_true', help='run inside the authenticated Xvfb session')
@@ -71,12 +83,14 @@ def main():
                       POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), SFXYEL=package('PLAYERS/SOR/SFXYEL')),
         # Enemy types of The Poison Fields (GetEnemyTypes, town "G" levels 0-3;
         # prefixes from the ELF enemy_table).
-        monsters=[dict(type=13, package='ZOM'), dict(type=12, package='MAG'), dict(type=20, package='GHO')])
+        monsters=[dict(type=13, package='ZOM'), dict(type=12, package='MAG'), dict(type=20, package='GHO')],
+        audio=audio_config())
     CONFIG.write_text(json.dumps(config, indent=1) + '\n')
     env = os.environ.copy()
     if args.virtual:
         from virtual_display import environment
         env = environment()
+        env['GDL_NO_AUDIO'] = '1'  # automated runs must not play on the host's speakers
     command = ['target/release/gdl_play', str(CONFIG)]
     raise SystemExit(subprocess.run(command, env=env).returncode)
 

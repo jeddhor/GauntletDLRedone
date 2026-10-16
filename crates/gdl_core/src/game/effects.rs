@@ -648,7 +648,8 @@ impl Game {
                     if player < 0 || r.u16_(0xd8) & 1 != 0 {
                         false
                     } else {
-                        self.audio("AudioRockFall", None, slot as i32);
+                        let at = self.items.records[slot].v3(0x40);
+                        self.audio_rock_fall(at)?;
                         self.items.records[slot].or_u16(0xd8, 1);
                         false
                     }
@@ -974,7 +975,7 @@ impl Game {
         let mut dir = target_dir;
         let distance = self.get_attack_dir(charge, p, facing, &mut dir, flags, enemy, item)?;
         let n = self.player_start_missile(distance, power, p, &mut dir, flags, origin_mode)?;
-        self.audio("AudioThrowWeapon", Some(p), 0);
+        self.audio_throw_weapon(p)?;
         Ok(n)
     }
 
@@ -1113,7 +1114,7 @@ impl Game {
                         self.items.records[slot].or_u16(0xd8, 1);
                         self.open_chest(slot, None)?;
                         if st == 0x2b {
-                            self.audio("AudioWoodBarrel", None, 0);
+                            self.audio_wood_barrel(at)?;
                             self.events.push(Event::Help { id: 0x1b, player: usize::MAX });
                         }
                     }
@@ -1152,14 +1153,16 @@ impl Game {
                         self.events.push(Event::GeneratorHit { slot, destroyed: level == 0 });
                     }
                     if level == 0 {
-                        self.audio("AudioGeneratorDies", None, slot as i32);
+                        let ty = i32::from(self.items.records[slot].i16_(0xf0));
+                        self.audio_generator_dies(at, ty)?;
                         for k in 0..self.enemies.len() {
                             if self.enemies[k].u32_(e::GENERATOR) == slot as u32 + 1 {
                                 self.enemies[k].set_u32(e::GENERATOR, 0);
                             }
                         }
                     } else {
-                        self.audio("AudioGeneratorDamaged", None, slot as i32);
+                        let ty = i32::from(self.items.records[slot].i16_(0xf0));
+                        self.audio_generator_damaged(at, ty)?;
                     }
                 }
             }
@@ -1181,10 +1184,10 @@ impl Game {
                     _ => {
                         if killed {
                             self.items.records[slot].or_u16(0xd8, 1);
-                            self.audio("AudioWoodBarrel", None, 0);
+                            self.audio_wood_barrel(at)?;
                             killed = false;
                         } else {
-                            self.audio("AudioWeaponHitBarrel", None, 0);
+                            self.sfx3(0x3c, at, 0x7f, 0x78)?;
                         }
                     }
                 }
@@ -1246,7 +1249,7 @@ impl Game {
         r.set_f32(fx::FADE, 0.0);
         r.set_i16(fx::OWNER, p as i16 + 1);
         // PlaceEffectOnFloor (y only; the blast tests x/z) and lights: presentation.
-        self.audio("AudioPotion", Some(p), colour as i32);
+        self.audio_potion(colour as usize, position, 0);
         Ok(())
     }
 
@@ -1266,7 +1269,12 @@ impl Game {
             _ => 2,
         };
         if self.enemy_start_missile(i, target, from, kind)? {
-            self.audio(if kind == 0 { "AudioEnemyShootArrow" } else { "AudioEnemyShootFireball" }, None, i as i32);
+            match kind {
+                0 => self.sfx3(0x30, from, 0x7f, 0x7e)?,
+                2 if self.enemies[i].i32_(e::TYPE) == 2 => return unsupported("AudioDemonFireBall"),
+                2 => self.sfx3(0x32, from, 0x7f, 0x7e)?,
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -1885,11 +1893,11 @@ impl Game {
         } else if result != 0 {
             let hit_at = if moved { to } else { from };
             if splash {
-                self.audio("AudioSplash", None, 0);
+                self.sfx3(0x24, hit_at, 0xb4, 0x78)?;
             } else {
                 let s = self.fx(i).u32_(if result == 1 { fx::WALL_SOUND } else { fx::HIT_SOUND });
                 if s != 0 {
-                    self.audio("AudioEffect", None, s as i32);
+                    self.audio_effect(s as i32, hit_at)?;
                 }
             }
             let mut h = self.fx(i).i16_(fx::HIT_FX) as i32;

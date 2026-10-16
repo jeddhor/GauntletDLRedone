@@ -94,7 +94,7 @@ impl Game {
 
     /// player_dies.
     pub fn player_dies(&mut self, player: usize) {
-        self.audio("AudioPlayerDies", Some(player), 0);
+        self.audio_player_dies(player);
         let pl = &mut self.players[player];
         pl.set_i32(pd::STATE, 8);
         pl.set_i32(pd::DEATH_COUNTER, 4);
@@ -262,12 +262,12 @@ impl Game {
             match pain {
                 2 => {
                     if 0.0 < d {
-                        self.audio("AudioPlayerPain", Some(player), 0);
+                        self.audio_player_pain(player)?;
                     }
                     self.players[player].set_f32(pd::PAIN_ACC, 0.0);
                 }
                 3 => {
-                    self.audio("AudioPlayerSeverePain", Some(player), 0);
+                    self.audio_player_severe_pain(player);
                     self.players[player].set_f32(pd::PAIN_ACC, 0.0);
                 }
                 0 => {}
@@ -278,13 +278,13 @@ impl Game {
                             pl.set_f32(pd::PAIN_ACC, sub(pl.f32_(pd::PAIN_ACC), 30.0)?);
                             pain = 0;
                             if 0.0 < d {
-                                self.audio("AudioPlayerPain", Some(player), 0);
+                                self.audio_player_pain(player)?;
                             }
                         }
                     } else {
                         pain = 0;
                         if 0.0 < d {
-                            self.audio("AudioPlayerPain", Some(player), 0);
+                            self.audio_player_pain(player)?;
                         }
                         self.players[player].set_f32(pd::PAIN_ACC, 0.0);
                     }
@@ -292,7 +292,7 @@ impl Game {
             }
         }
         if let Some(kind) = need_food {
-            self.audio("AudioNeedFood", Some(player), kind);
+            self.audio_need_food(kind, player);
         }
         if pain == 1 {
             if f & 0x800 == 0 {
@@ -305,12 +305,12 @@ impl Game {
                         0
                     };
                     if 0.0 < d {
-                        self.audio("AudioPlayerHit", Some(player), kind);
+                        self.audio_player_hit(player, kind);
                     }
                     self.players[player].set_i16(pd::HIT_SOUND_TIMER, 0x1e);
                 }
             } else if 0.0 < d {
-                self.audio("AudioPlayerPoison", Some(player), 0);
+                self.audio_player_poison(player);
             }
         }
         Ok(0)

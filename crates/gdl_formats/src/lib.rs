@@ -1,5 +1,6 @@
 //! Explicit little-endian readers for locally validated PS2 data families.
 pub mod animation;
+pub mod audio;
 pub mod animation_keys;
 mod binary;
 pub mod elf;

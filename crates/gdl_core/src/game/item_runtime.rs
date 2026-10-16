@@ -415,7 +415,7 @@ impl Game {
                             None => false,
                         };
                         if near {
-                            self.audio("AudioTentacle", None, slot as i32);
+                            self.sfx3(0x25_0001, r.v3(0x40), 0xe0, 0x32)?;
                         }
                     }
                     let rr = &mut self.items.records[slot];
