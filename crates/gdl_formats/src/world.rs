@@ -1,4 +1,6 @@
-//! Observed v2 world node and collision records; no gameplay collision solver.
+//! Observed v2 world node, collision-triangle and collision-grid records.
+//! Field meanings come from WorldCollide/CTriListCollide/BTriLineCol consumers
+//! (EE 0x11e160/0x11d600/0x11af80); the grid and triangles load unchanged.
 use crate::{binary::Reader, wad::ParseError};
 use serde::Serialize;
 
@@ -18,7 +20,38 @@ pub struct WorldNode {
 #[derive(Debug, Serialize)]
 pub struct CollisionRecord {
     pub index: u32,
+    /// Signed y range ×64 compared with the query's truncated y ×64.
+    pub min_y64: i16,
+    pub max_y64: i16,
+    /// Normal-xz scale used by BodyVectorNorm/WorldVectorNorm/CreateMat3Norm.
+    /// Stored as bits: flat triangles hold +inf, which the original never reads.
+    pub scale_bits: u32,
+    pub normal: [f32; 3],
+    pub origin: [f32; 3],
+    /// Local-plane vertices (u1, v1, u2, v2) ×64; vertex zero is the origin.
+    pub vertices64: [i16; 4],
     pub raw: Vec<u8>,
+}
+#[derive(Debug, Serialize, Clone, Copy)]
+pub struct GridRow {
+    pub min_x: u16,
+    pub max_x: u16,
+    pub cell_offset: u32,
+}
+/// Static collision grid. Cell words are `count << 22 | content byte offset`;
+/// content entries are i16 object index, i16 triangle count, then the counts'
+/// i16 triangle offsets relative to the object's first triangle.
+#[derive(Debug, Serialize, Clone)]
+pub struct CollisionGrid {
+    pub cell_size: f32,
+    pub dim_x: u32,
+    pub dim_z: u32,
+    pub rows: Vec<GridRow>,
+    pub cells: Vec<u32>,
+    pub contents: Vec<u8>,
+    /// Header words +16 and +24; meanings unresolved.
+    pub header_16: u32,
+    pub header_24: u32,
 }
 #[derive(Debug, Serialize)]
 pub struct World {
@@ -27,6 +60,7 @@ pub struct World {
     pub max: [f32; 3],
     pub nodes: Vec<WorldNode>,
     pub collisions: Vec<CollisionRecord>,
+    pub grid: CollisionGrid,
 }
 #[derive(Debug, Serialize)]
 pub struct Placement {
@@ -87,20 +121,92 @@ impl World {
                 raw: bytes[p..p + 60].to_vec(),
             });
         }
-        let collisions = (collisions.start..collisions.end)
-            .step_by(40)
-            .enumerate()
-            .map(|(index, p)| CollisionRecord {
+        let mut records = Vec::new();
+        for (index, p) in (collisions.start..collisions.end).step_by(40).enumerate() {
+            let scale_bits = r.u32(p + 4);
+            if f32::from_bits(scale_bits).is_nan() {
+                return Err(r.error(p + 4, "NaN collision normal scale"));
+            }
+            records.push(CollisionRecord {
                 index: index as u32,
+                min_y64: r.i16(p),
+                max_y64: r.i16(p + 2),
+                scale_bits,
+                normal: r.xyz(p + 8)?,
+                origin: r.xyz(p + 20)?,
+                vertices64: std::array::from_fn(|i| r.i16(p + 32 + 2 * i)),
                 raw: bytes[p..p + 40].to_vec(),
-            })
-            .collect();
+            });
+        }
+        let grid = Self::grid(&r)?;
         Ok(Self {
             raw_header: bytes[..120].to_vec(),
             min,
             max,
             nodes: results,
-            collisions,
+            collisions: records,
+            grid,
+        })
+    }
+    fn grid(r: &Reader) -> Result<CollisionGrid, ParseError> {
+        let (dim_x, dim_z) = (r.u32(64), r.u32(68));
+        let cell_size = r.float(60)?;
+        if cell_size <= 0.0 || dim_x == 0 || dim_z == 0 || dim_x > 4096 || dim_z > 4096 {
+            return Err(r.error(60, "collision grid dimensions outside policy"));
+        }
+        let rows_range = r.table(r.u32(32), dim_z, 8, 120)?;
+        let rows: Vec<_> = rows_range
+            .step_by(8)
+            .map(|p| GridRow {
+                min_x: r.u16(p),
+                max_x: r.u16(p + 2),
+                cell_offset: r.u32(p + 4),
+            })
+            .collect();
+        let mut cell_count = 0u64;
+        for (z, row) in rows.iter().enumerate() {
+            if row.min_x > row.max_x || u32::from(row.max_x) >= dim_x {
+                return Err(r.error(r.u32(32) as usize + 8 * z, "grid row x range invalid"));
+            }
+            cell_count = cell_count.max(u64::from(row.cell_offset) + u64::from(row.max_x - row.min_x) + 1);
+        }
+        if cell_count > 1 << 22 {
+            return Err(r.error(r.u32(32) as usize, "grid cell count policy exceeded"));
+        }
+        let cells_range = r.table(r.u32(20), cell_count as u32, 4, 120)?;
+        let cells: Vec<u32> = cells_range.step_by(4).map(|p| r.u32(p)).collect();
+        let content_start = r.u32(28) as usize;
+        let mut content_end = content_start;
+        for cell in &cells {
+            let mut p = content_start + (cell & 0x3f_ffff) as usize;
+            for _ in 0..cell >> 22 {
+                r.range(p, 4)?;
+                let count = r.i16(p + 2);
+                if count < 0 {
+                    return Err(r.error(p + 2, "negative grid triangle count"));
+                }
+                // A zero count does not advance in WorldCollide; it is retained as-is.
+                if count > 0 {
+                    r.range(p + 4, 2 * count as usize)?;
+                    if (0..count as usize).any(|k| r.i16(p + 4 + 2 * k) < 0) {
+                        return Err(r.error(p + 4, "negative grid triangle offset"));
+                    }
+                    p += 4 + 2 * count as usize;
+                } else {
+                    p += 4;
+                }
+            }
+            content_end = content_end.max(p);
+        }
+        Ok(CollisionGrid {
+            cell_size,
+            dim_x,
+            dim_z,
+            rows,
+            cells,
+            contents: r.bytes[content_start..content_end].to_vec(),
+            header_16: r.u32(16),
+            header_24: r.u32(24),
         })
     }
     /// Candidate translation-only interpretation of the next/child graph.
@@ -175,6 +281,13 @@ mod tests {
         }
         b[166..168].copy_from_slice(&1i16.to_le_bytes()); // 0.child=1
         b[224..226].copy_from_slice(&2i16.to_le_bytes()); // 1.next=2
+        b.resize(308, 0);
+        b[60..64].copy_from_slice(&3.0f32.to_le_bytes());
+        b[64..68].copy_from_slice(&1u32.to_le_bytes());
+        b[68..72].copy_from_slice(&1u32.to_le_bytes());
+        b[32..36].copy_from_slice(&300u32.to_le_bytes()); // rows; row 0 = x 0..0, cell 0
+        b[20..24].copy_from_slice(&296u32.to_le_bytes()); // one empty cell word
+        b[28..32].copy_from_slice(&296u32.to_le_bytes());
         b
     }
     #[test]
@@ -193,7 +306,9 @@ mod tests {
     #[test]
     fn world_tables_and_collision_references_are_bounded() {
         let b = world();
-        for n in 0..300 {
+        let w = World::parse(&b).unwrap();
+        assert_eq!((w.grid.dim_x, w.grid.rows.len(), w.grid.cells.len()), (1, 1, 1));
+        for n in 0..308 {
             assert!(World::parse(&b[..n]).is_err());
         }
         let mut bad = b.clone();

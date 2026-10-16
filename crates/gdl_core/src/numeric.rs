@@ -130,6 +130,38 @@ pub fn sqrt_rz(a: f32) -> Result<f32, UnsupportedNumericDomain> {
     Ok(root)
 }
 
+/// Ordinary VU subtraction rounded toward zero (`add_rz` of the negation).
+pub fn sub_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
+    add_rz(a, -b)
+}
+
+/// VU0 macro-mode DIV: PCSX2 v2.6.3 COP2 macro ops run under the EE MXCSR
+/// (configured Roundmode 3), so the quotient truncates toward zero.
+pub fn div_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
+    if (a != 0.0 && !a.is_normal()) || !b.is_normal() {
+        return Err(UnsupportedNumericDomain);
+    }
+    let exact = f64::from(a) / f64::from(b);
+    // The f64 quotient can round onto an f32 value just above the true
+    // quotient; compare the product exactly to step back in that case.
+    let mut q = round_rz(exact)?;
+    if q != 0.0 && (f64::from(q) * f64::from(b)).abs() > f64::from(a).abs() {
+        q = f32::from_bits(q.to_bits() - 1);
+    }
+    Ok(q)
+}
+
+/// EE SQRT.S: pinned PCSX2 forces nearest rounding for this instruction.
+/// Negative operands (sqrt of |x| plus flags on the EE) are not modelled.
+pub fn sqrt_rn(a: f32) -> Result<f32, UnsupportedNumericDomain> {
+    if a != 0.0 && (a.is_sign_negative() || !a.is_normal()) {
+        return Err(UnsupportedNumericDomain);
+    }
+    // f64 sqrt of an f32 is correctly rounded; rounding again to f32 is
+    // innocuous for square roots (53 >= 2*24 + 2).
+    Ok(f64::from(a).sqrt() as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +240,19 @@ mod tests {
         }
         assert!(sqrt_rz(-1.0).is_err());
         assert!(sqrt_rz(f32::from_bits(1)).is_err());
+    }
+    #[test]
+    fn vu_division_truncates_and_ee_sqrt_rounds_to_nearest() {
+        assert_eq!(div_rz(1.0, 3.0).unwrap().to_bits(), 0x3eaa_aaaa);
+        assert_eq!(div_rz(-1.0, 3.0).unwrap().to_bits(), 0xbeaa_aaaa);
+        assert_eq!(div_rz(6.0, 3.0).unwrap(), 2.0);
+        assert_eq!(sqrt_rn(2.0).unwrap().to_bits(), 0x3fb504f3);
+        assert_eq!(sqrt_rn(3.0).unwrap().to_bits(), 0x3fddb3d7);
+        assert_eq!(sqrt_rz(3.0).unwrap().to_bits(), 0x3fddb3d7);
+        assert_eq!(sqrt_rn(5.0).unwrap().to_bits(), 0x400f1bbd);
+        assert_eq!(sqrt_rz(5.0).unwrap().to_bits(), 0x400f1bbc);
+        assert!(div_rz(1.0, 0.0).is_err() && sqrt_rn(-1.0).is_err());
+        assert_eq!(sub_rz(1.0, 1.0).unwrap().to_bits(), 0);
     }
     #[test]
     fn division_uses_the_separate_nearest_rounding_contract() {

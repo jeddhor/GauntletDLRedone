@@ -384,6 +384,34 @@
         "bytes": 16
       }
     ],
-    "vu0_blocks_evidence": "fqdist EE0x1d6b90 stores f12/f13 to 0x2a1fc0/+4, LQC2 vf16 from 0x2a1fc0, VCALLMS 0x44, SQC2 vf16 to 0x2a1fa0 and returns its x lane. VU0 micro pc68..75 (fixture vu0MicroMem.bin): MUL.xy vf16,vf16,vf16; ADDy.x vf16,vf16,vf16y; SQRT Q,vf16x; WAITQ; ADDq.x vf16,vf00,Q; B to pc6; E bit at pc7. Blocks hold the most recent call from any caller at a paused vblank."
+    "vu0_blocks_evidence": "fqdist EE0x1d6b90 stores f12/f13 to 0x2a1fc0/+4, LQC2 vf16 from 0x2a1fc0, VCALLMS 0x44, SQC2 vf16 to 0x2a1fa0 and returns its x lane. VU0 micro pc68..75 (fixture vu0MicroMem.bin): MUL.xy vf16,vf16,vf16; ADDy.x vf16,vf16,vf16y; SQRT Q,vf16x; WAITQ; ADDq.x vf16,vf00,Q; B to pc6; E bit at pc7. Blocks hold the most recent call from any caller at a paused vblank.",
+    "collision_blocks": [
+      {
+        "name": "tcol_first_last",
+        "ee_address": 2224944,
+        "bytes": 32
+      },
+      {
+        "name": "worldinfo_checknum_counter",
+        "ee_address": 2225072,
+        "bytes": 4
+      },
+      {
+        "name": "floor_wall_cam_water_col_and_query",
+        "ee_address": 2225424,
+        "bytes": 416
+      },
+      {
+        "name": "col_result_and_extents",
+        "ee_address": 2871200,
+        "bytes": 56
+      },
+      {
+        "name": "player_floor_col_and_water",
+        "ee_address": 2310560,
+        "bytes": 88
+      }
+    ],
+    "collision_blocks_evidence": "ELF symbols TColFirstP/TColLastP 0x21f330/0x21f340 (16 each), WorldInfo 0x21f358 (+0x58 CheckNum counter), floor_col/wall_col/cam_col/water_col 0x21f510..0x21f650 (80 each), ColFirstP..col_tri 0x21f650..0x21f6a4, col_obj/col_dist/col_pos/startx..worldminz 0x2bcfa0..0x2bcfd8 (NOTYPE), player_floor_col 0x2341a0 (80) and player_water_wobj/player_water_y. Operands in WorldCollide/FloorCollide/WorldObjCollide/CTriListCollide. These hold the most recent query from any caller at a paused vblank."
   }
 }

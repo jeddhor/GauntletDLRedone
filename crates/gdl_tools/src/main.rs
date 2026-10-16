@@ -204,6 +204,84 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if (args.len() == 3 || args.len() == 4) && args[0] == "collision-query" {
+        // collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]
+        #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
+        #[serde(deny_unknown_fields)]
+        struct Request {
+            radius: f32,
+            first: [f32; 3],
+            last: [f32; 3],
+            check_flags: u32,
+            min_normal_y: f32,
+            max_normal_y: f32,
+            object_mask: u32,
+            exclusion_mask: i32,
+        }
+        let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let world = gdl_formats::world::World::parse(&raw)?;
+        let mut native = gdl_core::collision::CollisionWorld::from_world(&world)?;
+        let objects: Vec<_> = native
+            .objects
+            .iter()
+            .map(|o| serde_json::json!({"position_bits":o.position.map(f32::to_bits),"parent":o.parent}))
+            .collect();
+        let mut outcomes = Vec::new();
+        let mut requests_hash = serde_json::Value::Null;
+        if args.len() == 4 {
+            let raw_requests = bounded_read(Path::new(&args[3]), 4 * 1024 * 1024)?;
+            requests_hash = serde_json::json!(hash(&raw_requests));
+            let requests: Vec<Request> = serde_json::from_slice(&raw_requests)?;
+            if requests.len() > 4096 {
+                return Err("collision request policy exceeded".into());
+            }
+            for r in requests {
+                let query = gdl_core::collision::Query {
+                    radius: r.radius,
+                    first: r.first,
+                    last: r.last,
+                    check_flags: r.check_flags,
+                    min_normal_y: r.min_normal_y,
+                    max_normal_y: r.max_normal_y,
+                    object_mask: r.object_mask,
+                    exclusion_mask: r.exclusion_mask,
+                };
+                let hit_json = |h: &Option<gdl_core::collision::Hit>| {
+                    h.map(|h| serde_json::json!({"object":h.object,"triangle":h.triangle,
+                        "distance_bits":h.distance.to_bits(),"position_bits":h.position.map(f32::to_bits)}))
+                };
+                outcomes.push(match native.world_collide(query) {
+                    Ok((c, state)) => {
+                        let basis = match c.solid {
+                            Some(h) => {
+                                let t = native.triangles[h.triangle];
+                                gdl_core::collision::create_mat3_norm(t.scale, t.normal)
+                                    .map(|m| serde_json::json!(m.map(|row| row.map(f32::to_bits))))
+                                    .unwrap_or(serde_json::Value::Null)
+                            }
+                            None => serde_json::Value::Null,
+                        };
+                        serde_json::json!({"request":r,"solid":hit_json(&c.solid),"water":hit_json(&c.water),
+                            "basis_bits":basis,"direction_bits":state.direction.map(f32::to_bits),
+                            "length_bits":state.length.to_bits(),"min_y_bits":state.min_y.to_bits(),
+                            "max_y_bits":state.max_y.to_bits(),"check_num":state.check_num,"error":null})
+                    }
+                    Err(e) => serde_json::json!({"request":r,"error":e.to_string()}),
+                });
+            }
+        }
+        let report = serde_json::json!({"worlds_sha256":hash(&raw),"requests_sha256":requests_hash,
+            "objects":objects,"outcomes":outcomes,
+            "scope":"static WorldCollide subset; dynamic objects, matrix/offset objects and TriLineCol excluded"});
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "vu0-fqdist" {
         let raw = bounded_read(Path::new(&args[1]), 4 * 1024 * 1024)?;
         let requests: Vec<[f32; 2]> = serde_json::from_slice(&raw)?;
@@ -752,7 +830,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json\n       gdl_tools vu0-fqdist FQDIST_REQUESTS.json NEW_REPORT.json".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json\n       gdl_tools vu0-fqdist FQDIST_REQUESTS.json NEW_REPORT.json\n       gdl_tools collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);

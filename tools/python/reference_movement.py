@@ -26,6 +26,9 @@ def movement_probe(memory, profile):
     blocks = {b['name']: (b['ee_address'], b['bytes']) for b in layout.get('vu0_blocks', [])}
     if any(a % 16 or n != 16 for a, n in blocks.values()):
         raise ValueError('VU0 staging blocks must be aligned quadwords')
+    collision = {b['name']: (b['ee_address'], b['bytes']) for b in layout.get('collision_blocks', [])}
+    if any(a % 4 or n % 4 or not 0 < n <= 2048 for a, n in collision.values()):
+        raise ValueError('collision blocks must be aligned and bounded')
 
     def chunks(read, address, size):
         return b''.join(read(address+o, min(2048, size-o)) for o in range(0, size, 2048))
@@ -40,6 +43,7 @@ def movement_probe(memory, profile):
                     camera_ee_address=camera, camera_raw_hex=read(camera, camera_bytes).hex(),
                     globals={name: read(address, 4).hex() for name, address in globals_.items()},
                     vu0_blocks={name: read(a, n).hex() for name, (a, n) in blocks.items()},
+                    collision_blocks={name: read(a, n).hex() for name, (a, n) in collision.items()},
                     scope='raw slot-0 player record, controls, camera block and PlayerMotion globals')
 
     # The reload barrier reads at most 2048 bytes per request.
@@ -48,4 +52,5 @@ def movement_probe(memory, profile):
                (camera, memory[camera:camera+camera_bytes])]
     regions.extend((address, memory[address:address+4]) for address in globals_.values())
     regions.extend((a, memory[a:a+n]) for a, n in blocks.values())
+    regions.extend((a, memory[a:a+n]) for a, n in collision.values())
     return capture, regions
