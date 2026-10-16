@@ -254,3 +254,49 @@ fn start_alsa(mixer: Arc<Mutex<Mixer>>) -> Option<std::thread::JoinHandle<()>> {
         })
         .ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn voice(pcm: Vec<i16>, rate: u32, loops: bool, queued: bool) -> Voice {
+        Voice {
+            id: 1,
+            chain: vec![Arc::new(pcm)],
+            rates: vec![rate],
+            loop_from: Some(0),
+            loops,
+            part: 0,
+            pos: 0.0,
+            gain: [1.0, 0.5],
+            priority: 0,
+            queued,
+        }
+    }
+
+    #[test]
+    fn mixer_plays_a_chain_once_and_resamples() {
+        // Synthetic: 4 samples at 24 kHz into a 48 kHz output → 8 frames.
+        let mut m = Mixer { out_rate: 48_000, ..Default::default() };
+        m.voices.push(voice(vec![16384; 4], 24_000, false, false));
+        let mut out = vec![0f32; 2 * 10];
+        m.render(&mut out, 2);
+        assert_eq!(out[0], 0.5);
+        assert_eq!(out[1], 0.25);
+        assert_eq!(out[14], 0.5);
+        assert_eq!(out[16], 0.0);
+        assert!(m.voices.is_empty());
+    }
+
+    #[test]
+    fn queued_lines_play_one_at_a_time_and_loops_persist() {
+        let mut m = Mixer { out_rate: 48_000, ..Default::default() };
+        m.queue.push(voice(vec![100; 2], 48_000, false, true));
+        m.queue.push(voice(vec![100; 2], 48_000, false, true));
+        m.voices.push(voice(vec![1; 2], 48_000, true, false));
+        let mut out = vec![0f32; 2 * 4];
+        m.render(&mut out, 2);
+        assert_eq!(m.queue.len(), 1);
+        assert_eq!(m.voices.len(), 1); // the queued line finished; the loop persists
+    }
+}
