@@ -23,6 +23,8 @@ use std::{collections::HashMap, error::Error, path::Path};
 const MIRROR: Vec3 = Vec3::new(-1.0, 1.0, 1.0);
 
 type Parts = Vec<(Handle<Mesh>, Handle<StandardMaterial>)>;
+/// Spark sphere mesh, spark material, blast material.
+type SparkAssets = (Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>);
 /// Model parts with node offsets.
 type Model = Vec<(Vec3, Parts)>;
 
@@ -606,7 +608,7 @@ fn present_sparks(
     root: Query<Entity, With<MirrorRoot>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut cache: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>)>>,
+    mut cache: Local<Option<SparkAssets>>,
 ) {
     for e in &old {
         commands.entity(e).despawn();
