@@ -284,7 +284,7 @@ impl Game {
     }
 
     /// format_brain.
-    fn format_brain(&mut self, i: usize) {
+    pub(crate) fn format_brain(&mut self, i: usize) {
         let logic = self.enemies[i].i16_(e::LOGIC);
         let mut r = |n: u32| self.rng.rand_int(n).unwrap_or(0) as i32;
         let mut w: Vec<(usize, u32, i32)> = vec![(0x310, 4, 0x404a_2dd0), (0x344, 4, 0)];

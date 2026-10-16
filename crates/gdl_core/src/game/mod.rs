@@ -5,6 +5,7 @@
 //! are emitted as [`Event`]s instead of being performed.
 pub mod damage;
 pub mod enemies;
+pub mod enemy_ai;
 pub mod pickups;
 pub mod record;
 
@@ -100,6 +101,9 @@ pub struct Globals {
     /// MboxWinPtr camera forward x/z (+0x90/+0x98) read by PlayerMotion.
     pub camera_90: f32,
     pub camera_98: f32,
+    /// ATime 0x20f914 and AnimTimeScale 0x2bc3a0.
+    pub atime: f32,
+    pub anim_time_scale: f32,
 }
 
 /// Presentation side effects requested by the simulation.
@@ -139,6 +143,18 @@ pub struct Game {
     pub enemy_wall_hit: Option<usize>,
     /// did_action (set when a player damages an enemy).
     pub did_action: bool,
+    /// FWRDVAL 0x2c15b8: per-type step this update (do_enemies).
+    pub fwrdval: Vec<f32>,
+    /// angoff07 0x22d910 (8 floats) and e_actpri 0x23f950 (33 ints).
+    pub angoff07: Vec<f32>,
+    pub enemy_action_priority: Vec<i32>,
+    /// faceang 0x2c166c and frame_main 0x220110.
+    pub faceang: f32,
+    pub frame_main: i32,
+    /// enemy_wall_collp 0x2c1878 and the wall_col record of the last EnemyWallCollide.
+    pub enemy_wall_point: [f32; 3],
+    pub enemy_wall_contact: Option<crate::collision::Hit>,
+    pub enemy_anims: Vec<Option<enemy_ai::EnemyAnim>>,
 }
 
 impl Game {

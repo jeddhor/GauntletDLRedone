@@ -69,7 +69,7 @@ struct WallContact {
 }
 
 /// Collision output-struct row 1 (CreateMat3Norm normal row) for a static hit.
-fn hit_normal(world: &CollisionWorld, hit: &Hit) -> R<V3> {
+pub(crate) fn hit_normal(world: &CollisionWorld, hit: &Hit) -> R<V3> {
     let t = world.triangles[hit.triangle];
     let m = create_mat3_norm(t.scale, t.normal)?;
     Ok([m[1][0], m[1][1], m[1][2]])
@@ -108,7 +108,7 @@ fn wall_collide(world: &mut CollisionWorld, r: f32, first: V3, last: V3) -> R<Op
 }
 
 /// SlideAlongWall 0x11f028; returns 0, 1 or -1 as the original.
-fn slide_along_wall(r: f32, p: V3, d: &mut V3, h: V3, n: V3) -> R<i32> {
+pub(crate) fn slide_along_wall(r: f32, p: V3, d: &mut V3, h: V3, n: V3) -> R<i32> {
     let ex = sub(add(p[0], d[0])?, h[0])?;
     let ez = sub(add(p[2], d[2])?, h[2])?;
     let depth = sub(add(mul(ex, n[0])?, mul(ez, n[2])?)?, r)?;

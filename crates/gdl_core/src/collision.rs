@@ -5,7 +5,7 @@
 //! Scalar EE arithmetic uses the guarded toward-zero add/sub, toward-zero
 //! multiply, nearest DIV.S and nearest SQRT.S models. VU0 macro arithmetic uses
 //! ordinary toward-zero add/sub/mul/div/sqrt. Dynamic objects (WorldDynCollide),
-//! matrix/offset objects (flags 0x1000000/0x1000), TriLineCol (CheckFlags 0x20)
+//! matrix/offset objects (flags 0x1000000/0x1000); TriLineCol (CheckFlags 0x20) is transcribed, not yet compared
 //! and exceptional numeric domains are rejected, never approximated.
 use crate::numeric::{
     add_guarded_rz as add, add_rz, div_rn, div_rz, mul_rz as mul, sqrt_rn, sqrt_rz,
@@ -224,9 +224,6 @@ impl CollisionWorld {
     }
 
     pub fn world_collide(&mut self, q: Query) -> R<(Collision, QueryState)> {
-        if q.check_flags & 0x20 != 0 {
-            return Err(UnsupportedCollision("TriLineCol query (CheckFlags 0x20)"));
-        }
         let r = q.radius;
         let mut dir = [sub(q.last[0], q.first[0])?, sub(q.last[1], q.first[1])?, sub(q.last[2], q.first[2])?];
         let length = normal_vector(&mut dir)?;
@@ -424,7 +421,12 @@ impl CollisionWorld {
             {
                 continue;
             }
-            let Some((d, hit)) = b_tri_line_col(c.q.radius, &tri, c.q.first, c.q.last)? else {
+            let tested = if c.q.check_flags & 0x20 != 0 {
+                tri_line_col(&tri, c.q.first, c.q.last)?
+            } else {
+                b_tri_line_col(c.q.radius, &tri, c.q.first, c.q.last)?
+            };
+            let Some((d, hit)) = tested else {
                 continue;
             };
             let mut metric = if c.q.check_flags & 0x10 != 0 && d != 0.0 {
@@ -768,6 +770,43 @@ fn line_line_dist_3d2d(a: V3, b: V3, p: V3, q: V3, crossing: bool) -> R<(f32, V3
     let (u, lu) = vnormalize(d2)?;
     let (v, lv) = vnormalize(d1)?;
     line_line_dist(p2, u, lu, a, v, lv)
+}
+
+/// TriLineCol 0x11b6c0 (CheckFlags 0x20): the radius-less segment test;
+/// a hit reports distance 0.0 to CTriListCollide.
+fn tri_line_col(tri: &Triangle, first: V3, last: V3) -> R<Option<(f32, V3)>> {
+    let o = tri.origin;
+    let k = tri.scale;
+    let n = tri.normal;
+    let a = body_vector_norm(k, vsub(first, o)?, n)?;
+    if a[1] < 0.0 {
+        return Ok(None);
+    }
+    let b = body_vector_norm(k, vsub(last, o)?, n)?;
+    if a[1] < b[1] || (0.0 < a[1] && 0.0 < b[1]) || (a[1] < 0.0 && b[1] < 0.0) {
+        return Ok(None);
+    }
+    let dx = sub(b[0], a[0])?;
+    let dz = sub(b[2], a[2])?;
+    let (mut px, mut pz) = (a[0], a[2]);
+    if w(0x3c23_d70a) < fqdist(dx, dz)?.0 {
+        let sum = add(a[1].abs(), b[1].abs())?;
+        let t = if sum == 0.0 { mul(a[1].abs(), 1000.0)? } else { div_rn(a[1].abs(), sum)? };
+        px = add(mul(dx, t)?, a[0])?;
+        pz = add(mul(dz, t)?, a[2])?;
+    }
+    let [u1, v1, u2, v2] = tri.uv;
+    if 0.0 < sub(mul(u1, pz)?, mul(v1, px)?)? {
+        return Ok(None);
+    }
+    if 0.0 < sub(mul(sub(u2, u1)?, sub(pz, v1)?)?, mul(sub(v2, v1)?, sub(px, u1)?)?)? {
+        return Ok(None);
+    }
+    if 0.0 < sub(mul(-u2, sub(pz, v2)?)?, mul(-v2, sub(px, u2)?)?)? {
+        return Ok(None);
+    }
+    let local = world_vector_norm([px, 0.0, pz], k, n)?;
+    Ok(Some((0.0, vadd(local, o)?)))
 }
 
 /// BTriLineCol 0x11af80 for the segment first..last with radius `r`.
