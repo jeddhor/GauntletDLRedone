@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from run_play import ELF, resolve  # noqa: E402
 
-GAME_START = 'private/reference/start-states/poison-fields-game-v5.json'
+GAME_START = 'private/reference/start-states/poison-fields-game-v6.json'
 SIM_START = 'private/reference/start-states/poison-fields-sor-v2.json'
 
 
@@ -25,6 +25,7 @@ def main():
     ap.add_argument('--frames', type=int, default=600)
     ap.add_argument('--level', type=int, default=1, help='G level number 1-4')
     ap.add_argument('--script')
+    ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
     a = ap.parse_args()
     names = [f'LEVELS/LEVELG{a.level}/WORLDS.PS2', 'WDATA/TOWN.WAD', 'ITEMS/LEVELG/ANIM.PS2', 'MONSTERS/ZOM/ANIM.PS2',
              'MONSTERS/MAG/ANIM.PS2', 'MONSTERS/GHO/ANIM.PS2', 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2',
@@ -35,10 +36,15 @@ def main():
            f'powerups={pw}']
     if a.script:
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
+    if a.potions:
+        cmd += [f'potions={a.potions}']
     subprocess.run(cmd, check=True)
     r = json.loads(pathlib.Path(a.report).read_text())
     for u in r['unsupported']:
         print('UNSUPPORTED', u)
+    for smp in r['samples']:
+        if smp['effects']:
+            print(smp['frame'], [(e['slot'], e['node']['visual'], round(e['node']['radius'], 1)) for e in smp['effects']])
     last = r['samples'][-1]
     alive = [e for e in last['enemies'] if e['state'] in (1, 6)]
     print('frame', last['frame'], 'health', round(last['player_health'], 1), 'pos',

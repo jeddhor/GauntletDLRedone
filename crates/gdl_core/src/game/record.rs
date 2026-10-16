@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record(#[serde(with = "hex_bytes")] pub Vec<u8>);
 
-mod hex_bytes {
+pub(crate) mod hex_bytes {
     use serde::{Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&v.iter().map(|b| format!("{b:02x}")).collect::<String>())

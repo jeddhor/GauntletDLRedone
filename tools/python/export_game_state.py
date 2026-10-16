@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the v5 native game start state from the user's preserved save.
+"""Export the v6 native game start state from the user's preserved save.
 
 Captured (not recovered) values: player records, session globals, camera rest
 pose and view-plane constants, per-type enemy load tables. Guest pointers in
@@ -18,7 +18,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from reference_snapshot import frozen_memory  # noqa: E402
 
 FIXTURE = pathlib.Path('private/reference/captures/poison-fields-original.p2s')
-OUT = pathlib.Path('private/reference/start-states/poison-fields-game-v5.json')
+OUT = pathlib.Path('private/reference/start-states/poison-fields-game-v6.json')
 PLAYERS, PLAYER_SIZE, OBJECTS = 0x221550, 0x2b00, 0x11e4cb8
 # Pointer fields of the player record: (offset, conversion).
 POINTERS = [(0x80, 'clear'), (0x90, 'clear'), (0x690, 'clear'), (0x694, 'clear'), (0x6a0, 'clear'),
@@ -44,7 +44,7 @@ EXTRA = dict(item_active_dist=(0x234364, 'f'), mode_950=(0x20f950, 'i'), globals
              start_enemyinfo=(0x23e1ac, 'i'), random_item_num=(0x23c76c, 'I'), vb_counter=(0x2a1c78, 'I'),
              mode_970=(0x20f970, 'i'), stop_time=(0x220158, 'i'), boss_is_dying=(0x25d198, 'i'),
              newcam_mode=(0x21f130, 'i'), max_enemy_radius=(0x249044, 'f'), max_item_radius=(0x249048, 'f'),
-             boss_crit_inst=(0x25d2c0, 'i'), target_cone_mode=(0x21edcc, 'i'))
+             boss_crit_inst=(0x25d2c0, 'i'), target_cone_mode=(0x21edcc, 'i'), randpottype=(0x221540, 'i'))
 
 
 def main():
@@ -83,7 +83,7 @@ def main():
                                                 missile_origin_5c=list(struct.unpack_from('<3f', m, c + 0x5c)),
                                                 missile_origin_158=list(struct.unpack_from('<3f', m, c + 0x158)),
                                                 raw_hex=m[c:c + 0x200].hex()))
-    report = dict(schema_version=5, classes=classes, source_fixture=str(FIXTURE),
+    report = dict(schema_version=6, classes=classes, source_fixture=str(FIXTURE),
                   fixture_sha256=hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
                   label='INTERIM GAME START: player records/globals captured from the user save; '
                         'items loaded fresh, no enemies; spawn rules unrecovered',

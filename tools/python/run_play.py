@@ -15,7 +15,7 @@ import pathlib
 import subprocess
 
 START = pathlib.Path('private/reference/start-states/poison-fields-sor-v2.json')
-GAME_START = pathlib.Path('private/reference/start-states/poison-fields-game-v5.json')
+GAME_START = pathlib.Path('private/reference/start-states/poison-fields-game-v6.json')
 CONFIG = pathlib.Path('private/reports/play-config.json')
 ELF = pathlib.Path('private/disc/SLUS_200.47')
 

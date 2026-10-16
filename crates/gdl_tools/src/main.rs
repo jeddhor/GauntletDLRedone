@@ -373,6 +373,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             d.sim.current_action = 0;
             d.sim.requested_action = 0;
         }
+        if let Some(n) = opts.get("potions") {
+            // DEBUG override recorded in the report scope.
+            game.players[0].set_i32(0x1a18, n.parse()?);
+        }
         let mut script: Vec<u32> = Vec::new();
         if let Some(sc) = opts.get("script") {
             for part in sc.split(',') {
@@ -383,7 +387,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let mut samples = Vec::new();
         for f in 0..frames {
-            let levels = script.get(f).copied().unwrap_or(0);
+            let mut levels = script.get(f).copied().unwrap_or(0);
+            if levels & 0x8000_0000 != 0 {
+                // Tool-only token: magic button edge (interim use_potion).
+                levels &= 0x7fff_ffff;
+                if let Some(d) = driver.as_mut() {
+                    d.magic_pressed = true;
+                }
+            }
             match driver.as_mut() {
                 Some(d) => game.step_with(None, &mut |g| g.drive_player(0, d, levels)),
                 None => game.step(None),
@@ -402,7 +413,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         let events: Vec<String> = game.events.iter().filter(|e| !matches!(e, gdl_core::game::Event::Audio { .. })).take(400).map(|e| format!("{e:?}")).collect();
         let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
-            "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player; not a fidelity comparison"});
+            "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
+            "potions_override":opts.get("potions")});
         let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
         serde_json::to_writer_pretty(&mut file, &report)?;
         file.write_all(b"\n")?;

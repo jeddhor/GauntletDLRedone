@@ -103,6 +103,7 @@ struct Sim {
     kills: u32,
     sparks: Vec<(Vec3, f32)>,
     last_event: String,
+    magic_held: bool,
 }
 
 #[derive(Resource)]
@@ -386,6 +387,14 @@ fn simulate(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>, session: Res<
         return;
     }
     let levels = keyboard_levels(&keys);
+    if keys.pressed(KeyCode::KeyE) || keys.pressed(KeyCode::KeyL) {
+        if !sim.magic_held {
+            sim.driver.magic_pressed = true;
+        }
+        sim.magic_held = true;
+    } else {
+        sim.magic_held = false;
+    }
     let Sim { game, driver, .. } = &mut *sim;
     let before = game.events.len();
     game.step_with(None, &mut |g| g.drive_player(0, driver, levels));
@@ -395,6 +404,7 @@ fn simulate(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>, session: Res<
     for e in new {
         match e {
             Event::Exp { amount, .. } => sim.exp += i64::from(amount),
+            Event::LevelUp { level, .. } => sim.last_event = format!("LEVEL UP! now level {level}"),
             Event::Effect { position, .. } => sim.sparks.push((Vec3::from_array(position), 0.3)),
             Event::GeneratorHit { destroyed: true, .. } => sim.last_event = "generator destroyed".into(),
             Event::GotIt { kind, amount, .. } => sim.last_event = format!("picked up (kind {kind}, amount {amount})"),
@@ -596,20 +606,36 @@ fn present_sparks(
     root: Query<Entity, With<MirrorRoot>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut cache: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
+    mut cache: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>)>>,
 ) {
     for e in &old {
         commands.entity(e).despawn();
     }
-    let (mesh, mat) = cache
+    let (mesh, mat, blast) = cache
         .get_or_insert_with(|| {
             (
                 meshes.add(Sphere::new(0.5)),
                 materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.9, 0.3), unlit: true, ..default() }),
+                materials.add(StandardMaterial {
+                    base_color: Color::srgba(0.8, 0.5, 1.0, 0.25),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Blend,
+                    cull_mode: None,
+                    ..default()
+                }),
             )
         })
         .clone();
     let Ok(root) = root.single() else { return };
+    // Area effects (potion magic): a translucent sphere at the blast radius.
+    for n in sim.game.effects.nodes.iter().flatten() {
+        if 0.0 < n.radius && matches!(n.visual, Visual::Header(_)) {
+            let s = commands
+                .spawn((Spark, Mesh3d(mesh.clone()), MeshMaterial3d(blast.clone()), Transform::from_translation(Vec3::from_array(n.position)).with_scale(Vec3::splat(2.0 * n.radius))))
+                .id();
+            commands.entity(root).add_child(s);
+        }
+    }
     for (p, t) in &sim.sparks {
         let s = commands.spawn((Spark, Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), Transform::from_translation(*p).with_scale(Vec3::splat(0.5 + *t * 3.0)))).id();
         commands.entity(root).add_child(s);
@@ -671,19 +697,20 @@ fn present_player(
         let health = p.f32_(0x1a10);
         text.0 = format!(
             "INTERIM PLAYTEST - Yellow Sorceress - The Poison Fields, level {}\n\
-             Arrows/WASD: move   Space/K: throw   stand still in the exit portal to leave   Enter: continue after death   F9: debug skip level   Esc: quit\n\
-             HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}   EXP +{}   KILLS {}\n\
+             Arrows/WASD: move   Space/K: throw   E/L: potion magic   stand still in the exit portal to leave   Enter: continue after death   F9: debug skip level   Esc: quit\n\
+             HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}   LEVEL {}   EXP {}   KILLS {}\n\
              enemies active {}   generators standing {}   missiles thrown {}\n\
              {}\n\
              Native: item/enemy/generator/missile/damage/pickup systems, movement + collision\n\
              Interim/presentation: start state from your save, player action map + clip clock, camera, unlit materials,\n\
-             enemy frame objects, item rest poses, no audio, no exp/levels, no potions/magic, no boss{}{}",
+             enemy frame objects, item rest poses, no audio, magic has no animation, combat stats not re-derived on level up, no boss{}{}",
             session.levels[session.current].name,
             health,
             p.i32_(0x1a20),
             p.i32_(0x1a14),
             p.i32_(0x1a18),
-            sim.exp,
+            p.i32_(0x2ac0),
+            p.i32_(0x1a1c),
             sim.kills,
             live,
             generators,
@@ -775,7 +802,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (game, driver) = build_game(&session, 0, None)?;
     App::new()
         .insert_resource(Sources { character, clips, clip_bytes, rig, packages, monsters })
-        .insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new() })
+        .insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false })
         .insert_resource(session)
         .insert_resource(presentation)
         .init_resource::<Libraries>()

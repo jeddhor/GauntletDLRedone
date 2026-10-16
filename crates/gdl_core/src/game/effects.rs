@@ -88,6 +88,8 @@ pub struct EffectNode {
     pub visual: Visual,
     /// ATime when the current tree started (presentation clock).
     pub start: f32,
+    /// Current blast radius of an area effect (presentation reads it).
+    pub radius: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -110,6 +112,8 @@ pub struct EffectTables {
     /// exp_damaged_by_weapon / killed_by_weapon / damaged_by_attack / killed_by_attack.
     pub exp: [Vec<i32>; 4],
     pub headers: Vec<Option<EffectHeader>>,
+    /// MagicEffects 0x2407a0: EffectHeaders index by potion colour (0..4).
+    pub magic_effects: [i32; 5],
 }
 
 impl EffectTables {
@@ -147,7 +151,9 @@ impl EffectTables {
             };
             *h = find(weapon_anim, 0).or_else(|| find(powerup_anim, 1));
         }
-        Ok(Self { missile_info, wall_hit, spread, exp, headers })
+        let m = words(elf.object("MagicEffects")?);
+        let magic_effects: [i32; 5] = std::array::from_fn(|k| m.get(k).copied().unwrap_or(0) as i32);
+        Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects })
     }
 }
 
@@ -374,6 +380,7 @@ impl Game {
             scale: 1.0,
             visual,
             start: atime,
+            radius: 0.0,
         });
         let r = self.fx_mut(i);
         r.set_u32(0x14, 1);
@@ -986,6 +993,7 @@ impl Game {
         };
         let amount = *self.effects.tables.exp[table].get(k).ok_or_else(|| Unsupported("exp table index".into()))?;
         self.events.push(Event::Exp { player: p, amount, attack });
+        self.add_exp(p, amount, i32::from(attack))?;
         Ok(())
     }
 
@@ -1011,6 +1019,7 @@ impl Game {
                 let table = usize::from(destroyed);
                 let amount = 5 * *self.effects.tables.exp[table].get(k).ok_or_else(|| Unsupported("exp table index".into()))?;
                 self.events.push(Event::Exp { player: p, amount, attack: false });
+                self.add_exp(p, amount, 0)?;
                 Ok(())
             }
             _ => Ok(()),
@@ -1080,7 +1089,11 @@ impl Game {
             },
             2 => {
                 let content = self.items.records[slot].i16_(0xf0);
-                if 0 <= content && flags & 0x200 != 0 {
+                let death = 0 <= content
+                    && flags & 0x200 != 0
+                    && st != 0x2b
+                    && self.items.definitions.get(content as usize).is_some_and(|d| self.items.enemy_desc_type(d.name()) == 0x1e);
+                if death {
                     return unsupported("DamageItem death-chest potion path");
                 }
                 if killed && self.items.records[slot].u16_(0xd8) & 0x200 != 0 {
@@ -1174,6 +1187,55 @@ impl Game {
             self.events.push(Event::Effect { header: if killed { 3 } else { 2 }, position: at });
         }
         Ok(result as f32)
+    }
+
+    /// start_magic(power, player, position, potion flags, mode) for a player;
+    /// mode 0 is the ordinary potion blast (StartMagicFX 0x17eb50).
+    pub fn start_magic(&mut self, power: f32, p: usize, position: V3, flags: u32, mode: i32) -> R<()> {
+        let mut flags = flags;
+        let mut k = 1.0;
+        let mut power = mul(power, self.players[p].f32_(0x120))?;
+        if damage_color(flags) == p as i32 {
+            k = f32::from_bits(0x3f8c_cccd);
+            power = mul(power, f32::from_bits(0x3f8c_cccd))?;
+        }
+        if 0x18 < self.players[p].i32_(0x2ac0) {
+            flags |= 0x80_0000;
+        }
+        let mut colour = flags & 0xf;
+        if colour == 0 {
+            let r = self.randpottype;
+            colour = (r - (if r < 0 { r + 3 } else { r } >> 2) * 4 + 1) as u32;
+            flags |= colour;
+            self.randpottype += 1;
+        }
+        flags |= 0x200;
+        if mode != 0 {
+            return unsupported("start_magic shield/thrown modes");
+        }
+        // StartMagicFX(40 k, power, position, flags, player).
+        let idx = *self.effects.tables.magic_effects.get(colour as usize).ok_or_else(|| Unsupported("MagicEffects index".into()))?;
+        let h = self.effects.tables.headers.get(idx as usize).copied().flatten().ok_or_else(|| Unsupported(format!("magic effect header {idx}")))?;
+        let i = self.start_fx_tree(0.0, Visual::Header(idx as usize), h.frames, h.timing, Some(position), 0x12a)?;
+        let r = self.fx_mut(i);
+        r.set_u32(fx::KIND, idx as u32);
+        r.set_f32(fx::GRAVITY, 0.0);
+        r.set_f32(fx::RADIUS, 0.0);
+        r.set_i16(fx::HIT_FX, 0);
+        r.set_u32(fx::HIT_SOUND, 0);
+        r.set_u32(fx::WALL_SOUND, 0);
+        r.set_f32(fx::DAMAGE, mul(k, 40.0)?);
+        let mut df = flags;
+        if 4 < (df & 0xf) {
+            df &= 0xffff_fff3;
+        }
+        r.set_u32(fx::DAMAGE_FLAGS, df);
+        r.set_f32(fx::BLAST, power);
+        r.set_f32(fx::FADE, 0.0);
+        r.set_i16(fx::OWNER, p as i16 + 1);
+        // PlaceEffectOnFloor (y only; the blast tests x/z) and lights: presentation.
+        self.audio("AudioPotion", Some(p), colour as i32);
+        Ok(())
     }
 
     /// The missile subset of ProcessEffects.
@@ -1292,6 +1354,9 @@ impl Game {
             }
         };
         let damage = mul(power, self.fx(i).f32_(fx::DAMAGE))?;
+        if let Some(n) = self.effects.nodes[i].as_mut() {
+            n.radius = radius;
+        }
         let fwd = {
             let mut f = m[2];
             normal_vector_2d(&mut f)?;
@@ -1443,7 +1508,67 @@ impl Game {
                     }
                 }
             } else {
-                return unsupported("area effect vs items");
+                let mut rr = radius;
+                if self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0x400 != 0 {
+                    rr = sub(radius, 1.5)?;
+                    if rr < 0.0 {
+                        rr = 0.0;
+                    }
+                }
+                if 0.0 < rr {
+                    let env = self.collide_env();
+                    for it in self.grid.items_near(&self.items, rr, to)? {
+                        let rec = &self.items.records[it];
+                        let d = &self.items.definitions[rec.definition()];
+                        let content = rec.i16_(0xf0);
+                        let bomb = d.kind() == 2
+                            && 0 <= content
+                            && self.items.definitions.get(content as usize).is_some_and(|c| c.kind() == 4);
+                        let skip = if bomb { 0 } else { self.sfx_skip_item(it, self.fx(i).u32_(fx::FLAGS), self.fx(i).u32_(fx::DAMAGE_FLAGS)) };
+                        if skip == 1 {
+                            continue;
+                        }
+                        if self.fx(i).u32_(fx::FLAGS) & 0x100_0000 == 0 && time < self.items.records[it].f32_(0xec) {
+                            continue;
+                        }
+                        let rec = &self.items.records[it];
+                        let mut dv = v_sub(rec.v3(0x60), to)?;
+                        let dist = normal_vector_2d(&mut dv)?;
+                        let lim = add(rr, self.items.definitions[rec.definition()].f32_(0xc))?;
+                        if lim < dist {
+                            continue;
+                        }
+                        let mut cone = self.fx(i).f32_(fx::CONE);
+                        if -1.0 < cone {
+                            if dist < mul(lim, 0.2)? {
+                                cone = mul(cone, f32::from_bits(0x3f59_999a))?;
+                            }
+                            if dot_xz(dv, fwd)? < cone {
+                                continue;
+                            }
+                        }
+                        let mut out2 = [0.0; 3];
+                        let hit = item_coll_sub(&self.items, &mut self.collision, &env, it, from, to, Some(&mut out2), rr, rr)?;
+                        if hit < 0.0 {
+                            continue;
+                        }
+                        if self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0x80_0000 != 0 && 0 < owner {
+                            return unsupported("HealItem (vampiric area effect)");
+                        }
+                        if skip == 0 {
+                            let h = self.fx(i).i16_(fx::HITS) + 1;
+                            self.fx_mut(i).set_i16(fx::HITS, h);
+                            let df = self.fx(i).u32_(fx::DAMAGE_FLAGS);
+                            let dmg = self.damage_item(damage, it, df, owner as i32 - 1)?;
+                            if 0.0 <= dmg && 0 < owner {
+                                self.player_damaged_item(owner - 1, it, dmg == 0.0)?;
+                            }
+                            if 2.0 < damage && self.fx(i).u32_(fx::FLAGS) & 0x80_0000 == 0 {
+                                self.items.records[it].set_f32(0xec, add(cool, time)?);
+                            }
+                        }
+                    }
+                }
             }
         }
         if result == 0 {
@@ -1593,6 +1718,17 @@ impl Game {
             n.position = to;
         }
         Ok(())
+    }
+}
+
+/// DamageColor 0x190b20: the player colour a potion colour favours.
+pub fn damage_color(flags: u32) -> i32 {
+    match flags & 0xf {
+        1 => 2,
+        2 => 1,
+        3 => 0,
+        4 => 3,
+        _ => -1,
     }
 }
 

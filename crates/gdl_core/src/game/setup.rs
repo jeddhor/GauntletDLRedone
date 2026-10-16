@@ -49,9 +49,10 @@ pub struct StartExtra {
     pub max_item_radius: f32,
     pub boss_crit_inst: i32,
     pub target_cone_mode: i32,
+    pub randpottype: i32,
 }
 
-/// export_game_state.py v5.
+/// export_game_state.py v6.
 #[derive(Deserialize)]
 pub struct StartState {
     pub schema_version: u32,
@@ -154,8 +155,8 @@ impl Game {
     pub fn new_level(inp: LevelInputs) -> Result<Self, Box<dyn std::error::Error>> {
         let level = inp.wdata.levels.get(inp.level).ok_or("level index")?;
         let s = &inp.start;
-        if s.schema_version != 5 || s.players.len() != 4 {
-            return Err("start state v5 expected".into());
+        if s.schema_version != 6 || s.players.len() != 4 {
+            return Err("start state v6 expected".into());
         }
         let class = s.classes.first().cloned().flatten().ok_or("player 0 class data")?;
         let g = &s.globals;
@@ -239,6 +240,7 @@ impl Game {
             boss_crit_inst: s.extra.boss_crit_inst,
             target_cone_mode: s.extra.target_cone_mode,
             level_done: None,
+            randpottype: s.extra.randpottype,
             log: FrameLog::default(),
         };
         for slot in 0..item_count {
@@ -381,7 +383,7 @@ impl Game {
         self.players[player].set_u32(0x880, best.map_or(0, |(s, _)| s as u32 + 1));
         if let Some(g) = self.players[player].u32_(0x888).checked_sub(1) {
             if self.players[player].i32_(0xfc) == 1 {
-                let class = self.class;
+                let class = self.class.clone();
                 self.grab_powerup(player, g as usize, &class)?;
             }
             self.players[player].set_u32(0x888, 0);

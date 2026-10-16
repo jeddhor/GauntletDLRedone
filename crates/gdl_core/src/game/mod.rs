@@ -10,6 +10,7 @@ pub mod enemy_ai;
 pub mod item_runtime;
 pub mod pickups;
 pub mod players;
+pub mod progress;
 pub mod record;
 pub mod setup;
 
@@ -127,8 +128,10 @@ pub enum Event {
     PlayerDied { player: usize },
     /// StartFX* of EffectHeaders[header] at a position (hit sparks etc.).
     Effect { header: usize, position: [f32; 3] },
-    /// AddExp request from PlayerDamagedEnemy/Item (ModifyExp not ported).
+    /// AddExp request from PlayerDamagedEnemy/Item (applied by add_exp).
     Exp { player: usize, amount: i32, attack: bool },
+    /// ModifyExp raised the player's level.
+    LevelUp { player: usize, level: i32 },
     /// Item model/tree swap (generator level `level`, GEN_<prefix><level>).
     ItemModel { slot: usize, level: u8 },
     /// StartGenHitFx (destroyed = GenDieEffects).
@@ -189,6 +192,8 @@ pub struct Game {
     pub target_cone_mode: i32,
     /// Destination wave (world << 8 | level) once a player finished do_exit.
     pub level_done: Option<i32>,
+    /// randpottype 0x221540: rotating colour for untyped potions.
+    pub randpottype: i32,
     pub log: setup::FrameLog,
 }
 

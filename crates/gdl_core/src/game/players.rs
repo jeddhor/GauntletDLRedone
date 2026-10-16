@@ -40,6 +40,9 @@ pub struct PlayerDriver {
     pub missiles_started: u32,
     /// First consume_events refusal (the throw is not fired after it).
     pub event_error: Option<String>,
+    /// INTERIM: magic button edge this update (the original raises the
+    /// +0x8d8 0x20000 event from the magic action's animation).
+    pub magic_pressed: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -66,6 +69,7 @@ impl PlayerDriver {
             last: None,
             missiles_started: 0,
             event_error: None,
+            magic_pressed: false,
         }
     }
 
@@ -150,6 +154,9 @@ impl Game {
         self.player_pickups(p, from)?;
         let (_, magnitude) = d.tables.digital(levels);
         self.do_exit_check(p, magnitude);
+        if std::mem::take(&mut d.magic_pressed) {
+            self.use_potion(p)?;
+        }
         let Some((context, chosen, library)) = d.advance() else { return Ok(()) };
         let input = ActionEventInput {
             event_word: d.event_word,
@@ -180,6 +187,22 @@ impl Game {
                 d.missiles_started += n as u32;
             }
         }
+        Ok(())
+    }
+
+    /// PlayerMotion EE 0x14c0b8..0x14c0f0 (mode 0): spend a potion and cast
+    /// its colour (+0x2a98 + 4 × count); +0x92e = 0x80. INTERIM: requires a
+    /// potion and is triggered directly by the button.
+    pub fn use_potion(&mut self, p: usize) -> R<()> {
+        let count = self.players[p].i32_(0x1a18);
+        if count < 1 || self.players[p].i32_(0xfc) != 1 {
+            return Ok(());
+        }
+        let colour = self.players[p].u32_(0x2a98 + 4 * count as usize);
+        self.players[p].set_i32(0x1a18, count - 1);
+        let pos = self.players[p].v3(0x50);
+        self.start_magic(1.0, p, pos, colour, 0)?;
+        self.players[p].set_u16(0x92e, 0x80);
         Ok(())
     }
 

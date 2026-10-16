@@ -347,7 +347,7 @@ impl ItemWorld {
         Ok(slot)
     }
 
-    fn enemy_desc_type(&self, name: &[u8]) -> i32 {
+    pub fn enemy_desc_type(&self, name: &[u8]) -> i32 {
         if name.eq_ignore_ascii_case(b"BOSSGEN") {
             let t = self.session.enemy_kind[0];
             return if t != self.session.boss_type { t } else { -1 };
