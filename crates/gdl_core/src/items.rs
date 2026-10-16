@@ -65,6 +65,9 @@ impl ItemRecord {
     pub fn position(&self) -> [f32; 3] {
         [self.f32_(0x40), self.f32_(0x44), self.f32_(0x48)]
     }
+    pub fn v3(&self, o: usize) -> [f32; 3] {
+        [self.f32_(o), self.f32_(o + 4), self.f32_(o + 8)]
+    }
     pub fn matrix(&self) -> [[f32; 3]; 3] {
         std::array::from_fn(|r| std::array::from_fn(|c| self.f32_(0x10 + 16 * r + 4 * c)))
     }
@@ -207,6 +210,11 @@ pub struct ItemWorld {
     /// Loader parent (+0x18) and position (+0x1c) of each world object.
     pub object_parent: Vec<Option<usize>>,
     pub object_position: Vec<[f32; 3]>,
+    /// WORLDS node child (+0x2e) and next-sibling (+0x2c) links.
+    pub object_child: Vec<Option<usize>>,
+    pub object_next: Vec<Option<usize>>,
+    /// MaxItems = instances + 500 (AddItemInstList).
+    pub max_items: usize,
     pub world_has_gates: i32,
     pub rune_item: Option<usize>,
     pub rune_pos: [f32; 3],
@@ -275,6 +283,9 @@ impl ItemWorld {
             objects,
             object_parent: collision.objects.iter().map(|o| o.parent).collect(),
             object_position: collision.objects.iter().map(|o| o.position).collect(),
+            object_child: world.nodes.iter().map(|n| usize::try_from(n.child).ok()).collect(),
+            object_next: world.nodes.iter().map(|n| usize::try_from(n.next).ok()).collect(),
+            max_items: world.items.len() + 500,
             world_has_gates: 0,
             rune_item: None,
             rune_pos: [0.0; 3],

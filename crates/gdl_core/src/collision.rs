@@ -582,6 +582,11 @@ fn vnormalize(v: V3) -> R<(V3, f32)> {
 }
 
 /// NormalVector 0x1d5d50 (in place); returns the length.
+/// NormalVector 0x1d5d50 for other modules.
+pub fn normal_vector_pub(v: &mut V3) -> R<f32> {
+    normal_vector(v)
+}
+
 pub(crate) fn normal_vector(v: &mut V3) -> R<f32> {
     let xz = fqdist(v[0], v[2])?.0;
     let len = fqdist(xz, v[1])?.0;
