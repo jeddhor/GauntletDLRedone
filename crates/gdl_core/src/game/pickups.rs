@@ -41,6 +41,9 @@ pub struct ClassData {
     pub _raw: (),
     /// +0x58: powerup duration multiplier.
     pub powerup_time_58: f32,
+    /// +0x5c and +0x158: PlayerStartMissile origin offsets (modes 1 and 2).
+    pub missile_origin_5c: [f32; 3],
+    pub missile_origin_158: [f32; 3],
 }
 
 impl Game {

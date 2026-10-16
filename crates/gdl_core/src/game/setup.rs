@@ -47,9 +47,11 @@ pub struct StartExtra {
     pub boss_is_dying: i32,
     pub max_enemy_radius: f32,
     pub max_item_radius: f32,
+    pub boss_crit_inst: i32,
+    pub target_cone_mode: i32,
 }
 
-/// export_game_state.py v4.
+/// export_game_state.py v5.
 #[derive(Deserialize)]
 pub struct StartState {
     pub schema_version: u32,
@@ -117,6 +119,7 @@ pub struct LevelInputs<'a> {
     pub enemy_anims: EnemyAnimData,
     /// Item animation trees by definition name.
     pub item_anims: HashMap<String, Vec<ClipTiming>>,
+    pub effect_tables: super::effects::EffectTables,
 }
 
 /// Per-enemy (visible, near-visible) query.
@@ -138,8 +141,8 @@ impl Game {
     pub fn new_level(inp: LevelInputs) -> Result<Self, Box<dyn std::error::Error>> {
         let level = inp.wdata.levels.get(inp.level).ok_or("level index")?;
         let s = &inp.start;
-        if s.schema_version != 4 || s.players.len() != 4 {
-            return Err("start state v4 expected".into());
+        if s.schema_version != 5 || s.players.len() != 4 {
+            return Err("start state v5 expected".into());
         }
         let class = s.classes.first().cloned().flatten().ok_or("player 0 class data")?;
         let g = &s.globals;
@@ -214,6 +217,9 @@ impl Game {
             exit_state: 0,
             enemy_anim_data: inp.enemy_anims,
             class,
+            effects: super::effects::Effects::new(inp.effect_tables),
+            boss_crit_inst: s.extra.boss_crit_inst,
+            target_cone_mode: s.extra.target_cone_mode,
             log: FrameLog::default(),
         };
         for slot in 0..item_count {
@@ -274,8 +280,14 @@ impl Game {
         Ok(())
     }
 
-    /// One game update (game_main 0x4010 order).
+    /// One game update without players (headless runs).
     pub fn step(&mut self, visible_override: Option<&Visibility>) {
+        self.step_with(visible_override, &mut |_| Ok(()));
+    }
+
+    /// One game update (game_main 0x4010 order): world_update, do_items,
+    /// do_enemies, do_players (`players`), ProcessEffects.
+    pub fn step_with(&mut self, visible_override: Option<&Visibility>, players: &mut dyn FnMut(&mut Game) -> R<()>) {
         self.frame_main += 1;
         let spf = self.globals.spf;
         self.globals.time += spf;
@@ -301,6 +313,12 @@ impl Game {
         };
         if let Err(e) = self.do_enemies(vis) {
             self.log.note("do_enemies", &e);
+        }
+        if let Err(e) = players(self) {
+            self.log.note("do_players", &e);
+        }
+        if let Err(e) = self.process_effects() {
+            self.log.note("ProcessEffects", &e);
         }
     }
 

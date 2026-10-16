@@ -4,10 +4,12 @@
 //! presentation side effects (help text, audio, FX, HUD notices, vibration)
 //! are emitted as [`Event`]s instead of being performed.
 pub mod damage;
+pub mod effects;
 pub mod enemies;
 pub mod enemy_ai;
 pub mod item_runtime;
 pub mod pickups;
+pub mod players;
 pub mod record;
 pub mod setup;
 
@@ -113,7 +115,7 @@ pub struct Globals {
 /// Presentation side effects requested by the simulation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Event {
-    /// NewHelp(id, player): help/hint text.
+    /// NewHelp(id, player): help/hint text; player usize::MAX = −1 (all).
     Help { id: i32, player: usize },
     /// add_got_it(player, kind, amount): HUD pickup notice.
     GotIt { player: usize, kind: i32, amount: i32 },
@@ -123,6 +125,14 @@ pub enum Event {
     ItemExpired { slot: usize, mode: i32 },
     Vibrate { player: usize, strength: i32, time: i32 },
     PlayerDied { player: usize },
+    /// StartFX* of EffectHeaders[header] at a position (hit sparks etc.).
+    Effect { header: usize, position: [f32; 3] },
+    /// AddExp request from PlayerDamagedEnemy/Item (ModifyExp not ported).
+    Exp { player: usize, amount: i32, attack: bool },
+    /// Item model/tree swap (generator level `level`, GEN_<prefix><level>).
+    ItemModel { slot: usize, level: u8 },
+    /// StartGenHitFx (destroyed = GenDieEffects).
+    GeneratorHit { slot: usize, destroyed: bool },
 }
 
 pub struct Game {
@@ -169,6 +179,10 @@ pub struct Game {
     pub exit_state: i32,
     pub enemy_anim_data: enemy_ai::EnemyAnimData,
     pub class: pickups::ClassData,
+    pub effects: effects::Effects,
+    /// BossCritInst 0x25d2c0 and the targeting-cone global 0x21edcc.
+    pub boss_crit_inst: i32,
+    pub target_cone_mode: i32,
     pub log: setup::FrameLog,
 }
 

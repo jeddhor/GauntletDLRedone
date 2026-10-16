@@ -204,6 +204,15 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 2 && args[0] == "anim-trees" {
+        // anim-trees ANIM.PS2: tree labels with sequence label/frames/timing (stdout).
+        let anim = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;
+        for t in &anim.trees {
+            let seqs: Vec<String> = t.sequences.iter().map(|s| format!("{}:{}x{}", s.label, s.frames, s.timing_factor)).collect();
+            println!("{}\t{}\t{}\t{}", t.index, t.label, t.nodes.len(), seqs.join(" "));
+        }
+        return Ok(());
+    }
     if args.len() == 6 && args[0] == "player-sim" {
         // player-sim WORLDS.PS2 SLUS_200.47 START.json INPUTS.json NEW_REPORT.json
         // INPUTS: [[levels, edges], ...] one per game update.
@@ -326,31 +335,67 @@ fn run() -> Result<(), Box<dyn Error>> {
             item_anims.insert(t.label.clone(), gdl_core::game::setup::clips_of(&ianim, k));
         }
         let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
+        let mut opts = std::collections::HashMap::new();
         for a in &args[9..] {
             let a = a.to_str().ok_or("monster arg")?;
             let (t, path) = a.split_once('=').ok_or("TYPE=PATH:PREFIX expected")?;
+            if t.parse::<i32>().is_err() {
+                opts.insert(t.to_string(), path.to_string());
+                continue;
+            }
             let (path, prefix) = path.rsplit_once(':').ok_or("TYPE=PATH:PREFIX expected")?;
             let m = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(path), 64 * 1024 * 1024)?)?;
             gdl_core::game::setup::enemy_trees(&mut enemy_anims, t.parse()?, prefix, &m);
         }
+        let anim_of = |k: &str| -> Result<gdl_formats::animation::Animations, Box<dyn Error>> {
+            let path = opts.get(k).ok_or_else(|| format!("{k}=PATH required"))?;
+            Ok(gdl_formats::animation::Animations::parse(&bounded_read(Path::new(path), 64 * 1024 * 1024)?)?)
+        };
+        let effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &anim_of("weapons")?, &anim_of("powerups")?)?;
         let mut game = gdl_core::game::Game::new_level(gdl_core::game::setup::LevelInputs {
-            world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims })?;
+            world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, effect_tables })?;
+        // Optional scripted player: sim=START_SIM.json clips=SOR_CLIPS.PS2 script=LEVELS_HEX:UPDATES,...
+        let mut driver = match (opts.get("sim"), opts.get("script")) {
+            (Some(sim_path), Some(_)) => {
+                let st: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(sim_path), 4 * 1024 * 1024)?)?;
+                let sim: gdl_core::player_sim::PlayerSim = serde_json::from_value(st["sim"].clone())?;
+                let map: Vec<[i64; 2]> = serde_json::from_value(st["presentation"]["action_map"].clone())?;
+                let clips = anim_of("clips")?;
+                let tables = gdl_core::controls::tables_from_elf(&elf)?;
+                Some(gdl_core::game::players::PlayerDriver::new(sim, tables, map, gdl_core::game::setup::clips_of(&clips, 0)))
+            }
+            _ => None,
+        };
+        let mut script: Vec<u32> = Vec::new();
+        if let Some(sc) = opts.get("script") {
+            for part in sc.split(',') {
+                let (lv, n) = part.split_once(':').ok_or("script LEVELS_HEX:UPDATES")?;
+                let lv = u32::from_str_radix(lv, 16)?;
+                script.extend(std::iter::repeat_n(lv, n.parse::<usize>()?));
+            }
+        }
         let mut samples = Vec::new();
         for f in 0..frames {
-            game.step(None);
-            if let Some(cs) = game.camera.as_ref().map(|c| c.basis) { let _ = cs; }
+            let levels = script.get(f).copied().unwrap_or(0);
+            match driver.as_mut() {
+                Some(d) => game.step_with(None, &mut |g| g.drive_player(0, d, levels)),
+                None => game.step(None),
+            }
             if f % 15 == 0 || f + 1 == frames {
                 let enemies: Vec<_> = game.enemies.iter().enumerate().filter(|(_, e)| e.i32_(0xc8) != 0)
                     .map(|(k, e)| serde_json::json!({"slot":k,"type":e.i32_(0),"state":e.i32_(0xc8),"pos":e.v3(0x40),
                         "action":e.u32_(0xe0),"logic":e.i16_(0x324),"health":e.f32_(0x214),"target":e.i16_(0x288)})).collect();
+                let effects: Vec<_> = (0..game.effects.num).filter(|&k| 0.0 < game.effects.slots[k].f32_(0x68))
+                    .map(|k| serde_json::json!({"slot":k,"node":game.effects.nodes[k],"flags":game.effects.slots[k].u32_(0x64)})).collect();
                 samples.push(serde_json::json!({"frame":f,"enemies":enemies,"player_health":game.players[0].f32_(0x1a10),
-                    "events":game.events.len()}));
+                    "player_pos":game.players[0].v3(0x50),"events":game.events.len(),"effects":effects,
+                    "driver":driver.as_ref().map(|d| serde_json::json!({"anim":d.anim,"missiles":d.missiles_started,"event_error":d.event_error,"event_word":d.event_word}))}));
             }
         }
-        let events: Vec<String> = game.events.iter().take(400).map(|e| format!("{e:?}")).collect();
+        let events: Vec<String> = game.events.iter().filter(|e| !matches!(e, gdl_core::game::Event::Audio { .. })).take(400).map(|e| format!("{e:?}")).collect();
         let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
-            "scope":"INTERIM native game run: fresh items, no initial enemies, no player input; not a fidelity comparison"});
+            "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player; not a fidelity comparison"});
         let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
         serde_json::to_writer_pretty(&mut file, &report)?;
         file.write_all(b"\n")?;

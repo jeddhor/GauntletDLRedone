@@ -7,6 +7,7 @@ use crate::numeric::{add_guarded_rz as add, mul_rz as mul, sqrt_rn, sub_guarded_
 /// angidx (EE 0x211400, ELF data): nibble → table row/column.
 pub type AngleIndex = [i32; 16];
 
+#[derive(Debug, Clone)]
 pub struct JoyTables {
     angle: [f32; 49],
     magnitude: [f32; 49],
