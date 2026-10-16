@@ -191,6 +191,13 @@ impl CollisionWorld {
         }
     }
 
+    /// FloorPos 0x11ed38: FloorCollide(radius, +4, -10, CheckFlags 0x17); the
+    /// hit's y, or `default_y` without a hit.
+    pub fn floor_pos(&mut self, default_y: f32, radius: f32, position: V3, exclusion_mask: i32) -> R<(f32, Option<Hit>)> {
+        let (c, _) = self.floor_collide(radius, 4.0, -10.0, position, true, exclusion_mask)?;
+        Ok((c.solid.map_or(default_y, |h| h.position[1]), c.solid))
+    }
+
     /// FloorCollide 0x11ec58: vertical segment at `position` from y+top to
     /// y+bottom, CheckFlags 7 or 0x17, normal-y 0.5..2.0, object mask 0x23c.
     pub fn floor_collide(

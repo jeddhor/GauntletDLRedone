@@ -63,6 +63,18 @@ plane crossings and 5 edge-distance hits, CheckFlags 0x17 and 7. Exclusion mask 
 always matched first; mask 0 was not discriminated. Caller identity per sample
 is not established.
 
+## Item placement as a whole-level collision check
+
+PlaceItem 0x153068 drops each item with FloorPos 0x11ed38 (FloorCollide radius
+1.0, +4/−10, CheckFlags 0x17, exclusion 0) and adds 0.1 with an EE add. The
+fixture's live Items array (519 records of 0x110 bytes; item i = WORLDS item
+instance i) retains those heights. `gdl_tools place-items` reproduces **462/462
+static placements bit for bit** across the whole level (34 items skipped by the
+definition's +0xa bit 0). The other 23 items ride dynamic objects (ELEV1/2/3/5/
+9/13, PLAT1, the wooden arm, identified by position); their RAM heights follow
+those objects' current motion, which needs WorldDynCollide and world animation.
+Report: private/reports/place-items-g1-v1.json.
+
 ## Not yet native
 
 WorldDynCollide (41 dynamic objects in a runtime-built grid; none within 30 units

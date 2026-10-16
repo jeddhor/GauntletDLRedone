@@ -236,6 +236,37 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "place-items" {
+        // place-items WORLDS.PS2 NEW_REPORT.json — PlaceItem 0x153068 heights.
+        let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let world = gdl_formats::world::World::parse(&raw)?;
+        let mut collision = gdl_core::collision::CollisionWorld::from_world(&world)?;
+        let mut out = Vec::new();
+        for item in &world.items {
+            let def = &world.item_definitions[item.definition as usize];
+            let flags_0a = u16::from_le_bytes([def.raw[10], def.raw[11]]);
+            if flags_0a & 1 != 0 {
+                out.push(serde_json::json!({"index":item.index,"skipped":"definition +0xa bit 0"}));
+                continue;
+            }
+            let p = item.position;
+            out.push(match collision.floor_pos(p[1], 1.0, p, 0) {
+                Ok((y, hit)) => {
+                    let placed = gdl_core::numeric::add_guarded_rz(y, f32::from_bits(0x3dcc_cccd))?;
+                    serde_json::json!({"index":item.index,"y_bits":placed.to_bits(),
+                        "hit_object":hit.map(|h| h.object),"error":null})
+                }
+                Err(e) => serde_json::json!({"index":item.index,"error":e.to_string()}),
+            });
+        }
+        let report = serde_json::json!({"worlds_sha256":hash(&raw),"items":out,
+            "scope":"PlaceItem FloorPos+0.1 with static WorldCollide; dynamic objects excluded"});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "joy-tables" {
         // joy-tables SLUS_200.47 NEW_REPORT.json
         let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;

@@ -53,6 +53,32 @@ pub struct CollisionGrid {
     pub header_16: u32,
     pub header_24: u32,
 }
+/// Item definition (80 bytes; WorldInfo +0x68/+0x74 consumers InitItemInfoData,
+/// NewItem). Type/subtype words and name are consumer-qualified; the remaining
+/// fields are retained raw until their consumers are recovered.
+#[derive(Debug, Serialize, Clone)]
+pub struct ItemDefinition {
+    pub index: u32,
+    pub kind: i32,
+    pub subtype: i32,
+    pub word_08: i32,
+    pub scale: f32,
+    pub name: String,
+    pub raw: Vec<u8>,
+}
+/// Item instance (60 bytes; AddItemInstList → NewItem(record, +0x18, +0x24)).
+#[derive(Debug, Serialize, Clone)]
+pub struct ItemInstance {
+    pub index: u32,
+    pub definition: u16,
+    pub flags_02: u16,
+    /// +0x04..+0x18: parameters, e.g. a referenced world-object name.
+    pub parameters: Vec<u8>,
+    pub position: [f32; 3],
+    pub rotation: [f32; 3],
+    pub raw: Vec<u8>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct World {
     pub raw_header: Vec<u8>,
@@ -61,6 +87,8 @@ pub struct World {
     pub nodes: Vec<WorldNode>,
     pub collisions: Vec<CollisionRecord>,
     pub grid: CollisionGrid,
+    pub item_definitions: Vec<ItemDefinition>,
+    pub items: Vec<ItemInstance>,
 }
 #[derive(Debug, Serialize)]
 pub struct Placement {
@@ -139,6 +167,36 @@ impl World {
             });
         }
         let grid = Self::grid(&r)?;
+        let definitions = r.table(r.u32(76), r.u32(72), 80, 120)?;
+        let mut item_definitions = Vec::new();
+        for (index, p) in definitions.step_by(80).enumerate() {
+            item_definitions.push(ItemDefinition {
+                index: index as u32,
+                kind: r.i32(p),
+                subtype: r.i32(p + 4),
+                word_08: r.i32(p + 8),
+                scale: r.float(p + 12)?,
+                name: r.label(p + 0x28, 20),
+                raw: bytes[p..p + 80].to_vec(),
+            });
+        }
+        let instances = r.table(r.u32(84), r.u32(80), 60, 120)?;
+        let mut items = Vec::new();
+        for (index, p) in instances.step_by(60).enumerate() {
+            let definition = r.u16(p);
+            if usize::from(definition) >= item_definitions.len() {
+                return Err(r.error(p, "item instance definition out of range"));
+            }
+            items.push(ItemInstance {
+                index: index as u32,
+                definition,
+                flags_02: r.u16(p + 2),
+                parameters: bytes[p + 4..p + 0x18].to_vec(),
+                position: r.xyz(p + 0x18)?,
+                rotation: r.xyz(p + 0x24)?,
+                raw: bytes[p..p + 60].to_vec(),
+            });
+        }
         Ok(Self {
             raw_header: bytes[..120].to_vec(),
             min,
@@ -146,6 +204,8 @@ impl World {
             nodes: results,
             collisions: records,
             grid,
+            item_definitions,
+            items,
         })
     }
     fn grid(r: &Reader) -> Result<CollisionGrid, ParseError> {
