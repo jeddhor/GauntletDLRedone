@@ -7,6 +7,8 @@
 //! is ported); item animation clocks use the verified AnimateTree selection.
 use super::enemies::e;
 use super::{unsupported, Game, R};
+
+const HALF_PI: f32 = f32::from_bits(0x3fc9_0fdb);
 use crate::animation_clock::{select, ClipTiming, ClockState, SelectionInput};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sqrt_rn, sub_guarded_rz as sub};
 
@@ -187,6 +189,93 @@ impl Game {
         Ok(())
     }
 
+    /// trans_enemy 0x139888: check_enemy_pos at `to` (+0x244 lift). A free
+    /// position returns -1; otherwise the enemy is removed (+0xc8 = 0; the
+    /// MBTreeSetFlags(…, 2, 0) calls on +0x70/+0x1f0 are presentation) and 0
+    /// is returned.
+    fn trans_enemy(&mut self, k: usize, to: [f32; 3]) -> R<i32> {
+        let p = [to[0], add(to[1], self.enemies[k].f32_(0x244))?, to[2]];
+        if 0 < self.check_enemy_pos_pub(p, None, k)? {
+            return Ok(-1);
+        }
+        self.enemies[k].set_i32(e::STATE, 0);
+        Ok(0)
+    }
+
+    /// place_logic12 0x153ff8 (generator field block at item +0xf0): place
+    /// the first two spawns 3.5 to either side of the generator facing, the
+    /// rest at the spawn point; +0x330 records which (1, 2, 4).
+    fn place_logic12(&mut self, slot: usize, k: usize) -> R<()> {
+        use super::enemy_ai::{create_ypr_matrix, wrap};
+        self.enemies[k].set_i32(0x330, 0);
+        let phase = self.items.records[slot].i8_(0xf4);
+        let pos = self.enemies[k].v3(e::POSITION);
+        if phase == 0 || phase == 1 {
+            let f = self.items.records[slot].f32_(0x100);
+            let yaw = wrap(if phase == 0 { add(f, HALF_PI)? } else { sub(f, HALF_PI)? })?;
+            let m = create_ypr_matrix([0.0, yaw, 0.0])?;
+            let v = [0.0f32, 0.0, 3.5];
+            let mut w = [0.0f32; 3];
+            for (c, o) in w.iter_mut().enumerate() {
+                *o = add(add(mul(v[0], m[0][c])?, mul(v[1], m[1][c])?)?, mul(v[2], m[2][c])?)?;
+            }
+            let to = [add(pos[0], w[0])?, add(pos[1], w[1])?, add(pos[2], w[2])?];
+            self.enemies[k].set_v3(0x2f4, to);
+            if self.trans_enemy(k, to)? != 0 {
+                self.enemies[k].set_i32(0x330, if phase == 0 { 1 } else { 2 });
+            }
+        } else {
+            self.enemies[k].set_v3(0x2f4, pos);
+            self.enemies[k].set_i32(0x330, 4);
+        }
+        if self.enemies[k].i32_(0x330) != 0 {
+            let p = self.enemies[k].v3(e::POSITION);
+            self.enemies[k].set_v3(0x300, p);
+            let r = &mut self.items.records[slot];
+            r.set_i8(0xf2, r.i8_(0xf2).wrapping_add(1));
+            r.set_i8(0xf4, r.i8_(0xf4).wrapping_add(1));
+            if r.i8_(0xf3) <= r.i8_(0xf2) {
+                r.set_u8(0xfa, 7);
+                r.set_i8(0xf4, 3);
+            }
+        }
+        Ok(())
+    }
+
+    /// place_logic13 0x154318: chain the spawns through +0x348/+0x34c with
+    /// the generator's +0xf5 holding the newest.
+    fn place_logic13(&mut self, slot: usize, k: usize) {
+        let last = self.items.records[slot].i8_(0xf5);
+        let prev = if last < 0 {
+            -1
+        } else {
+            self.enemies[last as usize].set_i32(e::NEXT, k as i32);
+            i32::from(last)
+        };
+        self.enemies[k].set_i32(e::PREV, prev);
+        self.enemies[k].set_i32(e::NEXT, -1);
+        let r = &mut self.items.records[slot];
+        r.set_i8(0xf5, k as i8);
+        r.set_i8(0xf2, r.i8_(0xf2).wrapping_add(1));
+        r.set_i8(0xf4, r.i8_(0xf4).wrapping_add(1));
+    }
+
+    /// place_logic14 0x154390: alternate ±π/4 turns (+0x330 = 1 / -1).
+    fn place_logic14(&mut self, slot: usize, k: usize) -> R<()> {
+        let q = f32::from_bits(0x3f49_0fdb);
+        let even = self.items.records[slot].u8_(0xf4) & 1 == 0;
+        let h = self.enemies[k].f32_(0x260);
+        let h = if even { add(h, q)? } else { sub(h, q)? };
+        self.enemies[k].set_i32(0x330, if even { 1 } else { -1 });
+        let h = super::enemy_ai::wrap(h)?;
+        self.enemies[k].set_f32(0x260, h);
+        self.enemies[k].set_f32(0x264, h);
+        let r = &mut self.items.records[slot];
+        r.set_i8(0xf2, r.i8_(0xf2).wrapping_add(1));
+        r.set_i8(0xf4, r.i8_(0xf4).wrapping_add(1));
+        Ok(())
+    }
+
     /// The generator (type 3) case of ProcessItems.
     fn process_generator(&mut self, slot: usize) -> R<()> {
         let r = self.items.records[slot].clone();
@@ -223,7 +312,9 @@ impl Game {
         self.enemies[k].set_i16(0x2ec, 0);
         self.orient_spawn(k, r.f32_(0x100))?;
         match r.i8_(0xf7) {
-            0xc..=0xe => return unsupported("place_logic12/13/14"),
+            0xc => self.place_logic12(slot, k)?,
+            0xd => self.place_logic13(slot, k),
+            0xe => self.place_logic14(slot, k)?,
             _ => {
                 let rr = &mut self.items.records[slot];
                 rr.set_i8(0xf2, rr.i8_(0xf2) + 1);

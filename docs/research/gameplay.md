@@ -23,7 +23,19 @@ closure; the interim player driver), ProcessEffects.
 - Enemies: generate_enemy and spawning, InitActions trees ("<PREFIX><level>",
   levels 4–7 use EnemyDesc letters A/B/S/F from ELF 0x22d858), do_ai with
   move_logic00/02/04/05/06/07/18, blocked00/07, attacks, collisions,
-  damage_enemy, damage_player.
+  damage_enemy, damage_player. Other realms: move_logic14 0x13f320 (strafe,
+  re-aim at π/4 + n·π/12 after four turns or a >π/2 miss), move_logic17
+  0x13eba8 / move_logic23 0x13da78 (stationary, ranged action 0x18 within
+  +0x314 and ±10 height; 23 waits on its +0x334 cooldown), move_logic30
+  0x13cd40 (move_logic00 with a randomised attack period from level_data+0xc0
+  × 90, action 0xc or 0x10 at level ≥ 2).
+- Generator placement (generator field block at item +0xf0): place_logic12
+  0x153ff8 (first two spawns 3.5 to either side of the +0x100 facing via
+  trans_enemy 0x139888, then the spawn point; +0x330 = 1/2/4; full → +0xfa = 7,
+  +0xf4 = 3), place_logic13 0x154318 (spawn chain through +0x348/+0x34c with the
+  newest in +0xf5), place_logic14 0x154390 (alternating ±π/4, +0x330 = ±1).
+  trans_enemy removes the spawn (+0xc8 = 0) when check_enemy_pos fails; its
+  MBTreeSetFlags calls are presentation.
 - Effects/missiles: FindEffectIdx/DeleteEffect/ZeroEffect, StartFXTree,
   ChangeEffect, StartMissile/PlayerStartMissile, CalcTargetDir,
   GetAttackDir, PlayerGetTarget, closest_enemy/closest_generator,
@@ -80,5 +92,9 @@ killing nearby zombies and a generator.
 ## Not ported (known)
 
 Critters (GENERAL/GOLEM/GAR/DEATH), shield reflection,
-blocked08/10/20, move_logic 03/08–17/19–27 except those listed, bosses, power/turbo melee (event bits 0xf0), dash attack 0x3e, turbo powers, shields, transporters' destinations,
-wave exits (SaveStage), audio, camera logic, save/load, co-op.
+blocked08/10/20, move_logic 03/08–13/15/16/19–22/24–29 except those listed, bosses, power/turbo melee (event bits 0xf0), dash attack 0x3e, turbo powers, shields, transporters' destinations,
+wave exits (SaveStage), camera logic, save/load, co-op.
+Realm sweep (level 1 of each realm, 900-update scripted wander, interim
+player): B, D, E, H, I, K clean; A stops at DamageItem rock/wall/explosive
+barrel, C at move_logic29 and the ActivePlayerMask all-players trigger, F at
+the phasing enemy alpha (type 0x18), J at the ActivePlayerMask trigger.

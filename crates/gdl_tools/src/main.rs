@@ -345,7 +345,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let level: usize = args[3].to_str().ok_or("level")?.parse()?;
         let elf_raw = bounded_read(Path::new(&args[4]), 64 * 1024 * 1024)?;
         let elf = gdl_formats::elf::Elf::parse(&elf_raw)?;
-        let start: gdl_core::game::setup::StartState = serde_json::from_slice(&bounded_read(Path::new(&args[5]), 16 * 1024 * 1024)?)?;
+        let mut start: gdl_core::game::setup::StartState = serde_json::from_slice(&bounded_read(Path::new(&args[5]), 16 * 1024 * 1024)?)?;
         let iraw = bounded_read(Path::new(&args[6]), 64 * 1024 * 1024)?;
         let ianim = gdl_formats::animation::Animations::parse(&iraw)?;
         let frames: usize = args[7].to_str().ok_or("frames")?.parse()?;
@@ -365,6 +365,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             let (path, prefix) = path.rsplit_once(':').ok_or("TYPE=PATH:PREFIX expected")?;
             let m = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(path), 64 * 1024 * 1024)?)?;
             gdl_core::game::setup::enemy_trees(&mut enemy_anims, t.parse()?, prefix, &m);
+        }
+        if let Some(w) = opts.get("world") {
+            // Other realms: CurWorld/CurLevel for the session tables (the
+            // player record is still the one from the save).
+            start.globals.cur_world = w.parse()?;
+            start.globals.cur_level = level as i32;
         }
         let anim_of = |k: &str| -> Result<gdl_formats::animation::Animations, Box<dyn Error>> {
             let path = opts.get(k).ok_or_else(|| format!("{k}=PATH required"))?;
@@ -389,7 +395,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             _ => None,
         };
-        if let (Some(d), true) = (driver.as_mut(), 0 < level) {
+        if let (Some(d), true) = (driver.as_mut(), 0 < level || opts.contains_key("world")) {
             // Later levels: enter at the start locator (get_player_pos path).
             let loc = world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("no start locator")?;
             game.place_player_start(0, &mut d.sim, loc.position, loc.rotation[1]).map_err(|e| e.to_string())?;

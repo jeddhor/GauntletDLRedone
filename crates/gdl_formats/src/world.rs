@@ -255,7 +255,14 @@ impl World {
             .collect();
         let mut cell_count = 0u64;
         for (z, row) in rows.iter().enumerate() {
-            if row.min_x > row.max_x || u32::from(row.max_x) >= dim_x {
+            // Empty rows are stored as min 0xffff / max 0xfffe (no x matches).
+            if row.min_x > row.max_x {
+                if (row.min_x, row.max_x) != (0xffff, 0xfffe) {
+                    return Err(r.error(r.u32(32) as usize + 8 * z, "grid row x range invalid"));
+                }
+                continue;
+            }
+            if u32::from(row.max_x) >= dim_x {
                 return Err(r.error(r.u32(32) as usize + 8 * z, "grid row x range invalid"));
             }
             cell_count = cell_count.max(u64::from(row.cell_offset) + u64::from(row.max_x - row.min_x) + 1);
