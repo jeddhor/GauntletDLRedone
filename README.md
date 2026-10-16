@@ -187,5 +187,19 @@ python3 tools/python/compare_motion_request.py --trace private/reports/NEW_TRACE
 The request is the value stored before collision stages; it is not native
 movement. See [movement evidence](docs/research/movement.md).
 
+## Interim playtest
+
+An **interim** native walk-around (not the M12 slice) runs the Yellow Sorceress in
+The Poison Fields with original assets and the native, reference-compared
+movement and collision code:
+
+```sh
+python3 tools/python/export_start_state.py   # once; private start state from the save
+python3 tools/python/run_play.py             # Arrows/WASD move, Space/K attack, Esc quits
+```
+
+There are no enemies, items, damage, HUD or audio yet. See
+[playtest notes](docs/research/playtest.md) for exactly what is native and what is interim.
+
 The [current checkpoint](docs/state.md) records exact progress, passing checks,
 preserved reference state and ordered next steps.

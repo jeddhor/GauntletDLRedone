@@ -204,6 +204,53 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 6 && args[0] == "player-sim" {
+        // player-sim WORLDS.PS2 SLUS_200.47 START.json INPUTS.json NEW_REPORT.json
+        // INPUTS: [[levels, edges], ...] one per game update.
+        let worlds = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let mut world = gdl_core::collision::CollisionWorld::from_world(&gdl_formats::world::World::parse(&worlds)?)?;
+        let elf_bytes = bounded_read(Path::new(&args[2]), 64 * 1024 * 1024)?;
+        let tables = gdl_core::controls::tables_from_elf(&gdl_formats::elf::Elf::parse(&elf_bytes)?)?;
+        let start: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[3]), 4 * 1024 * 1024)?)?;
+        let mut sim: gdl_core::player_sim::PlayerSim = serde_json::from_value(start["sim"].clone())?;
+        let inputs: Vec<[u32; 2]> = serde_json::from_slice(&bounded_read(Path::new(&args[4]), 4 * 1024 * 1024)?)?;
+        if inputs.len() > 100_000 {
+            return Err("simulation input policy exceeded".into());
+        }
+        let mut updates = Vec::new();
+        for [levels, edges] in inputs {
+            match sim.step(&mut world, &tables, levels, edges) {
+                Ok(report) => updates.push(serde_json::json!({"report":report,
+                    "position_bits":sim.position.map(f32::to_bits),"facing_bits":sim.facing.to_bits(),
+                    "floor_y_bits":sim.floor_y_88c.to_bits(),"error":null})),
+                Err(e) => {
+                    updates.push(serde_json::json!({"error":e.to_string()}));
+                    break;
+                }
+            }
+        }
+        let report = serde_json::json!({"updates":updates,"scope":"interim closed-loop PlayerSim; see player_sim.rs labels"});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[5])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
+    if args.len() == 3 && args[0] == "joy-tables" {
+        // joy-tables SLUS_200.47 NEW_REPORT.json
+        let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let elf = gdl_formats::elf::Elf::parse(&raw)?;
+        let tables = gdl_core::controls::tables_from_elf(&elf)?;
+        let (angle, magnitude) = tables.tables();
+        let report = serde_json::json!({"elf_sha256":hash(&raw),
+            "angle_bits":angle.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),"magnitude_bits":magnitude.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            "scope":"native InitJoyAng from ELF magval/angidx"});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 4 && args[0] == "player-displacement" {
         // player-displacement WORLDS.PS2 STEPS.json NEW_REPORT.json
         #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
@@ -241,6 +288,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     word_100: step.word_100,
                     y_54: step.y_54,
                     wall_object_8a0: step.wall_object_8a0,
+                    floor_contact: None,
                 };
                 let out = gdl_core::player_collision::player_displacement(
                     &mut world,

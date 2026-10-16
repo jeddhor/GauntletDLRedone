@@ -107,6 +107,13 @@ must remain untouched. The user's `pcsx2/` checkout is a separate research sourc
   WORLDS triangles/grid load unchanged; all 1,360 runtime object positions are
   reproduced bit for bit; 85/85 distinct live WorldCollide queries match in every
   captured result field (`collision-comparison-v3/`), on one flat floor object.
+- Native player displacement with static collision matches 96/96 updates
+  (`displacement-comparison-v4/`); native InitJoyAng reproduces 98/98 control
+  table words from the ELF; the closed-loop PlayerSim reproduces 96/96 positions
+  and 92/96 facings (`closed-loop-comparison-v2/`).
+- INTERIM PLAYTEST: `python3 tools/python/run_play.py` (research/playtest.md);
+  labelled interim pieces include the start state, action pairs, matrix rebuild,
+  animation clock, rest-state camera and alpha cutout. Not the M12 slice.
 - fqdist's VU0 microprogram (pc 68..75, decoded from the fixture's VU0 micro
   memory) is native in gdl_core/vu0.rs with toward-zero VU mul/add/sqrt; 15/15
   distinct live operand/result pairs match in all lanes (`fqdist-comparison-v3/`).

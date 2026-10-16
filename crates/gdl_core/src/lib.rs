@@ -2,12 +2,14 @@
 pub mod animation;
 pub mod animation_clock;
 pub mod collision;
+pub mod controls;
 pub mod libm;
 pub mod numeric;
 pub mod player_animation;
 pub mod player_collision;
 pub mod player_input;
 pub mod player_motion;
+pub mod player_sim;
 pub mod transform;
 pub mod vu0;
 pub mod world_transform;

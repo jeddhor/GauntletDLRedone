@@ -2,6 +2,7 @@
 pub mod animation;
 pub mod animation_keys;
 mod binary;
+pub mod elf;
 pub mod objects;
 pub mod texdef;
 pub mod wad;

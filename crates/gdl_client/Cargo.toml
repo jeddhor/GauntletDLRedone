@@ -10,3 +10,4 @@ bevy.workspace = true
 gdl_core = { path = "../gdl_core" }
 gdl_formats = { path = "../gdl_formats" }
 sha2.workspace = true
+serde_json.workspace = true

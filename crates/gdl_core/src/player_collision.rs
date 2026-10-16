@@ -28,6 +28,9 @@ pub struct PlayerFloorState {
     pub word_100: i32,
     pub y_54: f32,
     pub wall_object_8a0: Option<usize>,
+    /// Diagnostic output: object of PlayerCollideFloor's first contact. The
+    /// original writer of +0x89c is not recovered.
+    pub floor_contact: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -197,6 +200,7 @@ fn collide_floor(
     let all = object_flags_with_parents(world, s.floor_object_89c);
     let gate = all & 0x0c00_0000 != 0 && all & 0x2000_0000 != 0;
     let first_object = first.map(|h| h.object);
+    s.floor_contact = first_object;
     if gate && s.floor_object_89c != first_object {
         *d = [0.0; 3];
         return Ok(if first.is_some() { -1 } else { -2 });
