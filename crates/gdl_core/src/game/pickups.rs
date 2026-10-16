@@ -36,6 +36,9 @@ pub mod p {
 /// Class data (PlayerData[player] → class record) values the port reads.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ClassData {
+    /// Raw class record (first 0x200 bytes) kept by the export; not used yet.
+    #[serde(skip)]
+    pub _raw: (),
     /// +0x58: powerup duration multiplier.
     pub powerup_time_58: f32,
 }

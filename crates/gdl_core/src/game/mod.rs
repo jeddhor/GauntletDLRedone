@@ -6,8 +6,10 @@
 pub mod damage;
 pub mod enemies;
 pub mod enemy_ai;
+pub mod item_runtime;
 pub mod pickups;
 pub mod record;
+pub mod setup;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
 use crate::item_collision::DynGrid;
@@ -74,6 +76,8 @@ pub struct Globals {
     pub num_in_game_players: i32,
     pub num_virtual_players: i32,
     pub num_visible_enemies: i32,
+    /// 0x20f958: forced player count for show_item.
+    pub global_958: i32,
     pub enemy_shrink: f32,
     pub secret_world: i32,
     pub max_keys_per_player: i32,
@@ -155,6 +159,17 @@ pub struct Game {
     pub enemy_wall_point: [f32; 3],
     pub enemy_wall_contact: Option<crate::collision::Hit>,
     pub enemy_anims: Vec<Option<enemy_ai::EnemyAnim>>,
+    pub item_anims: Vec<Option<item_runtime::ItemAnim>>,
+    pub camera: Option<item_runtime::Camera>,
+    /// ITEM_ACTIVE_DIST 0x234364, global 0x20f950 (mode), 0x20f954, start_enemyinfo, ExitState.
+    pub item_active_dist: f32,
+    pub mode_950: i32,
+    pub globals_954: i32,
+    pub start_enemyinfo: bool,
+    pub exit_state: i32,
+    pub enemy_anim_data: enemy_ai::EnemyAnimData,
+    pub class: pickups::ClassData,
+    pub log: setup::FrameLog,
 }
 
 impl Game {

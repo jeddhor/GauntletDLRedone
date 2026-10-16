@@ -427,6 +427,7 @@ impl Game {
             // SetEnemyObj: presentation nodes; type 0x1f sets +0x230 = 3.0.
             rec.set_u32(0x230, if t == 0x1f { 0x4040_0000 } else { 0 });
         }
+        self.attach_enemy_anim(i, t, level)?;
         if 4 <= level {
             level = 2;
         }

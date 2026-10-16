@@ -308,6 +308,55 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() >= 9 && args[0] == "game-run" {
+        // game-run WORLDS.PS2 WDATA.wad LEVEL SLUS_200.47 START_V4.json ITEMS_ANIM.PS2 FRAMES NEW_REPORT.json [TYPE=MONSTER_ANIM.PS2 ...]
+        let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let world = gdl_formats::world::World::parse(&raw)?;
+        let wraw = bounded_read(Path::new(&args[2]), 4 * 1024 * 1024)?;
+        let wdata = gdl_formats::wdata::WorldData::parse(&wraw)?;
+        let level: usize = args[3].to_str().ok_or("level")?.parse()?;
+        let elf_raw = bounded_read(Path::new(&args[4]), 64 * 1024 * 1024)?;
+        let elf = gdl_formats::elf::Elf::parse(&elf_raw)?;
+        let start: gdl_core::game::setup::StartState = serde_json::from_slice(&bounded_read(Path::new(&args[5]), 16 * 1024 * 1024)?)?;
+        let iraw = bounded_read(Path::new(&args[6]), 64 * 1024 * 1024)?;
+        let ianim = gdl_formats::animation::Animations::parse(&iraw)?;
+        let frames: usize = args[7].to_str().ok_or("frames")?.parse()?;
+        let mut item_anims = std::collections::HashMap::new();
+        for (k, t) in ianim.trees.iter().enumerate() {
+            item_anims.insert(t.label.clone(), gdl_core::game::setup::clips_of(&ianim, k));
+        }
+        let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
+        for a in &args[9..] {
+            let a = a.to_str().ok_or("monster arg")?;
+            let (t, path) = a.split_once('=').ok_or("TYPE=PATH:PREFIX expected")?;
+            let (path, prefix) = path.rsplit_once(':').ok_or("TYPE=PATH:PREFIX expected")?;
+            let m = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(path), 64 * 1024 * 1024)?)?;
+            gdl_core::game::setup::enemy_trees(&mut enemy_anims, t.parse()?, prefix, &m);
+        }
+        let mut game = gdl_core::game::Game::new_level(gdl_core::game::setup::LevelInputs {
+            world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims })?;
+        let mut samples = Vec::new();
+        for f in 0..frames {
+            game.step(None);
+            if let Some(cs) = game.camera.as_ref().map(|c| c.basis) { let _ = cs; }
+            if f % 15 == 0 || f + 1 == frames {
+                let enemies: Vec<_> = game.enemies.iter().enumerate().filter(|(_, e)| e.i32_(0xc8) != 0)
+                    .map(|(k, e)| serde_json::json!({"slot":k,"type":e.i32_(0),"state":e.i32_(0xc8),"pos":e.v3(0x40),
+                        "action":e.u32_(0xe0),"logic":e.i16_(0x324),"health":e.f32_(0x214),"target":e.i16_(0x288)})).collect();
+                samples.push(serde_json::json!({"frame":f,"enemies":enemies,"player_health":game.players[0].f32_(0x1a10),
+                    "events":game.events.len()}));
+            }
+        }
+        let events: Vec<String> = game.events.iter().take(400).map(|e| format!("{e:?}")).collect();
+        let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,
+            "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
+            "scope":"INTERIM native game run: fresh items, no initial enemies, no player input; not a fidelity comparison"});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "place-items" {
         // place-items WORLDS.PS2 NEW_REPORT.json — PlaceItem 0x153068 heights.
         let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
