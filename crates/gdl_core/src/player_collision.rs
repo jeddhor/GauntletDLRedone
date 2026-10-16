@@ -157,9 +157,15 @@ fn collide_walls(
         return Ok((if action == 0x8f { 1 } else { 2 }, Some(first)));
     }
     if flags & 0x1000 != 0 {
-        return Err(UnsupportedCollision("offset wall object"));
+        // Offset (moving) object: remove the displacement along the normal.
+        let n = first.normal;
+        let k = -add(add(mul(d[0], n[0])?, mul(d[1], n[1])?)?, mul(d[2], n[2])?)?;
+        d[0] = add(mul(k, n[0])?, d[0])?;
+        d[1] = add(mul(k, n[1])?, d[1])?;
+        d[2] = add(mul(k, n[2])?, d[2])?;
+    } else {
+        slide_along_wall(r, pos, d, first.hit, first.normal)?;
     }
-    slide_along_wall(r, pos, d, first.hit, first.normal)?;
     let target = [add(pos[0], d[0])?, add(pos[1], d[1])?, add(pos[2], d[2])?];
     world.bump_check(first.triangle);
     let mut contact = first;
