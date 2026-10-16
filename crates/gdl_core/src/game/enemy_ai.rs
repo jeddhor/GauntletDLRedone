@@ -155,6 +155,8 @@ pub struct EnemyAnim {
     pub clock: ClockState,
     pub clips: Vec<ClipTiming>,
     pub current: u16,
+    /// (type, level) of the attached tree, for presentation lookup.
+    pub tree: (i32, i32),
 }
 
 /// Clip timings by sequence index and the InitActions table.

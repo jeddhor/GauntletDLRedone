@@ -253,7 +253,7 @@ impl Game {
             self.enemies[i].set_i32(0xe8 + 8 * k, *idx);
             self.enemies[i].set_i32(0xec + 8 * k, *v);
         }
-        let mut anim = EnemyAnim { clock: fresh_clock(), clips, current: 0 };
+        let mut anim = EnemyAnim { clock: fresh_clock(), clips, current: 0, tree: (t, lvl) };
         // generate_enemy: InitAnim(START) when the type has one.
         let start = table.get(1).map_or(-1, |e| e.0);
         let first = if 0 <= start { start as u16 } else { 0 };
