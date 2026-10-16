@@ -6,4 +6,5 @@ pub mod elf;
 pub mod objects;
 pub mod texdef;
 pub mod wad;
+pub mod wdata;
 pub mod world;

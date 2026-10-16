@@ -3,6 +3,7 @@ pub mod animation;
 pub mod animation_clock;
 pub mod collision;
 pub mod controls;
+pub mod level;
 pub mod libm;
 pub mod numeric;
 pub mod player_animation;

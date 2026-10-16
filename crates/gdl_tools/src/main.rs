@@ -236,6 +236,22 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() == 4 && args[0] == "level-enemies" {
+        // level-enemies WDATA.wad LEVEL_INDEX NEW_REPORT.json
+        let raw = bounded_read(Path::new(&args[1]), 4 * 1024 * 1024)?;
+        let world = gdl_formats::wdata::WorldData::parse(&raw)?;
+        let index: usize = args[2].to_str().ok_or("level index")?.parse()?;
+        let level = world.levels.get(index).ok_or("level index out of range")?;
+        let world_kind = 0; // world_data[0] is checked only against tower (0xd).
+        let types = gdl_core::level::enemy_types(&world, level, world_kind, 3)?;
+        let report = serde_json::json!({"wdata_sha256":hash(&raw),"level":level,"enemies":world.enemies,
+            "chunks":world.chunks,"enemy_types":types});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[3])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "place-items" {
         // place-items WORLDS.PS2 NEW_REPORT.json — PlaceItem 0x153068 heights.
         let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
