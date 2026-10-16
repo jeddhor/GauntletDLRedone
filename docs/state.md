@@ -1,4 +1,32 @@
-# Development checkpoint — 2026-10-15
+# Development checkpoint — 2026-10-16
+
+Continuing the user's request (2026-10-15/16) to work through M11–M17 until a
+playable build exists; the user will test at the end. Latest source commit:
+find with `bash tools/git-local.sh log -1 --oneline`.
+
+## Current position (2026-10-16)
+
+- Native gameplay simulation (research/gameplay.md): items, pickups, enemies
+  and generators, enemy AI subset, damage, player missiles, potion magic,
+  experience/levels, exits and level progression G1→G4.
+- Interim playtest (research/playtest.md): `python3 tools/python/run_play.py`.
+  Start state v6 (`export_game_state.py`) plus the v2 player sim start.
+- Headless runner: `python3 tools/python/game_run.py REPORT --level N --script ...`.
+- Verification at this checkpoint: 43 core + 21 formats Rust tests (synthetic),
+  strict Clippy clean, release build; headless G1–G4 runs without unsupported
+  paths; Xvfb smoke of G1–G4. No new reference (PCSX2) comparisons were made for
+  the gameplay transcriptions — they are not fidelity evidence yet.
+- The 2026-10-15 Xvfb/PCSX2 session no longer existed on 2026-10-16; a new
+  authenticated Xvfb (:191) was started via xvfb-run + virtual_display.py.
+  PCSX2 was not restarted. Originals and copied slot 1 untouched.
+
+Next: critters (GENERAL/GOLEM/GAR/DEATH), melee and enemy missiles, audio and UI
+(M17), boss level G5 (M15), co-op (M16), saves (M18); reference encounter
+captures to qualify the transcriptions.
+
+---
+
+# Previous checkpoint — 2026-10-15
 
 Work resumed on 2026-10-14 in a new agent session after the 2026-10-13 pause.
 This checkpoint records the PlayerMotion request/facing milestone and the resume

@@ -1,43 +1,36 @@
 # Interim native playtest (not the M12 slice)
 
 `python3 tools/python/run_play.py` launches `gdl_play` on the current desktop
-(`--virtual` uses the authenticated Xvfb session). It walks the Yellow Sorceress
-through The Poison Fields with original level/character geometry, textures and
-animation clips, driven by the native simulation at 30 Hz.
+(`--virtual` uses the authenticated Xvfb session). It writes
+`private/reports/play-config.json` with every package resolved by verified
+archive identity, then runs the native game simulation (research/gameplay.md)
+for the Yellow Sorceress in The Poison Fields, levels G1–G4.
 
-Inputs are resolved by verified archive identity: LEVELS/levelG1 OBJECTS/WORLDS/
-TEXDEF/TEXTURES, PLAYERS/SOR/YEL00 OBJECTS/ANIM/TEXDEF/TEXTURES, PLAYERS/SOR/ANIM/
-ANIM.PS2, the profile-qualified SLUS_200.47 and a private start state from
-`tools/python/export_start_state.py` (copied from the preserved save).
+Controls: arrows/WASD move, Space/K throw, E/L use a potion (magic), stand
+still in the exit portal to leave the level, Enter continues after death
+(interim: restores the start-state health), F9 debug-skips to the next level,
+Esc quits. The HUD shows health, gold, keys, potions, level, experience,
+kills, active enemies, standing generators and the first log note or
+unported path.
 
-Native and reference-compared components:
-- Keyboard → the game's level words (observed Up 0x40000030, Down 0x800000c0,
-  Left 0x10000003, Right 0x2000000c; attack 0x02000200) → JoyAng/JoyMag built by
-  a native InitJoyAng from the ELF's `magval`/`angidx`: 98/98 runtime table words.
-- Motion code/run timer, request, facing turn, static wall/floor collision and
-  position (see movement.md, collision.md).
-- Closed loop from the start state with original per-update controls
-  (compare_closed_loop.py): positions 96/96; facing 92/96 (four 1-ulp
-  differences at turn updates from the interim matrix rebuild).
+Start: G1 uses the state exported from the preserved save
+(`export_game_state.py` v6 + `export_start_state.py` v2). Later levels carry the
+player record and enter at the level's start locator. The G5 boss level is not
+ported; leaving G4 ends the session with a message.
 
-Interim, not fidelity evidence (shown in the window):
-- Start state copied from the save (spawn rules unrecovered).
-- Requested action from observed code pairs (1→0, 8→17, 13→19, 15→92).
-- Player matrix rebuilt as rotation(facing) × captured scale (CreateYPRMatrix
-  and the 1.0000074 scale source unrecovered).
-- Animation: native choose() transitions and original clip timing, but a
-  presentation clock without CalcAnimInfo state, blending or events; action→clip
-  map captured from the runtime table at player+0x1e8.
-- Camera: StdCamera rest state (target = position + attention offset +0x810,
-  forward basis and distance 24.0 from StdCamera, FOV from MboxWinPtr+0x1c); no
-  camera logic, smoothing or collision.
-- Presentation: x mirrored for Bevy (the original camera basis satisfies
-  right × up = forward); the screenshot comparison confirms orientation.
-  Materials are unlit with a per-texture alpha cutout at half the texture's own
-  maximum alpha; GS/TEXA alpha, lightmaps and fog remain M05 work.
-- Not present: enemies, generators, items/keys, barrels, dynamic objects,
-  projectiles, damage/health, HUD, audio, exits, saves.
+Native and reference-compared components: controls, motion code/run timer,
+request, facing, static/dynamic collision and position (movement.md,
+collision.md); item load records (items.md); attribute formula (gameplay.md).
+Everything else in gameplay.md is a transcription without a reference
+comparison yet.
 
-Smoke tests performed on Xvfb (llvmpipe): launch, READY idle, Up → RUN1, Up+Right
-stopping at the cliff edge, attack → THROW1S; screenshots compared visually with
-the fixture screenshot for layout/orientation only.
+Presentation only (labelled on screen): unlit materials with alpha cutout,
+rest-state follow camera, item models at tree rest pose (camera-facing "CF"
+nodes omitted), enemy per-frame objects chosen by matching object stems to
+sequences by frame count (the OANIM channel is not decoded), missiles drawn
+with the SFXYEL WEAP_TW_Y rest pose, hit sparks and magic blasts as spheres,
+no audio.
+
+Smoke tests on Xvfb (llvmpipe, 2026-10-16): G1 launch with enemies swarming;
+throws (7 missiles, 6 kills); key pickup; F9 transitions to G2, G3 and G4 with
+geometry, generators and items rendered.
