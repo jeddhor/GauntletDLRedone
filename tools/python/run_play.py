@@ -108,19 +108,25 @@ def critter_files(kinds, world, known):
     return out
 
 
+def level_kinds(wdata_path, index):
+    """GetEnemyTypes kinds of one LEVL record (`gdl_tools level-enemies`)."""
+    tmp = CONFIG.with_name(f'play-enemies-{index}.json')
+    if tmp.exists():
+        tmp.unlink()
+    subprocess.run(['target/release/gdl_tools', 'level-enemies', str(wdata_path), str(index), str(tmp)], check=True,
+                   stdout=subprocess.DEVNULL)
+    kinds = json.loads(tmp.read_text())['enemy_types']['kind']
+    tmp.unlink()
+    return kinds
+
+
 def realm_monsters(wdata_path, indices, known):
     """(type, prefix) of every enemy type the realm's levels load (GetEnemyTypes
     via `gdl_tools level-enemies`; prefixes from the ELF enemy_table 0x22c7a0)."""
     from elf_read import read as elf_read
     kinds = set()
     for k in indices:
-        tmp = CONFIG.with_name(f'play-enemies-{k}.json')
-        if tmp.exists():
-            tmp.unlink()
-        subprocess.run(['target/release/gdl_tools', 'level-enemies', str(wdata_path), str(k), str(tmp)], check=True,
-                       stdout=subprocess.DEVNULL)
-        kinds |= set(json.loads(tmp.read_text())['enemy_types']['kind'])
-        tmp.unlink()
+        kinds |= set(level_kinds(wdata_path, k))
     elf = ELF.read_bytes()
     out = {}
     for k in range(44):
@@ -157,8 +163,9 @@ def main():
     world, wad = REALMS[args.realm]
     wdata, rig, clips = resolve([f'WDATA/{wad}.WAD', 'PLAYERS/SOR/YEL00/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2'])
     known = known_names()
-    # Regular levels (boss_type < 0) in level-code order; boss arenas are not ported.
-    records = sorted((r for r in levl_records(wdata.read_bytes()) if r[2] < 0), key=lambda r: int(r[1][1:]))
+    # Every level in level-code order; the boss arena last (the critter engine
+    # is ported for single-type bosses; the chimera's heads are not).
+    records = sorted(levl_records(wdata.read_bytes()), key=lambda r: (0 <= r[2], int(r[1][1:])))
     if args.level:
         records = [r for r in records if r[1] >= args.level.upper()] or records
     packages = dict(POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), SFXYEL=package('PLAYERS/SOR/SFXYEL'))
@@ -169,7 +176,8 @@ def main():
         for name in items:
             packages.setdefault(f'ITEMS_{name[5:]}', package(f'ITEMS/{name}'))
         levels.append(dict(name=code, index=index, worlds=str(resolve([f'LEVELS/LEVEL{code}/WORLDS.PS2'])[0]),
-                           level=package(f'LEVELS/LEVEL{code}', anim=False), items=[f'ITEMS_{n[5:]}' for n in items]))
+                           level=package(f'LEVELS/LEVEL{code}', anim=False), items=[f'ITEMS_{n[5:]}' for n in items],
+                           critters=critter_files(level_kinds(wdata, index), world, known)))
     monsters = realm_monsters(wdata, [r[0] for r in records], known)
     for _, prefix in monsters:
         packages[prefix] = package(f'MONSTERS/{prefix}')

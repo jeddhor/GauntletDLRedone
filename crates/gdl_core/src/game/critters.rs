@@ -220,6 +220,11 @@ impl Game {
         &mut self.crit_mut(i).rec
     }
 
+    /// TYPE +0xe4 × level_data +0xac: a critter type's starting health.
+    pub fn critter_type_rec_pub(&self, t: TypeRef) -> Option<f32> {
+        let ty = self.critter_data.files.get(t.0)?.wad.types.get(t.1)?;
+        mul(CritterFile::f32_(ty, 0xe4), self.level_f32(0xac)).ok()
+    }
     pub(crate) fn crm_pub(&mut self, i: usize) -> &mut Record {
         self.crm(i)
     }

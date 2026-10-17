@@ -106,6 +106,81 @@ struct Session {
 #[derive(Component)]
 struct LevelEntity;
 
+/// A critter instance slot (CritterInsts index) and the type it shows.
+#[derive(Component)]
+struct CritterSlot {
+    index: usize,
+    shown: Option<(usize, usize)>,
+}
+
+/// One tree node's meshes of a critter slot.
+#[derive(Component)]
+struct CritterPart {
+    node: usize,
+}
+
+/// Critters drawn from the simulation skeleton: each tree node with an
+/// object "<tree prefix><node label>" (15 characters) in the critter's model
+/// package, posed by gdl_core::tree_pose (presentation of the native pose;
+/// skinned parts and effects attached to the tree are not drawn).
+fn present_critters(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    libs: Res<Libraries>,
+    mut slots: Query<(Entity, &mut CritterSlot, &mut Visibility, Option<&Children>)>,
+    mut parts: Query<(&CritterPart, &mut Transform)>,
+) {
+    let g = &sim.game;
+    for (entity, mut slot, mut vis, children) in &mut slots {
+        let Some(Some(cr)) = g.critters.get(slot.index) else {
+            *vis = Visibility::Hidden;
+            continue;
+        };
+        let file = &g.critter_data.files[cr.ty.0];
+        let (Some(tree), Some(model)) = (file.trees[cr.ty.1], file.model.as_ref()) else {
+            *vis = Visibility::Hidden;
+            continue;
+        };
+        let t = &model.0.trees[tree];
+        if slot.shown != Some(cr.ty) {
+            commands.entity(entity).despawn_related::<Children>();
+            let lib_name = t.prefix.clone();
+            if let Some(lib) = libs.0.get(&lib_name) {
+                for node in &t.nodes {
+                    let label: String = (t.prefix.clone() + &node.label).chars().take(15).collect();
+                    if let Some(list) = lib.by_label.get(&label) {
+                        let holder = commands.spawn((CritterPart { node: node.index as usize }, Transform::default(), Visibility::default())).id();
+                        for (mesh, material) in list {
+                            let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+                            commands.entity(holder).add_child(child);
+                        }
+                        commands.entity(entity).add_child(holder);
+                    }
+                }
+            }
+            slot.shown = Some(cr.ty);
+        }
+        *vis = Visibility::Visible;
+        let r = &cr.rec;
+        let mut root = gdl_core::tree_pose::IDENTITY;
+        for row in 0..3 {
+            root[4 * row..4 * row + 3].copy_from_slice(&r.v3(0x10 + 16 * row));
+        }
+        root[12..15].copy_from_slice(&r.v3(0x40));
+        let Some(children) = children else { continue };
+        for child in children.iter() {
+            if let Ok((part, mut tf)) = parts.get_mut(child)
+                && let Ok(m) = gdl_core::tree_pose::node_world(&cr.parents, &cr.locals, root, part.node, None)
+            {
+                let mat = Mat4::from_cols_array(&m);
+                if mat.is_finite() {
+                    *tf = Transform::from_matrix(mat);
+                }
+            }
+        }
+    }
+}
+
 /// A world-geometry node drawn at `rest` (summed file position).
 #[derive(Component)]
 struct WorldNode {
@@ -384,6 +459,10 @@ fn spawn_level(
                 }
             }
         }
+    }
+    for index in 0..gdl_core::game::critters::MAX_INSTS {
+        let e = commands.spawn((CritterSlot { index, shown: None }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
+        commands.entity(root).add_child(e);
     }
     for (kind, n) in [(SlotKind::Enemy, 25), (SlotKind::Item, item_count), (SlotKind::Effect, 64)] {
         for index in 0..n {
@@ -888,12 +967,17 @@ fn present_player(
             generators,
             sim.last_event,
         );
+        if let Some(boss) = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|k| g.critters.get(k)).and_then(Option::as_ref) {
+            // Boss health (the original's health meter blits are presentation).
+            let max = g.critter_type_rec_pub(boss.ty).map_or(0.0, |v| v);
+            t.push_str(&format!("\nBOSS {:>6.0} / {:.0}", boss.rec.f32_(0x4f4).max(0.0), max));
+        }
         if ui.details {
             t.push_str(&format!(
                 "\n\nINTERIM PLAYTEST (not the M12 slice). missiles thrown {}\n\
                  Native: item/enemy/generator/missile/damage/pickup/magic/exp/exit/sound-cue systems, movement + collision\n\
                  Interim/presentation: start state from your save, player action map + clip clock, camera, unlit materials,\n\
-                 enemy frame objects, item rest poses, approximate audio mixing, magic without animation, melee holds the player still, no boss\n\
+                 enemy frame objects, item rest poses, approximate audio mixing, magic without animation, melee holds the player still, boss pose without blending\n\
                  Enter after death: interim continue   F9: debug skip to next level{}",
                 sim.driver.missiles_started,
                 g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),
@@ -1020,7 +1104,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, simulate)
         .init_resource::<Ui>()
-        .add_systems(Update, (ui_input, advance_level, present_world, present_world_nodes, present_sparks, present_player).chain())
+        .add_systems(Update, (ui_input, advance_level, present_world, present_world_nodes, present_critters, present_sparks, present_player).chain())
         .run();
     Ok(())
 }
@@ -1085,6 +1169,11 @@ fn advance_level(
         if let Some(k) = session.levels.iter().position(|l| l.index == level).filter(|_| world == session.world_number) {
             session.next = Some(k);
             session.banner = Some((3.0, format!("{name} COMPLETE - entering {}", session.levels[k].name)));
+        } else if wave == gdl_core::game::boss::TOWER_WAVE {
+            session.finished = Some(format!(
+                "{} COMPLETE!\nThe boss is defeated; the game would return to the hub (not ported yet).\nThanks for testing! (Esc to quit)",
+                session.title
+            ));
         } else {
             session.finished = Some(format!(
                 "{name} COMPLETE. The exit leads to wave {wave:#x}; that level (boss/hub) is not ported yet. Thanks for testing! (Esc to quit)"

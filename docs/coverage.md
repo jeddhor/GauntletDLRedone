@@ -21,7 +21,7 @@ Content denominators remain provisional and do not indicate reachability.
 | M12 Playable slice | Not accepted | Interim playtest (research/playtest.md) plays G1–G4 of The Poison Fields with the native simulation: enemies, generators, items, missiles, melee, magic, exits, original audio. Labelled interim player driver/animation/camera/materials; no reference comparison of encounters; gates not met |
 | M13 Progression/world logic | Partial | Exit flow (DoExit/do_exit) and destination wave, level start locator, WldBtm, per-level enemy loading, AddExp/ModifyExp ported (gameplay.md); saves, hub/tower, persistence and rules beyond levels G1–G4 pending |
 | M14 Content expansion | Not implemented | Private archive-family catalog exists; reachable content/support matrix pending |
-| M15 Bosses/endgame | Not implemented | Phase logic, gates and critical-path coverage pending |
+| M15 Bosses/endgame | Partial | Critter engine (research/critters.md): boss AI, attacks, damage, BOSSGEN, death, coin spew, good-wizard timing, auto exit; the lich (G5) completes headless. Grab, fire cones, chimera heads, golem/gargoyle AI, hub/endgame pending |
 | M16 Local multiplayer | Not implemented | One-to-four player scenarios and ownership/camera rules pending |
 | M17 Audio/UI completion | Partial | Native audio (AUDATPS2.ROM/VBK/ADS decoders, ~35 cue ports, ALSA mixer; research/audio.md); interim title/pause/HUD/banners; original menus, front end and attention-area music pending |
 | M18 Saves/migrations | Not implemented | Native durable save/recovery contract pending |

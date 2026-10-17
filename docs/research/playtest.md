@@ -6,12 +6,14 @@
 archive identity, then runs the native game simulation (research/gameplay.md)
 for the Yellow Sorceress in The Poison Fields, levels G1–G4.
 
-`--realm A`…`K` plays that realm's regular levels instead (LEVL records with
-boss_type < 0, in level-code order; `--level A3` starts later). The realm's
+`--realm A`…`K` plays that realm's levels instead (level-code order with the
+boss arena last; `--level A3` starts later, `--level G5` goes straight to the
+lich). The realm's
 WDATA, every monster package its levels load, and per level both the level's
 own ITEMS package and the realm's (HYPOTHESIS) are configured. Exits follow
-the destination wave to the matching LEVL record; a boss arena or another
-realm ends the session. The HUD names other realms by their WDATA file
+the destination wave to the matching LEVL record; defeating the boss ends the
+session with "COMPLETE" (the hub is not ported), any other realm's wave ends it
+too. The HUD names other realms by their WDATA file
 (e.g. "Castle realm (A)"). Realm D (FOREST) generators spawn nothing (zero LEVL
 multipliers, research/gameplay.md).
 
@@ -25,6 +27,12 @@ any unported path hit.
 
 Audio: original sound effects, announcer lines and level music play through
 ALSA (research/audio.md); mixing is approximate. `--virtual` runs are silent.
+
+Bosses (research/critters.md): the boss is simulated by the native critter
+engine and drawn from its skeleton (no sequence blending); the HUD shows its
+health. Only the lich (G5) has been run end to end; other bosses may stop at an
+unported path (grab, fire cones, the chimera's heads), shown as SIMULATION
+STOPPED. Players currently walk through critters.
 
 Start: G1 uses the state exported from the preserved save
 (`export_game_state.py` v6 + `export_start_state.py` v2). Every other level
@@ -55,3 +63,7 @@ geometry, generators and items rendered.
 Realm smoke test on Xvfb (2026-10-17): `--realm A` starts in A1 with the
 castle's enemies, chests and keys rendered; F9 carries the player into A2
 (LEVL record 2) at its start locator; `--realm G` still starts G1 from the save.
+
+Boss smoke test on Xvfb (2026-10-17): `--level G5` shows the lich animating in
+its arena with the boss health line; headless runs cover activation, attacks,
+BOSSGEN generators, death, coin spew, the good-wizard timing and the exit.
