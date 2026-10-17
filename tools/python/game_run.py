@@ -80,6 +80,9 @@ def main():
                        f'ITEMS/LEVEL{a.world}/OBJECTS.PS2', 'WEAPONS/OBJECTS.PS2', 'POWERUPS/OBJECTS.PS2']
            + [f'MONSTERS/{p}/OBJECTS.PS2' for _, p in monsters] if n in known]
     cmd += ['objects=' + ','.join(str(x) for x in resolve(obj))]
+    from run_play import critter_files  # noqa: E402
+    for c in critter_files(kinds, number, known):
+        cmd += [f"critter={c['wad']}" + (f":{c['anim']}" if 'anim' in c else '')]
     if len(item_pkgs) > 1:
         cmd += [f'items2={resolve([item_pkgs[1]])[0]}']
     if a.world != 'G':

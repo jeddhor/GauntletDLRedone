@@ -66,6 +66,8 @@ struct LevelSource {
     package: Value,
     /// Item packages, level-specific first (names in `packages`).
     items: Vec<String>,
+    /// Critter files (CRITTER/*.WAD) with their model ANIM.PS2.
+    critters: Vec<(String, Option<String>)>,
 }
 
 /// Inputs to (re)build the native game for a level; the current geometry.
@@ -437,6 +439,21 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
         effect_tables,
         audio_rom: session.audio_rom.clone(),
         mb_objects: Some(session.object_labels.iter().cloned().chain(session.level.objects.definitions.iter().map(|d| d.label.clone())).collect()),
+        critters: lv
+            .critters
+            .iter()
+            .map(|(wad, model)| -> Result<_, Box<dyn Error>> {
+                let w = gdl_formats::critter::CritterWad::parse(&gdl_client::bounded_read(Path::new(wad))?)?;
+                let m = match model {
+                    Some(m) => {
+                        let bytes = gdl_client::bounded_read(Path::new(m))?;
+                        Some(std::sync::Arc::new((Animations::parse(&bytes)?, bytes)))
+                    }
+                    None => None,
+                };
+                Ok((wad.clone(), w, m))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
     })?;
     let tables = tables_from_elf(&elf)?;
     let mut sim = session.sim_start.clone();
@@ -937,6 +954,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             worlds: l["worlds"].as_str().ok_or("level worlds")?.into(),
             package: l["level"].clone(),
             items: l["items"].as_array().ok_or("level items")?.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+            critters: l["critters"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|c| Some((c["wad"].as_str()?.to_string(), c["anim"].as_str().map(String::from)))).collect())
+                .unwrap_or_default(),
         });
     }
     let first = levels.first().ok_or("no levels")?;

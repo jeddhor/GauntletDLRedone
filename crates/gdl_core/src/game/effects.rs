@@ -71,7 +71,8 @@ pub mod fx {
 /// weapon_anim, else powerup_anim) with its first sequence's timing.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct EffectHeader {
-    /// 0 = WEAPONS/ANIM.PS2 (weapon_anim), 1 = POWERUPS/ANIM.PS2 (powerup_anim).
+    /// 0 = WEAPONS/ANIM.PS2 (weapon_anim), 1 = POWERUPS/ANIM.PS2 (powerup_anim),
+    /// 2 + n = the model of critter file n (InitCustomEffect).
     pub source: u8,
     pub tree: usize,
     pub frames: i16,
@@ -120,6 +121,14 @@ pub struct EffectTables {
     pub enemy_missile_info: Vec<[u32; 12]>,
     /// EnemyMissileDesc 0x24de68: "ARROW", "BOMB", "FBALL".
     pub enemy_missile_desc: [String; 3],
+    /// Tree labels of weapon_anim/powerup_anim for InitCustomEffect (exact match).
+    pub shared: Vec<EffectHeaderLabel>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EffectHeaderLabel {
+    pub label: String,
+    pub header: EffectHeader,
 }
 
 impl EffectTables {
@@ -166,7 +175,22 @@ impl EffectTables {
             let raw = &d[8 * k..8 * k + 8];
             String::from_utf8_lossy(&raw[..raw.iter().position(|&b| b == 0).unwrap_or(8)]).into_owned()
         });
-        Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects, enemy_missile_info, enemy_missile_desc })
+        let mut shared = Vec::new();
+        for (source, a) in [(0u8, weapon_anim), (1, powerup_anim)] {
+            for (k, t) in a.trees.iter().enumerate() {
+                let s = t.sequences.first();
+                shared.push(EffectHeaderLabel {
+                    label: t.label.clone(),
+                    header: EffectHeader { source, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor) },
+                });
+            }
+        }
+        Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects, enemy_missile_info, enemy_missile_desc, shared })
+    }
+
+    /// AtreeMatch over weapon_anim then powerup_anim (strcmp).
+    pub fn shared_header(&self, name: &str) -> Option<EffectHeader> {
+        self.shared.iter().find(|h| h.label == name).map(|h| h.header)
     }
 }
 
@@ -181,6 +205,8 @@ pub struct Effects {
     pub tables: EffectTables,
     /// pmissile_sfxidx: the slots of the last PlayerStartMissile.
     pub pmissile: [i32; 5],
+    /// NumCustomEffects (InitCustomEffectSub).
+    pub custom_effects: usize,
 }
 
 impl Effects {
@@ -193,6 +219,7 @@ impl Effects {
             sfx_id: 0x100,
             tables,
             pmissile: [-1; 5],
+            custom_effects: 0,
         }
     }
 }
@@ -255,10 +282,10 @@ fn dir_matrix(v: V3) -> [V3; 3] {
 }
 
 impl Game {
-    fn fx(&self, i: usize) -> &Record {
+    pub(crate) fn fx(&self, i: usize) -> &Record {
         &self.effects.slots[i]
     }
-    fn fx_mut(&mut self, i: usize) -> &mut Record {
+    pub(crate) fn fx_mut(&mut self, i: usize) -> &mut Record {
         &mut self.effects.slots[i]
     }
 
@@ -290,6 +317,9 @@ impl Game {
     }
 
     /// DeleteEffect(slot, force).
+    pub(crate) fn delete_effect_pub(&mut self, i: usize) {
+        self.delete_effect(i, true);
+    }
     pub fn delete_effect(&mut self, i: usize, force: bool) {
         if MAX_EFFECTS <= i {
             return;
@@ -369,7 +399,7 @@ impl Game {
     }
 
     /// StartFXTree(time, tree, position, flags, node flags).
-    fn start_fx_tree(&mut self, time: f32, visual: Visual, frames: i16, timing: i16, position: Option<V3>, flags: u32) -> R<usize> {
+    pub(crate) fn start_fx_tree(&mut self, time: f32, visual: Visual, frames: i16, timing: i16, position: Option<V3>, flags: u32) -> R<usize> {
         let i = self.find_effect_idx();
         let atime = self.globals.atime;
         let mut looping = 0u16;
@@ -847,13 +877,10 @@ impl Game {
 
     /// PlayerGetTarget(player, origin, facing, out direction, target, item).
     pub fn player_get_target(&self, p: usize, origin: V3, facing: V3, out: &mut V3, target: &mut i32, item: &mut Option<usize>) -> R<f32> {
-        if self.boss_crit_inst != 0 || !self.critters_empty() {
-            return unsupported("PlayerGetTarget with critters");
-        }
         if self.globals.pvp_mode == 2 {
             return unsupported("PlayerGetTarget player-vs-player");
         }
-        let range = 30.0;
+        let range = if self.boss_crit_inst != 0 { 200.0 } else { 30.0 };
         let mut d = range;
         let pl = &self.players[p];
         let mut target_pos = [0.0; 3];
@@ -868,7 +895,11 @@ impl Game {
                 }
             }
         } else if 0x10000 <= *target {
-            return unsupported("critter target");
+            let k = (*target & 0xffff) as usize;
+            if self.critters.get(k).is_some_and(Option::is_some) {
+                target_pos = self.crit(k).rec.v3(super::critters::c::COL);
+                d = self.critter_get_target_sub(f32::from_bits(0x3f34_fdf4), 0.0, k, origin, facing, out)?;
+            }
         }
         let mut far = range <= d;
         if let Some(it) = item.filter(|_| far)
@@ -890,6 +921,13 @@ impl Game {
             *target = who;
             if let Some(v) = v {
                 *out = v;
+            }
+            if let Some((k, dc, v)) = self.critter_get_target(cone, range, origin, facing)?
+                && dc < d
+            {
+                *out = v;
+                *target = k as i32 | 0x10000;
+                d = dc;
             }
             let (dg, generator, gv) = self.closest_generator(cone, range, origin, facing)?;
             *item = generator;
@@ -1286,6 +1324,9 @@ impl Game {
     }
 
     /// Random 0x1d6b00: (rand() & 0x7fff) × x / 32767.
+    pub(crate) fn random_pub(&mut self, x: f32) -> R<f32> {
+        self.random(x)
+    }
     fn random(&mut self, x: f32) -> R<f32> {
         let r = (self.rng.rand() & 0x7fff) as f32;
         Ok(div(mul(r, x)?, 32767.0)?)
@@ -1693,7 +1734,7 @@ impl Game {
                             let df = self.fx(i).u32_(fx::DAMAGE_FLAGS) | if pain { 0 } else { 0x80 };
                             res = self.damage_player(if pain { damage } else { 0.0 }, k, i32::from(pain), df, Some(dir))?;
                             if 0xfff < owner_raw {
-                                return unsupported("CritterDamagedPlayer");
+                                self.critter_damaged_player(k, owner_raw as u16 & 0xfff, damage)?;
                             }
                             if 2.0 < damage {
                                 self.players[k].set_f32(0x8c0, add(cool, time)?);
@@ -1745,7 +1786,7 @@ impl Game {
                     let push = [mul(v[0], 0.25)?, 0.0, mul(v[2], 0.25)?];
                     self.damage_player(damage, k, 1, df, Some(push))?;
                     if 0xfff < owner_raw {
-                        return unsupported("CritterDamagedPlayer");
+                        self.critter_damaged_player(k, owner_raw as u16 & 0xfff, damage)?;
                     }
                     if self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0x800 == 0 {
                         if 2.0 < damage {
@@ -1846,7 +1887,12 @@ impl Game {
                 }
             }
             if result == 0 && !self.critters_empty() {
-                return unsupported("effect vs critters");
+                let (r, clip) = self.effect_vs_critters(i, mode != 0, radius, from, to, fwd, damage, owner as i32 - 1, hold, age, pierce != 0)?;
+                result = r;
+                if let Some(p) = clip {
+                    to = p;
+                    moved = true;
+                }
             }
         }
         if result == 0 && self.fx(i).u32_(fx::FLAGS) & 2 != 0 {

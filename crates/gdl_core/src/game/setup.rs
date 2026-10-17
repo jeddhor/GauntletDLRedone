@@ -171,6 +171,9 @@ pub struct LevelInputs<'a> {
     /// Object labels of every loaded package (OBJECTS definitions); None
     /// makes the paths that search them unsupported.
     pub mb_objects: Option<std::collections::HashSet<String>>,
+    /// Critter files the level loads (LoadGauntWorldStart) with their model
+    /// package ANIM.PS2 (bytes kept for key sampling).
+    pub critters: Vec<super::critters::CritterInput>,
 }
 
 /// Per-enemy (visible, near-visible) query.
@@ -282,6 +285,30 @@ impl Game {
             active_player_mask: 0,
             enemy_alpha: vec![0xff; 25],
             lock_cam_req: 0,
+            critters: Vec::new(),
+            critter_data: super::critters::CritterData {
+                files: inp
+                    .critters
+                    .into_iter()
+                    .map(|(name, wad, model)| {
+                        let n = wad.types.len();
+                        super::critters::CritterFile { name, wad, trees: vec![None; n], model }
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+            critter_new_id: 1,
+            boss_start_pos: [0.0; 3],
+            critter_counter: 0,
+            critter_nactive: 0,
+            critter_ntargets: [0.0; 4],
+            boss_activate_time: 0.0,
+            boss_cam_mode: 0,
+            safe_rock_num: 0,
+            safe_rock_idx: -1,
+            safe_rock_items: Vec::new(),
+            safe_rock_counter: Vec::new(),
+            boss_key_position: None,
             mb_objects: inp.mb_objects,
             sounds: {
                 let slots: Vec<(i32, i32, String)> = (0..8)
@@ -306,6 +333,21 @@ impl Game {
         };
         // AddItemInstList calls SetPlayerVars before placing the items.
         game.set_player_vars();
+        // CritterLoadAllTypes / CritterInitAllMoves, then AddLocatorInstList's
+        // boss locators (kind 6, skipped in game_mode 0x400b).
+        game.critter_load_types().map_err(|e| format!("critter types: {}", e.0))?;
+        if game.globals.game_mode != 0x400b {
+            for loc in inp.world.locators.iter().filter(|l| l.kind == 6) {
+                let m = super::enemy_ai::create_ypr_matrix(loc.rotation).map_err(|e| format!("boss locator: {}", e.0))?;
+                let mut mat = [0.0f32; 16];
+                for r in 0..3 {
+                    mat[4 * r..4 * r + 4].copy_from_slice(&m[r]);
+                }
+                mat[12..15].copy_from_slice(&loc.position);
+                mat[15] = 1.0;
+                game.add_boss(mat).map_err(|e| format!("AddBoss: {}", e.0))?;
+            }
+        }
         for slot in 0..item_count {
             let name = String::from_utf8_lossy(game.items.definitions[game.items.records[slot].definition()].name()).into_owned();
             if let Some(clips) = inp.item_anims.get(&name) {

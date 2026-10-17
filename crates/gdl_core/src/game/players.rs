@@ -313,8 +313,9 @@ impl Game {
         if reach <= d {
             return Ok(());
         }
-        match enemy {
-            Some(e) => {
+        let critter = usize::try_from(target).ok().filter(|&t| 0x10000 <= t).map(|t| t & 0xffff);
+        match (enemy, critter) {
+            (Some(e), _) => {
                 let to = self.enemies[e].v3(super::enemies::e::COLLISION);
                 if self.fast_wall_collide(pos, to, 0)?.is_none() {
                     let res = self.player_damage_enemy(damage, 0.0, p, e, flags, Some(hit), true)?;
@@ -325,7 +326,16 @@ impl Game {
                     }
                 }
             }
-            None => {
+            (None, Some(k)) => {
+                let to = self.crit(k).rec.v3(super::critters::c::COL);
+                if self.fast_wall_collide(pos, to, 0)?.is_none() {
+                    let res = self.player_damage_critter(damage, 0.0, p, k, flags, Some(hit))?;
+                    let v = self.players[p].i32_(0x90c) + if res != 0 { 3 } else { 1 };
+                    self.players[p].set_i32(0x90c, v);
+                    self.players[p].set_f32(0x910, self.globals.time);
+                }
+            }
+            (None, None) => {
                 if let Some(it) = item {
                     self.player_damage_item(damage, p, it, flags)?;
                 }

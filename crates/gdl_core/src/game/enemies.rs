@@ -961,8 +961,9 @@ impl Game {
         Ok(())
     }
 
+    /// NumCritterInsts == 0 (live instances).
     pub fn critters_empty(&self) -> bool {
-        true
+        self.critters.iter().all(Option::is_none)
     }
 }
 

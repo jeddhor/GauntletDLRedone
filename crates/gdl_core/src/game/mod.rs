@@ -3,6 +3,9 @@
 //! ProcessEffects. Records keep their original layouts (see `record`);
 //! presentation side effects (help text, audio, FX, HUD notices, vibration)
 //! are emitted as [`Event`]s instead of being performed.
+pub mod critter_ai;
+pub mod critter_hits;
+pub mod critters;
 pub mod damage;
 pub mod effects;
 pub mod enemies;
@@ -127,6 +130,8 @@ pub enum Event {
     Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, queue: bool },
     /// AudioLOOP(id, position, volume, priority): a looping sound.
     LoopSound { id: i32, position: [f32; 3], volume: i32, priority: i32 },
+    /// BossDeath's boss key effect (BossKeySfx) at a position.
+    BossKey { position: [f32; 3] },
     /// AudioSuicideYellKill-style stop of every playing instance of an ID.
     StopSound { id: i32 },
     /// Expired item (ExpireItem 0x1537b0) with its fade mode.
@@ -203,6 +208,26 @@ pub struct Game {
     pub randpottype: i32,
     /// ActivePlayerMask 0x220154 (SetPlayerVars 0x125ef8).
     pub active_player_mask: u32,
+    /// CritterInsts (index = instance slot) and the loaded critter types.
+    pub critters: Vec<Option<critters::Critter>>,
+    pub critter_data: critters::CritterData,
+    /// CritterNewID, BossStartPos.
+    pub critter_new_id: u16,
+    pub boss_start_pos: [f32; 3],
+    /// CritterCounter, CritterNActivePlayers, CritterPlayerNTargets.
+    pub critter_counter: u16,
+    pub critter_nactive: usize,
+    pub critter_ntargets: [f32; 4],
+    /// BossActivateTime, BossCamMode, SafeRockNum/Idx, SafeRockItemIdx,
+    /// SafeRockActiveCounter.
+    pub boss_activate_time: f32,
+    pub boss_cam_mode: i32,
+    pub safe_rock_num: i32,
+    pub safe_rock_idx: i32,
+    pub safe_rock_items: Vec<usize>,
+    pub safe_rock_counter: Vec<f32>,
+    /// Where BossDeath placed the boss key effect.
+    pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).
     pub lock_cam_req: i32,
     /// Enemy tree alpha (presentation; see enemy_mod_alpha).

@@ -204,6 +204,34 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "critter-inspect" {
+        // critter-inspect CRITTER.WAD NEW_REPORT.json: chunk table and record labels.
+        use gdl_formats::critter::{label, CritterWad};
+        let b = bounded_read(Path::new(&args[1]), 4 * 1024 * 1024)?;
+        let w = CritterWad::parse(&b)?;
+        let i16_ = |r: &[u8], o: usize| i16::from_le_bytes([r[o], r[o + 1]]);
+        let i32_ = |r: &[u8], o: usize| i32::from_le_bytes(r[o..o + 4].try_into().unwrap());
+        let report = serde_json::json!({
+            "source_sha256":hash(&b),"chunks":w.chunks,
+            "types":w.types.iter().map(|t| serde_json::json!({"name":label(t,0,16),"nodes":[label(t,0x20,16),label(t,0x30,16),label(t,0x40,16)],
+                "desc":i16_(t,0x50),"etype_slot":i16_(t,0x52),"flags_5c":format!("{:#x}",i32_(t,0x5c)),
+                "moves":[i16_(t,0x110),i16_(t,0x112)],"patterns":[i16_(t,0x114),i16_(t,0x116)],"colnodes":[i16_(t,0x118),i16_(t,0x11a)],
+                "child_type":i16_(t,0x11c),"alias_type":i16_(t,0x11e)})).collect::<Vec<_>>(),
+            "descs":w.descs.iter().map(|d| serde_json::json!({"name":label(d,0,16),"prefix":label(d,0x10,16),"kind":i16_(d,0x20)})).collect::<Vec<_>>(),
+            "addas":w.addas.iter().map(|a| serde_json::json!({"type":i16_(a,0),"flags":i16_(a,2),"tree":label(a,0x10,8),"node":label(a,0x18,8)})).collect::<Vec<_>>(),
+            "nodes":w.nodes.iter().map(|n| label(n,0,16)).collect::<Vec<_>>(),
+            "moves":w.moves.iter().map(|m| serde_json::json!({"type":i32_(m,0),"flags":format!("{:#x}",i32_(m,4)),"priority":i32_(m,8),
+                "name":label(m,0x10,16),"seq":label(m,0x20,16),"node":label(m,0x30,16)})).collect::<Vec<_>>(),
+            "patterns":w.patterns.iter().map(|p| (0..8).map(|k| i16_(p,0x20 + 2 * k)).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "damages":w.damages.iter().map(|d| i16_(d,0)).collect::<Vec<_>>(),
+            "sfx":w.sfx.iter().map(|x| serde_json::json!({"flags":format!("{:#x}",i32_(x,0)),"name":label(x,0x10,16),"sound":label(x,0x20,32)})).collect::<Vec<_>>(),
+            "scope":"structure of CritterInitHeader tables; labels only, semantics in research/critters.md"});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "audio-inspect" {
         // audio-inspect FILE(.VBK|.ADS|AUDATPS2.ROM) NEW_REPORT.json: tables + decoded lengths.
         let b = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
@@ -355,9 +383,27 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
         let mut opts = std::collections::HashMap::new();
+        let mut critters = Vec::new();
         for a in &args[9..] {
             let a = a.to_str().ok_or("monster arg")?;
             let (t, path) = a.split_once('=').ok_or("TYPE=PATH:PREFIX expected")?;
+            if t == "critter" {
+                // critter=CRITTER.WAD[:MODEL_ANIM.PS2]
+                let (wad, model) = match path.split_once(':') {
+                    Some((w, m)) => (w, Some(m)),
+                    None => (path, None),
+                };
+                let w = gdl_formats::critter::CritterWad::parse(&bounded_read(Path::new(wad), 4 * 1024 * 1024)?)?;
+                let m = match model {
+                    Some(m) => {
+                        let bytes = bounded_read(Path::new(m), 64 * 1024 * 1024)?;
+                        Some(std::sync::Arc::new((gdl_formats::animation::Animations::parse(&bytes)?, bytes)))
+                    }
+                    None => None,
+                };
+                critters.push((wad.to_string(), w, m));
+                continue;
+            }
             if t.parse::<i32>().is_err() {
                 opts.insert(t.to_string(), path.to_string());
                 continue;
@@ -400,7 +446,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     Some(set)
                 }
                 None => None,
-            } })?;
+            },
+            critters })?;
         // Optional scripted player: sim=START_SIM.json clips=SOR_CLIPS.PS2 script=LEVELS_HEX:UPDATES,...
         let mut driver = match (opts.get("sim"), opts.get("script")) {
             (Some(sim_path), Some(_)) => {
@@ -452,7 +499,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "action":e.u32_(0xe0),"logic":e.i16_(0x324),"health":e.f32_(0x214),"target":e.i16_(0x288)})).collect();
                 let effects: Vec<_> = (0..game.effects.num).filter(|&k| 0.0 < game.effects.slots[k].f32_(0x68))
                     .map(|k| serde_json::json!({"slot":k,"node":game.effects.nodes[k],"flags":game.effects.slots[k].u32_(0x64)})).collect();
-                samples.push(serde_json::json!({"frame":f,"enemies":enemies,"player_health":game.players[0].f32_(0x1a10),
+                let critters: Vec<_> = game.critters.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| serde_json::json!({
+                    "slot":k,"state":c.rec.i32_(8),"health":c.rec.f32_(0x4f4),"move":c.rec.i16_(0x124),"next":c.rec.i16_(0x126),
+                    "seq":c.clock.sequence,"frame":c.clock.frame,"pos":c.rec.v3(0x40),"target":c.rec.i16_(0x130),"ntargets":c.rec.i16_(0x136)}))).collect();
+                samples.push(serde_json::json!({"frame":f,"enemies":enemies,"critters":critters,"player_health":game.players[0].f32_(0x1a10),
                     "player_pos":game.players[0].v3(0x50),"events":game.events.len(),"effects":effects,
                     "driver":driver.as_ref().map(|d| serde_json::json!({"anim":d.anim,"missiles":d.missiles_started,"event_error":d.event_error,"event_word":d.event_word}))}));
             }

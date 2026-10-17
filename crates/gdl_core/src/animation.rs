@@ -151,6 +151,17 @@ pub fn exact_key(track: &KeyTrack<'_>, frame: u16) -> Result<[f32; 9], KeyError>
 /// Reciprocal spacing table values for 1..255 were checked in frozen reference
 /// RAM and equal nearest-rounded float32 reciprocals. Longer gaps are rejected.
 pub fn sample_channels(track: &KeyTrack<'_>, frame: f32) -> Result<[f32; 9], KeyError> {
+    sample_channels_with(track, frame, false)
+}
+
+/// [`sample_channels`] that also interpolates key gaps of 256 frames or more
+/// with a nearest-rounded float32 reciprocal (HYPOTHESIS: the table beyond
+/// 255 was not checked). Used by the critter skeleton (tree_pose).
+pub fn sample_channels_long_gaps(track: &KeyTrack<'_>, frame: f32) -> Result<[f32; 9], KeyError> {
+    sample_channels_with(track, frame, true)
+}
+
+fn sample_channels_with(track: &KeyTrack<'_>, frame: f32, long_gaps: bool) -> Result<[f32; 9], KeyError> {
     if !frame.is_finite() || frame < 0.0 {
         return Err(KeyError::UnsupportedSample);
     }
@@ -183,7 +194,7 @@ pub fn sample_channels(track: &KeyTrack<'_>, frame: f32) -> Result<[f32; 9], Key
     let mut values = upper;
     if upper_frame > lower_frame && gap_to_upper > f32::from_bits(0x3e00_0000) {
         let spacing = upper_frame - lower_frame;
-        if spacing >= 256 {
+        if spacing >= 256 && !long_gaps {
             return Err(KeyError::UnsupportedSample);
         }
         let reciprocal = (1.0f64 / f64::from(spacing)) as f32;

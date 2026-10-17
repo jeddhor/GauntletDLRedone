@@ -73,6 +73,41 @@ def known_names():
     return {n.upper() for e in proposed['entries'] for n in e['proposed_names']}
 
 
+# LoadGauntWorldStart 0x163ec0: critter enemy types → CRITTER/*.WAD.
+CRITTER_FILES = {0x21: 'GENERAL', 0x22: 'DRAGON', 0x23: 'CHIMERA', 0x24: 'DJINN', 0x25: 'DRIDER', 0x26: 'PBOSS',
+                 0x27: 'YETI', 0x28: 'WRAITH', 0x29: 'LICH', 0x2a: 'SKORNE1', 0x2b: 'SKORNE2', 0x2c: 'GARM'}
+
+
+def critter_files(kinds, world, known):
+    """[{wad, anim}] for the critter enemy types of a level. Boss models are
+    "monsters/<DESC name>" (GetCritterDesc); golem/gargoyle/general model
+    paths are not resolved yet (anim omitted)."""
+    out = []
+    for k in sorted(set(kinds)):
+        if k == 0x1d:
+            name = {9: 'GOLEMI', 6: 'GOLEMF'}.get(world, 'GOLEM')
+        elif k == 0x20:
+            continue  # gar_<EnemyData name>.wad: not resolved yet
+        elif k in CRITTER_FILES:
+            name = CRITTER_FILES[k]
+        else:
+            continue
+        wad, = resolve([f'CRITTER/{name}.WAD'])
+        b = wad.read_bytes()
+        directory, count = struct.unpack_from('<II', b, 0)
+        desc = None
+        for i in range(count):
+            tag, off, n, _ = struct.unpack_from('<4I', b, directory + 16 * i)
+            if tag.to_bytes(4, 'big') == b'DESC' and n:
+                desc = b[off:off + 16].split(b'\0')[0].decode().upper()
+                kind = struct.unpack_from('<h', b, off + 0x20)[0]
+        entry = dict(wad=str(wad))
+        if desc and kind not in (3, 7, 8) and f'MONSTERS/{desc}/ANIM.PS2' in known:
+            entry['anim'] = str(resolve([f'MONSTERS/{desc}/ANIM.PS2'])[0])
+        out.append(entry)
+    return out
+
+
 def realm_monsters(wdata_path, indices, known):
     """(type, prefix) of every enemy type the realm's levels load (GetEnemyTypes
     via `gdl_tools level-enemies`; prefixes from the ELF enemy_table 0x22c7a0)."""

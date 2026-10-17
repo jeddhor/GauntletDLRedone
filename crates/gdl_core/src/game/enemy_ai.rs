@@ -2127,6 +2127,7 @@ impl Game {
 
     /// do_enemies (game_mode 0x4010 path with the camera visibility supplied).
     pub fn do_enemies(&mut self, visible: &dyn Fn(&Game, usize) -> (bool, bool)) -> R<()> {
+        self.process_critter_list()?;
         if 0 <= self.globals.boss_index {
             let b = self.globals.boss_index as usize;
             self.enemies[b].set_i32(e::STATE, 1);

@@ -16,5 +16,6 @@ pub mod player_motion;
 pub mod player_sim;
 pub mod rng;
 pub mod transform;
+pub mod tree_pose;
 pub mod vu0;
 pub mod world_transform;
