@@ -104,6 +104,45 @@ struct Session {
 #[derive(Component)]
 struct LevelEntity;
 
+/// A world-geometry node drawn at `rest` (summed file position).
+#[derive(Component)]
+struct WorldNode {
+    node: usize,
+    rest: Vec3,
+}
+
+/// Presentation of moving world objects (elevators' item-driven y, rotators'
+/// YawMat3): a node follows the nearest moved object among itself and its
+/// ancestors, displaced and rotated relative to that object's rest matrix.
+fn present_world_nodes(sim: Res<Sim>, mut nodes: Query<(&WorldNode, &mut Transform)>) {
+    let c = &sim.game.collision;
+    if !(0..c.objects.len()).any(|o| c.object_moved(o)) {
+        return;
+    }
+    for (n, mut tf) in &mut nodes {
+        let mut k = Some(n.node);
+        let mut mover = None;
+        let mut guard = 0;
+        while let Some(i) = k.filter(|&i| i < c.objects.len()) {
+            if c.object_moved(i) {
+                mover = Some(i);
+                break;
+            }
+            k = c.objects[i].parent;
+            guard += 1;
+            if 256 < guard {
+                break;
+            }
+        }
+        let Some(m) = mover else { continue };
+        let (Ok(cur), Ok(rest)) = (c.object_matrix(m), c.object_rest_matrix(m)) else { continue };
+        let rows = Mat3::from_cols(Vec3::new(cur[0][0], cur[0][1], cur[0][2]), Vec3::new(cur[1][0], cur[1][1], cur[1][2]), Vec3::new(cur[2][0], cur[2][1], cur[2][2]));
+        let rel = n.rest - Vec3::new(rest[3][0], rest[3][1], rest[3][2]);
+        tf.translation = rows * rel + Vec3::new(cur[3][0], cur[3][1], cur[3][2]);
+        tf.rotation = Quat::from_mat3(&rows);
+    }
+}
+
 /// Per monster package: tree label → sequence index → frame object labels.
 #[derive(Resource, Default)]
 struct EnemyFrames(HashMap<String, HashMap<String, Vec<Vec<String>>>>);
@@ -335,6 +374,7 @@ fn spawn_level(
                             Mesh3d(mesh.clone()),
                             MeshMaterial3d(material.clone()),
                             Transform::from_translation(Vec3::from_array(p.summed_position)),
+                            WorldNode { node: p.node_index as usize, rest: Vec3::from_array(p.summed_position) },
                             LevelEntity,
                         ))
                         .id();
@@ -959,7 +999,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, simulate)
         .init_resource::<Ui>()
-        .add_systems(Update, (ui_input, advance_level, present_world, present_sparks, present_player).chain())
+        .add_systems(Update, (ui_input, advance_level, present_world, present_world_nodes, present_sparks, present_player).chain())
         .run();
     Ok(())
 }

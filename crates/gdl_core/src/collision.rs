@@ -451,6 +451,25 @@ impl CollisionWorld {
         Ok([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [t[0], t[1], t[2], 1.0]])
     }
 
+    /// object_matrix at the file rest pose (no item-driven y, no run-time
+    /// rotation); presentation uses it to displace moving nodes.
+    pub fn object_rest_matrix(&self, o: usize) -> R<[[f32; 4]; 4]> {
+        let ob = &self.objects[o];
+        let t = match ob.parent {
+            Some(p) if ob.flags & 0x100_0000 != 0 => {
+                let pm = self.object_rest_matrix(p)?;
+                [add_rz(ob.position[0], pm[3][0])?, add_rz(ob.position[1], pm[3][1])?, add_rz(ob.position[2], pm[3][2])?]
+            }
+            _ => ob.position,
+        };
+        Ok([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [t[0], t[1], t[2], 1.0]])
+    }
+
+    /// Whether item logic has moved this object (elevator y or rotation).
+    pub fn object_moved(&self, o: usize) -> bool {
+        self.node_y[o].is_some() || self.node_rot[o].is_some()
+    }
+
     fn rotated_chain(&self, o: usize) -> bool {
         let mut k = Some(o);
         while let Some(i) = k {

@@ -43,8 +43,10 @@ rest-state follow camera, item models at tree rest pose (camera-facing "CF"
 nodes omitted), enemy per-frame objects chosen by matching object stems to
 sequences by frame count (the OANIM channel is not decoded), missiles drawn
 with the SFXYEL WEAP_TW_Y rest pose, hit sparks and magic blasts as spheres,
-elevators and rotators move in the simulation (collision) but their geometry
-is drawn at rest.
+moving world objects (elevators' item-driven y, rotators) are drawn by
+displacing each node relative to the nearest moved object among itself and its
+ancestors (rest matrix → current matrix); visual rotation not yet observed in
+a run.
 
 Smoke tests on Xvfb (llvmpipe, 2026-10-16): G1 launch with enemies swarming;
 throws (7 missiles, 6 kills); key pickup; F9 transitions to G2, G3 and G4 with
