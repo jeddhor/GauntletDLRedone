@@ -718,19 +718,22 @@ impl Game {
     /// CritterLineCollide for EnemyCollideEnemy 0x142a40 (kind 2: only
     /// collision nodes with NODE flag 8, no SfxId test).
     pub(crate) fn critter_line_collide_enemy(&mut self, r: f32, from: V3, to: V3) -> R<Option<usize>> {
-        Ok(self.critter_line_collide_kind(r, from, to, None, true)?.map(|(k, _)| k))
+        Ok(self.critter_line_collide_kind(r, from, to, None, 2, None)?.map(|(k, _)| k))
     }
 
     /// CritterLineCollide 0x19a810 (from CritterCollideStart: all critters).
     fn critter_line_collide(&mut self, r: f32, from: V3, to: V3, sfx_id: Option<i16>) -> R<Option<(usize, V3)>> {
-        self.critter_line_collide_kind(r, from, to, sfx_id, false)
+        self.critter_line_collide_kind(r, from, to, sfx_id, 0, None)
     }
 
-    fn critter_line_collide_kind(&mut self, r: f32, from: V3, to: V3, sfx_id: Option<i16>, enemy: bool) -> R<Option<(usize, V3)>> {
+    /// CritterLineCollide's body: `mode` (t0) is passed to LineCylinderCollide
+    /// as its directional flag; mode 2 also limits node tests to NODE flag 8.
+    /// `skip` is CritterCollideStart's crit_skipcol.
+    pub(crate) fn critter_line_collide_kind(&mut self, r: f32, from: V3, to: V3, sfx_id: Option<i16>, mode: i32, skip: Option<usize>) -> R<Option<(usize, V3)>> {
         let dxz = add(mul(sub(to[0], from[0])?, sub(to[0], from[0])?)?, mul(sub(to[2], from[2])?, sub(to[2], from[2])?)?)?;
         let dy = mul(sub(to[1], from[1])?, sub(to[1], from[1])?)?;
         for k in 0..self.critters.len() {
-            if self.critters[k].is_none() {
+            if self.critters[k].is_none() || skip == Some(k) {
                 continue;
             }
             if let Some(id) = sfx_id
@@ -739,11 +742,11 @@ impl Game {
                 continue;
             }
             if self.critter_type_u32(k, 0x5c) & 2 != 0
-                && let Some(p) = self.critter_line_node_col(k, r, dxz, dy, from, to, enemy)?
+                && let Some(p) = self.critter_line_node_col(k, r, dxz, dy, from, to, mode)?
             {
                 return Ok(Some((k, p)));
             }
-            if let Some(p) = self.critter_line_root_col(k, r, dxz, dy, from, to)? {
+            if let Some(p) = self.critter_line_root_col(k, r, dxz, dy, from, to, mode)? {
                 return Ok(Some((k, p)));
             }
         }
@@ -751,7 +754,8 @@ impl Game {
     }
 
     /// CritterLineRootColSub 0x19a3d8.
-    fn critter_line_root_col(&self, k: usize, r: f32, dxz: f32, dy: f32, from: V3, to: V3) -> R<Option<V3>> {
+    #[allow(clippy::too_many_arguments)]
+    fn critter_line_root_col(&self, k: usize, r: f32, dxz: f32, dy: f32, from: V3, to: V3, mode: i32) -> R<Option<V3>> {
         let h = add(r, self.critter_type_f32(k, 0x78))?;
         let w = add(r, self.critter_type_f32(k, 0x7c))?;
         let col = self.crit(k).rec.v3(c::COL);
@@ -760,12 +764,13 @@ impl Game {
         if !(add(mul(a, a)?, mul(b, b)?)? <= add(mul(w, w)?, dxz)? && sub(col[1], to[1])? <= add(h, dy)?) {
             return Ok(None);
         }
-        super::enemies::line_cylinder_collide(col, from, to, w, h, false)
+        super::enemies::line_cylinder_collide(col, from, to, w, h, mode != 0)
     }
 
     /// CritterLineNodeColSub 0x19a468 (sets +0xb40 to the colnode hit).
     #[allow(clippy::too_many_arguments)]
-    fn critter_line_node_col(&mut self, k: usize, r: f32, dxz: f32, dy: f32, from: V3, to: V3, enemy: bool) -> R<Option<V3>> {
+    #[allow(clippy::too_many_arguments)]
+    fn critter_line_node_col(&mut self, k: usize, r: f32, dxz: f32, dy: f32, from: V3, to: V3, mode: i32) -> R<Option<V3>> {
         let t = self.crit(k).ty;
         let first = self.critter_type_i16(k, 0x11a) as usize;
         for n in 0..self.crit(k).colnode_nodes.len() {
@@ -777,7 +782,7 @@ impl Game {
                 continue;
             }
             let nrec = &self.critter_data.files[t.0].wad.nodes[first + n];
-            if enemy && CritterFile::i16_pub(nrec, 0x10) as u16 & 8 == 0 {
+            if mode == 2 && CritterFile::i16_pub(nrec, 0x10) as u16 & 8 == 0 {
                 continue;
             }
             let rr = add(r, CritterFile::f32_pub(nrec, 0x2c))?;
@@ -786,7 +791,7 @@ impl Game {
             let b = sub(cp[2], to[2])?;
             if add(mul(a, a)?, mul(b, b)?)? <= add(mul(rr, rr)?, dxz)?
                 && sub(cp[1], to[1])? <= add(rr, dy)?
-                && let Some(p) = super::enemies::line_cylinder_collide(cp, from, to, rr, rr, false)?
+                && let Some(p) = super::enemies::line_cylinder_collide(cp, from, to, rr, rr, mode != 0)?
             {
                 self.crit_mut(k).rec.set_i16(c::COLNODE_HIT, n as i16);
                 return Ok(Some(p));

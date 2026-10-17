@@ -409,7 +409,45 @@ impl Game {
             return Ok(());
         }
         if (t as u32).wrapping_sub(0x1d) < 2 || t == 0x20 {
-            return unsupported("statue enemies (types 0x1d/0x1e/0x20)");
+            // Statues (0x155eb0): EnemyShrink model scale is presentation. They
+            // wait for +0xf8 bit 0 (DamageItem), then mark +0xd8 bit 0 and
+            // +0xde = 1 for one update, then spawn once +0xda < 1.
+            if r.u32_(0xf8) & 1 == 0 {
+                return Ok(());
+            }
+            if r.u16_(0xd8) & 1 == 0 {
+                let rr = &mut self.items.records[slot];
+                rr.or_u16(0xd8, 1);
+                rr.set_u8(0xde, 1);
+                return Ok(());
+            }
+            if 0 < r.i16_(0xda) {
+                return Ok(());
+            }
+        }
+        // 0x155f40: gargoyle 0x20 → CritterNewInst(7), golem 0x1d → (3),
+        // general 0x21 → (8) at the item matrix (+0x10, translation +0x40);
+        // other types, or no instance, generate an enemy.
+        let ckind = match t {
+            0x20 => Some(7),
+            0x1d => Some(3),
+            0x21 => Some(8),
+            _ => None,
+        };
+        if let Some(kind) = ckind {
+            let m: crate::tree_pose::Mat = std::array::from_fn(|k| r.f32_(0x10 + 4 * k));
+            if let Some(k) = self.critter_new_inst(kind, 0, m)? {
+                self.delete_item(slot, false);
+                if 0.0 < r.f32_(0xfc) {
+                    let v = mul(r.f32_(0xfc), self.level_f32(0xb4))?;
+                    self.crm_pub(k).set_f32(0xb58, v);
+                }
+                if let Ok(link) = u32::try_from(r.i16_(0x102)) {
+                    // +0xb54: the item dropped at death (native slot + 1).
+                    self.crm_pub(k).set_u32(0xb54, link + 1);
+                }
+                return Ok(());
+            }
         }
         let pos = r.v3(0x60);
         let dir = r.v3(0x30);

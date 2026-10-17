@@ -156,7 +156,35 @@ CritterChildCriticalMove reads the current-move record with +0x124 = -1
 (the preceding MOVE record of the shared chunk); this is the instruction
 behaviour, kept as is.
 
-Not ported yet: CritterGolemAI, safe rocks beyond setup, legend items against bosses, PlayerCollideCritters (players walk
+Statue critters are ported. ProcessItems 0x155eb0 holds statue items
+(0x1d golem, 0x1e death, 0x20 gargoyle) until DamageItem sets +0xf8 bit 0,
+then marks +0xd8 bit 0 / +0xde = 1 for one update and spawns once +0xda < 1.
+0x20/0x1d/0x21 spawn CritterNewInst(7/3/8, 0, item matrix) (+0xb58 = item
++0xfc × level +0xb4, +0xb54 = linked item); other types, or no instance,
+use generate_enemy. Files: golem/golemF/golemI.wad, gar_<ENMY +0x10>.wad,
+general.wad; models per GetCritterDesc: kinds 3/8 "monsters/<desc>/<world_data
++4>" (MONSTERS/GOLEM/LEVELG), kind 7 "monsters/<desc>_<ENMY +0x10>"
+(MONSTERS/GAR_SERP); trees GOLEM1, GAR1, GENERAL1. Generals (kind 8) start on
+FindClosestWaypoint(10, position) (game/lookouts.rs). CritterGolemAI
+0x198598: CritterGetSingleTargetPlayer 0x19b260, activation without range,
+Block → Attack → Translate → Ready selection (Ready only while a trigger
+camera runs, none under StopTime), death move → CritterDropItem 0x197778
+(linked item or "GARG<name>" in StartBagFX 0x17f2f8) and CritterDelInst.
+CritterDoKnockback 0x1989e8 for non-bosses. CritterTranslate for non-bosses
+collides (game/critter_move.rs): world walls/floor with CritterWorldDamage,
+items (CritterColItem codes), players (pushed via +0x848), enemies (golems
+damage enemies with half height ≤ 2) and critters (CritterLineCollide mode 1
+skipping itself). Waypoints: CritterMoveTargetPos follows NextWaypoint
+links, CritterRotate turns to the lookout. CritterLineCollide's t0 mode is
+LineCylinderCollide's directional flag (EnemyCollideEnemy and
+PlayerCollideCritters pass 2, ProcessEffects 0, CritterCollideCritters 1);
+the port previously passed non-directional for mode 2.
+
+Headless check (G1, DEBUG teleport to (-2, 11, -80)): general #88 spawns
+(health 150), patrols lookouts 0 ↔ 1 and attacks the player; no unsupported
+path. Not checked against a reference instance (the fixture has none live).
+
+Not ported yet: safe rocks beyond setup, legend items against bosses, PlayerCollideCritters (players walk
 through critters), boss camera and health meter (presentation).
 
 Headless check (G5, DEBUG boss_health=10, potions 3): the lich dies, spews

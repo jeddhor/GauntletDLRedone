@@ -6,12 +6,14 @@
 pub mod boss;
 pub mod critter_ai;
 pub mod critter_hits;
+pub mod critter_move;
 pub mod critters;
 pub mod damage;
 pub mod effects;
 pub mod enemies;
 pub mod enemy_ai;
 pub mod item_runtime;
+pub mod lookouts;
 pub mod pickups;
 pub mod players;
 pub mod progress;
@@ -191,6 +193,8 @@ pub struct Game {
     pub enemy_anims: Vec<Option<enemy_ai::EnemyAnim>>,
     pub item_anims: Vec<Option<item_runtime::ItemAnim>>,
     pub camera: Option<item_runtime::Camera>,
+    /// The start camera parameters the per-update rest pose uses.
+    pub camera_rest: Option<setup::StartCamera>,
     /// ITEM_ACTIVE_DIST 0x234364, global 0x20f950 (mode), 0x20f954, start_enemyinfo, ExitState.
     pub item_active_dist: f32,
     pub mode_950: i32,
@@ -244,6 +248,12 @@ pub struct Game {
     pub enemy_alpha: Vec<i32>,
     /// Labels of the loaded MBOX object tables (MBOX_FindObject_Sub).
     pub mb_objects: Option<std::collections::HashSet<String>>,
+    /// LevelEnemyDesc 0x1626c8 inputs: EnemyType slots (kind, ENMY +0x10
+    /// name) and world_data +4.
+    pub enemy_slot_names: Vec<(i32, String)>,
+    pub world_dir: String,
+    /// Lookouts 0x23bd20 / NumLookouts 0x23c720 (game/lookouts.rs).
+    pub lookouts: Vec<lookouts::Lookout>,
     pub sounds: sound::SoundTables,
     pub log: setup::FrameLog,
 }

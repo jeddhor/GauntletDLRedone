@@ -468,6 +468,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             d.sim.current_action = 0;
             d.sim.requested_action = 0;
         }
+        if let (Some(t), Some(d)) = (opts.get("teleport"), driver.as_mut()) {
+            // DEBUG: start player 0 at x,y,z through the start-locator path
+            // (not a fidelity input; recorded in the report).
+            let v: Vec<f32> = t.split(',').map(str::parse).collect::<Result<_, _>>()?;
+            let p = [*v.first().ok_or("teleport x")?, *v.get(1).ok_or("teleport y")?, *v.get(2).ok_or("teleport z")?];
+            game.place_player_start(0, &mut d.sim, p, 0.0).map_err(|e| e.to_string())?;
+            d.sim.current_action = 0;
+            d.sim.requested_action = 0;
+        }
         if let Some(h) = opts.get("boss_health") {
             // DEBUG: start the boss with this health (not a fidelity input).
             let h: f32 = h.parse()?;
@@ -525,9 +534,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "d8":r.u16_(0xd8),"pos":r.v3(0x60)})).collect();
         let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
+            "critter_files":game.critter_data.files.iter().map(|f| serde_json::json!({"name":f.name,"trees":f.trees,"model":f.model.is_some()})).collect::<Vec<_>>(),
+            "critter_etypes":game.critter_data.etypes.iter().map(|r| r.iter().map(|t| t.map(|t| [t.0, t.1])).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "lookouts":game.lookouts.iter().map(|l| serde_json::json!({"pos":l.position,"next":l.next,"param":l.param})).collect::<Vec<_>>(),
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
-            "potions_override":opts.get("potions"),"boss_health_override":opts.get("boss_health")});
+            "potions_override":opts.get("potions"),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport")});
         let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
         serde_json::to_writer_pretty(&mut file, &report)?;
         file.write_all(b"\n")?;

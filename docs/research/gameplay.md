@@ -126,6 +126,17 @@ wave exits (SaveStage), camera logic, save/load, co-op.
   collision uses the full matrix. Native composition of rotated nodes with
   their parents (rows × parent rows) is not verified against GetWorldMat.
   AudioRotator 0x160020 (snd1_370 0x23d568 loop, snd2_371 0x23d5a0 stop).
+- Lookouts (game/lookouts.rs): kind-8/10 locators, at most 0x14, +0x30
+  position, +0x70 next (locator +2), +0x72 parameter (locator +1). Actual
+  reference check: the native G1 table equals the fixture's live Lookouts
+  0x23bd20 (6 records, NumLookouts 0x23c720).
+- Statue flags for SetItem: golem/death statue anims are enemy_anim[0x1d] /
+  [0x1e] (0x233598 +0x74/+0x78: the enemy package of that type is loaded);
+  critter_3/7_loaded are CritterETypes[3/7][0] (registered before items).
+- Camera (HYPOTHESIS, do_camera not ported): the simulation camera follows
+  player 0's rest pose after every update; it gates placed-enemy spawns and
+  item activation. It was previously fixed at the level start, so placed
+  enemies spawned only near the start.
 - ResolveWorldData 0x161738 rewrites each LEVL record once (+6 0 → 1) and
   clears flag bit 0: zero fields +0xac..+0xdc take +0xa8 (+0xa8 and +0xc4
   default 1.0), +0xa8/+0xb0/+0xb4/+0xd0/+0xd4/+0xdc are multiplied by

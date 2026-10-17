@@ -1554,6 +1554,46 @@ impl Game {
         Ok(())
     }
 
+    /// StartBagFX 0x17f2f8(power, position, item): effect 0x44 (3 s, flags
+    /// 0x200004, hit fx 0x45) thrown with gravity 50 and radius 1 at 20 ×
+    /// up, or towards the nearest active player within 30 (power/2 × the
+    /// horizontal direction, power/2 × 0.707 up); spin x 0.2618 +
+    /// Random(1.0472). The item rides at +0xec and is placed where the
+    /// effect ends (ProcessEffects).
+    pub(crate) fn start_bag_fx(&mut self, power: f32, position: V3, item: usize) -> R<i32> {
+        let p = if power <= 0.0 { 20.0 } else { power };
+        let mut vel = [mul(p, 0.0)?, mul(p, 1.0)?, mul(p, 0.0)?];
+        let mut best = 30.0f32;
+        for k in 0..4 {
+            if self.players[k].i32_(0xfc) != 1 {
+                continue;
+            }
+            let pp = self.players[k].v3(0x50);
+            let mut d = [sub(pp[0], position[0])?, sub(pp[1], position[1])?, sub(pp[2], position[2])?];
+            let len = crate::item_collision::normal_vector_2d(&mut d)?;
+            if len < best {
+                best = len;
+                let h = mul(p, 0.5)?;
+                vel = [mul(h, d[0])?, mul(h, f32::from_bits(0x3f34_fdf4))?, mul(h, d[2])?];
+            }
+        }
+        let spin = [add(self.random(f32::from_bits(0x3f86_0a92))?, f32::from_bits(0x3e86_0a92))?, 0.0, 0.0];
+        let Some(h) = self.effects.tables.headers.get(0x44).copied().flatten() else { return unsupported("effect header 0x44 (bag)") };
+        let i = self.start_fx_tree(3.0, Visual::Header(0x44), h.frames, h.timing, Some(position), 0x20_0004)?;
+        let r = self.fx_mut(i);
+        r.set_u32(fx::KIND, 0x44);
+        r.set_i16(fx::HIT_FX, 0x45);
+        r.set_u32(fx::HIT_SOUND, 0);
+        r.set_u32(fx::WALL_SOUND, 0);
+        r.set_v3(fx::VELOCITY, vel);
+        r.set_v3(fx::SPIN, spin);
+        r.set_f32(fx::GRAVITY, 50.0);
+        r.set_f32(fx::RADIUS, 1.0);
+        // +0xec: the carried item (native slot + 1).
+        r.set_u32(0xec, item as u32 + 1);
+        Ok(i as i32)
+    }
+
     /// StartFirework 0x17e4d8: StartFXMissile(duration `size`, kind 0,
     /// position, velocity, flags 0x10020000, hit fx/sounds -1), +0xb8 and
     /// +0xc4 from the arguments; MBPsysFlame is presentation. No damage.
@@ -2225,8 +2265,21 @@ impl Game {
                     if f & 0x400_0000 != 0 {
                         self.boss_generate_enemy()?;
                     }
-                    if self.fx(i).u32_(0xec) != 0 {
-                        return unsupported("effect carrying an item (+0xec)");
+                    if let Some(it) = self.fx(i).u32_(0xec).checked_sub(1).map(|v| v as usize) {
+                        // The carried item lands: visible (+0xe1 = 0), kind-1
+                        // pickup delay +0x100 = 10, at the effect position.
+                        let n = self.effects.nodes[i].ok_or_else(|| Unsupported("effect node".into()))?;
+                        let at = if moved { to } else { n.position };
+                        let def = self.items.records[it].definition();
+                        let r = &mut self.items.records[it];
+                        r.set_u8(0xe1, 0);
+                        if self.items.definitions[def].kind() == 1 {
+                            r.set_i16(0x100, 10);
+                        }
+                        r.set_f32(0x40, at[0]);
+                        r.set_f32(0x44, at[1]);
+                        r.set_f32(0x48, at[2]);
+                        self.items.place_item(it, &mut self.collision)?;
                     }
                     self.delete_effect(i, true);
                     return Ok(());

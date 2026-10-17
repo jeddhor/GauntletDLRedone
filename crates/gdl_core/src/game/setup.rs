@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, HashMap};
 
 type V3 = [f32; 3];
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct StartCamera {
     pub basis: [V3; 3],
     pub distance: f32,
@@ -176,6 +176,18 @@ pub struct LevelInputs<'a> {
     pub critters: Vec<super::critters::CritterInput>,
 }
 
+/// Whether a loaded critter file has a TYPE in CritterETypes[kind][0] (TYPE
+/// +0x52 slot 0, DESC +0x20 kind).
+fn critter_slot0_loaded(critters: &[super::critters::CritterInput], kind: i16) -> bool {
+    critters.iter().any(|(_, wad, _)| {
+        wad.types.iter().any(|t| {
+            let d = i16::from_le_bytes([t[0x50], t[0x51]]);
+            i16::from_le_bytes([t[0x52], t[0x53]]) == 0
+                && usize::try_from(d).ok().and_then(|d| wad.descs.get(d)).is_some_and(|d| i16::from_le_bytes([d[0x20], d[0x21]]) == kind)
+        })
+    })
+}
+
 /// Per-enemy (visible, near-visible) query.
 pub type Visibility = dyn Fn(&Game, usize) -> (bool, bool);
 
@@ -217,10 +229,15 @@ impl Game {
             global_958: g.global_958,
             global_970: s.extra.mode_970,
             random_item_num: s.extra.vb_counter,
-            golem_statue_anim: false,
-            death_statue_anim: false,
-            critter_3_loaded: false,
-            critter_7_loaded: false,
+            // enemy_anim[0x1d] / [0x1e] (0x233598 +0x74/+0x78): the type's
+            // enemy package is loaded.
+            golem_statue_anim: inp.enemy_anims.trees.keys().any(|k| k.0 == 0x1d),
+            death_statue_anim: inp.enemy_anims.trees.keys().any(|k| k.0 == 0x1e),
+            // CritterTypeLoaded(kind, 0): CritterETypes[kind][0], registered by
+            // CritterAllocType when LoadGauntWorldStart loads the files (before
+            // the items).
+            critter_3_loaded: critter_slot0_loaded(&inp.critters, 3),
+            critter_7_loaded: critter_slot0_loaded(&inp.critters, 7),
         };
         let mut collision = CollisionWorld::from_world(inp.world)?;
         let loaded = load_items(inp.world, &mut collision, ItemTables::from_elf(inp.elf)?, session, s.extra.vb_counter)?;
@@ -275,6 +292,7 @@ impl Game {
             enemy_anims: vec![None; 25],
             item_anims: vec![None; item_count],
             camera: None,
+            camera_rest: None,
             item_active_dist: s.extra.item_active_dist,
             mode_950: s.extra.mode_950,
             globals_954: s.extra.globals_954,
@@ -320,6 +338,17 @@ impl Game {
             spew_items: Vec::new(),
             player_grab: [None; 4],
             mb_objects: inp.mb_objects,
+            lookouts: super::lookouts::build(&inp.world.locators),
+            enemy_slot_names: (0..8)
+                .map(|k| {
+                    let name = types.data[k].and_then(|d| inp.wdata.enemies.get(d)).map(|e| {
+                        let b = &e.raw[0x10..0x18];
+                        String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(8)]).into_owned()
+                    });
+                    (types.kind[k], name.unwrap_or_default())
+                })
+                .collect(),
+            world_dir: inp.wdata.world_dir.clone().unwrap_or_default(),
             sounds: {
                 let slots: Vec<(i32, i32, String)> = (0..8)
                     .map(|k| {
@@ -368,6 +397,7 @@ impl Game {
             game.log.unsupported.insert(n, 0);
         }
         game.update_camera(&s.camera);
+        game.camera_rest = Some(s.camera.clone());
         Ok(game)
     }
 
@@ -462,6 +492,12 @@ impl Game {
         }
         if let Err(e) = self.process_effects() {
             self.log.note("ProcessEffects", &e);
+        }
+        // HYPOTHESIS (do_camera not ported): the camera follows player 0's
+        // rest pose after each update; the next update's visibility tests
+        // (placed enemies, item activation) use it.
+        if let Some(c) = self.camera_rest.clone() {
+            self.update_camera(&c);
         }
     }
 

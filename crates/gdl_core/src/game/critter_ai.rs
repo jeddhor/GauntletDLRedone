@@ -137,7 +137,11 @@ impl Game {
                     return Ok(false);
                 }
             }
-            3 | 7 | 8 => return unsupported("CritterGolemAI"),
+            3 | 7 | 8 => {
+                if !self.critter_golem_ai(i)? {
+                    return Ok(false);
+                }
+            }
             _ => {
                 self.critter_animate(i)?;
                 self.critter_floor(i)?;
@@ -657,8 +661,18 @@ impl Game {
     /// CritterMoveTargetPos 0x19b6c0 (waypoints unsupported).
     fn critter_move_target_pos(&mut self, i: usize) -> R<bool> {
         if self.ci16(i, c::NTARGETS) < 1 {
-            if self.crit(i).rec.u32_(c::WAYPOINT) != 0 {
-                return unsupported("critter waypoints");
+            // Waypoints: the current lookout until within 1 unit, then the
+            // linked one (NextWaypoint) until the chain ends.
+            while let Some(w) = self.crit(i).rec.u32_(c::WAYPOINT).checked_sub(1).map(|v| v as usize) {
+                let lp = self.lookouts.get(w).ok_or_else(|| Unsupported("waypoint index".into()))?.position;
+                let pos = self.crit(i).rec.v3(c::POS);
+                let d = [sub(lp[0], pos[0])?, sub(lp[1], pos[1])?, sub(lp[2], pos[2])?];
+                if 1.0 <= add(add(mul(d[0], d[0])?, mul(d[1], d[1])?)?, mul(d[2], d[2])?)? {
+                    self.crm_pub(i).set_v3(c::TARGET_POS, lp);
+                    return Ok(true);
+                }
+                let next = self.next_waypoint(w).map_or(0, |n| n as u32 + 1);
+                self.crm_pub(i).set_u32(c::WAYPOINT, next);
             }
             self.crm_pub(i).set_v3(c::TARGET_POS, [0.0; 3]);
             return Ok(false);
@@ -1520,8 +1534,9 @@ impl Game {
         Ok(())
     }
 
-    /// CritterTranslate 0x197110 for bosses (kind 4: leash around +0x4e0,
-    /// no world collision).
+    /// CritterTranslate 0x197110: bosses (kind 4) move on a leash around
+    /// +0x4e0 without world collision; other kinds collide (critter_move.rs).
+    /// True when a player was pushed.
     fn critter_translate(&mut self, i: usize, mv: usize) -> R<bool> {
         let speed = mul(mul(self.critter_move_f32(i, mv, 0x84), self.globals.spf)?, self.level_f32(0xb0))?;
         let leash = self.critter_type_f32(i, 0xac);
@@ -1584,7 +1599,12 @@ impl Game {
         }
         self.crm_pub(i).set_v3(c::VELOCITY, v);
         if self.critter_kind(i) != 4 {
-            return unsupported("critter translate with world collision");
+            let pos0 = self.crit(i).rec.v3(c::POS);
+            let mut d = [sub(p[0], pos0[0])?, sub(p[1], pos0[1])?, sub(p[2], pos0[2])?];
+            let pushed = self.critter_collide_move(i, &mut d)?;
+            let np = [add(pos0[0], d[0])?, add(pos0[1], d[1])?, add(pos0[2], d[2])?];
+            self.crm_pub(i).set_v3(c::POS, np);
+            return Ok(pushed);
         }
         let centre = self.crit(i).rec.v3(c::LEASH_CENTRE);
         p = [sub(p[0], centre[0])?, sub(p[1], centre[1])?, sub(p[2], centre[2])?];
@@ -1629,8 +1649,12 @@ impl Game {
             } else {
                 delta = sub(a, yaw)?;
             }
-        } else if self.crit(i).rec.u32_(c::WAYPOINT) != 0 && self.ci16(i, c::NTARGETS) == 0 {
-            return unsupported("critter waypoint rotation");
+        } else if let (Some(w), 0) = (self.crit(i).rec.u32_(c::WAYPOINT).checked_sub(1), self.ci16(i, c::NTARGETS)) {
+            let lp = self.lookouts.get(w as usize).ok_or_else(|| Unsupported("waypoint index".into()))?.position;
+            let pos = self.crit(i).rec.v3(c::POS);
+            let d = [sub(lp[0], pos[0])?, sub(lp[1], pos[1])?, sub(lp[2], pos[2])?];
+            let a = crate::libm::atan2f(d[0], d[2]).map_err(|_| Unsupported("atan2f".into()))?;
+            delta = sub(a, yaw)?;
         } else {
             delta = 0.0;
         }
@@ -1691,12 +1715,196 @@ impl Game {
         Ok(())
     }
 
-    /// CritterDoKnockback 0x1989e8 (bosses skip it).
+    /// CritterDoKnockback 0x1989e8 (bosses skip it): +0x500 knock impulse ×
+    /// strength (20 dead, 10 for damage flags 0x10140, 7.5 for 0x20, 5 for
+    /// 0x10; golems 5 less) into the +0x510 velocity, capped at length 40.
     fn critter_do_knockback(&mut self, i: usize) -> R<()> {
-        if self.critter_kind(i) == 4 {
+        let kind = self.critter_kind(i);
+        if kind == 4 {
             return Ok(());
         }
-        unsupported("CritterDoKnockback for non-boss critters")
+        let fl = self.crit(i).rec.u32_(c::DAMAGE_FLAGS);
+        let mut k = if self.cf(i, c::HEALTH) <= 0.0 {
+            20.0
+        } else if fl & 0x10140 != 0 {
+            10.0
+        } else if fl & 0x20 != 0 {
+            7.5
+        } else if fl & 0x10 != 0 {
+            5.0
+        } else {
+            0.0
+        };
+        if kind == 3 {
+            k = sub(k, 5.0)?;
+        }
+        if 0.0 < k {
+            let kn = self.crit(i).rec.v3(c::KNOCK);
+            let v0 = self.crit(i).rec.v3(c::VELOCITY);
+            let mut v = [add(mul(k, kn[0])?, v0[0])?, add(mul(k, kn[1])?, v0[1])?, add(mul(k, kn[2])?, v0[2])?];
+            let q = add(add(mul(v[0], v[0])?, mul(v[1], v[1])?)?, mul(v[2], v[2])?)?;
+            if 1600.0 < q {
+                crate::collision::normal_vector_pub(&mut v)?;
+                v = [mul(v[0], 40.0)?, mul(v[1], 40.0)?, mul(v[2], 40.0)?];
+            }
+            let r = self.crm_pub(i);
+            r.set_v3(c::VELOCITY, v);
+            r.set_v3(c::KNOCK, [0.0; 3]);
+        }
+        Ok(())
+    }
+
+    /// CritterGetSingleTargetPlayer 0x19b260 (golem AI): the lowest-score
+    /// active, targetable player as the only target (score × 1000 while the
+    /// player's +0x8c0 hold runs); a target clears the waypoint.
+    fn critter_get_single_target_player(&mut self, i: usize) -> R<()> {
+        self.set_ci16(i, c::NTARGETS, 0);
+        if self.cf(i, c::HEALTH) <= 0.0 {
+            return Ok(());
+        }
+        let q = Query::at(self.critter_type_rec(i), 0x80);
+        for p in 0..4 {
+            let pl = &self.players[p];
+            if pl.i32_(pd::STATE) != 1 || pl.u32_(0x138) & 4 != 0 {
+                continue;
+            }
+            let pos = pl.v3(0x70);
+            let (mut score, mut rec) = self.critter_calc_target(i, Some(q), pos)?;
+            let gate = self.crit(i).rec.u32_(c::WAYPOINT) == 0 || self.cf(i, 0xb58) <= 0.0 || score <= self.cf(i, 0xb58);
+            if !gate {
+                continue;
+            }
+            if self.globals.time < self.players[p].f32_(0x8c0) {
+                score = mul(score, 1000.0)?;
+            }
+            if self.ci16(i, c::NTARGETS) != 0 && self.cf(i, Self::target_at(0) + 0xc) <= score {
+                continue;
+            }
+            self.set_ci16(i, c::NTARGETS, 1);
+            rec[0] = f32::from_bits(p as u32);
+            rec[3] = score;
+            rec[4] = 1.0;
+            for (w, v) in rec.iter().enumerate() {
+                self.crm_pub(i).set_f32(Self::target_at(0) + 4 * w, *v);
+            }
+        }
+        if self.ci16(i, c::NTARGETS) != 0 {
+            self.crm_pub(i).set_u32(c::WAYPOINT, 0);
+            let p = self.crit(i).rec.i32_(Self::target_at(0)) as usize;
+            self.critter_ntargets[p] = add(self.critter_ntargets[p], 1.0)?;
+        }
+        Ok(())
+    }
+
+    /// CritterDropItem 0x197778: the linked item (+0xb54), or for a gargoyle
+    /// a new "GARG<EnemyData +0x10>" item, leaves in a bag effect.
+    fn critter_drop_item(&mut self, i: usize) -> R<()> {
+        let kind = self.critter_kind(i);
+        let linked = self.crit(i).rec.u32_(0xb54).checked_sub(1).map(|v| v as usize);
+        let item = match linked {
+            Some(it) => {
+                self.crm_pub(i).set_u32(0xb54, 0);
+                Some(it)
+            }
+            None if kind == 7 => {
+                let name = format!("GARG{}", self.level_enemy_desc_name(0x20)?).to_ascii_uppercase();
+                match self.items.find_info_index(1, 0x10, name.as_bytes()) {
+                    Some(d) => Some(self.add_item_sub(d, None)?),
+                    None => None,
+                }
+            }
+            None => None,
+        };
+        if let Some(it) = item {
+            match kind {
+                7 => self.help(0x8a, usize::MAX),
+                8 => self.help(0x86, usize::MAX),
+                _ => {}
+            }
+            self.items.records[it].set_u8(0xe1, 10);
+            let at = self.crit(i).rec.v3(c::ATTN);
+            self.start_bag_fx(0.0, at, it)?;
+        }
+        Ok(())
+    }
+
+    /// CritterGolemAI 0x198598 (golems 3, gargoyles 7, generals 8); false
+    /// when the instance was deleted. EnemyShrink tree scaling and the death
+    /// fade alpha are presentation.
+    fn critter_golem_ai(&mut self, i: usize) -> R<bool> {
+        self.critter_get_single_target_player(i)?;
+        self.critter_set_difficulty(i)?;
+        if self.crit(i).rec.i32_(c::STATE) == 0 {
+            // MaxPlayerDist without a waypoint: the result is unused.
+            self.critter_activate(i);
+        }
+        let prev = self.ci16(i, c::MOVE);
+        let prev_type = self.critter_move_i32(i, prev.max(0) as usize, 0);
+        self.critter_move_setup(i);
+        self.critter_look_for_critical_move(i)?;
+        let stop = self.stop_time != 0;
+        if self.globals.trig_cam_active != 0 {
+            if self.ci16(i, c::NEXT) < 0 {
+                self.critter_look_for_ready(i)?;
+                if self.ci16(i, c::NEXT) < 0 {
+                    let m = self.ci16(i, c::MOVE);
+                    self.set_ci16(i, c::NEXT, m);
+                }
+            }
+        } else if stop {
+            if self.ci16(i, c::NEXT) < 0 {
+                let m = self.ci16(i, c::MOVE);
+                self.set_ci16(i, c::NEXT, m);
+            }
+        } else if self.ci16(i, c::NEXT) < 0 {
+            self.critter_look_for_block(i)?;
+            if self.ci16(i, c::NEXT) < 0 {
+                self.critter_look_for_attack(i)?;
+                if self.ci16(i, c::NEXT) < 0 {
+                    self.critter_look_for_translate(i)?;
+                    if self.ci16(i, c::NEXT) < 0 {
+                        self.critter_look_for_ready(i)?;
+                        if self.ci16(i, c::NEXT) < 0 {
+                            let m = self.ci16(i, c::MOVE);
+                            self.set_ci16(i, c::NEXT, m);
+                        }
+                    }
+                }
+            }
+        }
+        let animate = if stop && 0 <= self.ci16(i, c::MOVE) {
+            // The next-move record is read even when +0x126 is -1.
+            let next_type = i32::from(self.critter_move_i16_signed(i, self.ci16(i, c::NEXT), 0)?);
+            prev_type == 0x11 || next_type == 0x11 || prev_type == 0x10 || next_type == 0x10
+        } else {
+            true
+        };
+        if animate {
+            self.critter_animate(i)?;
+        }
+        if self.ci16(i, c::MOVE) < 0 {
+            self.set_ci16(i, c::MOVE, 0);
+        }
+        let mv = self.ci16(i, c::MOVE) as usize;
+        let frame = self.cf(i, c::ANIM_FRAME) as i32;
+        let mtype = self.critter_move_i32(i, mv, 0);
+        if mtype == 0x11 {
+            if self.crit(i).clock.mode_bits & 0xff != 0 {
+                self.critter_drop_item(i)?;
+                self.critter_del_inst(i)?;
+                return Ok(false);
+            }
+            // MBTreeSetAlpha fade over the move's last frames: presentation.
+        } else if stop {
+            return Ok(true);
+        }
+        self.critter_do_transition(i, mv)?;
+        self.critter_do_actions(i, mv, frame as i16)?;
+        if !self.critter_translate(i, mv)? {
+            self.critter_rotate(i, mv)?;
+        }
+        self.critter_look_at_player(i, Some(mv))?;
+        Ok(true)
     }
 
     /// CritterKill 0x1976c0.

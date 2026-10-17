@@ -78,16 +78,36 @@ CRITTER_FILES = {0x21: 'GENERAL', 0x22: 'DRAGON', 0x23: 'CHIMERA', 0x24: 'DJINN'
                  0x27: 'YETI', 0x28: 'WRAITH', 0x29: 'LICH', 0x2a: 'SKORNE1', 0x2b: 'SKORNE2', 0x2c: 'GARM'}
 
 
-def critter_files(kinds, world, known):
-    """[{wad, anim}] for the critter enemy types of a level. Boss models are
-    "monsters/<DESC name>" (GetCritterDesc); golem/gargoyle/general model
-    paths are not resolved yet (anim omitted)."""
+def wrld_dir(wdata_bytes):
+    """world_data +4: the WRLD chunk's directory name (e.g. "levelG")."""
+    directory, count = struct.unpack_from('<II', wdata_bytes, 0)
+    for i in range(count):
+        tag, off, n, _ = struct.unpack_from('<4I', wdata_bytes, directory + 16 * i)
+        if tag.to_bytes(4, 'big') == b'WRLD':
+            return wdata_bytes[off + 4:off + 20].split(b'\0')[0].decode()
+    raise ValueError('WDATA without WRLD')
+
+
+def critter_files(level, world, known, wdata_bytes):
+    """[{wad, anim}] for the critter enemy types of a level (`level`: the
+    `gdl_tools level-enemies` report). GetCritterDesc 0x192168 names the model
+    package: kind 7 "monsters/<desc>_<EnemyData +0x10>", kinds 3/8
+    "monsters/<desc>/<world_data +4>", else "monsters/<desc>"; the type 0x20
+    file is "gar_<EnemyData +0x10>.wad" (LoadGauntWorldStart 0x163ec0)."""
+    types, enemies = level['enemy_types'], level['enemies']
+    gar = None
+    for k, d in zip(types['kind'], types['data']):
+        if k == 0x20 and d is not None:
+            raw = bytes.fromhex(enemies[d]['raw']) if isinstance(enemies[d]['raw'], str) else bytes(enemies[d]['raw'])
+            gar = raw[0x10:0x18].split(b'\0')[0].decode()
     out = []
-    for k in sorted(set(kinds)):
+    for k in sorted(set(types['kind'])):
         if k == 0x1d:
             name = {9: 'GOLEMI', 6: 'GOLEMF'}.get(world, 'GOLEM')
         elif k == 0x20:
-            continue  # gar_<EnemyData name>.wad: not resolved yet
+            if not gar:
+                continue
+            name = f'GAR_{gar.upper()}'
         elif k in CRITTER_FILES:
             name = CRITTER_FILES[k]
         else:
@@ -102,22 +122,28 @@ def critter_files(kinds, world, known):
                 desc = b[off:off + 16].split(b'\0')[0].decode().upper()
                 kind = struct.unpack_from('<h', b, off + 0x20)[0]
         entry = dict(wad=str(wad))
-        if desc and kind not in (3, 7, 8) and f'MONSTERS/{desc}/ANIM.PS2' in known:
-            entry['anim'] = str(resolve([f'MONSTERS/{desc}/ANIM.PS2'])[0])
+        if kind == 7:
+            model = f'MONSTERS/{desc}_{gar.upper()}/ANIM.PS2'
+        elif kind in (3, 8):
+            model = f'MONSTERS/{desc}/{wrld_dir(wdata_bytes).upper()}/ANIM.PS2'
+        else:
+            model = f'MONSTERS/{desc}/ANIM.PS2'
+        if desc and model in known:
+            entry['anim'] = str(resolve([model])[0])
         out.append(entry)
     return out
 
 
 def level_kinds(wdata_path, index):
-    """GetEnemyTypes kinds of one LEVL record (`gdl_tools level-enemies`)."""
+    """The `gdl_tools level-enemies` report of one LEVL record (GetEnemyTypes)."""
     tmp = CONFIG.with_name(f'play-enemies-{index}.json')
     if tmp.exists():
         tmp.unlink()
     subprocess.run(['target/release/gdl_tools', 'level-enemies', str(wdata_path), str(index), str(tmp)], check=True,
                    stdout=subprocess.DEVNULL)
-    kinds = json.loads(tmp.read_text())['enemy_types']['kind']
+    level = json.loads(tmp.read_text())
     tmp.unlink()
-    return kinds
+    return level
 
 
 def realm_monsters(wdata_path, indices, known):
@@ -126,7 +152,7 @@ def realm_monsters(wdata_path, indices, known):
     from elf_read import read as elf_read
     kinds = set()
     for k in indices:
-        kinds |= set(level_kinds(wdata_path, k))
+        kinds |= set(level_kinds(wdata_path, k)['enemy_types']['kind'])
     elf = ELF.read_bytes()
     out = {}
     for k in range(44):
@@ -177,7 +203,7 @@ def main():
             packages.setdefault(f'ITEMS_{name[5:]}', package(f'ITEMS/{name}'))
         levels.append(dict(name=code, index=index, worlds=str(resolve([f'LEVELS/LEVEL{code}/WORLDS.PS2'])[0]),
                            level=package(f'LEVELS/LEVEL{code}', anim=False), items=[f'ITEMS_{n[5:]}' for n in items],
-                           critters=critter_files(level_kinds(wdata, index), world, known)))
+                           critters=critter_files(level_kinds(wdata, index), world, known, wdata.read_bytes())))
     monsters = realm_monsters(wdata, [r[0] for r in records], known)
     for _, prefix in monsters:
         packages[prefix] = package(f'MONSTERS/{prefix}')

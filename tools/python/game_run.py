@@ -44,6 +44,7 @@ def main():
     ap.add_argument('--script')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
     ap.add_argument('--boss-health', help='DEBUG: set the boss critter health')
+    ap.add_argument('--teleport', help='DEBUG: start player 0 at x,y,z')
     a = ap.parse_args()
     letters = {'A': (1, 'CASTLE'), 'B': (2, 'MOUNT'), 'C': (3, 'DESERT'), 'D': (4, 'FOREST'), 'E': (5, 'TEMPLE'),
                'F': (6, 'HELL'), 'G': (7, 'TOWN'), 'H': (8, 'BATTLE'), 'I': (9, 'ICE'), 'J': (10, 'DREAM'),
@@ -63,7 +64,8 @@ def main():
     if tmp.exists():
         tmp.unlink()
     subprocess.run([TOOLS, 'level-enemies', str(wd), str(index), str(tmp)], check=True)
-    kinds = json.loads(tmp.read_text())['enemy_types']['kind']
+    level = json.loads(tmp.read_text())
+    kinds = level['enemy_types']['kind']
     tmp.unlink()
     elf = ELF.read_bytes()
     prefixes = {}
@@ -86,7 +88,7 @@ def main():
            + [f'MONSTERS/{p}/OBJECTS.PS2' for _, p in monsters] if n in known]
     cmd += ['objects=' + ','.join(str(x) for x in resolve(obj))]
     from run_play import critter_files  # noqa: E402
-    for c in critter_files(kinds, number, known):
+    for c in critter_files(level, number, known, wd.read_bytes()):
         cmd += [f"critter={c['wad']}" + (f":{c['anim']}" if 'anim' in c else '')]
     if len(item_pkgs) > 1:
         cmd += [f'items2={resolve([item_pkgs[1]])[0]}']
@@ -97,6 +99,8 @@ def main():
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
     if a.potions:
         cmd += [f'potions={a.potions}']
+    if a.teleport:
+        cmd += [f'teleport={a.teleport}']
     if a.boss_health:
         cmd += [f'boss_health={a.boss_health}']
     subprocess.run(cmd, check=True)

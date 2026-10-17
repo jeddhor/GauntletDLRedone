@@ -912,7 +912,8 @@ impl Game {
             let slot = carried as usize - 1;
             self.enemies[i].set_u32(e::CARRIED, 0);
             self.items.records[slot].set_u8(0xe1, 10);
-            self.audio("StartBagFX", None, slot as i32);
+            let at = self.enemies[i].v3(0x40);
+            self.start_bag_fx(0.0, at, slot)?;
         } else if t == 0x20 {
             return unsupported("gargoyle drop (AddItem GARG…)");
         }

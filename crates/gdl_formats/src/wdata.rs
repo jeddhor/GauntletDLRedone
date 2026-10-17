@@ -71,6 +71,9 @@ pub struct WorldData {
     pub enemies: Vec<EnemyEntry>,
     pub sounds: Vec<WorldSound>,
     pub stages: Vec<StageAudio>,
+    /// world_data +4 (WRLD chunk +4, 16 bytes): the realm's model directory
+    /// name, e.g. "levelG" (GetCritterDesc, LevelEnemyDesc).
+    pub world_dir: Option<String>,
 }
 
 impl WorldData {
@@ -167,7 +170,14 @@ impl WorldData {
                 });
             }
         }
-        Ok(Self { chunks, levels, enemies, sounds, stages })
+        let world_dir = match find("WRLD") {
+            Some(c) => {
+                r.range(c.offset as usize + 4, 16)?;
+                Some(r.label(c.offset as usize + 4, 16))
+            }
+            None => None,
+        };
+        Ok(Self { chunks, levels, enemies, sounds, stages, world_dir })
     }
 }
 

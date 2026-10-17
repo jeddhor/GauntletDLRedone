@@ -567,7 +567,10 @@ impl Game {
             prev = k;
         }
         if self.critter_kind(i) == 8 {
-            return unsupported("critter waypoint start (FindClosestWaypoint)");
+            // +0xb5c: FindClosestWaypoint(10, position, 0) (native lookout + 1).
+            let p = self.cr(i).v3(c::POS);
+            let w = self.find_closest_waypoint(10.0, p, false)?.map_or(0, |k| k as u32 + 1);
+            self.crm(i).set_u32(c::WAYPOINT, w);
         }
         Ok(Some(i))
     }
