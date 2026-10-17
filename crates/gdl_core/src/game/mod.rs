@@ -125,6 +125,8 @@ pub struct Globals {
 pub enum Event {
     /// NewHelp(id, player): help/hint text; player usize::MAX = −1 (all).
     Help { id: i32, player: usize },
+    /// A world object hidden by WorldObjectExplode (presentation).
+    ObjectHidden { object: usize },
     /// ScrollMessageBox(player mask, -1, text, -1): the blocking scroll
     /// message UI (presentation; the original pauses the game while shown).
     ScrollMessage { player_mask: u32, text: i32 },

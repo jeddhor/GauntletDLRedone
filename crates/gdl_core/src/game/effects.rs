@@ -607,10 +607,13 @@ impl Game {
             }
             let (c, s) = (spread[k as usize], spread[5 + k as usize]);
             let d = [add(mul(dir[0], c)?, mul(dir[2], s)?)?, dir[1], add(mul(-dir[0], s)?, mul(dir[2], c)?)?];
-            // WeapThrowFx[player][flags & 0xf] is runtime data; the fixture's
-            // row is −1 only for the ordinary (no weapon powerup) throw.
+            // PLACEHOLDER: WeapThrowFx[player][flags & 0xf] (InitPlayerMissiles'
+            // "WEAP_TW_<type>" custom effects) is not loaded; classes 2/6 with
+            // a weapon powerup would use it as the missile header and parent
+            // it to the missile. The ordinary missile is used and the gap is
+            // logged (not a fidelity result).
             if (class == 2 || class == 6) && flags & 0xf != 0 {
-                return unsupported("WeapThrowFx weapon-powerup throw effect");
+                self.log.note("PlayerStartMissile", &Unsupported("PLACEHOLDER WeapThrowFx weapon-powerup throw effect (ordinary missile used)".into()));
             }
             let slot = self.start_missile(speed, damage, player as i32 + 1, start, d, flags, &info, k, 0, Visual::Missile { player })?;
             let mut scale = 1.0;
@@ -639,6 +642,12 @@ impl Game {
 
     /// WeaponWallCollide(radius, from, to): hit position and object.
     fn weapon_wall_collide(&mut self, r: f32, from: V3, to: V3) -> R<WallHit> {
+        let (hit, water) = self.weapon_wall_hit(r, from, to)?;
+        Ok((hit.map(|h| h.position), hit.map(|h| (h.object, water))))
+    }
+
+    /// WeaponWallCollide keeping the hit (wall_col: normal for ReflectVector).
+    fn weapon_wall_hit(&mut self, r: f32, from: V3, to: V3) -> R<(Option<crate::collision::Hit>, bool)> {
         let (c, _) = self.collision.world_collide(Query {
             radius: r,
             first: from,
@@ -649,7 +658,7 @@ impl Game {
             object_mask: 0x23e,
             exclusion_mask: 4,
         })?;
-        Ok((c.solid.map(|h| h.position), c.solid.map(|h| (h.object, c.water.is_some()))))
+        Ok((c.solid, c.water.is_some()))
     }
 
     /// WeaponCheckItemCollision(item, player).
@@ -1638,6 +1647,45 @@ impl Game {
         Ok(i as i32)
     }
 
+    /// WorldObjectExplode 0x1647a8: WorldExplosion at the hit, then the
+    /// object and its parents vanish (+0x10 |= 0x10000000: no collision;
+    /// the MB tree hide flag is presentation).
+    pub(crate) fn world_object_explode(&mut self, object: usize, at: V3) -> R<()> {
+        self.world_explosion(at)?;
+        let mut o = Some(object);
+        let mut guard = 0;
+        while let Some(k) = o {
+            self.items.objects[k].flags_10 |= 0x1000_0000;
+            if let Some(f) = self.collision.runtime_flags.get_mut(k) {
+                *f |= 0x1000_0000;
+            }
+            self.events.push(Event::ObjectHidden { object: k });
+            o = self.collision.objects[k].parent;
+            guard += 1;
+            if self.collision.objects.len() < guard {
+                return unsupported("object parent cycle");
+            }
+        }
+        Ok(())
+    }
+
+    /// WorldExplosion 0x164688 (CurWorld 9/0xb: effect 0x5e radius 6 flags
+    /// 0x800, else or without that header 0x16 flags 0x21, radius 5 outside
+    /// 9/0xb): damage 50, StartFXMissile(0, kind, pos, 0, 0x2b, 0, 4, 0).
+    fn world_explosion(&mut self, at: V3) -> R<()> {
+        let special = self.globals.cur_world == 9 || self.globals.cur_world == 0xb;
+        let (mut kind, blast, mut fl) = if special { (0x5e, 6.0, 0x800) } else { (0x16, 5.0, 0x21) };
+        if self.effects.tables.headers.get(kind).copied().flatten().is_none() {
+            kind = 0x16;
+            fl = 0x21;
+        }
+        if let Some(i) = self.start_fx_missile(0.0, kind, at, [0.0; 3], 0x2b, 0, 4, 0)? {
+            self.sfx_set_damage(i, 50.0, blast, 0.0, fl, 0);
+        }
+        self.events.push(Event::Audio { cue: "AudioWorldExplosion", player: None, arg: 0 });
+        Ok(())
+    }
+
     /// StartDeathFX 0x17f7d0(parent, level, flags): effect 0x60 (level 2)
     /// or 0x5f for 10 s, parented to Death's node
     /// (presentation), linger until ATime + 0.5; -1 without the header.
@@ -2165,8 +2213,9 @@ impl Game {
         }
         if result == 0 {
             if self.fx(i).u32_(fx::FLAGS) & 4 != 0 {
-                let (hit, obj) = self.weapon_wall_collide(mul(radius, 0.5)?, from, to)?;
-                if let (Some(h), Some((o, water))) = (hit, obj) {
+                let (wall, water) = self.weapon_wall_hit(mul(radius, 0.5)?, from, to)?;
+                if let Some(wh) = wall {
+                    let (h, o) = (wh.position, wh.object);
                     splash = water;
                     to = h;
                     moved = true;
@@ -2175,12 +2224,32 @@ impl Game {
                     }
                     let all = self.collision.runtime_flags.get(o).copied().unwrap_or(self.collision.objects[o].flags);
                     if matches!(all & 0xf_0000, 0x4_0000 | 0x5_0000) {
-                        return unsupported("WorldObjectExplode (breakable world object)");
+                        self.world_object_explode(o, h)?;
                     }
                     if self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0x20_0000 == 0 {
                         result = 1;
                     } else {
-                        return unsupported("bouncing missile (ReflectVector)");
+                        // Bouncing shot: ReflectVector(velocity, wall normal),
+                        // upward speed × 0.4, lifetime capped at ATime + 10 or
+                        // shortened by 1 s; flight continues. AudioWeaponReflect
+                        // and the CreateDirMatrix orientation (flag 0x20000) are
+                        // presentation.
+                        if self.fx(i).u32_(fx::WALL_SOUND) != 0 {
+                            self.events.push(Event::Audio { cue: "AudioWeaponReflect", player: None, arg: 0 });
+                        }
+                        let n = crate::player_collision::hit_normal(&self.collision, &wh)?;
+                        let v = self.fx(i).v3(fx::VELOCITY);
+                        let dot = add(add(mul(v[0], n[0])?, mul(v[1], n[1])?)?, mul(v[2], n[2])?)?;
+                        let k = add(-dot, -dot)?;
+                        let mut r = [add(mul(k, n[0])?, v[0])?, add(mul(k, n[1])?, v[1])?, add(mul(k, n[2])?, v[2])?];
+                        if 0.0 < r[1] {
+                            r[1] = mul(r[1], f32::from_bits(0x3ecc_cccd))?;
+                        }
+                        self.fx_mut(i).set_v3(fx::VELOCITY, r);
+                        let cap = add(atime, 10.0)?;
+                        let end = self.fx(i).f32_(fx::END);
+                        let e2 = if cap < end { cap } else { sub(end, 1.0)? };
+                        self.fx_mut(i).set_f32(fx::END, e2);
                     }
                 }
             }

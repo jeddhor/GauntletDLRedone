@@ -226,6 +226,18 @@ fn present_world_nodes(sim: Res<Sim>, mut nodes: Query<(&WorldNode, &mut Transfo
     }
 }
 
+/// World objects removed by WorldObjectExplode (object +0x10 bit
+/// 0x10000000) are hidden with their meshes.
+fn hide_exploded_nodes(sim: Res<Sim>, mut nodes: Query<(&WorldNode, &mut Visibility)>) {
+    let objs = &sim.game.items.objects;
+    for (n, mut vis) in &mut nodes {
+        let gone = objs.get(n.node).is_some_and(|o| o.flags_10 & 0x1000_0000 != 0);
+        if gone && *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
 /// Per monster package: tree label → sequence index → frame object labels.
 #[derive(Resource, Default)]
 struct EnemyFrames(HashMap<String, HashMap<String, Vec<Vec<String>>>>);
@@ -1110,7 +1122,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, simulate)
         .init_resource::<Ui>()
-        .add_systems(Update, (ui_input, advance_level, present_world, present_world_nodes, present_critters, present_sparks, present_player).chain())
+        .add_systems(Update, (ui_input, advance_level, present_world, present_world_nodes, hide_exploded_nodes, present_critters, present_sparks, present_player).chain())
         .run();
     Ok(())
 }
