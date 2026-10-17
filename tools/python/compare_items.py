@@ -50,7 +50,8 @@ def main():
     session = dict(cur_world=i(0x23e180), mode_950=i(0x20f950), boss_type=i(0x25d2c4), num_virtual_players=i(0x20f990),
                    game_mode=u(0x20f978), global_958=i(0x20f958), global_970=i(0x20f970), random_item_num=final_random,
                    golem_statue_anim=int(u(0x233598 + 116) != 0), death_statue_anim=int(u(0x233598 + 120) != 0),
-                   critter_3_loaded=0, critter_7_loaded=0, rng_seed=0)
+                   critter_3_loaded=0, critter_7_loaded=0, rng_seed=0,
+                   difficulty=i(0x21edcc))
     scratch = args.report.with_suffix('.native.json')
     session_path = args.report.with_suffix('.session.json')
     session_path.write_text(json.dumps(session, indent=2) + '\n')

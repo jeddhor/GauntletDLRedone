@@ -202,8 +202,11 @@ impl Game {
         let g = &s.globals;
         let world_kind = if g.cur_world == 0xd { 0xd } else { 0 };
         let types = crate::level::enemy_types(inp.wdata, level, world_kind, s.extra.mode_950)?;
+        // ResolveWorldData 0x161738: the runtime record (difficulty word 0x21edcc).
+        let level_raw = crate::level::resolved_level(level, inp.elf, s.extra.target_cone_mode)?;
+        let multipliers = crate::level::multipliers_cc(&level_raw);
         let session = ItemSession {
-            multipliers: level.multipliers_cc,
+            multipliers,
             enemy_kind: types.kind,
             gen_kind: types.gen_kind,
             // LoadWorldData 0x161b98: BossType = level_data +0x44.
@@ -244,7 +247,7 @@ impl Game {
         globals.boss_type = level.boss_type;
         let mut game = Game {
             globals,
-            level: level.raw.clone(),
+            level: level_raw.clone(),
             players,
             enemies: enemies::new_enemy_records(),
             items: loaded.world,

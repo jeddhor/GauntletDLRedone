@@ -200,7 +200,8 @@ pub struct Game {
     pub enemy_anim_data: enemy_ai::EnemyAnimData,
     pub class: pickups::ClassData,
     pub effects: effects::Effects,
-    /// BossCritInst 0x25d2c0 and the targeting-cone global 0x21edcc.
+    /// BossCritInst 0x25d2c0 and the difficulty word 0x21edcc (index of
+    /// diff_mul_tab.15 in ResolveWorldData; also PlayerGetTarget's cone).
     pub boss_crit_inst: i32,
     pub target_cone_mode: i32,
     /// Destination wave (world << 8 | level) once a player finished do_exit.

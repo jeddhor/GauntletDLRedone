@@ -126,6 +126,16 @@ wave exits (SaveStage), camera logic, save/load, co-op.
   collision uses the full matrix. Native composition of rotated nodes with
   their parents (rows × parent rows) is not verified against GetWorldMat.
   AudioRotator 0x160020 (snd1_370 0x23d568 loop, snd2_371 0x23d5a0 stop).
+- ResolveWorldData 0x161738 rewrites each LEVL record once (+6 0 → 1) and
+  clears flag bit 0: zero fields +0xac..+0xdc take +0xa8 (+0xa8 and +0xc4
+  default 1.0), +0xa8/+0xb0/+0xb4/+0xd0/+0xd4/+0xdc are multiplied by
+  diff_mul_tab.15 0x23e168 [difficulty word 0x21edcc] (0.667/1.0/1.5) and
+  +0xb8/+0xc0/+0xc8/+0xd8 become 1 / (factor × value). Native setup uses the
+  resolved copy (level::resolved_level). Actual reference check: the
+  fixture's live G1 record (level_data 0x23e158 → 0xfb51e4, difficulty 1)
+  equals the resolved TOWN.WAD record over +0xa8..+0xdc (+0xb8 2.0, +0xc8
+  2.0, +0xd8 1.3333) and +6 = 1. FOREST.WAD stores zero multipliers, so its
+  levels run at 1.0 (previously generators got max 0 and the drider health 0).
 - Level records: LoadWorldData 0x161b98 sets level_data = LEVL[wave & 0xff];
   the level directory is the record's code (GetLevelDesc 0x162750,
   "levels/level%s"). Records are not in level-number order (CASTLE: A1, A6,
@@ -134,8 +144,5 @@ wave exits (SaveStage), camera logic, save/load, co-op.
 Level sweep (every level of realms A–K, 600-update scripted wander, interim
 player, 2026-10-16): no unsupported path outside the boss arenas; G5 stops at
 the ActivateNearestEnemy boss trigger. The boss arenas (A5, B6, C5, D5, E2,
-F2, G5, H4, I5, J5, K5) have no generators. FOREST.WAD's LEVL multipliers
-(+0xcc..+0xdc) are all 0.0 (no run-time writer found), so D1–D4 generators
-get max 0 and spawn nothing in this transcription — unchecked against a
-reference. Not ported: the CurWorld 10 StartExplosion fireworks,
+F2, G5, H4, I5, J5, K5) have no generators. Not ported: the CurWorld 10 StartExplosion fireworks,
 SetPlayerVars' other writes.

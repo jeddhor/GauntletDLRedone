@@ -325,8 +325,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         let cur_world = int("cur_world")? as i32;
         let world_kind = if cur_world == 0xd { 0xd } else { 0 };
         let types = gdl_core::level::enemy_types(&wdata, level, world_kind, int("mode_950")? as i32)?;
+        let level_raw = gdl_core::level::resolved_level(level, &elf, int("difficulty")? as i32)?;
         let session = gdl_core::items::ItemSession {
-            multipliers: level.multipliers_cc,
+            multipliers: gdl_core::level::multipliers_cc(&level_raw),
             enemy_kind: types.kind,
             gen_kind: types.gen_kind,
             boss_type: int("boss_type")? as i32,

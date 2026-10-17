@@ -41,9 +41,10 @@ Type-5 triggers bound to an object call AddItemWobj (item_wobjs, ≤ 0x95; inity
 
 ## Verification (fixture, synthetic only where stated)
 
-`private/reports/items-compare-g1-b.json` against the user save's live Items
+`private/reports/items-compare-g1-c.json` against the user save's live Items
 array (519 records): 519 slots, 0 definition mismatches, 0 unsupported paths,
-384 records byte-exact over the compared ranges; world_has_gates 2/2; 16/19
+393 records byte-exact over the compared ranges (384 in -b, before SetItem
+used the ResolveWorldData multipliers; no new mismatch groups); world_has_gates 2/2; 16/19
 item_wobjs exact; every object flag bit natively set is also set in RAM.
 
 The fixture is mid-play, so remaining differences are reported, not masked:

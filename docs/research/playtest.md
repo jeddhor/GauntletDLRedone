@@ -14,8 +14,7 @@ own ITEMS package and the realm's (HYPOTHESIS) are configured. Exits follow
 the destination wave to the matching LEVL record; defeating the boss ends the
 session with "COMPLETE" (the hub is not ported), any other realm's wave ends it
 too. The HUD names other realms by their WDATA file
-(e.g. "Castle realm (A)"). Realm D (FOREST) generators spawn nothing (zero LEVL
-multipliers, research/gameplay.md).
+(e.g. "Castle realm (A)").
 
 Controls: Enter starts from the title prompt; arrows/WASD move, Space/K
 throw, E/L use a potion (magic), P pauses, F1 toggles the diagnostics block,

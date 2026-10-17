@@ -116,6 +116,17 @@ pub fn div_rn(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 /// Square root rounded toward zero, as configured PCSX2 microVU SQRT executes
 /// SSE sqrtss under the VU0 MXCSR (Roundmode 3). Finite nonnegative normal
 /// operands and zero only; the negative-operand flag path is not modelled.
+/// [`div_rn`] with the EE's zero-divisor result: a divisor whose exponent is
+/// zero gives ±FLT_MAX with the XOR of the operand signs (upstream claim:
+/// PCSX2 FPU.cpp checkDivideByZero, not a hardware capture). Only call sites
+/// whose instructions can divide by a data-driven zero use this.
+pub fn div_rn_ee(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
+    if b.to_bits() & 0x7f80_0000 == 0 {
+        return Ok(f32::from_bits(((a.to_bits() ^ b.to_bits()) & 0x8000_0000) | 0x7f7f_ffff));
+    }
+    div_rn(a, b)
+}
+
 pub fn sqrt_rz(a: f32) -> Result<f32, UnsupportedNumericDomain> {
     if a != 0.0 && (a.is_sign_negative() || !a.is_normal()) {
         return Err(UnsupportedNumericDomain);
@@ -164,6 +175,16 @@ pub fn sqrt_rn(a: f32) -> Result<f32, UnsupportedNumericDomain> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn div_rn_ee_zero_divisor_gives_signed_max() {
+        // Synthetic: x/±0 and 0/0 follow PCSX2's checkDivideByZero.
+        assert_eq!(super::div_rn_ee(3.0, 0.0).unwrap(), f32::MAX);
+        assert_eq!(super::div_rn_ee(-3.0, 0.0).unwrap(), -f32::MAX);
+        assert_eq!(super::div_rn_ee(3.0, -0.0).unwrap(), -f32::MAX);
+        assert_eq!(super::div_rn_ee(0.0, 0.0).unwrap(), f32::MAX);
+        assert_eq!(super::div_rn_ee(6.0, 2.0).unwrap(), 3.0);
+    }
+
     use super::*;
     #[test]
     fn alignment_guard_changes_cancellation_and_is_symmetric() {

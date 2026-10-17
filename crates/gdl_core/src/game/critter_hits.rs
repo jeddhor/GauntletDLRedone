@@ -1108,7 +1108,8 @@ impl Game {
                 let dot = add(mul(d[0], facing[0])?, mul(d[2], facing[2])?)?;
                 let thr = if 0.0 < widen { mul(add(cos, mul(len, widen)?)?, h)? } else { cos };
                 if thr < dot {
-                    let score = div(len, mul(sub(dot, thr)?, CritterFile::f32_pub(nrec, 0x1c))?)?;
+                    // NODE +0x1c can be 0: the EE quotient is ±FLT_MAX (0x199aa8).
+                    let score = crate::numeric::div_rn_ee(len, mul(sub(dot, thr)?, CritterFile::f32_pub(nrec, 0x1c))?)?;
                     if score < best_s {
                         *out = d;
                         best_d = len;
