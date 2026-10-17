@@ -6,6 +6,15 @@
 archive identity, then runs the native game simulation (research/gameplay.md)
 for the Yellow Sorceress in The Poison Fields, levels G1–G4.
 
+`--realm A`…`K` plays that realm's regular levels instead (LEVL records with
+boss_type < 0, in level-code order; `--level A3` starts later). The realm's
+WDATA, every monster package its levels load, and per level both the level's
+own ITEMS package and the realm's (HYPOTHESIS) are configured. Exits follow
+the destination wave to the matching LEVL record; a boss arena or another
+realm ends the session. The HUD names other realms by their WDATA file
+(e.g. "Castle realm (A)"). Realm D (FOREST) generators spawn nothing (zero LEVL
+multipliers, research/gameplay.md).
+
 Controls: Enter starts from the title prompt; arrows/WASD move, Space/K
 throw, E/L use a potion (magic), P pauses, F1 toggles the diagnostics block,
 stand still in the exit portal to leave the level, Enter continues after death
@@ -18,9 +27,10 @@ Audio: original sound effects, announcer lines and level music play through
 ALSA (research/audio.md); mixing is approximate. `--virtual` runs are silent.
 
 Start: G1 uses the state exported from the preserved save
-(`export_game_state.py` v6 + `export_start_state.py` v2). Later levels carry the
-player record and enter at the level's start locator. The G5 boss level is not
-ported; leaving G4 ends the session with a message.
+(`export_game_state.py` v6 + `export_start_state.py` v2). Every other level
+(and every level of another realm) carries that player record and enters at
+the level's start locator. Boss levels are not ported; an exit to one ends the
+session with a message.
 
 Native and reference-compared components: controls, motion code/run timer,
 request, facing, static/dynamic collision and position (movement.md,
@@ -33,8 +43,13 @@ rest-state follow camera, item models at tree rest pose (camera-facing "CF"
 nodes omitted), enemy per-frame objects chosen by matching object stems to
 sequences by frame count (the OANIM channel is not decoded), missiles drawn
 with the SFXYEL WEAP_TW_Y rest pose, hit sparks and magic blasts as spheres,
-no audio.
+elevators and rotators move in the simulation (collision) but their geometry
+is drawn at rest.
 
 Smoke tests on Xvfb (llvmpipe, 2026-10-16): G1 launch with enemies swarming;
 throws (7 missiles, 6 kills); key pickup; F9 transitions to G2, G3 and G4 with
 geometry, generators and items rendered.
+
+Realm smoke test on Xvfb (2026-10-17): `--realm A` starts in A1 with the
+castle's enemies, chests and keys rendered; F9 carries the player into A2
+(LEVL record 2) at its start locator; `--realm G` still starts G1 from the save.

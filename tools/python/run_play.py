@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Launch the INTERIM native playtest (Yellow Sorceress, The Poison Fields)
-with the native gameplay simulation (enemies, generators, items, missiles).
+"""Launch the INTERIM native playtest (Yellow Sorceress; The Poison Fields by
+default, or any realm's regular levels with --realm) with the native gameplay
+simulation (enemies, generators, items, missiles).
 
 Inputs are resolved from the verified private extraction by package label and
 decoded hash, plus the user's executable and the private start state exported
@@ -12,6 +13,7 @@ import hashlib
 import json
 import os
 import pathlib
+import struct
 import subprocess
 
 START = pathlib.Path('private/reference/start-states/poison-fields-sor-v2.json')
@@ -50,9 +52,56 @@ def audio_config():
                 streams={n[8:]: str(p) for n, p in zip(streams, resolve(streams))})
 
 
+REALMS = {'A': (1, 'CASTLE'), 'B': (2, 'MOUNT'), 'C': (3, 'DESERT'), 'D': (4, 'FOREST'), 'E': (5, 'TEMPLE'),
+          'F': (6, 'HELL'), 'G': (7, 'TOWN'), 'H': (8, 'BATTLE'), 'I': (9, 'ICE'), 'J': (10, 'DREAM'),
+          'K': (11, 'SKY')}  # ELF worlddatas 0x23deb0
+
+
+def levl_records(wdata):
+    """LEVL records (0x10c each): (index, code, boss_type +0x44)."""
+    directory, count = struct.unpack_from('<II', wdata, 0)
+    for i in range(count):
+        tag, off, n, _ = struct.unpack_from('<4I', wdata, directory + 16 * i)
+        if tag.to_bytes(4, 'big') == b'LEVL':
+            return [(k, wdata[off + 0x10c * k + 8: off + 0x10c * k + 12].split(b'\0')[0].decode(),
+                     struct.unpack_from('<i', wdata, off + 0x10c * k + 0x44)[0]) for k in range(n)]
+    raise ValueError('WDATA without LEVL')
+
+
+def known_names():
+    proposed = json.loads(pathlib.Path('private/reports/wad-independent.json').read_text())
+    return {n.upper() for e in proposed['entries'] for n in e['proposed_names']}
+
+
+def realm_monsters(wdata_path, indices, known):
+    """(type, prefix) of every enemy type the realm's levels load (GetEnemyTypes
+    via `gdl_tools level-enemies`; prefixes from the ELF enemy_table 0x22c7a0)."""
+    from elf_read import read as elf_read
+    kinds = set()
+    for k in indices:
+        tmp = CONFIG.with_name(f'play-enemies-{k}.json')
+        if tmp.exists():
+            tmp.unlink()
+        subprocess.run(['target/release/gdl_tools', 'level-enemies', str(wdata_path), str(k), str(tmp)], check=True,
+                       stdout=subprocess.DEVNULL)
+        kinds |= set(json.loads(tmp.read_text())['enemy_types']['kind'])
+        tmp.unlink()
+    elf = ELF.read_bytes()
+    out = {}
+    for k in range(44):
+        rec = elf_read(elf, 0x22c7a0 + 0x24 * k, 0x24)
+        t = int.from_bytes(rec[:4], 'little', signed=True)
+        prefix = rec[0x14:0x24].split(b'\0')[0].decode()
+        if t in kinds and t >= 0 and f'MONSTERS/{prefix}/ANIM.PS2' in known:
+            out[t] = prefix
+    return sorted(out.items())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--virtual', action='store_true', help='run inside the authenticated Xvfb session')
+    parser.add_argument('--realm', default='G', choices=sorted(REALMS), help='realm letter (G: The Poison Fields)')
+    parser.add_argument('--level', help='first level code, e.g. A2 (default: the realm\'s first level)')
     args = parser.parse_args()
     source = json.loads(pathlib.Path('profiles/ps2/slus-20047.json').read_text())
     if hashlib.sha256(ELF.read_bytes()).hexdigest() != source['executable']['sha256']:
@@ -70,20 +119,32 @@ def main():
             out['anim'] = str(paths[3])
         return out
 
-    wdata, rig, clips = resolve(['WDATA/TOWN.WAD', 'PLAYERS/SOR/YEL00/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2'])
-    # The Poison Fields levels G1-G4 (WDATA/TOWN.WAD records 0-3); G5 is the boss level.
-    levels = [dict(name=f'G{n}', worlds=str(resolve([f'LEVELS/LEVELG{n}/WORLDS.PS2'])[0]),
-                   level=package(f'LEVELS/LEVELG{n}', anim=False)) for n in range(1, 5)]
+    world, wad = REALMS[args.realm]
+    wdata, rig, clips = resolve([f'WDATA/{wad}.WAD', 'PLAYERS/SOR/YEL00/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2'])
+    known = known_names()
+    # Regular levels (boss_type < 0) in level-code order; boss arenas are not ported.
+    records = sorted((r for r in levl_records(wdata.read_bytes()) if r[2] < 0), key=lambda r: int(r[1][1:]))
+    if args.level:
+        records = [r for r in records if r[1] >= args.level.upper()] or records
+    packages = dict(POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), SFXYEL=package('PLAYERS/SOR/SFXYEL'))
+    levels = []
+    for index, code, _ in records:
+        # HYPOTHESIS: the level's own ITEMS package and the realm's are both loaded.
+        items = [f'LEVEL{x}' for x in (code, args.realm) if f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
+        for name in items:
+            packages.setdefault(f'ITEMS_{name[5:]}', package(f'ITEMS/{name}'))
+        levels.append(dict(name=code, index=index, worlds=str(resolve([f'LEVELS/LEVEL{code}/WORLDS.PS2'])[0]),
+                           level=package(f'LEVELS/LEVEL{code}', anim=False), items=[f'ITEMS_{n[5:]}' for n in items]))
+    monsters = realm_monsters(wdata, [r[0] for r in records], known)
+    for _, prefix in monsters:
+        packages[prefix] = package(f'MONSTERS/{prefix}')
     config = dict(
-        sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), wdata=str(wdata), levels=levels,
+        sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), wdata=str(wdata), levels=levels, world=world,
+        # Realm label: the project's name for G, else the WDATA file name.
+        title='The Poison Fields' if args.realm == 'G' else f'{wad.title()} realm ({args.realm})',
         character=package('PLAYERS/SOR/YEL00', anim=False),
-        character_rig=str(rig), character_clips=str(clips),
-        packages=dict(ZOM=package('MONSTERS/ZOM'), MAG=package('MONSTERS/MAG'), GHO=package('MONSTERS/GHO'),
-                      ITEMS=package('ITEMS/LEVELG'),
-                      POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), SFXYEL=package('PLAYERS/SOR/SFXYEL')),
-        # Enemy types of The Poison Fields (GetEnemyTypes, town "G" levels 0-3;
-        # prefixes from the ELF enemy_table).
-        monsters=[dict(type=13, package='ZOM'), dict(type=12, package='MAG'), dict(type=20, package='GHO')],
+        character_rig=str(rig), character_clips=str(clips), packages=packages,
+        monsters=[dict(type=t, package=p) for t, p in monsters],
         audio=audio_config())
     CONFIG.write_text(json.dumps(config, indent=1) + '\n')
     env = os.environ.copy()

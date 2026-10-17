@@ -366,6 +366,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             let m = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(path), 64 * 1024 * 1024)?)?;
             gdl_core::game::setup::enemy_trees(&mut enemy_anims, t.parse()?, prefix, &m);
         }
+        if let Some(extra) = opts.get("items2") {
+            // Further item packages (the realm's, after the level's own).
+            let more = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(extra), 64 * 1024 * 1024)?)?;
+            for (k, t) in more.trees.iter().enumerate() {
+                item_anims.entry(t.label.clone()).or_insert_with(|| gdl_core::game::setup::clips_of(&more, k));
+            }
+        }
         if let Some(w) = opts.get("world") {
             // Other realms: CurWorld/CurLevel for the session tables (the
             // player record is still the one from the save).

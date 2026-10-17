@@ -60,8 +60,12 @@ struct Libraries(HashMap<String, Library>);
 /// One playable level of the realm (config entry).
 struct LevelSource {
     name: String,
+    /// LEVL record index (CurLevel; the exit wave's low byte).
+    index: usize,
     worlds: std::path::PathBuf,
     package: Value,
+    /// Item packages, level-specific first (names in `packages`).
+    items: Vec<String>,
 }
 
 /// Inputs to (re)build the native game for a level; the current geometry.
@@ -72,6 +76,10 @@ struct Session {
     /// Start-state JSON (v5); later levels replace player 0 and CurLevel.
     start: Value,
     levels: Vec<LevelSource>,
+    /// CurWorld of the realm being played (7 = The Poison Fields).
+    world_number: i32,
+    /// Realm label for the HUD (config "title").
+    title: String,
     current: usize,
     world: World,
     level: Package,
@@ -348,11 +356,16 @@ fn spawn_level(
 fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::record::Record>) -> Result<(Game, PlayerDriver), Box<dyn Error>> {
     let elf = gdl_formats::elf::Elf::parse(&session.elf_bytes)?;
     let wdata = gdl_formats::wdata::WorldData::parse(&session.wdata_bytes)?;
+    let lv = &session.levels[idx];
     let mut start = session.start.clone();
     if let Some(r) = carry {
         start["players"][0] = Value::String(r.0.iter().map(|b| format!("{b:02x}")).collect());
-        start["globals"]["cur_level"] = Value::from(idx as i64);
     }
+    // The save is G1 (world 7, record 0); any other level enters at its
+    // start locator with CurWorld/CurLevel set (the session tables follow).
+    let from_save = carry.is_none() && session.world_number == 7 && lv.index == 0;
+    start["globals"]["cur_world"] = Value::from(session.world_number);
+    start["globals"]["cur_level"] = Value::from(lv.index as i64);
     let start: setup::StartState = serde_json::from_value(start)?;
     let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
     for (t, prefix, path) in &session.monster_paths {
@@ -363,10 +376,12 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
         let path = session.anim_paths.get(pkg).ok_or_else(|| format!("{pkg} anim path"))?;
         Ok(Animations::parse(&gdl_client::bounded_read(Path::new(path))?)?)
     };
-    let items_anim = anim("ITEMS")?;
     let mut item_anims = HashMap::new();
-    for (k, t) in items_anim.trees.iter().enumerate() {
-        item_anims.insert(t.label.clone(), setup::clips_of(&items_anim, k));
+    for pkg in &lv.items {
+        let items_anim = anim(pkg)?;
+        for (k, t) in items_anim.trees.iter().enumerate() {
+            item_anims.entry(t.label.clone()).or_insert_with(|| setup::clips_of(&items_anim, k));
+        }
     }
     let weapons = anim("WEAPONS")?;
     let powerups = anim("POWERUPS")?;
@@ -374,7 +389,7 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
     let mut game = Game::new_level(setup::LevelInputs {
         world: &session.world,
         wdata: &wdata,
-        level: idx,
+        level: lv.index,
         elf: &elf,
         start,
         enemy_anims,
@@ -385,7 +400,7 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
     })?;
     let tables = tables_from_elf(&elf)?;
     let mut sim = session.sim_start.clone();
-    if carry.is_some() {
+    if !from_save {
         let loc = session.world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("level has no player start locator")?;
         game.place_player_start(0, &mut sim, loc.position, loc.rotation[1]).map_err(|e| e.to_string())?;
         sim.current_action = 0;
@@ -485,8 +500,8 @@ fn record_transform(rows: [Vec3; 3], pos: Vec3) -> Transform {
 
 /// Item model key and parts: tree rest pose (nodes at summed initial
 /// positions), else "<NAME>L1", else "<NAME>".
-fn item_parts(sources: &Sources, libs: &Libraries, name: &str) -> Vec<(Vec3, Parts)> {
-    for pkg in ["ITEMS", "POWERUPS"] {
+fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str) -> Vec<(Vec3, Parts)> {
+    for pkg in items.iter().map(String::as_str).chain(["POWERUPS"]) {
         let (Some(p), Some(lib)) = (sources.packages.get(pkg), libs.0.get(pkg)) else { continue };
         if let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == name)) {
             let mut out = Vec::new();
@@ -534,11 +549,13 @@ fn present_world(
     mut commands: Commands,
     sim: Res<Sim>,
     sources: Res<Sources>,
+    session: Res<Session>,
     libs: Res<Libraries>,
     frames: Res<EnemyFrames>,
     mut slots: SlotQuery,
 ) {
     let g = &sim.game;
+    let items = &session.levels[session.current].items;
     for (entity, mut slot, mut transform, mut vis) in &mut slots {
         let (key, parts, tf): (Option<String>, Option<Model>, Transform) = match slot.kind {
             SlotKind::Enemy => {
@@ -602,7 +619,7 @@ fn present_world(
                     if slot.key.as_deref() == Some(key.as_str()) {
                         (Some(key), None, tf)
                     } else {
-                        (Some(key), Some(item_parts(&sources, &libs, &name)), tf)
+                        (Some(key), Some(item_parts(&sources, &libs, items, &name)), tf)
                     }
                 }
             }
@@ -772,7 +789,7 @@ fn present_player(
     let health = p.f32_(0x1a10);
     if let Ok(mut text) = banner.single_mut() {
         text.0 = if !ui.started {
-            "GAUNTLET: DARK LEGACY\nnative reconstruction - interim playtest\n\nYellow Sorceress - The Poison Fields\n\nPress Enter to start".to_string()
+            format!("GAUNTLET: DARK LEGACY\nnative reconstruction - interim playtest\n\nYellow Sorceress - {}\n\nPress Enter to start", session.title)
         } else if let Some(f) = &session.finished {
             f.clone()
         } else if let Some((_, b)) = &session.banner {
@@ -798,7 +815,7 @@ fn present_player(
         let mut t = format!(
             "YELLOW SORCERESS   level {}   exp {}\n\
              HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}\n\
-             The Poison Fields {}   kills {}   enemies {}   generators {}\n\
+             {} {}   kills {}   enemies {}   generators {}\n\
              {}\n\
              move: arrows/WASD   throw: Space/K   potion: E/L   pause: P   details: F1   quit: Esc",
             p.i32_(0x2ac0),
@@ -807,6 +824,7 @@ fn present_player(
             p.i32_(0x1a20),
             p.i32_(0x1a14),
             p.i32_(0x1a18),
+            session.title,
             session.levels[session.current].name,
             sim.kills,
             live,
@@ -875,8 +893,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     for l in cfg["levels"].as_array().ok_or("config levels")? {
         levels.push(LevelSource {
             name: l["name"].as_str().ok_or("level name")?.to_string(),
+            index: l["index"].as_u64().ok_or("level index")? as usize,
             worlds: l["worlds"].as_str().ok_or("level worlds")?.into(),
             package: l["level"].clone(),
+            items: l["items"].as_array().ok_or("level items")?.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
         });
     }
     let first = levels.first().ok_or("no levels")?;
@@ -896,6 +916,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         world: World::parse(&gdl_client::bounded_read(&first.worlds)?)?,
         level: load_package(&first.package)?,
         levels,
+        world_number: cfg["world"].as_i64().unwrap_or(7) as i32,
+        title: cfg["title"].as_str().unwrap_or("The Poison Fields").to_string(),
         current: 0,
         sim_start: player,
         action_map,
@@ -989,7 +1011,8 @@ fn advance_level(
     }
     if keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
         // DEBUG: act as if the exit portal (destination: next level) was used.
-        sim.game.level_done = Some(0x700 | (session.current as i32 + 1));
+        let next = session.levels.get(session.current + 1).map_or(0xff, |l| l.index as i32);
+        sim.game.level_done = Some(session.world_number << 8 | next);
     }
     if session.banner.is_none()
         && session.finished.is_none()
@@ -998,9 +1021,9 @@ fn advance_level(
         let world = wave >> 8;
         let level = (wave & 0xff) as usize;
         let name = session.levels[session.current].name.clone();
-        if world == 7 && level < session.levels.len() {
-            session.next = Some(level);
-            session.banner = Some((3.0, format!("{name} COMPLETE - entering {}", session.levels[level].name)));
+        if let Some(k) = session.levels.iter().position(|l| l.index == level).filter(|_| world == session.world_number) {
+            session.next = Some(k);
+            session.banner = Some((3.0, format!("{name} COMPLETE - entering {}", session.levels[k].name)));
         } else {
             session.finished = Some(format!(
                 "{name} COMPLETE. The exit leads to wave {wave:#x}; that level (boss/hub) is not ported yet. Thanks for testing! (Esc to quit)"

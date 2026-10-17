@@ -51,7 +51,9 @@ def main():
     index = level_index(wd.read_bytes(), f'{a.world}{a.level}')
     proposed = json.loads(pathlib.Path('private/reports/wad-independent.json').read_text())
     known = {n.upper() for e in proposed['entries'] for n in e['proposed_names']}
-    items = next(f'ITEMS/LEVEL{x}/ANIM.PS2' for x in (f'{a.world}{a.level}', a.world) if f'ITEMS/LEVEL{x}/ANIM.PS2' in known)
+    # HYPOTHESIS (as run_play.py): the level's own ITEMS package and the realm's.
+    item_pkgs = [f'ITEMS/LEVEL{x}/ANIM.PS2' for x in (f'{a.world}{a.level}', a.world) if f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
+    items = item_pkgs[0]
     tmp = pathlib.Path(a.report + '.enemies.json')
     if tmp.exists():
         tmp.unlink()
@@ -78,6 +80,8 @@ def main():
                        f'ITEMS/LEVEL{a.world}/OBJECTS.PS2', 'WEAPONS/OBJECTS.PS2', 'POWERUPS/OBJECTS.PS2']
            + [f'MONSTERS/{p}/OBJECTS.PS2' for _, p in monsters] if n in known]
     cmd += ['objects=' + ','.join(str(x) for x in resolve(obj))]
+    if len(item_pkgs) > 1:
+        cmd += [f'items2={resolve([item_pkgs[1]])[0]}']
     if a.world != 'G':
         cmd += [f'world={number}']
     print('monsters', monsters, 'missing', sorted(set(prefixes.values()) - {p for _, p in monsters}))
