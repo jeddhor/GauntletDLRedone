@@ -1446,7 +1446,8 @@ impl Game {
     /// boss key effect (BossType < 0x2a) and health meter hide.
     fn boss_death(&mut self, i: usize) -> R<()> {
         self.globals.boss_is_dead = 1;
-        self.events.push(super::Event::Audio { cue: "StartGoodWizard", player: None, arg: 0 });
+        // StartGoodWizard 0x165cf0 (optmenu_disable is presentation).
+        self.globals.good_wizard = 1;
         for p in 0..4 {
             let st = self.players[p].i32_(pd::STATE);
             if st == 1 || st == 8 {

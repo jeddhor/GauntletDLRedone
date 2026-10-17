@@ -165,10 +165,20 @@ impl SoundTables {
             } else {
                 (name.clone(), name.clone(), 0, i32::from(*ty != 0x1d), "DIE")
             };
-            if 0 < boss_type {
-                return Err("SetEnemyAudio modify_boss_ene not ported".into());
-            }
-            let f = |n: String| find(&n).unwrap_or(-1);
+            // modify_boss_ene 0x15f168: on boss levels the name is cut at 14
+            // characters and gets the boss letter (0x24 C, 0x25 D, 0x29 B).
+            let modify = |n: String| -> String {
+                let letter = match boss_type {
+                    0x24 => "C",
+                    0x25 => "D",
+                    0x29 => "B",
+                    _ => return n,
+                };
+                let mut t: String = n.chars().take(14).collect();
+                t.push_str(letter);
+                t
+            };
+            let f = |n: String| find(&if 0 < boss_type { modify(n) } else { n }).unwrap_or(-1);
             s.mon[0][slot] = f(format!("S_{b}{kill}CLOSE"));
             s.mon[1][slot] = f(format!("S_{n}{kill}CLOSE"));
             s.mon[2][slot] = f(format!("S_{b}{kill}FAR"));

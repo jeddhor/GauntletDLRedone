@@ -30,6 +30,8 @@ replaced by a plausible gameplay rule or generated asset.
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 | Loaded MBOX object tables | SetSafeRock/ItemFindMBObjectL1 search every loaded model table; native uses the labels of all runner packages (HYPOTHESIS) | Trace the level's package load list (LoadLevel) and model_count |
 | SetPlayerVars side writes | ActivePlayerMask ported; 0x220158, 0x22015c/0x2201a4 scale and player +0x93e zeroing not ported; ProcessItems' 0x220170 → 0x220160 store not ported | Identify consumers before porting |
+| Good-wizard speech timing | Phases wait 6 s each (CaptionText/AudioStillPlaying not simulated) | Measure the sequence in a reference boss kill |
+| CritterDamagedPlayer anger value | f12 after damage_player is undefined; effect damage used | Read the value in a reference capture |
 | FOREST realm generators | LEVL multipliers all 0.0, so generator max is 0 | Observe a Forest level in the reference |
 | Rotated node composition | Rotators compose rotated nodes as rows × parent rows (unverified) | Transcribe GetWorldMat and compare a rotator level |
 | Enemy tree alpha at spawn | enemy_alpha starts at 255 (HYPOTHESIS); presentation only | Read MBTreeGetAlpha for a fresh tree in a capture |

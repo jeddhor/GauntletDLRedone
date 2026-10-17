@@ -106,11 +106,26 @@ CritterDoTransition/DoActions/Translate/Rotate/LookAtPlayer and floor snap.
   (index | 0x10000) via CritterGetTarget(Sub); melee through PlayerDamageEnemy's
   critter branch.
 
+Ported since: CritterNodeEnemyCollide, EnemyCollideEnemy's critter test
+(kind 2, NODE flag 8), ItemLineCollide 0x157708, PlaceEffectOnFloor, effect
+end AddItem(3, 0, "BOSSGEN") (the lich's spit lands a boss generator),
+BossGenerateEnemy (acts only for Garm 0x2c), BossSpewCoins + StartSpewItem +
+ProcessSpewItems (spew_tab 0x25d1a8; passes 0/1 rotate the unscaled vector
+but still draw three Random values), acosf (kernel 0x1e9980), modify_boss_ene
+sound names, BossType from level_data +0x44 (LoadWorldData), and the
+completion: BossDeath → StartGoodWizard → DoGoodWizard timing (speech phases
+use a placeholder 6 s each, HYPOTHESIS) → auto_exit_timer (WizDelayGoldLeft
+600 / WizDelayNoGold 120) → do_auto_exit → auto_exit_flag → players leave for
+TowerWave 0xd00.
+
 Not ported yet: child critters (chimera heads), CritterGolemAI, grab/release
-(PlayerSetGrabbed), BossSpewCoins and spew items, fire cones
-(CritterFirePlayerCollide, ItemLineCollide), safe rocks beyond setup,
-CritterNodeEnemyCollide, legend items against bosses, PlayerCollideCritters
-(players walk through critters), boss camera, health meter, death → exit.
+(PlayerSetGrabbed), fire cones (CritterFirePlayerCollide), safe rocks beyond
+setup, legend items against bosses, PlayerCollideCritters (players walk
+through critters), boss camera and health meter (presentation).
+
+Headless check (G5, DEBUG boss_health=10, potions 3): the lich dies, spews
+coins, the good-wizard sequence runs and the level ends with destination
+0xd00 and no unsupported path.
 
 Headless check (G5, 2000 updates, scripted approach and throws): the lich
 activates when the player is within 39 units, plays START, then READY and

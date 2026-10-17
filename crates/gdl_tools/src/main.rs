@@ -467,6 +467,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             d.sim.current_action = 0;
             d.sim.requested_action = 0;
         }
+        if let Some(h) = opts.get("boss_health") {
+            // DEBUG: start the boss with this health (not a fidelity input).
+            let h: f32 = h.parse()?;
+            for c in game.critters.iter_mut().flatten() {
+                c.rec.set_f32(0x4f4, h);
+            }
+        }
         if let Some(n) = opts.get("potions") {
             // DEBUG override recorded in the report scope.
             game.players[0].set_i32(0x1a18, n.parse()?);
@@ -503,6 +510,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "slot":k,"state":c.rec.i32_(8),"health":c.rec.f32_(0x4f4),"move":c.rec.i16_(0x124),"next":c.rec.i16_(0x126),
                     "seq":c.clock.sequence,"frame":c.clock.frame,"pos":c.rec.v3(0x40),"target":c.rec.i16_(0x130),"ntargets":c.rec.i16_(0x136)}))).collect();
                 samples.push(serde_json::json!({"frame":f,"enemies":enemies,"critters":critters,"player_health":game.players[0].f32_(0x1a10),
+                    "level_done":game.level_done,"good_wizard":game.globals.good_wizard,"auto_exit":[game.auto_exit_timer,game.globals.auto_exit_flag],"player_state":game.players[0].i32_(0xfc),
                     "player_pos":game.players[0].v3(0x50),"events":game.events.len(),"effects":effects,
                     "driver":driver.as_ref().map(|d| serde_json::json!({"anim":d.anim,"missiles":d.missiles_started,"event_error":d.event_error,"event_word":d.event_word}))}));
             }
@@ -518,7 +526,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
-            "potions_override":opts.get("potions")});
+            "potions_override":opts.get("potions"),"boss_health_override":opts.get("boss_health")});
         let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
         serde_json::to_writer_pretty(&mut file, &report)?;
         file.write_all(b"\n")?;

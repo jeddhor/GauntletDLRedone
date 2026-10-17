@@ -3,6 +3,7 @@
 //! ProcessEffects. Records keep their original layouts (see `record`);
 //! presentation side effects (help text, audio, FX, HUD notices, vibration)
 //! are emitted as [`Event`]s instead of being performed.
+pub mod boss;
 pub mod critter_ai;
 pub mod critter_hits;
 pub mod critters;
@@ -226,6 +227,12 @@ pub struct Game {
     pub safe_rock_idx: i32,
     pub safe_rock_items: Vec<usize>,
     pub safe_rock_counter: Vec<f32>,
+    /// good_wiz_timer, good_wiz_alpha, auto_exit_timer (vblanks).
+    pub good_wiz_timer: f32,
+    pub good_wiz_alpha: i32,
+    pub auto_exit_timer: i32,
+    /// SpewItems (item slot, velocity), at most 0x20.
+    pub spew_items: Vec<(Option<usize>, [f32; 3])>,
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).

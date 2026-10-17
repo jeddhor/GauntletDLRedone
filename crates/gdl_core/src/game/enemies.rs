@@ -690,11 +690,13 @@ impl Game {
         Ok(who)
     }
 
-    /// EnemyCollideEnemy(r, h, enemy, from, to, any): nearest blocking enemy.
-    /// Critters (CritterLineCollide) are not present in the native world yet.
+    /// EnemyCollideEnemy(r, h, enemy, from, to, any): a blocking critter
+    /// (index | 0x10000) first, else the nearest blocking enemy.
     pub fn enemy_collide_enemy(&mut self, r: f32, h: f32, i: usize, from: V3, to: V3, any: bool) -> R<i32> {
-        if !self.critters_empty() {
-            return unsupported("CritterLineCollide");
+        if !self.critters_empty()
+            && let Some(k) = self.critter_line_collide_enemy(r, from, to)?
+        {
+            return Ok(k as i32 | 0x10000);
         }
         let favoured = self.enemies[i].i32_(0x29c);
         let mut forced = if !any && favoured < 0x10000 { favoured } else { -1 };

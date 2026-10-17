@@ -39,6 +39,7 @@ def main():
     ap.add_argument('--world', default='G', help='world letter (A-K, S); G is The Poison Fields')
     ap.add_argument('--script')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
+    ap.add_argument('--boss-health', help='DEBUG: set the boss critter health')
     a = ap.parse_args()
     letters = {'A': (1, 'CASTLE'), 'B': (2, 'MOUNT'), 'C': (3, 'DESERT'), 'D': (4, 'FOREST'), 'E': (5, 'TEMPLE'),
                'F': (6, 'HELL'), 'G': (7, 'TOWN'), 'H': (8, 'BATTLE'), 'I': (9, 'ICE'), 'J': (10, 'DREAM'),
@@ -92,6 +93,8 @@ def main():
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
     if a.potions:
         cmd += [f'potions={a.potions}']
+    if a.boss_health:
+        cmd += [f'boss_health={a.boss_health}']
     subprocess.run(cmd, check=True)
     r = json.loads(pathlib.Path(a.report).read_text())
     print('sounds', len(r.get('sounds', [])), r.get('sounds', [])[:6])

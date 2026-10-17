@@ -206,7 +206,8 @@ impl Game {
             multipliers: level.multipliers_cc,
             enemy_kind: types.kind,
             gen_kind: types.gen_kind,
-            boss_type: g.boss_type,
+            // LoadWorldData 0x161b98: BossType = level_data +0x44.
+            boss_type: level.boss_type,
             cur_world: g.cur_world,
             num_virtual_players: g.num_virtual_players,
             game_mode: g.game_mode,
@@ -240,6 +241,7 @@ impl Game {
         let mut globals = s.globals.clone();
         // GauntWorldInit 0x162e90: WldBtm = world min y − 4.5.
         globals.world_bottom = crate::numeric::sub_guarded_rz(inp.world.min[1], 4.5)?;
+        globals.boss_type = level.boss_type;
         let mut game = Game {
             globals,
             level: level.raw.clone(),
@@ -309,6 +311,10 @@ impl Game {
             safe_rock_items: Vec::new(),
             safe_rock_counter: Vec::new(),
             boss_key_position: None,
+            good_wiz_timer: 0.0,
+            good_wiz_alpha: 0,
+            auto_exit_timer: 0,
+            spew_items: Vec::new(),
             mb_objects: inp.mb_objects,
             sounds: {
                 let slots: Vec<(i32, i32, String)> = (0..8)
@@ -327,7 +333,7 @@ impl Game {
                     word_2a: a.word_2a,
                     parts: a.parts.clone(),
                 });
-                super::sound::SoundTables::new(inp.elf, inp.audio_rom, &slots, g.boss_type, &snds, stage)?
+                super::sound::SoundTables::new(inp.elf, inp.audio_rom, &slots, level.boss_type, &snds, stage)?
             },
             log: FrameLog::default(),
         };
@@ -423,6 +429,10 @@ impl Game {
         self.globals.atime += spf;
         self.globals.itime = (self.globals.time * 1000.0) as i32;
         self.sync_collision();
+        self.do_auto_exit();
+        if let Err(e) = self.boss_world_update() {
+            self.log.note("world_update", &e);
+        }
         if let Err(e) = self.setup_dyn_grid() {
             self.log.note("world_update", &e);
         }

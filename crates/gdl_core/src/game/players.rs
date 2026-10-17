@@ -165,6 +165,9 @@ impl Game {
             return Ok(());
         }
         if state == 4 {
+            if self.auto_exit_done() {
+                return Ok(());
+            }
             let go = self.all_players_go_to_same_level();
             if (go != 0 || self.globals.end_of_stage != 0) && !self.anybody_playing() {
                 self.do_exit(p, go)?;

@@ -1772,7 +1772,10 @@ impl Game {
                         continue;
                     }
                     if 10.0 < dist {
-                        return unsupported("ItemLineCollide for a distant blast");
+                        let pc = self.players[k].v3(0x70);
+                        if 0 <= self.item_line_collide(f32::from_bits(0x3dcc_cccd), to, pc, Some(pc), true)? {
+                            continue;
+                        }
                     }
                     let mut cone = self.fx(i).f32_(fx::CONE);
                     if -1.0 < cone {
@@ -2122,11 +2125,19 @@ impl Game {
                     }
                 }
                 let f = self.fx(i).u32_(fx::FLAGS);
-                if f & 0x30_0000 != 0 && self.fx(i).f32_(fx::HOLD) <= 0.0 {
-                    return unsupported("PlaceEffectOnFloor");
+                if f & 0x30_0000 != 0 {
+                    // PlaceEffectOnFloor 0x17ac30: onto the floor + 0.1 (the
+                    // floor-aligned orientation is presentation).
+                    let r = self.fx(i).f32_(fx::RADIUS);
+                    let (col, _) = self.collision.floor_collide(add(r, 1.0)?, add(r, 5.0)?, -10.0, to, true, 0)?;
+                    if let Some(h) = col.solid {
+                        to = [h.position[0], add(h.position[1], 0.1)?, h.position[2]];
+                    }
+                    moved = true;
                 }
                 if f & 0x400_0000 != 0 {
-                    return unsupported("BossGenerateEnemy effect");
+                    self.boss_generate_enemy()?;
+                    self.fx_mut(i).set_u32(fx::FLAGS, f & 0xfbff_ffff | 0x400);
                 }
                 let _ = hit_at;
             }
@@ -2136,8 +2147,19 @@ impl Game {
             if f & 0x8_0000 == 0 {
                 let next = self.fx(i).i16_(fx::NEXT_FX) as i32;
                 if f & 0x4000 == 0 || 0xd8 < (next - 1) as u32 {
-                    if f & 0x600_0000 != 0 || self.fx(i).u32_(0xec) != 0 {
-                        return unsupported("effect end item/boss generation");
+                    if f & 0x200_0000 != 0 {
+                        // AddItem(3, 0, "BOSSGEN", effect matrix): a boss generator.
+                        if let Some(d) = self.items.find_info_index(3, 0, b"BOSSGEN") {
+                            let n = self.effects.nodes[i].ok_or_else(|| Unsupported("effect node".into()))?;
+                            let at = if moved { to } else { n.position };
+                            self.add_item_sub(d, Some((n.matrix, at)))?;
+                        }
+                    }
+                    if f & 0x400_0000 != 0 {
+                        self.boss_generate_enemy()?;
+                    }
+                    if self.fx(i).u32_(0xec) != 0 {
+                        return unsupported("effect carrying an item (+0xec)");
                     }
                     self.delete_effect(i, true);
                     return Ok(());
@@ -2148,6 +2170,59 @@ impl Game {
         if moved && let Some(n) = self.effects.nodes[i].as_mut() {
             n.matrix = m;
             n.position = to;
+        }
+        Ok(())
+    }
+}
+
+impl Game {
+    /// ItemLineCollide 0x157708(radius, from, to, max position, first): the
+    /// blocking item along a segment (barrels 0x2b, type-10 breakables and
+    /// standing rocks) or -1.
+    pub(crate) fn item_line_collide(&mut self, r: f32, from: V3, to: V3, max: Option<V3>, first: bool) -> R<i32> {
+        let maxd = match max {
+            Some(m) => fqdist(sub(m[0], from[0])?, sub(m[2], from[2])?)?.0,
+            None => 1e21,
+        };
+        let mut best: i32 = -1;
+        for k in 0..self.items.records.len() {
+            let rec = &self.items.records[k];
+            if !rec.active() {
+                continue;
+            }
+            let d = &self.items.definitions[rec.definition()];
+            match (d.kind(), d.subtype()) {
+                (2, 0x2b) if rec.u8_(0xdc) != 2 => {}
+                (10, 0x28 | 0x31 | 0x33 | 0x34 | 0x35) => continue,
+                (10, 0x29) if rec.i16_(0xe4) < 1 || rec.i16_(0xf2) < 1 => continue,
+                (10, _) => {}
+                _ => continue,
+            }
+            let hit = if d.i16_(8) == 4 {
+                let rr = rec.clone();
+                crate::item_collision::item_object_col(&mut self.collision, &rr, from, to, r)?.is_some()
+            } else {
+                let (w, h) = (add(r, d.f32_(0xc))?, add(r, d.f32_(0x10))?);
+                super::enemies::line_cylinder_collide(rec.v3(0x60), from, to, w, h, false)?.is_some()
+            };
+            if hit {
+                let p = self.items.records[k].v3(0x60);
+                let dd = fqdist(sub(p[0], from[0])?, sub(p[2], from[2])?)?.0;
+                if !((0 <= best && 0.0 <= dd) || maxd < dd) {
+                    best = k as i32;
+                }
+            }
+            if 0 <= best && first {
+                return Ok(best);
+            }
+        }
+        Ok(best)
+    }
+
+    /// BossGenerateEnemy 0x19dbe0: only Garm (BossType 0x2c) spawns enemies.
+    fn boss_generate_enemy(&mut self) -> R<()> {
+        if self.globals.boss_type == 0x2c {
+            return unsupported("BossGenerateEnemy (Garm)");
         }
         Ok(())
     }

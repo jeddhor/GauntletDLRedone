@@ -99,7 +99,7 @@ impl DynGrid {
 
 /// ItemObjectCol 0x157510: the segment against the item's own triangles
 /// (instance +4 first, +6 count) in item space; contact point and normal in world.
-fn item_object_col(collision: &mut crate::collision::CollisionWorld, r: &ItemRecord, from: V3, to: V3, radius: f32) -> R<Option<(V3, V3)>> {
+pub(crate) fn item_object_col(collision: &mut crate::collision::CollisionWorld, r: &ItemRecord, from: V3, to: V3, radius: f32) -> R<Option<(V3, V3)>> {
     let first = r.i16_(0xd4);
     if first < 0 {
         return Err(crate::items::UnsupportedItem("ItemObjectCol without triangles (FatalErrorC)".into()));

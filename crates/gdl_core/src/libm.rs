@@ -311,3 +311,77 @@ mod tests {
         assert!(atan2f(f32::INFINITY, 1.0).is_err());
     }
 }
+
+/// acosf: the wrapper at EE 0x1e7a50 rejects |x| > 1 (matherr path); the
+/// kernel at 0x1e9980 (operation order and literal words from the
+/// instructions) uses the integer sqrtf at 0x1eb210, which returns the
+/// round-to-nearest root for the normal arguments reached here.
+pub fn acosf(x: f32) -> Result<f32> {
+    finite(x)?;
+    const PS: [u32; 6] = [0x3e2aaaab, 0xbea6b090, 0x3e4e0aa8, 0xbd241146, 0x3a4f7f04, 0x3811ef08];
+    const QS: [u32; 4] = [0xc019d139, 0x4001572d, 0xbf303361, 0x3d9dc62e];
+    let pio2_hi = w(0x3fc90fda);
+    let pio2_lo = w(0x33a22168);
+    let pi = w(0x40490fda);
+    let ix = x.to_bits() & 0x7fff_ffff;
+    if ix == 0x3f80_0000 {
+        return Ok(if 0 < x.to_bits() as i32 { 0.0 } else { w(0x40490fdb) });
+    }
+    if 0x3f80_0000 < ix {
+        return Err(UnsupportedNumericDomain);
+    }
+    let pq = |z: f32| -> Result<(f32, f32)> {
+        let mut p = add(mul(z, w(PS[5]))?, w(PS[4]))?;
+        for k in (0..4).rev() {
+            p = add(mul(z, p)?, w(PS[k]))?;
+        }
+        let p = mul(z, p)?;
+        let mut q = add(mul(z, w(QS[3]))?, w(QS[2]))?;
+        q = add(mul(z, q)?, w(QS[1]))?;
+        q = add(mul(z, q)?, w(QS[0]))?;
+        let q = add(mul(z, q)?, 1.0)?;
+        Ok((p, q))
+    };
+    let sqrtf = |z: f32| crate::numeric::sqrt_rn(z);
+    if ix < 0x3f00_0000 {
+        if ix <= 0x2300_0000 {
+            return Ok(w(0x3fc90fdb));
+        }
+        let z = mul(x, x)?;
+        let (p, q) = pq(z)?;
+        let r = div(p, q)?;
+        return sub(pio2_hi, sub(x, sub(pio2_lo, mul(x, r)?)?)?);
+    }
+    if (x.to_bits() as i32) < 0 {
+        let z = mul(add(x, 1.0)?, 0.5)?;
+        let (p, q) = pq(z)?;
+        let s = sqrtf(z)?;
+        let r = div(p, q)?;
+        let wv = sub(mul(r, s)?, pio2_lo)?;
+        let t = add(s, wv)?;
+        return sub(pi, add(t, t)?);
+    }
+    let z = mul(sub(1.0, x)?, 0.5)?;
+    let s = sqrtf(z)?;
+    let df = w(s.to_bits() & 0xffff_f000);
+    let c = div(sub(z, mul(df, df)?)?, add(s, df)?)?;
+    let (p, q) = pq(z)?;
+    let r = div(p, q)?;
+    let wv = add(mul(r, s)?, c)?;
+    let t = add(df, wv)?;
+    add(t, t)
+}
+
+#[cfg(test)]
+mod acos_tests {
+    #[test]
+    fn acosf_tracks_the_host_closely() {
+        // Synthetic: the port against f64 acos within a few ulps.
+        for x in [-0.99f32, -0.7, -0.3, 0.0, 0.2, 0.49, 0.5, 0.8, 0.999] {
+            let a = super::acosf(x).unwrap();
+            assert!((f64::from(a) - f64::from(x).acos()).abs() < 1e-6, "{x}");
+        }
+        assert!(super::acosf(1.5).is_err());
+        assert_eq!(super::acosf(1.0).unwrap(), 0.0);
+    }
+}
