@@ -270,11 +270,9 @@ impl Game {
     pub fn grabbed_position(&self, p: usize) -> R<Option<V3>> {
         let Some((i, node, local)) = self.player_grab[p] else { return Ok(None) };
         let Some(Some(_)) = self.critters.get(i) else { return Ok(None) };
-        let root = self.critter_root_pub(i);
-        let cr = self.crit(i);
         let m = match node {
-            Some(n) => crate::tree_pose::node_world(&cr.parents, &cr.locals, root, n, Some(local)).map_err(|e| Unsupported(e.0))?,
-            None => root,
+            Some(n) => self.critter_node_world(i, n, Some(local))?,
+            None => self.critter_root_pub(i),
         };
         Ok(Some([m[12], m[13], m[14]]))
     }
@@ -367,9 +365,7 @@ impl Game {
                 let mut p = match self.crit(i).node_dc {
                     None => self.crit(i).rec.v3(c::POS),
                     Some(n) => {
-                        let root = self.critter_root_pub(i);
-                        let cr = self.crit(i);
-                        let m = crate::tree_pose::node_world(&cr.parents, &cr.locals, root, n, Some(off)).map_err(|e| Unsupported(e.0))?;
+                        let m = self.critter_node_world(i, n, Some(off))?;
                         [m[12], m[13], m[14]]
                     }
                 };
@@ -426,14 +422,29 @@ impl Game {
         }
         let Some(h) = self.effects.tables.headers.get(header as usize).copied().flatten() else { return Ok(-1) };
         let world = if attach {
-            // Parented to the transition node (or the tree root): spawned at
-            // the node's world transform of the local offset.
-            let node = if flags & 0x801 == 0 { self.crit(i).node_dc } else { Some(0) };
-            let root = self.critter_root_pub(i);
-            let cr = self.crit(i);
+            // SfxSetParent: 0x800 the MB parent of +0xcc (a root's own matrix,
+            // a child's tree parent), 1 the +0xcc animation root, otherwise
+            // the +0xdc transition node; spawned at the parent's world
+            // transform of the local offset.
+            let ar = self.crit(i).anim_root;
+            let node = if flags & 0x800 != 0 {
+                match usize::try_from(self.crit(i).parents[ar]) {
+                    Ok(p) => Some(Some(p)),
+                    Err(_) => Some(None),
+                }
+            } else if flags & 1 != 0 {
+                Some(Some(ar))
+            } else {
+                self.crit(i).node_dc.map(Some)
+            };
             match node {
-                Some(n) => {
-                    let m = crate::tree_pose::node_world(&cr.parents, &cr.locals, root, n, Some(pos)).map_err(|e| Unsupported(e.0))?;
+                Some(Some(n)) => {
+                    let m = self.critter_node_world(i, n, Some(pos))?;
+                    [m[12], m[13], m[14]]
+                }
+                Some(None) => {
+                    let o = self.critter_pose_owner(i);
+                    let m = crate::tree_pose::node_world(&[-1], &[crate::tree_pose::IDENTITY], self.critter_root_pub(o), 0, Some(pos)).map_err(|e| Unsupported(e.0))?;
                     [m[12], m[13], m[14]]
                 }
                 None => pos,
@@ -687,7 +698,19 @@ impl Game {
     }
 
     /// CritterNoHit(Sub) 0x199f50: the effect `sfx_id` may not hit yet.
+    /// CritterNoHit 0x199f50: CritterNoHitSub on the instance, then on a
+    /// root's children or a child's root.
     fn critter_no_hit(&self, i: usize, sfx_id: i16) -> bool {
+        if self.critter_no_hit_sub(i, sfx_id) {
+            return true;
+        }
+        match self.crit(i).parent {
+            None => self.critter_children(i).into_iter().any(|k| self.critter_no_hit_sub(k, sfx_id)),
+            Some(p) => self.critter_no_hit_sub(p, sfx_id),
+        }
+    }
+
+    fn critter_no_hit_sub(&self, i: usize, sfx_id: i16) -> bool {
         let time = self.globals.time;
         (0..4).any(|k| self.crit(i).rec.i16_(0x524 + 2 * k) == sfx_id && time < self.crit(i).rec.f32_(0x52c + 4 * k))
     }
@@ -991,6 +1014,37 @@ impl Game {
                 self.players[p].set_i32(o, v);
             }
             return Ok(1);
+        }
+        if let Some(root) = self.crit(i).parent {
+            // A child's damage is also taken from its root.
+            let rh = sub(self.crit(root).rec.f32_(c::HEALTH), d)?;
+            self.crit_mut(root).rec.set_f32(c::HEALTH, rh);
+            if rh <= 0.0 {
+                self.critter_kill(root)?;
+                return Ok(1);
+            }
+        }
+        if 0 < self.crit(i).rec.u8_(c::NCHILDREN) as i8 {
+            // A root's damage is split over its active children at half rate.
+            let kids = self.critter_children(i);
+            let mut n = 0.0f32;
+            for &k in &kids {
+                if 1 < self.crit(k).rec.u32_(c::STATE) {
+                    n = add(n, 1.0)?;
+                }
+            }
+            if 0.0 < n {
+                let share = mul(div(d, n)?, 0.5)?;
+                for &k in &kids {
+                    if 1 < self.crit(k).rec.u32_(c::STATE) {
+                        let kh = sub(self.crit(k).rec.f32_(c::HEALTH), share)?;
+                        self.crit_mut(k).rec.set_f32(c::HEALTH, kh);
+                        if kh <= 0.0 {
+                            self.critter_kill(k)?;
+                        }
+                    }
+                }
+            }
         }
         if fl & 0x100_0000 == 0 {
             if fl & 0xf == 0 {

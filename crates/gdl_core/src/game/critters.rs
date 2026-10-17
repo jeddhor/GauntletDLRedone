@@ -141,8 +141,13 @@ pub struct CritterData {
 pub struct Critter {
     pub rec: Record,
     pub ty: TypeRef,
+    /// +0xb60 next child in the root's chain, +0xb64 the root (children).
     pub child: Option<usize>,
     pub parent: Option<usize>,
+    /// +0x80 animation root node: 0 for a root; a child's subtree node
+    /// (CritterInitChild detaches it from the root's animation tree but
+    /// keeps the matrix hierarchy, so children share the root's pose).
+    pub anim_root: usize,
     pub clock: ClockState,
     pub clip: u16,
     pub clips: Vec<ClipTiming>,
@@ -257,6 +262,29 @@ impl Game {
     }
     pub(crate) fn critter_move_rec(&self, i: usize, m: usize) -> &[u8] {
         self.cmove(i, m)
+    }
+    /// MOVE field at a signed move index: the original indexes TYPE +0x124
+    /// with +0x124 = -1 in some paths (CritterChildCriticalMove), reading the
+    /// preceding record of the shared MOVE chunk.
+    pub(crate) fn critter_move_i16_signed(&self, i: usize, m: i16, o: usize) -> R<i16> {
+        let t = self.crit(i).ty;
+        let first = CritterFile::i16_(&self.critter_data.files[t.0].wad.types[t.1], 0x112) as i32;
+        let k = usize::try_from(first + i32::from(m)).map_err(|_| Unsupported("critter MOVE before the chunk".into()))?;
+        let rec = self.critter_data.files[t.0].wad.moves.get(k).ok_or_else(|| Unsupported("critter MOVE past the chunk".into()))?;
+        Ok(CritterFile::i16_(rec, o))
+    }
+    /// The children of root `i` in chain order (+0xb60 links).
+    pub(crate) fn critter_children(&self, i: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut k = self.crit(i).child;
+        while let Some(n) = k {
+            if MAX_INSTS < out.len() {
+                break;
+            }
+            out.push(n);
+            k = self.crit(n).child;
+        }
+        out
     }
     pub(crate) fn move_count_pub(&self, i: usize) -> i16 {
         self.move_count(i)
@@ -518,10 +546,26 @@ impl Game {
         self.critter_init_inst(i, t)?;
         self.critter_init_geo(i, m)?;
         self.critter_init_colnodes(i);
-        if 0 <= CritterFile::i16_(self.ctype(t), 0x11c) {
-            return unsupported("critter child types (CritterInitChild)");
-        }
         self.crm(i).set_u8(c::NCHILDREN, 0);
+        let mut child_ty = CritterFile::i16_(self.ctype(t), 0x11c);
+        let mut prev = i;
+        while 0 <= child_ty {
+            let ct = (t.0, child_ty as usize);
+            if self.critter_data.files[t.0].wad.types.get(ct.1).is_none() {
+                return unsupported("critter child TYPE index");
+            }
+            // The original does not test CritterEmptyInst's result here.
+            let Some(k) = self.critter_empty_inst() else { return unsupported("no free critter instance for a child") };
+            self.critter_init_inst(k, ct)?;
+            self.critter_init_child(k, i)?;
+            self.critter_init_colnodes(k);
+            self.crit_mut(prev).child = Some(k);
+            self.crit_mut(k).parent = Some(i);
+            child_ty = CritterFile::i16_(self.ctype(ct), 0x11c);
+            let n = self.cr(i).u8_(c::NCHILDREN).wrapping_add(1);
+            self.crm(i).set_u8(c::NCHILDREN, n);
+            prev = k;
+        }
         if self.critter_kind(i) == 8 {
             return unsupported("critter waypoint start (FindClosestWaypoint)");
         }
@@ -564,6 +608,7 @@ impl Game {
             ty: t,
             child: None,
             parent: None,
+            anim_root: 0,
             clock: super::setup::fresh_clock(),
             clip: 0,
             clips,
@@ -577,6 +622,64 @@ impl Game {
         };
         self.critters[i] = Some(crit);
         Ok(())
+    }
+
+    /// CritterInitChild 0x193900: the root's animation instance (+0x80..+0xc4)
+    /// is copied, then +0x80 becomes the child's TYPE +0x10 node of the root's
+    /// tree (AtreeFindNodeIdx, 16 characters) detached from the root's
+    /// animation tree (AtreeNodeSetParent(node, 0, 0, 0): the MB parent is
+    /// kept). The look-at nodes follow CritterInitGeo's rules; the child's
+    /// matrix stays zero until CritterUpdateChild.
+    fn critter_init_child(&mut self, k: usize, root: usize) -> R<()> {
+        let bytes: Vec<u8> = (0x80..0xc4).map(|o| self.cr(root).u8_(o)).collect();
+        for (n, b) in bytes.iter().enumerate() {
+            self.crm(k).set_u8(0x80 + n, *b);
+        }
+        let (clock, clip) = (self.crit(root).clock, self.crit(root).clip);
+        let t = self.crit(k).ty;
+        let rt = self.crit(root).ty;
+        let name = label(self.ctype(t), 0x10, 16);
+        let node = {
+            let file = &self.critter_data.files[rt.0];
+            let tree = file.trees[rt.1].ok_or_else(|| Unsupported("critter tree".into()))?;
+            let model = file.model.as_ref().ok_or_else(|| Unsupported("critter model".into()))?;
+            let key: Vec<u8> = name.bytes().take(16).collect();
+            model.0.trees[tree].nodes.iter().position(|nd| nd.label.bytes().take(16).eq(key.iter().copied()))
+        };
+        let Some(node) = node else { return unsupported(format!("critter child node {name} not in the root tree")) };
+        let cr = self.crit_mut(k);
+        cr.clock = clock;
+        cr.clip = clip;
+        cr.anim_root = node;
+        let n56 = self.type_i16(k, 0x56);
+        let mut d4 = self.critter_node(k, n56, None);
+        if self.type_u32(k, 0x5c) & 0x10 != 0
+            && let Some(n) = d4
+            && let Ok(p) = usize::try_from(self.crit(k).parents[n])
+        {
+            d4 = Some(p);
+        }
+        let (n58, n5a) = (self.type_i16(k, 0x58), self.type_i16(k, 0x5a));
+        let (d8, e8) = (self.critter_node(k, n58, None), self.critter_node(k, n5a, None));
+        let cr = self.crit_mut(k);
+        cr.node_d4 = d4;
+        cr.node_d8 = d8;
+        cr.node_e8 = e8;
+        Ok(())
+    }
+
+    /// The root instance whose tree pose instance `i` uses.
+    pub(crate) fn critter_pose_owner(&self, i: usize) -> usize {
+        self.crit(i).parent.unwrap_or(i)
+    }
+
+    /// GetWorldMat of tree node `n` for instance `i` (children compose
+    /// through the root's tree and matrix), with an optional local offset.
+    pub(crate) fn critter_node_world(&self, i: usize, n: usize, offset: Option<V3>) -> R<Mat> {
+        let o = self.critter_pose_owner(i);
+        let root = self.critter_root(o);
+        let cr = self.crit(o);
+        node_world(&cr.parents, &cr.locals, root, n, offset).map_err(|e| Unsupported(format!("critter pose: {}", e.0)))
     }
 
     /// CritterGetNode: tree node `idx` or the default.
@@ -679,13 +782,9 @@ impl Game {
     /// GetWorldMat(node, out, offset) into the instance record at `at`
     /// (16 floats); `None` node copies the instance matrix.
     fn critter_node_matrix(&mut self, i: usize, node: Option<usize>, at: usize, offset: Option<V3>) -> R<Mat> {
-        let root = self.critter_root(i);
         let m = match node {
-            Some(n) => {
-                let cr = self.crit(i);
-                node_world(&cr.parents, &cr.locals, root, n, offset).map_err(|e| Unsupported(format!("critter pose: {}", e.0)))?
-            }
-            None => root,
+            Some(n) => self.critter_node_world(i, n, offset)?,
+            None => self.critter_root(i),
         };
         for (k, v) in m.iter().enumerate() {
             self.crm(i).set_f32(at + 4 * k, *v);

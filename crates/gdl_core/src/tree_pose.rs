@@ -27,19 +27,29 @@ impl From<UnsupportedNumericDomain> for PoseError {
 
 /// Local matrices of every node of `tree` at `frame` of `sequence`.
 pub fn local_pose(anim: &Animations, bytes: &[u8], tree: usize, sequence: u32, frame: f32) -> Result<Vec<Mat>, PoseError> {
+    Ok(local_pose_where(anim, bytes, tree, sequence, frame, &|_| true)?.into_iter().map(|m| m.unwrap_or(IDENTITY)).collect())
+}
+
+/// [`local_pose`] for the nodes accepted by `keep` (others are None): an
+/// animation instance whose root is a subtree node animates only that subtree.
+pub fn local_pose_where(anim: &Animations, bytes: &[u8], tree: usize, sequence: u32, frame: f32, keep: &dyn Fn(usize) -> bool) -> Result<Vec<Option<Mat>>, PoseError> {
     let t = anim.trees.get(tree).ok_or_else(|| PoseError("tree index".into()))?;
     let mut out = Vec::with_capacity(t.nodes.len());
-    for node in &t.nodes {
+    for (k, node) in t.nodes.iter().enumerate() {
+        if !keep(k) {
+            out.push(None);
+            continue;
+        }
         if node.node_type != 1 {
             let mut m = IDENTITY;
             m[12..15].copy_from_slice(&node.initial_position);
-            out.push(m);
+            out.push(Some(m));
             continue;
         }
         let track = t.key_track(bytes, node.index, sequence).map_err(|e| PoseError(format!("key track: {e}")))?;
         let channels = crate::animation::sample_channels_long_gaps(&track, frame).map_err(|e| PoseError(format!("sample: {e}")))?;
         let (m, _scale) = crate::transform::local_transform(channels, node.initial_position, track.transform_flags)?;
-        out.push(m);
+        out.push(Some(m));
     }
     Ok(out)
 }

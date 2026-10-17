@@ -7,7 +7,7 @@ use super::damage::pd;
 use super::{unsupported, Game, Unsupported, R};
 use crate::animation_clock::{select, SelectionInput};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sqrt_rn, sub_guarded_rz as sub};
-use crate::tree_pose::local_pose;
+use crate::tree_pose::local_pose_where;
 
 type V3 = [f32; 3];
 
@@ -99,16 +99,37 @@ impl Game {
         if self.crit(i).parent.is_some() {
             return Ok(false);
         }
-        if self.crit(i).child.is_some() {
-            return unsupported("critter children (ProcessCritter)");
-        }
-        self.crm_pub(i).set_u8(c::NLIVE_CHILDREN, 0);
+        let kids = self.critter_children(i);
+        let live = kids.iter().filter(|&&k| 0.0 < self.cf(k, c::HEALTH)).count();
+        self.crm_pub(i).set_u8(c::NLIVE_CHILDREN, live as u8);
         self.critter_attention_pub(i)?;
         self.critter_update_colnodes_pub(i)?;
         self.critter_do_knockback(i)?;
         self.critter_update_counters(i)?;
-        if self.crit(i).rec.i32_(c::STATE) == 3 && self.cf(i, c::HEALTH) <= 0.0 {
-            self.critter_kill(i)?;
+        for &k in &kids {
+            self.critter_update_child(i, k)?;
+            self.critter_update_colnodes_pub(k)?;
+            self.critter_update_counters(k)?;
+        }
+        if self.crit(i).rec.i32_(c::STATE) == 3 {
+            // A root with children dies once every child's health is gone.
+            let mut n = 1;
+            for &k in &kids {
+                if n < 1 {
+                    n = 0;
+                } else {
+                    n += 1;
+                    if 0.0 < self.cf(k, c::HEALTH) {
+                        n = 0;
+                    }
+                }
+            }
+            if 2 <= n {
+                self.crm_pub(i).set_f32(c::HEALTH, -1.0);
+            }
+            if self.cf(i, c::HEALTH) <= 0.0 {
+                self.critter_kill(i)?;
+            }
         }
         match self.critter_kind(i) {
             4 => {
@@ -127,6 +148,34 @@ impl Game {
         Ok(true)
     }
 
+    /// CritterUpdateChild 0x198b78: the root's matrix, attention point and
+    /// collision centre; the position follows the +0xdc transition node.
+    fn critter_update_child(&mut self, root: usize, k: usize) -> R<()> {
+        let m: Vec<f32> = (0..16).map(|n| self.cf(root, c::MATRIX + 4 * n)).collect();
+        let (att, col) = (self.crit(root).rec.v3(c::ATTN), self.crit(root).rec.v3(c::COL));
+        {
+            let r = self.crm_pub(k);
+            for (n, v) in m.iter().enumerate() {
+                r.set_f32(c::MATRIX + 4 * n, *v);
+            }
+            r.set_v3(c::ATTN, att);
+            r.set_v3(c::COL, col);
+        }
+        match self.crit(k).node_dc {
+            Some(n) => {
+                let w = self.critter_node_matrix_pub(k, Some(n), c::NODE_MATRIX, None)?;
+                self.crm_pub(k).set_v3(c::POS, [w[12], w[13], w[14]]);
+            }
+            None => {
+                let r = self.crm_pub(k);
+                for (n, v) in m.iter().enumerate() {
+                    r.set_f32(c::NODE_MATRIX + 4 * n, *v);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// FloorCollide(5, 4, -1000, position, 0, 0, 2) and the floor offset.
     fn critter_floor(&mut self, i: usize) -> R<Option<crate::collision::Hit>> {
         let p = self.crit(i).rec.v3(c::POS);
@@ -143,6 +192,12 @@ impl Game {
     fn critter_boss_ai(&mut self, i: usize) -> R<bool> {
         self.critter_get_target_players(i)?;
         self.critter_set_difficulty(i)?;
+        let kids = self.critter_children(i);
+        for &k in &kids {
+            self.critter_get_target_players(k)?;
+            self.critter_set_difficulty(k)?;
+        }
+        self.critter_resolve_multiple_targets(i);
         self.critter_process_safe_rocks()?;
         let time = self.globals.time;
         if self.crit(i).rec.i32_(c::STATE) == 0 {
@@ -169,6 +224,32 @@ impl Game {
                 self.critter_look_for_block(i)?;
                 if self.ci16(i, c::NEXT) < 0 {
                     self.critter_look_for_attack(i)?;
+                    let mut busy = 0;
+                    for &k in &kids {
+                        self.critter_move_setup(k);
+                        if 0 <= self.ci16(i, c::PATTERN) {
+                            self.critter_child_get_pattern(i, k);
+                            continue;
+                        }
+                        if 0 <= self.ci16(i, c::NEXT) {
+                            continue;
+                        }
+                        self.critter_child_critical_move(k)?;
+                        if self.ci16(k, c::NEXT) < 0 {
+                            self.critter_look_for_attack(k)?;
+                            if self.ci16(k, c::NEXT) < 0 {
+                                self.critter_look_for_ready(k)?;
+                                continue;
+                            }
+                        }
+                        if 0 <= self.ci16(k, c::PATTERN) || 0x7e < self.critter_move_i32(k, self.ci16(k, c::NEXT) as usize, 0) as u32 {
+                            busy += 1;
+                        }
+                    }
+                    if busy != 0 {
+                        let v = self.critter_find_move_type(i, 1, 1);
+                        self.set_ci16(i, c::NEXT, v);
+                    }
                     if self.ci16(i, c::NEXT) < 0 {
                         let cur = self.ci16(i, c::MOVE);
                         let cur_type = if 0 <= cur { self.critter_move_i32(i, cur as usize, 0) as u32 } else { self.critter_move_i32(i, 0, 0) as u32 };
@@ -189,6 +270,26 @@ impl Game {
             self.set_ci16(i, c::MOVE, 0);
         }
         let mv = self.ci16(i, c::MOVE) as usize;
+        let root_type = self.critter_move_i32(i, mv, 0);
+        for &k in &kids {
+            if self.crit(k).rec.i32_(c::STATE) == 1 {
+                let v = self.critter_find_move_type(k, 0x11, 1);
+                self.set_ci16(k, c::NEXT, v);
+                self.critter_animate(k)?;
+                continue;
+            }
+            if (root_type == 1 || 0 <= self.ci16(i, c::PATTERN))
+                && 1 < self.globals.quest_item_state.wrapping_sub(2)
+                && (0 <= self.ci16(k, c::MOVE) || 0 <= self.ci16(k, c::NEXT))
+            {
+                self.critter_animate(k)?;
+                continue;
+            }
+            self.critter_copy_anim(i, k)?;
+            if root_type == 1 {
+                self.set_ci16(k, c::NEXT, 0);
+            }
+        }
         let frame = self.cf(i, c::ANIM_FRAME);
         let hold = self.critter_move_f32(i, mv, 0x8c);
         let done = self.crit(i).clock.mode_bits & 0xff != 0;
@@ -232,6 +333,17 @@ impl Game {
         self.critter_translate(i, mv)?;
         self.critter_rotate(i, mv)?;
         self.critter_look_at_player(i, Some(mv))?;
+        for &k in &kids {
+            let m = usize::try_from(self.ci16(k, c::MOVE)).ok();
+            if let Some(m) = m {
+                let frame = self.cf(k, c::ANIM_FRAME);
+                self.critter_do_transition(k, m)?;
+                self.critter_do_actions(k, m, frame as i32 as i16)?;
+                self.critter_translate(k, m)?;
+                self.critter_rotate(k, m)?;
+            }
+            self.critter_look_at_player(k, m)?;
+        }
         if let Some(h) = self.critter_floor(i)?
             && self.crit(i).rec.i32_(c::STATE) == 0
             && self.boss_activate_time == 0.0
@@ -302,6 +414,9 @@ impl Game {
     /// CritterActivate 0x197658 / BossActivate 0x19dfb8.
     fn critter_activate(&mut self, i: usize) {
         self.crm_pub(i).set_i32(c::STATE, 3);
+        for k in self.critter_children(i) {
+            self.crm_pub(k).set_i32(c::STATE, 3);
+        }
         if self.critter_kind(i) == 4 {
             self.boss_activate(i, true);
         }
@@ -531,8 +646,8 @@ impl Game {
             pick = -1;
         }
         if pick < 0 {
-            if any && self.crit(i).parent.is_some() {
-                return unsupported("child critter target");
+            if any && let Some(p) = self.crit(i).parent {
+                return self.critter_move_get_target(p, q, any);
             }
             return Ok(-1);
         }
@@ -596,6 +711,124 @@ impl Game {
         pick as i16
     }
 
+    /// CritterChildCriticalMove 0x195fd0. The current-move record is read
+    /// at +0x124 even when it is -1 (the preceding MOVE record).
+    fn critter_child_critical_move(&mut self, i: usize) -> R<()> {
+        let cur = self.ci16(i, c::MOVE);
+        let q = self.globals.quest_item_state;
+        if self.crit(i).rec.i32_(c::STATE) == 1 {
+            let v = self.critter_find_move_type(i, 0x11, 1);
+            self.set_ci16(i, c::NEXT, v);
+        } else if q.wrapping_sub(3) < 3 && self.globals.boss_type == 0x23 {
+            let v = self.critter_find_move_type(i, 0x20, 0);
+            self.set_ci16(i, c::NEXT, v);
+        } else {
+            let n = self.critter_move_i16_signed(i, cur, 0x54)?;
+            if 0 <= n {
+                self.set_ci16(i, c::NEXT, n);
+            }
+        }
+        if self.ci16(i, c::NEXT) < 0 {
+            let flags = self.crit(i).rec.u32_(c::DAMAGE_FLAGS);
+            let mut found = false;
+            if flags & 0x120 != 0 {
+                if flags & 0x100 != 0 {
+                    let v = self.critter_find_move_type(i, 0x42, 0);
+                    self.set_ci16(i, c::NEXT, v);
+                }
+                found = 0 <= self.ci16(i, c::NEXT);
+                if !found {
+                    let v = self.critter_find_move_type(i, 0x41, 0);
+                    self.set_ci16(i, c::NEXT, v);
+                }
+            }
+            if !found && self.ci16(i, c::NEXT) < 0 {
+                let lim = mul(ROAR_MUL[self.critter_nactive.min(4)], 50.0)? as i32 as f32;
+                if lim <= self.cf(i, c::DAMAGE_TAKEN) {
+                    let v = self.critter_find_move_type(i, 0x22, 0);
+                    self.set_ci16(i, c::NEXT, v);
+                }
+                if self.ci16(i, c::NEXT) < 0 {
+                    if flags & 0x10 != 0 {
+                        let v = self.critter_find_move_type(i, 0x40, 0);
+                        self.set_ci16(i, c::NEXT, v);
+                    }
+                    if self.ci16(i, c::NEXT) < 0 {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        self.set_ci16(i, c::PATTERN_CAND, -2);
+        Ok(())
+    }
+
+    /// CritterChildGetPattern 0x196a78: a child joins its root's pattern.
+    fn critter_child_get_pattern(&mut self, root: usize, k: usize) {
+        let p = self.ci16(root, c::PATTERN);
+        if p < self.critter_type_i16(k, 0x114) {
+            let step = self.ci16(root, c::PATTERN_STEP);
+            self.set_ci16(k, c::PATTERN, p);
+            self.set_ci16(k, c::PATTERN_STEP, step);
+            let m = self.critter_pattern_i16(k, p as usize, (0x20 + 2 * i32::from(step)) as usize);
+            self.set_ci16(k, c::NEXT, m);
+        }
+    }
+
+    /// CritterResolveMultipleTargets 0x19b060: when a player is targeted by
+    /// more instances than its anger allows (2 above 1.0, 3 above 0.75,
+    /// else 4), the children's entries with the highest +0xc score for
+    /// that player are dropped.
+    fn critter_resolve_multiple_targets(&mut self, i: usize) {
+        if self.crit(i).rec.u8_(c::NLIVE_CHILDREN) as i8 <= 0 || 0 <= self.ci16(i, c::PATTERN) {
+            return;
+        }
+        let mut t = 0;
+        while t < self.ci16(i, c::NTARGETS) as usize {
+            let at = Self::target_at(t);
+            let w = self.cf(i, at + 0x10);
+            let p = self.crit(i).rec.i32_(at) as usize;
+            let lim = if 1.0 < w { 2.0 } else if 0.75 < w { 3.0 } else { 4.0 };
+            if p < 4 && lim < self.critter_ntargets[p] {
+                loop {
+                    let mut best: Option<(usize, usize)> = None;
+                    let mut score = 0.0f32;
+                    for k in self.critter_children(i) {
+                        if 0 <= self.ci16(k, c::PATTERN) {
+                            continue;
+                        }
+                        for e in 0..self.ci16(k, c::NTARGETS).max(0) as usize {
+                            let ea = Self::target_at(e);
+                            if self.crit(k).rec.i32_(ea) != p as i32 {
+                                continue;
+                            }
+                            let sc = self.cf(k, ea + 0xc);
+                            if best.is_none() || score < sc {
+                                score = sc;
+                                best = Some((k, e));
+                                break;
+                            }
+                        }
+                    }
+                    let Some((k, e)) = best else { break };
+                    let n = self.ci16(k, c::NTARGETS);
+                    for m in e..(n as usize).saturating_sub(1) {
+                        let bytes: Vec<u8> = (0..0x30).map(|b| self.crit(k).rec.u8_(Self::target_at(m + 1) + b)).collect();
+                        for (b, v) in bytes.iter().enumerate() {
+                            self.crm_pub(k).set_u8(Self::target_at(m) + b, *v);
+                        }
+                    }
+                    self.set_ci16(k, c::NTARGETS, n - 1);
+                    self.critter_ntargets[p] -= 1.0;
+                    if self.critter_ntargets[p] <= lim {
+                        break;
+                    }
+                }
+            }
+            t += 1;
+        }
+    }
+
     /// CritterLookForCriticalMove 0x195cf8.
     fn critter_look_for_critical_move(&mut self, i: usize) -> R<()> {
         let cur = self.ci16(i, c::MOVE);
@@ -656,6 +889,10 @@ impl Game {
         if 0 <= self.ci16(i, c::NEXT) && 0 <= self.ci16(i, c::PATTERN) {
             self.set_ci16(i, c::PATTERN, -1);
             self.set_ci16(i, c::PATTERN_STEP, -1);
+            for k in self.critter_children(i) {
+                self.set_ci16(k, c::PATTERN, -1);
+                self.set_ci16(k, c::PATTERN_STEP, -1);
+            }
         }
         self.crm_pub(i).and_u32(c::DAMAGE_FLAGS, 0xffff_fecf);
         Ok(())
@@ -1022,8 +1259,69 @@ impl Game {
             return Ok(());
         }
         let frame = cr.clock.frame.max(0.0);
-        let locals = local_pose(&model.0, &model.1, tree, u32::from(cr.clock.sequence), frame).map_err(|e| Unsupported(format!("critter pose: {}", e.0)))?;
-        self.crit_mut(i).locals = locals;
+        let seq = u32::from(cr.clock.sequence);
+        // Children animate their detached subtrees; the root everything else.
+        let owner = self.critter_pose_owner(i);
+        let roots: Vec<(usize, usize)> = self.critter_children(owner).into_iter().map(|k| (self.crit(k).anim_root, k)).collect();
+        let parents = self.crit(owner).parents.clone();
+        let animator = |n: usize| -> usize {
+            let mut m = n as i32;
+            for _ in 0..=parents.len() {
+                let Ok(u) = usize::try_from(m) else { break };
+                if let Some(&(_, k)) = roots.iter().find(|r| r.0 == u) {
+                    return k;
+                }
+                m = parents.get(u).copied().unwrap_or(-1);
+            }
+            owner
+        };
+        let locals = local_pose_where(&model.0, &model.1, tree, seq, frame, &|n| animator(n) == i).map_err(|e| Unsupported(format!("critter pose: {}", e.0)))?;
+        let out = &mut self.crit_mut(owner).locals;
+        for (n, m) in locals.into_iter().enumerate() {
+            if let (Some(m), Some(slot)) = (m, out.get_mut(n)) {
+                *slot = m;
+            }
+        }
+        Ok(())
+    }
+
+    /// CritterCopyAnim 0x195a20: the child's subtree takes the root's
+    /// sequence at the rounded frame (AnimateATreeFrame →
+    /// AnimateTreeFrameInterp with no interpolation, then AnimateNode).
+    fn critter_copy_anim(&mut self, root: usize, k: usize) -> R<()> {
+        let seq = self.crit(root).rec.u16_(c::ANIM_SEQ);
+        let frame = add(self.cf(root, c::ANIM_FRAME), 0.5)? as i32;
+        let cr = self.crit_mut(k);
+        if (seq as i16) < cr.clips.len() as i16 {
+            if seq != cr.clock.sequence {
+                cr.clock.start_time = cr.clock.last_time;
+                cr.clock.sequence = seq;
+            }
+            let frames = cr.clips[seq as usize].frames;
+            cr.clock.blend_fraction = 0.0;
+            let mut f = frame as f32;
+            let last = (frames as i32 - 1) as f32;
+            if last < f {
+                f = last;
+            }
+            if f < 0.0 {
+                f = 0.0;
+            }
+            cr.clock.frame = f;
+            cr.clock.blend_end_time = 0.0;
+            cr.clock.reset_byte = 1;
+            cr.clip = seq;
+            cr.rec.set_u16(c::ANIM_SEQ, seq);
+            cr.rec.set_i16(c::ANIM_FRAMES, frames);
+            cr.rec.set_f32(c::ANIM_FRAME, f);
+        }
+        self.critter_update_pose(k)?;
+        let done = self.crit(root).rec.u16_(c::MOVE_DONE);
+        let cr = self.crit_mut(k);
+        cr.rec.set_u16(c::MOVE_DONE, done);
+        cr.rec.set_i16(c::MOVE, -1);
+        cr.rec.set_i16(c::PATTERN, -1);
+        cr.rec.set_i16(c::PATTERN_STEP, -1);
         Ok(())
     }
 
@@ -1052,7 +1350,8 @@ impl Game {
                 self.set_ci16(i, c::PATTERN, cand);
                 self.set_ci16(i, c::PATTERN_STEP, 0);
             }
-        } else {
+        } else if self.crit(i).parent.is_none_or(|p| self.ci16(p, c::PATTERN) < 0) {
+            // A child follows its root's pattern without stepping it.
             let step = self.ci16(i, c::PATTERN_STEP) + 1;
             self.set_ci16(i, c::PATTERN_STEP, step);
             let mut next = -1;
@@ -1062,6 +1361,10 @@ impl Game {
             if next < 0 {
                 self.set_ci16(i, c::PATTERN, -1);
                 self.set_ci16(i, c::PATTERN_STEP, -1);
+                for k in self.critter_children(i) {
+                    self.set_ci16(k, c::PATTERN, -1);
+                    self.set_ci16(k, c::PATTERN_STEP, -1);
+                }
             }
         }
         let fxi = self.ci16(i, c::MOVE_FX);
@@ -1097,7 +1400,8 @@ impl Game {
                 self.crm_pub(i).set_u16(c::ACTION_FLAGS, 0);
                 self.crm_pub(i).set_u16(c::SFX_FLAGS, 0);
                 let node = self.critter_move_i16(i, mv, 0xe);
-                let n = usize::try_from(node).ok().filter(|&k| k < self.crit(i).locals.len()).or(Some(0));
+                let ar = self.crit(i).anim_root;
+                let n = usize::try_from(node).ok().filter(|&k| k < self.crit(i).parents.len()).or(Some(ar));
                 self.crit_mut(i).node_dc = n;
             }
         }
@@ -1403,6 +1707,11 @@ impl Game {
         self.crm_pub(i).set_i32(c::STATE, 1);
         let exp = mul(self.critter_type_f32(i, 0xe8), 0.2)?;
         self.critter_award_exp(exp, None)?;
+        if self.crit(i).parent.is_none() {
+            for k in self.critter_children(i) {
+                self.crm_pub(k).set_f32(c::HEALTH, 1.0);
+            }
+        }
         if self.critter_kind(i) == 4 && self.crit(i).parent.is_none() {
             self.boss_is_dying = 1;
         }

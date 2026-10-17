@@ -124,8 +124,39 @@ and the DamageFX effect), and the effect orientation in CritterDoDamageFX:
 YawMat3 0x1d5388 by DAMG +0x14, then WPitchMat3 0x1d5228 by DAMG +0x1c
 (each row's y/z rotated; no-op below |a| 0x38d1b717, sinf first).
 
-Not ported yet: child critters (chimera heads), CritterGolemAI, safe rocks
-beyond setup, legend items against bosses, PlayerCollideCritters (players walk
+Child critters (chimera heads) are ported: CritterNewInst follows TYPE
++0x11c through the same file's types (CHIMERA: root 0 → EAGLE 1 → LION 2 →
+SNAKE 3), chaining +0xb60 and pointing +0xb64 at the root. CritterInitChild
+0x193900 copies the root's animation instance (+0x80..+0xc4) and roots the
+child's at its TYPE +0x10 node of the root's tree (AtreeFindNodeIdx, 16
+characters), detached from the root's animation tree by
+AtreeNodeSetParent(node, 0, 0, 0); the MB parent is kept, so world matrices
+still compose through the body. Native model: children share the root's
+pose; each instance animates only the nodes whose nearest child root is its
+own (AnimateNode walks the detached subtree). ProcessCritter processes
+children only through the root (CritterUpdateChild 0x198b78: root matrix,
+attention and collision centre; the position follows +0xdc), counts live
+children (+0x487) and kills a root once every child's health is gone.
+CritterBossAI: children's GetTargetPlayers/SetDifficulty,
+CritterResolveMultipleTargets 0x19b060, child selection
+(CritterChildGetPattern 0x196a78 while the root runs a pattern, else
+CritterChildCriticalMove 0x195fd0 → LookForAttack → LookForReady; busy
+children make the root pick a type-1 move), CritterCopyAnim 0x195a20 for
+idle children (AnimateTreeFrameInterp: clock offsets +0xe sequence, +0x14
+blend, +0x18 frame, +0x20 start, +0x24 blend end, +0x30 last time, from
+CalcAnimInfo), and the children's transition/actions/translate/rotate.
+CritterDamage: a child's damage also comes off the root; a root's damage is
+split over its active children at half rate. CritterNoHit tests the family,
+CritterMoveGetTarget falls back to the root, CritterKill on a root sets the
+children's health to 1.0, CritterActivate activates them, and MoveDone /
+LookForCriticalMove reset the children's patterns. CritterDoSfxSub parents
+by flag: 0x800 the MB parent of +0xcc (a root's own matrix, a child's tree
+parent), 1 the animation root, else +0xdc.
+CritterChildCriticalMove reads the current-move record with +0x124 = -1
+(the preceding MOVE record of the shared chunk); this is the instruction
+behaviour, kept as is.
+
+Not ported yet: CritterGolemAI, safe rocks beyond setup, legend items against bosses, PlayerCollideCritters (players walk
 through critters), boss camera and health meter (presentation).
 
 Headless check (G5, DEBUG boss_health=10, potions 3): the lich dies, spews
@@ -141,3 +172,11 @@ Headless check (B6 dragon, 1400 updates, scripted approach and throws): fire
 cones and pitched effects run; the dragon takes 2000 → 1987 and the player
 483 → 129, with no unsupported path. C5/F2/K5 also run their fire cones;
 A5 (chimera) still stops at setup on child critters.
+Headless check (A5 chimera, scripted approach and throws, DEBUG
+boss_health=10 for every instance, potions 3): the heads activate with the
+body, pick their own moves, damage the player and die separately; the body
+dies (with the DEBUG health a head hit also empties the body), the good
+wizard runs and the level ends with destination 0xd00, with no unsupported
+path. Without the override the chimera (4500 body, 900/1125/900 heads at
+these multipliers) damages the player 483 → 31 in 1400 updates. B6, G5,
+G1, A1, C4, C5, F2 and K5 runs are identical to the previous build.

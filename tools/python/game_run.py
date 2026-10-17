@@ -7,10 +7,14 @@ LEVELS_HEX:UPDATES,... (e.g. 0:20,2000200:3 = idle 20 updates, attack 3).
 Reports are written once (new file) under private/reports/.
 """
 import argparse
+import os
 import json
 import pathlib
 import subprocess
 import sys
+
+# GDL_TOOLS: an alternate gdl_tools binary (A/B comparisons against another build).
+TOOLS = os.environ.get('GDL_TOOLS', 'target/release/gdl_tools')
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from run_play import ELF, resolve  # noqa: E402
@@ -58,7 +62,7 @@ def main():
     tmp = pathlib.Path(a.report + '.enemies.json')
     if tmp.exists():
         tmp.unlink()
-    subprocess.run(['target/release/gdl_tools', 'level-enemies', str(wd), str(index), str(tmp)], check=True)
+    subprocess.run([TOOLS, 'level-enemies', str(wd), str(index), str(tmp)], check=True)
     kinds = json.loads(tmp.read_text())['enemy_types']['kind']
     tmp.unlink()
     elf = ELF.read_bytes()
@@ -72,7 +76,7 @@ def main():
     monsters = [(t, p) for t, p in prefixes.items() if f'MONSTERS/{p}/ANIM.PS2' in known]
     ia, wp, pw, clips, rom, *mons = resolve([items, 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2',
                                              'AUDIO/AUDATPS2.ROM'] + [f'MONSTERS/{p}/ANIM.PS2' for _, p in monsters])
-    cmd = ['target/release/gdl_tools', 'game-run', str(w), str(wd), str(index), str(ELF), GAME_START, str(ia),
+    cmd = [TOOLS, 'game-run', str(w), str(wd), str(index), str(ELF), GAME_START, str(ia),
            str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}']
     cmd += [f'{t}={path}:{p}' for (t, p), path in zip(monsters, mons)]
     # HYPOTHESIS: the MBOX object tables loaded for the level (the original

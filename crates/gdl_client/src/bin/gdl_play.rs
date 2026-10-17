@@ -136,6 +136,12 @@ fn present_critters(
             *vis = Visibility::Hidden;
             continue;
         };
+        // Children (chimera heads) share their root's tree and pose; the
+        // root's slot draws every node.
+        if cr.parent.is_some() {
+            *vis = Visibility::Hidden;
+            continue;
+        }
         let file = &g.critter_data.files[cr.ty.0];
         let (Some(tree), Some(model)) = (file.trees[cr.ty.1], file.model.as_ref()) else {
             *vis = Visibility::Hidden;
