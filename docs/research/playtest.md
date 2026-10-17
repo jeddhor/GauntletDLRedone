@@ -20,6 +20,13 @@ Campaign: `python3 tools/python/run_play.py --campaign` starts in the Tower
 (hub) with every realm configured; realm portals open per the save's
 progress, a defeated boss returns to the Tower. Packages load per level.
 
+Co-op (INTERIM, M16 in progress): player 2 joins by pressing R (keyboard
+T/F/G/H move, R throw, Y potion) or South on gamepad 2; gamepads 1–4 drive
+players 1–4 (D-pad or left stick, South throw, East potion). A joining player
+is a copy of player 1's record (PLACEHOLDER: character select and
+LoadPlyrData are not ported); the camera follows the living players'
+average (HYPOTHESIS).
+
 Controls: Enter starts from the title prompt; arrows/WASD move, Space/K
 throw, E/L use a potion (magic), P pauses, F1 toggles the diagnostics block,
 stand still in the exit portal to leave the level, Enter continues after death

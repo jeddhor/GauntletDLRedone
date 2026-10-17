@@ -413,9 +413,19 @@ impl Game {
     /// StdCamera rest pose (hypothesis until do_camera is ported):
     /// target = player 0 position + attention offset, eye = target − forward × distance.
     pub fn update_camera(&mut self, c: &StartCamera) {
-        let p = self.players[0].v3(0x50);
-        let a = self.players[0].v3(0x810);
-        let target = [p[0] + a[0], p[1] + a[1], p[2] + a[2]];
+        // HYPOTHESIS (co-op): the average of the players in state 1 (player
+        // 0 alone otherwise); the original's multi-player camera is not ported.
+        let active: Vec<usize> = (0..4).filter(|&k| self.players[k].i32_(0xfc) == 1).collect();
+        let pick: Vec<usize> = if active.len() < 2 { vec![0] } else { active };
+        let n = pick.len() as f32;
+        let mut target = [0.0f32; 3];
+        for &k in &pick {
+            let p = self.players[k].v3(0x50);
+            let a = self.players[k].v3(0x810);
+            for i in 0..3 {
+                target[i] += (p[i] + a[i]) / n;
+            }
+        }
         let f = c.basis[2];
         let eye = [target[0] - f[0] * c.distance, target[1] - f[1] * c.distance, target[2] - f[2] * c.distance];
         self.camera = Some(Camera { basis: c.basis, eye, target, planes: c.planes, newcam_mode: c.newcam_mode });

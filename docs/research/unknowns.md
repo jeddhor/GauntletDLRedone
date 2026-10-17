@@ -35,6 +35,7 @@ replaced by a plausible gameplay rule or generated asset.
 | Rotated node composition | Rotators compose rotated nodes as rows × parent rows (unverified) | Transcribe GetWorldMat and compare a rotator level |
 | Camera follow | Simulation camera = player 0 rest pose after each update (HYPOTHESIS) | Port do_camera and compare camera matrices in a capture |
 | Interim throw hold | G1 teleport test: player stayed in action 0x61 for ~900 updates with one missile static (interim player) | Reproduce with the reference player controller |
+| Co-op join and camera | Joining players copy player 1's record; camera = average of living players | Port the join flow (LoadPlyrData, can_join) and the multi-player camera |
 | Enemy tree alpha at spawn | enemy_alpha starts at 255 (HYPOTHESIS); presentation only | Read MBTreeGetAlpha for a fresh tree in a capture |
 
 External data consultation cannot establish PS2 offsets or behavior without local

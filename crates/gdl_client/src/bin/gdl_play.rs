@@ -266,6 +266,51 @@ struct Sim {
     sparks: Vec<(Vec3, f32)>,
     last_event: String,
     magic_held: bool,
+    /// Co-op players 1–3 (interim drivers) and their potion-button state.
+    coop: [Option<PlayerDriver>; 3],
+    coop_magic: [bool; 3],
+}
+
+/// One player slot's controls this update: the level word, attack edge
+/// and potion button. Slot 0: WASD/arrows, Space/K, E/L, or gamepad 0;
+/// slot 1: TFGH, R, Y, or gamepad 1; slots 2–3: gamepads 2–3 (D-pad or
+/// left stick, South attack, East potion).
+fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> (u32, bool, bool) {
+    let mut levels = 0;
+    let (mut attack_edge, mut magic) = (false, false);
+    let mut dirs = [false; 4];
+    match slot {
+        0 => {
+            levels = keyboard_levels(keys);
+            attack_edge = keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::KeyK);
+            magic = keys.pressed(KeyCode::KeyE) || keys.pressed(KeyCode::KeyL);
+        }
+        1 => {
+            dirs = [keys.pressed(KeyCode::KeyT), keys.pressed(KeyCode::KeyG), keys.pressed(KeyCode::KeyF), keys.pressed(KeyCode::KeyH)];
+            if keys.pressed(KeyCode::KeyR) {
+                levels |= 0x0200_0200;
+            }
+            attack_edge = keys.just_pressed(KeyCode::KeyR);
+            magic = keys.pressed(KeyCode::KeyY);
+        }
+        _ => {}
+    }
+    if let Some(g) = pads.get(slot) {
+        let s = g.left_stick();
+        dirs[0] |= g.pressed(GamepadButton::DPadUp) || 0.5 < s.y;
+        dirs[1] |= g.pressed(GamepadButton::DPadDown) || s.y < -0.5;
+        dirs[2] |= g.pressed(GamepadButton::DPadLeft) || s.x < -0.5;
+        dirs[3] |= g.pressed(GamepadButton::DPadRight) || 0.5 < s.x;
+        if g.pressed(GamepadButton::South) {
+            levels |= 0x0200_0200;
+        }
+        attack_edge |= g.just_pressed(GamepadButton::South);
+        magic |= g.pressed(GamepadButton::East);
+    }
+    if dirs.iter().any(|&d| d) {
+        levels |= direction_levels(dirs[0], dirs[1], dirs[2], dirs[3]);
+    }
+    (levels, attack_edge, magic)
 }
 
 #[derive(Resource)]
@@ -279,9 +324,11 @@ struct Presentation {
 #[derive(Component)]
 struct MirrorRoot;
 #[derive(Component)]
-struct CharacterRoot;
+/// The character body of player slot `.0`.
+struct CharacterRoot(usize);
+/// A rig node (tree index) of player slot `.1`.
 #[derive(Component)]
-struct RigNode(usize);
+struct RigNode(usize, usize);
 #[derive(Component)]
 struct FollowCamera;
 #[derive(Component)]
@@ -412,17 +459,22 @@ fn setup(
     let character = &sources.character;
     let (cache, unknown, _) = gdl_client::materials_for(&character.objects, &character.table, &character.textures, &mut images, &mut materials, true);
     let (parts, _) = gdl_client::object_meshes(&character.objects, &cache, &unknown, &mut meshes);
-    let body = commands.spawn((CharacterRoot, Transform::default(), Visibility::default())).id();
-    commands.entity(root).add_child(body);
-    let tree = &sources.rig.trees[0];
-    for node in &tree.nodes {
-        let label: String = (tree.prefix.clone() + &node.label).chars().take(16).collect();
-        for def in character.objects.definitions.iter().filter(|d| d.label == label) {
-            for (mesh, material) in parts.get(&(def.object_index as u32)).into_iter().flatten() {
-                let child = commands
-                    .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(node.index as usize)))
-                    .id();
-                commands.entity(body).add_child(child);
+    // One body per player slot (co-op players use the same model: the
+    // character select is not ported).
+    for slot in 0..4 {
+        let vis = if slot == 0 { Visibility::default() } else { Visibility::Hidden };
+        let body = commands.spawn((CharacterRoot(slot), Transform::default(), vis)).id();
+        commands.entity(root).add_child(body);
+        let tree = &sources.rig.trees[0];
+        for node in &tree.nodes {
+            let label: String = (tree.prefix.clone() + &node.label).chars().take(16).collect();
+            for def in character.objects.definitions.iter().filter(|d| d.label == label) {
+                for (mesh, material) in parts.get(&(def.object_index as u32)).into_iter().flatten() {
+                    let child = commands
+                        .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(node.index as usize, slot)))
+                        .id();
+                    commands.entity(body).add_child(child);
+                }
             }
         }
     }
@@ -611,6 +663,7 @@ fn keyboard_levels(keys: &ButtonInput<KeyCode>) -> u32 {
 #[allow(clippy::too_many_arguments)]
 fn simulate(
     keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<(Entity, &Gamepad)>,
     mut sim: ResMut<Sim>,
     session: Res<Session>,
     presentation: Res<Presentation>,
@@ -620,8 +673,11 @@ fn simulate(
     if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started || ui.paused {
         return;
     }
-    let levels = keyboard_levels(&keys);
-    if keys.pressed(KeyCode::KeyE) || keys.pressed(KeyCode::KeyL) {
+    let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().collect();
+    pads.sort_by_key(|(e, _)| *e);
+    let pads: Vec<&Gamepad> = pads.into_iter().map(|(_, g)| g).collect();
+    let (levels, _, magic) = player_input(0, &keys, &pads);
+    if magic {
         if !sim.magic_held {
             sim.driver.magic_pressed = true;
         }
@@ -629,9 +685,49 @@ fn simulate(
     } else {
         sim.magic_held = false;
     }
-    let Sim { game, driver, .. } = &mut *sim;
+    let mut coop_levels = [0u32; 3];
+    for (k, cl) in coop_levels.iter_mut().enumerate() {
+        let (l, attack, magic) = player_input(k + 1, &keys, &pads);
+        *cl = l;
+        if sim.coop[k].is_none() {
+            if attack && 0.0 < sim.game.players[0].f32_(0x1a10) {
+                // PLACEHOLDER join: a copy of player 0 beside it.
+                let mut d = sim.driver.clone();
+                let mut at = sim.driver.sim.position;
+                at[0] += 3.0 * (k as f32 + 1.0);
+                let yaw = sim.driver.sim.facing;
+                match sim.game.join_player_copy(k + 1, 0, &mut d.sim, at, yaw) {
+                    Ok(()) => {
+                        sim.coop[k] = Some(d);
+                        sim.last_event = format!("player {} joined (interim copy of player 1)", k + 2);
+                    }
+                    Err(e) => sim.last_event = format!("join failed: {}", e.0),
+                }
+            }
+            continue;
+        }
+        if magic {
+            if !sim.coop_magic[k]
+                && let Some(d) = sim.coop[k].as_mut()
+            {
+                d.magic_pressed = true;
+            }
+            sim.coop_magic[k] = true;
+        } else {
+            sim.coop_magic[k] = false;
+        }
+    }
+    let Sim { game, driver, coop, .. } = &mut *sim;
     let before = game.events.len();
-    game.step_with(None, &mut |g| g.drive_player(0, driver, levels));
+    game.step_with(None, &mut |g| {
+        g.drive_player(0, driver, levels)?;
+        for (k, d) in coop.iter_mut().enumerate() {
+            if let Some(d) = d {
+                g.drive_player(k + 1, d, coop_levels[k])?;
+            }
+        }
+        Ok(())
+    });
     sim.updates += 1;
     let new: Vec<Event> = sim.game.events.drain(before..).collect();
     sim.game.events.clear();
@@ -923,7 +1019,7 @@ fn present_sparks(
     }
 }
 
-type BodyQuery<'w, 's> = Query<'w, 's, &'static mut Transform, (With<CharacterRoot>, Without<RigNode>, Without<FollowCamera>, Without<Slot>)>;
+type BodyQuery<'w, 's> = Query<'w, 's, (&'static CharacterRoot, &'static mut Transform, &'static mut Visibility), (Without<RigNode>, Without<FollowCamera>, Without<Slot>)>;
 type NodeQuery<'w, 's> = Query<'w, 's, (&'static RigNode, &'static mut Transform), (Without<CharacterRoot>, Without<FollowCamera>, Without<Slot>)>;
 type CameraQuery<'w, 's> = Query<'w, 's, &'static mut Transform, (With<FollowCamera>, Without<CharacterRoot>, Without<RigNode>, Without<Slot>)>;
 
@@ -945,23 +1041,34 @@ fn present_player(
     if keys.just_pressed(KeyCode::Escape) {
         exit.write(AppExit::Success);
     }
-    let s = &sim.driver.sim;
-    let m = s.matrix;
-    let world = Mat4::from_cols_array(&[
-        m[0][0], m[0][1], m[0][2], 0.0, m[1][0], m[1][1], m[1][2], 0.0, m[2][0], m[2][1], m[2][2], 0.0, s.position[0], s.position[1], s.position[2], 1.0,
-    ]);
-    if let Ok(mut t) = body.single_mut() {
-        *t = Transform::from_matrix(world);
+    let drivers: [Option<&PlayerDriver>; 4] = [Some(&sim.driver), sim.coop[0].as_ref(), sim.coop[1].as_ref(), sim.coop[2].as_ref()];
+    let poses: Vec<_> = drivers.iter().map(|d| d.and_then(|d| gdl_client::rig_pose(&sources.clips, &sources.clip_bytes, d.anim.clip, d.anim.frame).ok())).collect();
+    for (root, mut t, mut vis) in &mut body {
+        let Some(d) = drivers.get(root.0).copied().flatten() else {
+            *vis = Visibility::Hidden;
+            continue;
+        };
+        *vis = Visibility::Inherited;
+        let s = &d.sim;
+        let m = s.matrix;
+        *t = Transform::from_matrix(Mat4::from_cols_array(&[
+            m[0][0], m[0][1], m[0][2], 0.0, m[1][0], m[1][1], m[1][2], 0.0, m[2][0], m[2][1], m[2][2], 0.0, s.position[0], s.position[1], s.position[2], 1.0,
+        ]));
     }
-    let anim = sim.driver.anim;
-    if let Ok(pose) = gdl_client::rig_pose(&sources.clips, &sources.clip_bytes, anim.clip, anim.frame) {
-        for (node, mut t) in &mut nodes {
-            if let Some(p) = pose.get(node.0) {
-                *t = Transform::from_matrix(*p);
-            }
+    for (node, mut t) in &mut nodes {
+        if let Some(p) = poses.get(node.1).and_then(|p| p.as_ref()).and_then(|pose| pose.get(node.0)) {
+            *t = Transform::from_matrix(*p);
         }
     }
-    let target = Vec3::from_array(s.position) + presentation.attention;
+    // HYPOTHESIS (co-op): the camera follows the average of the living
+    // players (the original multi-player camera is not ported).
+    let living: Vec<Vec3> = drivers
+        .iter()
+        .enumerate()
+        .filter_map(|(k, d)| d.filter(|_| 0.0 < sim.game.players[k].f32_(0x1a10)).map(|d| Vec3::from_array(d.sim.position)))
+        .collect();
+    let centre = if living.is_empty() { Vec3::from_array(sim.driver.sim.position) } else { living.iter().sum::<Vec3>() / living.len() as f32 };
+    let target = centre + presentation.attention;
     let [_, up, forward] = presentation.basis;
     let eye = target - forward * presentation.distance;
     if let Ok(mut t) = camera.single_mut() {
@@ -1000,7 +1107,7 @@ fn present_player(
              HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}\n\
              {} {}   kills {}   enemies {}   generators {}\n\
              {}\n\
-             move: arrows/WASD   throw: Space/K   potion: E/L   pause: P   details: F1   quit: Esc",
+             P1 move: arrows/WASD  throw: Space/K  potion: E/L | P2 (join: R) TFGH, R, Y | pads: D-pad, South, East | P pause  F1  Esc",
             p.i32_(0x2ac0),
             p.i32_(0x1a1c),
             health,
@@ -1145,7 +1252,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     app
         .insert_resource(Sources { character, clips, clip_bytes, rig, packages, monsters })
-        .insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false })
+        .insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3] })
         .insert_resource(session)
         .insert_resource(presentation)
         .init_resource::<Libraries>()
@@ -1304,8 +1411,23 @@ fn advance_level(
         Ok(())
     })();
     let carry = sim.game.players[0].clone();
+    let coop_carry: Vec<Option<gdl_core::game::record::Record>> = (1..4).map(|k| sim.coop[k - 1].as_ref().map(|_| sim.game.players[k].clone())).collect();
     match loaded.and_then(|_| build_game(&session, idx, Some(&carry))) {
-        Ok((game, mut driver)) => {
+        Ok((mut game, mut driver)) => {
+            // Co-op players keep their records and enter beside player 1.
+            for (k, rec) in coop_carry.iter().enumerate() {
+                let Some(rec) = rec else { continue };
+                game.players[k + 1] = rec.clone();
+                let mut d = driver.clone();
+                let mut at = driver.sim.position;
+                at[0] += 3.0 * (k as f32 + 1.0);
+                let yaw = driver.sim.facing;
+                if game.join_player_copy(k + 1, k + 1, &mut d.sim, at, yaw).is_ok() {
+                    sim.coop[k] = Some(d);
+                } else {
+                    sim.coop[k] = None;
+                }
+            }
             if let Some(a) = audio.as_mut() {
                 a.stop_all();
                 if let Some(stage) = game.sounds.stage.as_ref() {

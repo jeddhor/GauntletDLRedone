@@ -517,6 +517,19 @@ impl Game {
         Ok(())
     }
 
+    /// PLACEHOLDER co-op join: player `p` enters as a copy of player
+    /// `from`'s record (class, stats, inventory) beside it. The original's
+    /// join flow (character select, LoadPlyrData, can_join timers) is not
+    /// ported; not a fidelity result.
+    pub fn join_player_copy(&mut self, p: usize, from: usize, sim: &mut PlayerSim, at: [f32; 3], yaw: f32) -> R<()> {
+        let mut r = self.players[from].clone();
+        r.set_u32(0x0, p as u32);
+        self.players[p] = r;
+        self.place_player_start(p, sim, at, yaw)?;
+        self.set_player_vars();
+        Ok(())
+    }
+
     /// Single-player level start (get_player_pos): PlayerStartPos with its
     /// yaw, y from FloorPos(y, 0.5, position, 1).
     pub fn place_player_start(&mut self, p: usize, sim: &mut PlayerSim, start: [f32; 3], yaw: f32) -> R<()> {

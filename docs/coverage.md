@@ -22,7 +22,7 @@ Content denominators remain provisional and do not indicate reachability.
 | M13 Progression/world logic | Partial | Exit flow (DoExit/do_exit) and destination wave, level start locator, WldBtm, per-level enemy loading, AddExp/ModifyExp ported (gameplay.md); saves, hub/tower, persistence and rules beyond levels G1–G4 pending |
 | M14 Content expansion | Not implemented | Private archive-family catalog exists; reachable content/support matrix pending |
 | M15 Bosses/endgame | Partial | Critter engine (research/critters.md): boss AI, attacks, damage, BOSSGEN, death, coin spew, good-wizard timing, auto exit; grab and fire cones (B6/C5/F2/K5 run headless); the lich (G5) and the chimera with its child heads (A5) complete headless; golems, gargoyles and generals spawn from statues with CritterGolemAI, collision and waypoints. Tower hub: exits gated by progress, campaign mode (EnterTower doors, HideExits); endgame and Sumner speeches pending |
-| M16 Local multiplayer | Not implemented | One-to-four player scenarios and ownership/camera rules pending |
+| M16 Local multiplayer | Partial (interim) | Up to four local players (keyboard set 2, gamepads via bevy_gilrs); joining players copy player 1's record (PLACEHOLDER), averaged camera (HYPOTHESIS); original join/drop, character select, camera and ownership rules pending |
 | M17 Audio/UI completion | Partial | Native audio (AUDATPS2.ROM/VBK/ADS decoders, ~35 cue ports, ALSA mixer; research/audio.md); interim title/pause/HUD/banners; original menus, front end and attention-area music pending |
 | M18 Saves/migrations | Not implemented | Native durable save/recovery contract pending |
 | M19 Enhancements | Deferred | Fidelity prerequisites not accepted |

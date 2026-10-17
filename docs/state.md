@@ -24,9 +24,15 @@ exists; the user will test at the end of M17. Latest source commit: find with
   Clippy clean, release build. Fixture memory checks: LEVL record, lookouts,
   item records. No new PCSX2 encounter comparisons.
 
+- Campaign: `run_play.py --campaign` starts in the Tower hub (exits gated by
+  progress) and loads realm packages per level. Local co-op (interim): up to
+  four players; gamepads through Bevy's bevy_gilrs feature (added 2026-10-17:
+  bevy_gilrs 0.18.1, gilrs 0.11.2, gilrs-core 0.6.8 and their small deps,
+  pinned in Cargo.lock; links the system libudev).
+
 Known interim limits: interim player controller (melee holds still, hit
 reactions interrupt throws), WeapThrowFx placeholder, wave exits/secret realm
-(SaveStage/LoadStage) and co-op (M16) not ported, original menus (M17) not
+(SaveStage/LoadStage) co-op join/camera rules (M16) interim, original menus (M17) not
 started, saves (M18).
 
 ---
