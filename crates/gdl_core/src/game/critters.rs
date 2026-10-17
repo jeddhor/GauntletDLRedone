@@ -121,6 +121,9 @@ impl CritterFile {
 /// A critter file for the level: (name, parsed WAD, model ANIM.PS2 + bytes).
 pub type CritterInput = (String, CritterWad, Option<Arc<(Animations, Vec<u8>)>>);
 
+/// A grabbed player's parent: (critter, tree node, local offset).
+pub type Grab = (usize, Option<usize>, [f32; 3]);
+
 /// (file, type) of a critter type.
 pub type TypeRef = (usize, usize);
 

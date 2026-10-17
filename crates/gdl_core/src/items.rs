@@ -258,6 +258,11 @@ fn rotate(m: &mut [[f32; 3]; 3], angle: f32, a: usize, b: usize) -> R<()> {
     Ok(())
 }
 
+/// WPitchMat3 0x1d5228: each row's (y, z) pair rotated by `angle`.
+pub fn pitch_mat3(m: &mut [[f32; 3]; 3], angle: f32) -> R<()> {
+    rotate(m, angle, 1, 2)
+}
+
 /// NewItem's matrix: identity, then pitch (rows' y/z), yaw (x/z), roll (x/y).
 pub fn item_matrix(rotation: [f32; 3]) -> R<[[f32; 3]; 3]> {
     let mut m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -1040,4 +1045,20 @@ pub fn load_items(
     w.link_triggers();
     let random_calls = w.session.random_item_num.wrapping_sub(start) / 0x1b7;
     Ok(LoadedItems { world: w, outcome, max_level_coins: coins, random_calls })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pitch_mat3_rotates_each_row_y_z() {
+        // Synthetic: a quarter turn maps row 1 (0,1,0) to (0,cos,sin) = (0,0,1).
+        let mut m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        super::pitch_mat3(&mut m, std::f32::consts::FRAC_PI_2).unwrap();
+        assert_eq!(m[0], [1.0, 0.0, 0.0]);
+        assert!(m[1][1].abs() < 1e-6 && (m[1][2] - 1.0).abs() < 1e-6);
+        assert!((m[2][1] + 1.0).abs() < 1e-6 && m[2][2].abs() < 1e-6);
+        let mut n = [[0.0, 1.0, 0.0]; 3];
+        super::pitch_mat3(&mut n, 0.00005).unwrap();
+        assert_eq!(n, [[0.0, 1.0, 0.0]; 3]);
+    }
 }

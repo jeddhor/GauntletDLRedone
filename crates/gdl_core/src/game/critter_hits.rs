@@ -47,7 +47,12 @@ impl Game {
                     self.critter_do_damage_fx(i, d, true, None)?;
                 }
             }
-            4 => return unsupported("CritterFirePlayerCollide (ItemLineCollide)"),
+            4 => {
+                self.critter_fire_player_collide(i, &drec)?;
+                if first {
+                    self.critter_do_damage_fx(i, d, true, None)?;
+                }
+            }
             5 => {
                 if first && 0 < self.safe_rock_num {
                     return unsupported("safe-rock damage FX");
@@ -175,6 +180,45 @@ impl Game {
             n += 1;
         }
         Ok(n)
+    }
+
+    /// CritterFirePlayerCollide 0x19bd98: a cone/beam from the transition
+    /// node along its forward (DAMG yaw +0x14, pitch +0x1c, range +0xc,
+    /// radius +8, minimum +0x10), blocked by items (ItemLineCollide 0.5).
+    fn critter_fire_player_collide(&mut self, i: usize, drec: &[u8]) -> R<()> {
+        let range = CritterFile::f32_pub(drec, 0xc);
+        let r = CritterFile::f32_pub(drec, 8);
+        let minr = CritterFile::f32_pub(drec, 0x10);
+        let mut f = self.crit(i).rec.v3(c::NODE_MATRIX + 0x20);
+        crate::collision::normal_vector_pub(&mut f)?;
+        let f = yaw_vec3(CritterFile::f32_pub(drec, 0x14), f)?;
+        let f = pitch_vec3(CritterFile::f32_pub(drec, 0x1c), f)?;
+        let off = mul_vec_mat3(v3(drec, 0x20), &self.node_rows(i, c::NODE_MATRIX))?;
+        let np = self.crit(i).rec.v3(c::NODE_POS);
+        let start = [add(np[0], off[0])?, add(np[1], off[1])?, add(np[2], off[2])?];
+        let end = [add(mul(range, f[0])?, start[0])?, add(mul(range, f[1])?, start[1])?, add(mul(range, f[2])?, start[2])?];
+        let time = self.globals.time;
+        for p in 0..4 {
+            if self.players[p].i32_(pd::STATE) != 1 || time < self.players[p].f32_(0x8c0) {
+                continue;
+            }
+            let pc = self.players[p].v3(0x70);
+            let dist = crate::vu0::fqdist(sub(pc[0], start[0])?, sub(pc[2], start[2])?)?.0;
+            if dist < minr || range < dist {
+                continue;
+            }
+            let (w, h) = (add(r, self.players[p].f32_(0x828))?, add(r, self.players[p].f32_(0x82c))?);
+            if super::enemies::line_cylinder_collide(pc, start, end, w, h, false)?.is_none() {
+                continue;
+            }
+            if 0 <= self.item_line_collide(0.5, start, pc, Some(pc), true)? {
+                continue;
+            }
+            let mut dir = [sub(end[0], start[0])?, sub(end[1], start[1])?, sub(end[2], start[2])?];
+            crate::item_collision::normal_vector_2d(&mut dir)?;
+            self.critter_damage_player(i, p, drec, 0, dir, true)?;
+        }
+        Ok(())
     }
 
     /// CritterGrabPlayer 0x19c038 with PlayerSetGrabbed 0x136cf8 /
@@ -495,8 +539,13 @@ impl Game {
                 crate::collision::yaw_mat3(&mut mm, yaw)?;
                 nm.matrix = mm;
             }
-            if CritterFile::f32_pub(&drec, 0x1c) != 0.0 {
-                return unsupported("WPitchMat3 on a critter effect");
+            let pitch = CritterFile::f32_pub(&drec, 0x1c);
+            if pitch != 0.0
+                && let Some(nm) = self.effects.nodes[k].as_mut()
+            {
+                let mut mm = nm.matrix;
+                crate::items::pitch_mat3(&mut mm, pitch)?;
+                nm.matrix = mm;
             }
         }
         if extra < 0.0 {

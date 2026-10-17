@@ -118,9 +118,14 @@ use a placeholder 6 s each, HYPOTHESIS) → auto_exit_timer (WizDelayGoldLeft
 600 / WizDelayNoGold 120) → do_auto_exit → auto_exit_flag → players leave for
 TowerWave 0xd00.
 
-Not ported yet: child critters (chimera heads), CritterGolemAI, grab/release
-(PlayerSetGrabbed), fire cones (CritterFirePlayerCollide), safe rocks beyond
-setup, legend items against bosses, PlayerCollideCritters (players walk
+Also ported: grab/release (CritterGrabPlayer, CritterReleasePlayer, the
+grabbed-player pin), fire cones (DoDamage type 4 → CritterFirePlayerCollide
+and the DamageFX effect), and the effect orientation in CritterDoDamageFX:
+YawMat3 0x1d5388 by DAMG +0x14, then WPitchMat3 0x1d5228 by DAMG +0x1c
+(each row's y/z rotated; no-op below |a| 0x38d1b717, sinf first).
+
+Not ported yet: child critters (chimera heads), CritterGolemAI, safe rocks
+beyond setup, legend items against bosses, PlayerCollideCritters (players walk
 through critters), boss camera and health meter (presentation).
 
 Headless check (G5, DEBUG boss_health=10, potions 3): the lich dies, spews
@@ -131,3 +136,8 @@ Headless check (G5, 2000 updates, scripted approach and throws): the lich
 activates when the player is within 39 units, plays START, then READY and
 attacks; throws reduce its health (4500 → 4240) and its stomps/swings reduce
 the player's. Non-boss levels are unchanged (G1/A1/C4 sweep values identical).
+
+Headless check (B6 dragon, 1400 updates, scripted approach and throws): fire
+cones and pitched effects run; the dragon takes 2000 → 1987 and the player
+483 → 129, with no unsupported path. C5/F2/K5 also run their fire cones;
+A5 (chimera) still stops at setup on child critters.
