@@ -3,7 +3,7 @@
 //! ExpireItem 0x1537b0, FlatGenerator 0x1585b0, PlayerAddPowerup 0x12c0e8,
 //! AddItemSub 0x153898, OpenChest 0x1588a8. Player record offsets as in the
 //! original (index ×4 of the decompiler's int view).
-use super::{unsupported, Event, Game, R};
+use super::{unsupported, Event, Game, Unsupported, R};
 use crate::numeric::{add_guarded_rz as add, mul_rz as mul, sub_guarded_rz as sub};
 use crate::vu0::fqdist;
 
@@ -111,7 +111,7 @@ impl Game {
                     pl.set_f32(slot(i), time);
                 }
                 if flags & 8 != 0 {
-                    return unsupported("MaxStopTime (time-stop powerup)");
+                    self.max_stop_time = self.players[player].f32_(slot(i));
                 }
                 return Ok(());
             }
@@ -136,7 +136,7 @@ impl Game {
         pl.set_f32(slot(best) + 8, amount);
         pl.set_u32(slot(best) + 12, flags);
         if flags & 8 != 0 {
-            return unsupported("MaxStopTime (time-stop powerup)");
+            self.max_stop_time = time;
         }
         Ok(())
     }
@@ -364,8 +364,19 @@ impl Game {
             return Ok(());
         }
         let mut d = content as usize;
-        if self.items.definitions.get(d).ok_or_else(|| super::Unsupported("chest content".into()))?.kind() == -1 {
-            return unsupported("random chest content (RandItemIdx in OpenChest)");
+        let mut guard = 0;
+        while self.items.definitions.get(d).ok_or_else(|| super::Unsupported("chest content".into()))?.kind() == -1 {
+            // A random definition: RandItemIdx(chest slot, choice count +4)
+            // picks one of its +8 choices (RandomItemNum += 0x1b7).
+            let n = self.items.definitions[d].subtype() as u32;
+            let k = self.items.rand_item_idx(chest, n) as usize;
+            content = self.items.definitions[d].i16_(8 + 2 * k);
+            self.items.records[chest].set_i16(0xf0, content);
+            d = usize::try_from(content).map_err(|_| super::Unsupported("random chest choice".into()))?;
+            guard += 1;
+            if 64 < guard {
+                return unsupported("random chest content chain");
+            }
         }
         let dk = self.items.definitions[d].kind();
         let ds = self.items.definitions[d].subtype();
@@ -568,14 +579,135 @@ impl Game {
                 self.players[player].set_u16(p::STATUS_934, 1);
                 expire = true;
             }
-            10 => return unsupported("rune pickup (PlayerHasRune/PlayerGiveRune)"),
-            0xd => return unsupported("legend item pickup"),
-            0xe => return unsupported("scroll message item"),
-            0xf => return unsupported("crystal pickup"),
-            0x10 => return unsupported("gargoyle item pickup"),
+            10 => {
+                let rune = def.i16_(0x40) as i32;
+                if self.player_has_rune(idx as i32, rune) {
+                    self.help(0x5a, idx);
+                } else {
+                    for k in 0..4 {
+                        self.player_give_rune(k, rune);
+                    }
+                    self.audio("AudioPickupRune", Some(idx), 0);
+                    self.got_it(idx, def.subtype(), amount);
+                    // RuneDispTimer = 300: HUD presentation.
+                    self.start_gem_fx(r.v3(0x40), 0x400)?;
+                    self.items.rune_item = None;
+                    let mut bits = 0u32;
+                    for k in 0..4 {
+                        if self.players[k].i32_(0xfc) != 0 {
+                            bits |= u32::from(self.players[k].u16_(0x1a26));
+                        }
+                    }
+                    let n = (0..0xd).filter(|b| bits & (1 << b) != 0).count() as i32;
+                    self.audio("AudioNumRunesFound", None, n);
+                    expire = true;
+                }
+            }
+            0xd => {
+                self.help(amount + 0x71, idx);
+                self.player_give_class_bit(idx, 0xcf4, amount);
+                self.audio_pickup(idx);
+                self.got_it(idx, def.subtype(), amount);
+                expire = true;
+            }
+            0xe => {
+                self.events.push(Event::ScrollMessage { player_mask: 1 << (idx & 0x1f), text: amount - 1 });
+                expire = true;
+            }
+            0xf => {
+                self.start_gem_fx(r.v3(0x40), amount)?;
+                self.player_give_counted(0xd0a, 0x1d96, amount, false)?;
+                self.audio_pickup(idx);
+                self.got_it(idx, def.subtype(), amount);
+                expire = true;
+            }
+            0x10 => {
+                self.player_give_counted(0xd04, 0x1d90, amount, true)?;
+                self.audio_pickup(idx);
+                self.got_it(idx, def.subtype(), amount);
+                self.start_gem_fx(r.v3(0x40), 0x100)?;
+                expire = true;
+            }
             _ => {}
         }
         self.finish_grab(slot, expire, df)
+    }
+
+    /// PlayerHasRune 0x1769a0(player or -1, rune): the rune bit among the
+    /// active players' +0x1a26 and class-record (+0xcf2 + class × 0xb4) words.
+    pub fn player_has_rune(&self, player: i32, rune: i32) -> bool {
+        let range = if player < 0 { 0..4 } else { player as usize..player as usize + 1 };
+        let mut bits = 0u32;
+        for k in range {
+            if self.players[k].i32_(0xfc) != 0 {
+                let cls = self.players[k].u32_(p::CHARACTER) as usize;
+                bits |= u32::from(self.players[k].u16_(0xcf2 + cls * 0xb4) | self.players[k].u16_(0x1a26));
+            }
+        }
+        let want = if (0..0xe).contains(&rune) { 1u32 << rune } else { rune as u32 };
+        bits & want & 0xffff == want & 0xffff
+    }
+
+    /// PlayerGiveRune 0x176a48 for one player (state 1 or 4): +0x1a26 bit.
+    fn player_give_rune(&mut self, k: usize, rune: i32) {
+        let st = self.players[k].i32_(0xfc);
+        if st == 1 || st == 4 {
+            let v = self.players[k].u16_(0x1a26) | (1u32 << (rune & 0x1f)) as u16;
+            self.players[k].set_u16(0x1a26, v);
+        }
+    }
+
+    /// PlayerGiveLegendItem 0x176d88: a bit in the class record word at `o`.
+    fn player_give_class_bit(&mut self, k: usize, o: usize, bit: i32) {
+        let st = self.players[k].i32_(0xfc);
+        if st == 1 || st == 4 {
+            let at = o + 0xb4 * self.players[k].u32_(p::CHARACTER) as usize;
+            let v = self.players[k].u16_(at) | (1u32 << (bit & 0x1f)) as u16;
+            self.players[k].set_u16(at, v);
+        }
+    }
+
+    /// PlayerGiveCrystal 0x176e90 / PlayerGiveGargItem 0x177158 for every
+    /// active player: the class-record count at `o` + 2n up to MAX_CRYSTALS
+    /// / max_garg_items (the tower copy at `tower` too in CurWorld 0xd), and
+    /// the +0x900 display id (n, or n + 0x100 for gargoyle items) for 3 s.
+    fn player_give_counted(&mut self, o: usize, tower: usize, n: i32, garg: bool) -> R<()> {
+        let table = if garg { &self.items.tables.max_garg_items } else { &self.items.tables.max_crystals };
+        let max = *usize::try_from(n).ok().and_then(|k| table.get(k)).ok_or_else(|| Unsupported("crystal/garg item index".into()))?;
+        for k in 0..4 {
+            let st = self.players[k].i32_(0xfc);
+            if st != 1 && st != 4 {
+                continue;
+            }
+            let cls = 0xb4 * self.players[k].u32_(p::CHARACTER) as usize;
+            let at = o + cls + 2 * n as usize;
+            let c = i32::from(self.players[k].i16_(at));
+            if 0 <= c && c < max {
+                self.players[k].set_i16(at, c as i16 + 1);
+                if self.globals.cur_world == 0xd {
+                    let t = tower + cls + 2 * n as usize;
+                    let v = self.players[k].i16_(t) + 1;
+                    self.players[k].set_i16(t, v);
+                }
+            }
+            self.players[k].set_i32(0x900, if garg { n + 0x100 } else { n });
+            self.players[k].set_f32(0x904, 3.0);
+        }
+        Ok(())
+    }
+
+    /// StartGemFX 0x17f518(position, n): effect 0x4f (runes, 0x400), 0x4e
+    /// (gargoyle items, 0x100) or 0x45 + n (crystals).
+    fn start_gem_fx(&mut self, position: [f32; 3], n: i32) -> R<()> {
+        let header = match n {
+            0x400 => 0x4f,
+            0x100 => 0x4e,
+            n => usize::try_from(n + 0x45).map_err(|_| Unsupported("gem effect".into()))?,
+        };
+        let Some(h) = self.effects.tables.headers.get(header).copied().flatten() else { return Ok(()) };
+        let i = self.start_fx_tree(0.0, super::effects::Visual::Header(header), h.frames, h.timing, Some(position), 0)?;
+        self.fx_mut(i).set_u32(0x60, header as u32);
+        Ok(())
     }
 
     fn finish_grab(&mut self, slot: usize, expire: bool, df: i8) -> R<()> {

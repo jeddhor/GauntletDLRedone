@@ -133,6 +133,17 @@ wave exits (SaveStage), camera logic, save/load, co-op.
 - Statue flags for SetItem: golem/death statue anims are enemy_anim[0x1d] /
   [0x1e] (0x233598 +0x74/+0x78: the enemy package of that type is loaded);
   critter_3/7_loaded are CritterETypes[3/7][0] (registered before items).
+- Ported for the level sweep: SuicideExplosion outside worlds 7/0xb (effect
+  0x16 + 0x1c flame; every explosion also starts 0x50 when that header
+  exists, StartFXMissile returning -1 otherwise), rune / legend item /
+  scroll / crystal / gargoyle-item pickups (PlayerHasRune, PlayerGiveRune,
+  PlayerGiveLegendItem, PlayerGiveCrystal, PlayerGiveGargItem, StartGemFX;
+  ScrollMessageBox is a UI event), random chest content (RandItemIdx),
+  shot switch chains (DamageItem kind 5 subtype 0x1f), move_logic03 (flee,
+  get_face_ang2) and move_logic26, CurWorld 10 generator sounds 0x2c0024 /
+  0x2c0025, Death's touch (do_enemy_attack type 0x1e, AddExp kind -2 =
+  amount × LevelDeltaExp × 0.01, StartDeathFX) and dissolve, the time-stop
+  and trigger-camera enemy paths of do_enemies, MaxStopTime.
 - Camera (HYPOTHESIS, do_camera not ported): the simulation camera follows
   player 0's rest pose after every update; it gates placed-enemy spawns and
   item activation. It was previously fixed at the level start, so placed

@@ -125,6 +125,9 @@ pub struct Globals {
 pub enum Event {
     /// NewHelp(id, player): help/hint text; player usize::MAX = −1 (all).
     Help { id: i32, player: usize },
+    /// ScrollMessageBox(player mask, -1, text, -1): the blocking scroll
+    /// message UI (presentation; the original pauses the game while shown).
+    ScrollMessage { player_mask: u32, text: i32 },
     /// add_got_it(player, kind, amount): HUD pickup notice.
     GotIt { player: usize, kind: i32, amount: i32 },
     /// Audio* calls, by original function name (cues not yet transcribed).
@@ -169,12 +172,17 @@ pub struct Game {
     /// no_enemy_slot 0x23c74c, StopTime, BossIsDying, SuicideBomberIndex.
     pub no_enemy_slot: bool,
     pub stop_time: i32,
+    /// MaxStopTime 0x22c4f8 (time-stop powerup duration) and OldEnemyShrink.
+    pub max_stop_time: f32,
+    pub old_enemy_shrink: f32,
     pub boss_is_dying: i32,
     pub suicide_bomber_index: i32,
     /// enemy_wall_colobj after EnemyWallCollide.
     pub enemy_wall_hit: Option<usize>,
     /// did_action (set when a player damages an enemy).
     pub did_action: bool,
+    /// death_touch: set while Death drains a player (do_enemy_attack).
+    pub death_touch: bool,
     /// FWRDVAL 0x2c15b8: per-type step this update (do_enemies).
     pub fwrdval: Vec<f32>,
     /// angoff07 0x22d910 (8 floats) and e_actpri 0x23f950 (33 ints).

@@ -458,6 +458,17 @@ impl Game {
         get_yaw(self.players[t as usize].v3(0x50), rec.v3(e::POSITION))
     }
 
+    /// get_face_ang2 0x13c3a0: toward the +0x33c player (flee logic), else
+    /// the stored heading.
+    fn get_face_ang2(&self, i: usize, toward: bool) -> R<f32> {
+        let rec = &self.enemies[i];
+        let t = rec.i32_(0x33c);
+        if t < 0 || !toward {
+            return Ok(rec.f32_(0x260));
+        }
+        get_yaw(self.players[t as usize].v3(0x50), rec.v3(e::POSITION))
+    }
+
     /// set_turn_dir: 1 or -1, whichever side of ±30° is nearer the target.
     fn set_turn_dir(&self, i: usize) -> R<i32> {
         let rec = &self.enemies[i];
@@ -1084,6 +1095,49 @@ impl Game {
         Ok(())
     }
 
+    /// move_logic03 0x141b40 (flee): away from the +0x33c player (+ offset
+    /// steps after contacts), the move vector damped by 0.9; a visible
+    /// target returns to logic 0, no flee player to wander 5/6.
+    fn move_logic03(&mut self, i: usize) -> R<()> {
+        if self.enemies[i].i16_(0x2f2) != 0 && 0 <= self.enemies[i].i16_(0x288) {
+            self.enemies[i].set_i16(e::LOGIC, 0);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i32_(0x33c) < 0 {
+            self.enemies[i].set_i16(e::LOGIC, (i as i16 & 1) + 5);
+            return self.do_ai(i);
+        }
+        let contact_before = self.enemies[i].i32_(0x36c);
+        let mut off = 0.0f32;
+        if 0 < contact_before {
+            let k = self.enemies[i].i32_(0x338);
+            if k < 8 {
+                off = *usize::try_from(k).ok().and_then(|k| self.offset_step5.get(k)).ok_or_else(|| super::Unsupported("offset_step5 index".into()))?;
+                self.enemies[i].set_i32(0x338, k + 1);
+                self.enemies[i].set_i32(0x36c, 0);
+            }
+        }
+        let a = wrap(add(add(self.get_face_ang2(i, true)?, PI)?, off)?)?;
+        self.enemies[i].set_f32(0x260, a);
+        self.set_enemy_trans(1.0, a, i)?;
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        for o in [0x224, 0x228, 0x22c] {
+            let v = mul(self.ef(i, o), f32::from_bits(0x3f66_6666))?;
+            self.enemies[i].set_f32(o, v);
+        }
+        self.do_enemy_move(i)?;
+        if self.enemies[i].i16_(0x294) != 0 {
+            self.enemies[i].set_i32(0x36c, 0);
+        }
+        if contact_before < 1 && 0 < self.enemies[i].i32_(0x36c) {
+            let h = self.ef(i, 0x260);
+            self.enemies[i].set_f32(0x268, h);
+            self.enemies[i].set_i32(0x338, 0);
+        }
+        Ok(())
+    }
+
     /// move_logic26 0x13d598: keep away from the target player (within ±10
     /// in y): back off (action 0x16 away, + offset_step5 steps after
     /// contacts) once closer than half of +0x314, stop at 0.8 × +0x314, else
@@ -1211,6 +1265,7 @@ impl Game {
         match self.enemies[i].i16_(e::LOGIC) {
             0 => self.move_logic00(i)?,
             2 => self.move_logic_diag(i, true, 4)?,
+            3 => self.move_logic03(i)?,
             4 => self.move_logic_diag(i, false, 2)?,
             5 => self.move_logic_wander(i, -HALF_PI)?,
             6 => self.move_logic_wander(i, HALF_PI)?,
@@ -1748,11 +1803,71 @@ impl Game {
         Ok(blocked)
     }
 
+    /// do_enemy_attack's Death (0x1e) branch: every 3 updates drain the
+    /// touched player (health -(+0xd0), or one level-delta of experience for
+    /// level 2) from the +0x214 pool; Death leaves (enemy_dies) when it is
+    /// spent. StartDeathFX keeps its effect in +0x1f4.
+    fn death_touch(&mut self, i: usize) -> R<()> {
+        if 0 < self.enemies[i].i32_(0x220) {
+            return Ok(());
+        }
+        let target = self.enemies[i].i32_(0x298);
+        let Ok(p) = usize::try_from(target) else { return Ok(()) };
+        if self.players[p].u32_(0x134) & 0x8_0000 != 0 {
+            return Ok(());
+        }
+        let wait = self.enemies[i].i16_(0x2e8);
+        if 0 < wait {
+            self.enemies[i].set_i16(0x2e8, wait - 1);
+            return Ok(());
+        }
+        self.request_enemy_action(i, 0xc);
+        let t = self.enemies[i].i32_(0x21c) - self.globals.vb_elapsed;
+        self.enemies[i].set_i32(0x21c, t);
+        if 0 < t {
+            return Ok(());
+        }
+        self.enemies[i].set_i32(0x21c, t + 3);
+        let level2 = self.enemies[i].i16_(0x21a) == 2;
+        let hit = if level2 {
+            self.add_exp(p, -1, -2)?;
+            0
+        } else {
+            let d = -self.ef(i, 0xd0);
+            self.damage_player(d, p, 1, 0x1000, None)?
+        };
+        self.help(if level2 { 0x80 } else { 0x82 }, p);
+        self.did_action = true;
+        let n = self.enemies[i].i16_(0x2e2).wrapping_add(1);
+        self.enemies[i].set_i16(0x2e2, n);
+        if hit == 0 {
+            if self.enemies[i].i32_(0x1f4) < 0 {
+                let fx = self.start_death_fx(i32::from(self.enemies[i].i16_(0x21a)))?;
+                self.enemies[i].set_i32(0x1f4, fx);
+            }
+        } else {
+            self.enemies[i].set_f32(0x214, 0.0);
+        }
+        let left = sub(self.ef(i, 0x214), self.ef(i, 0xd0))?;
+        self.enemies[i].set_f32(0x214, left);
+        let at = self.enemies[i].v3(0x40);
+        if 0.0 <= left {
+            // do_death_sound: the 0x66 loop panned at Death (audio).
+            self.audio("do_death_sound", Some(p), 0);
+            self.death_touch = true;
+        } else {
+            self.enemies[i].set_i32(0x334, 1);
+            self.sfx(0x68, Some(at), 0xe0, 0xc);
+            self.enemy_dies(i, target as i16)?;
+        }
+        Ok(())
+    }
+
     /// do_enemy_attack(enemy): queue an attack on the touched player.
     fn do_enemy_attack(&mut self, i: usize) -> R<()> {
         let t = self.enemies[i].i32_(e::TYPE);
         if t == 0x1e {
-            return unsupported("Death touch (do_enemy_attack type 0x1e)");
+            return self.death_touch(i);
         }
         if t == 0x1f {
             return unsupported("It tag (do_enemy_attack type 0x1f)");
@@ -2269,19 +2384,32 @@ impl Game {
                     if self.enemies[k].i32_(e::TYPE) != self.globals.boss_type {
                         self.enemy_update_offsets(k)?;
                         if self.stop_time != 0 {
-                            return unsupported("time stop enemy path");
-                        }
-                        if self.globals.trig_cam_active != 0 {
-                            return unsupported("trigger-camera enemy path");
-                        }
-                        self.find_closest_player(k)?;
-                        self.enemy_attack_control(k)?;
-                        self.enemy_knockback_control(k)?;
-                        if !self.enemy_ai_control(k)? {
+                            // StopTime: the animation start (+0xa4) moves with
+                            // time, freezing the pose; knockback and collision run.
+                            let st = add(self.ef(k, 0xa4), self.globals.spf)?;
+                            self.enemies[k].set_f32(0xa4, st);
+                            if let Some(Some(an)) = self.enemy_anims.get_mut(k) {
+                                an.clock.start_time = add(an.clock.start_time, self.globals.spf)?;
+                            }
+                            self.enemy_knockback_control(k)?;
+                            self.do_enemy_collide(0.0, k)?;
+                        } else if self.globals.trig_cam_active != 0 {
+                            // Trigger camera: action 0 played out, no AI.
+                            self.enemies[k].set_u32(0xe4, 0);
                             let a = self.do_enemy_action(k)?;
                             self.enemies[k].set_u32(0xe0, a);
-                            let v = if a != self.enemies[k].u32_(0xe4) { 0 } else { -1 };
-                            self.enemies[k].set_i32(0x3a4, v);
+                            self.do_enemy_collide(0.0, k)?;
+                            self.enemy_knockback_control(k)?;
+                        } else {
+                            self.find_closest_player(k)?;
+                            self.enemy_attack_control(k)?;
+                            self.enemy_knockback_control(k)?;
+                            if !self.enemy_ai_control(k)? {
+                                let a = self.do_enemy_action(k)?;
+                                self.enemies[k].set_u32(0xe0, a);
+                                let v = if a != self.enemies[k].u32_(0xe4) { 0 } else { -1 };
+                                self.enemies[k].set_i32(0x3a4, v);
+                            }
                         }
                     }
                 }
@@ -2290,7 +2418,29 @@ impl Game {
                     if self.enemies[k].i32_(e::TYPE) == self.globals.boss_type {
                         // boss shadow follows; presentation only
                     } else if self.enemies[k].i32_(e::TYPE) == 0x1e {
-                        return unsupported("Death dissolve");
+                        // Death leaving: its touch effect is deleted, it rises
+                        // (y += 10 spf) while the +0x39c alpha counts to 0xff,
+                        // then help 0x81/0x83 if it drained someone and kill.
+                        let alpha = self.enemies[k].i32_(0x39c);
+                        if let Ok(fx) = usize::try_from(self.enemies[k].i32_(0x1f4)) {
+                            self.delete_effect_pub(fx);
+                            self.enemies[k].set_i32(0x1f4, -1);
+                        }
+                        if alpha < 0xff {
+                            if let Some(a) = self.enemy_alpha.get_mut(k) {
+                                *a = alpha;
+                            }
+                            self.enemies[k].set_i32(0x39c, alpha + 4 * self.globals.vb_elapsed);
+                            let y = add(mul(self.globals.spf, 10.0)?, self.ef(k, 0x44))?;
+                            self.enemies[k].set_f32(0x44, y);
+                        } else {
+                            if self.enemies[k].i32_(0x334) != 0 {
+                                let h = if self.enemies[k].i16_(0x21a) == 2 { 0x81 } else { 0x83 };
+                                let p = self.enemies[k].i32_(0x298).max(0) as usize;
+                                self.help(h, p);
+                            }
+                            self.kill_enemy(k)?;
+                        }
                     } else {
                         self.enemy_knockback_control(k)?;
                         self.enemies[k].set_u32(0xe4, 0x20);

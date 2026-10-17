@@ -24,9 +24,22 @@ impl Game {
     /// AddExp(player, amount, kind): kind 1 = melee attack (charges turbo),
     /// 0 = weapon. Returns ModifyExp's level change (1 up, −1 down, 0).
     pub fn add_exp(&mut self, p: usize, amount: i32, kind: i32) -> R<i32> {
-        if kind == -2 {
-            return super::unsupported("AddExp kind -2 (LevelDeltaExp share)");
-        }
+        let level = self.players[p].i32_(0x2ac0);
+        let n = if kind == -2 {
+            // Level-delta share (Death's drain): amount × (int)(LevelDeltaExp × 0.01).
+            if amount < 0 && level == 99 {
+                return Ok(0);
+            }
+            let d = if level < 0x3d { (level - 1) * 0x3c + 1000 } else { 0x11f8 };
+            amount.wrapping_mul(mul(d as f32, f32::from_bits(0x3c23_d70a))? as i32)
+        } else {
+            self.scaled_exp(p, amount)?
+        };
+        self.add_exp_sub(p, n, kind)
+    }
+
+    /// AddExp's level_data +0x9c/+0xa0 scaling (and the AuxLevels ×5).
+    fn scaled_exp(&self, p: usize, amount: i32) -> R<i32> {
         let target = self.level_f32(0x9c);
         let mut mult = self.level_f32(0xa0);
         let level = self.players[p].i32_(0x2ac0) as f32;
@@ -38,6 +51,10 @@ impl Game {
         if self.globals.aux_levels & 0x10 != 0 {
             n = mul(n as f32, 5.0)? as i32;
         }
+        Ok(n)
+    }
+
+    fn add_exp_sub(&mut self, p: usize, n: i32, kind: i32) -> R<i32> {
         let changed = self.modify_exp(p, n)?;
         if kind == 1 {
             let r = &mut self.players[p];

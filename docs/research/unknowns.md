@@ -29,7 +29,7 @@ replaced by a plausible gameplay rule or generated asset.
 | Native saves/campaign/co-op/audio | Not implemented | Follow dependencies M10–M18; no release-scope claims yet |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 | Loaded MBOX object tables | SetSafeRock/ItemFindMBObjectL1 search every loaded model table; native uses the labels of all runner packages (HYPOTHESIS) | Trace the level's package load list (LoadLevel) and model_count |
-| SetPlayerVars side writes | ActivePlayerMask ported; 0x220158, 0x22015c/0x2201a4 scale and player +0x93e zeroing not ported; ProcessItems' 0x220170 → 0x220160 store not ported | Identify consumers before porting |
+| SetPlayerVars side writes | StopTime, EnemyShrink, ActivePlayerMask, +0x93e and SetNumPlayers ported; NumVirtualPlayers' 0x20f954 override and NumLivePlayers not captured; ProcessItems' 0x220170 → 0x220160 store not ported | Capture 0x20f954 |
 | Good-wizard speech timing | Phases wait 6 s each (CaptionText/AudioStillPlaying not simulated) | Measure the sequence in a reference boss kill |
 | CritterDamagedPlayer anger value | f12 after damage_player is undefined; effect damage used | Read the value in a reference capture |
 | Rotated node composition | Rotators compose rotated nodes as rows × parent rows (unverified) | Transcribe GetWorldMat and compare a rotator level |

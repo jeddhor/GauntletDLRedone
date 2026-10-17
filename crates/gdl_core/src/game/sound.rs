@@ -568,20 +568,16 @@ impl Game {
         self.sfx(id, Some(pos), vol, 0x32);
     }
     pub fn audio_generator_dies(&mut self, pos: V3, ty: i32) -> R<()> {
-        if self.globals.cur_world == 10 && ty == 0x18 {
-            return super::unsupported("AudioGeneratorDies world 10 special");
-        }
-        let id = self.world_tab(&self.sounds.gen_die, 1, 0);
-        if self.globals.boss_type < 0 {
+        // CurWorld 10 type-0x18 generators use sound 0x2c0025 (lui/ori literal).
+        let id = if self.globals.cur_world == 10 && ty == 0x18 { 0x2c_0025 } else { self.world_tab(&self.sounds.gen_die, 1, 0) };
+        if self.globals.boss_type < 0 && 0 <= id {
             self.sfx3(id, pos, 0x7f, 0x51)?;
         }
         Ok(())
     }
     pub fn audio_generator_damaged(&mut self, pos: V3, ty: i32) -> R<()> {
-        if self.globals.cur_world == 10 && ty == 0x18 {
-            return super::unsupported("AudioGeneratorDamaged world 10 special");
-        }
-        let id = self.world_tab(&self.sounds.gen_hit, 1, 0);
+        // CurWorld 10 type-0x18 generators use sound 0x2c0024 (lui/ori literal).
+        let id = if self.globals.cur_world == 10 && ty == 0x18 { 0x2c_0024 } else { self.world_tab(&self.sounds.gen_hit, 1, 0) };
         self.sfx3(id, pos, 0xb4, 0x5b)
     }
 

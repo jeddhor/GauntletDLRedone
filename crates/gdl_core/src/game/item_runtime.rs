@@ -193,13 +193,39 @@ impl Game {
     /// +0xfc state is 1 or 5. Its other writes (0x220158, 0x22015c/0x2201a4,
     /// player +0x93e) are not ported (unknowns.md).
     pub(crate) fn set_player_vars(&mut self) {
+        // SetPlayerVars 0x125ef8: StopTime (a time-stop powerup, +0x138 bit
+        // 8), EnemyShrink (0.667 per shrink powerup, bit 0x200, outside boss
+        // levels), ActivePlayerMask, +0x93e cleared, then SetNumPlayers.
+        // NumVirtualPlayers = 0x20f954 when set (not captured: kept as is).
+        self.stop_time = 0;
+        self.old_enemy_shrink = self.globals.enemy_shrink;
+        self.globals.enemy_shrink = 1.0;
         self.active_player_mask = 0;
-        for (k, pl) in self.players.iter().enumerate().take(4) {
-            let st = pl.i32_(0xfc);
+        let (mut total, mut in_game) = (0, 0);
+        for k in 0..4 {
+            let st = self.players[k].i32_(0xfc);
+            if st != 0 {
+                total += 1;
+                if 1 < (st as u32).wrapping_sub(2) {
+                    in_game += 1;
+                }
+            }
             if st == 1 || st == 5 {
                 self.active_player_mask |= 1 << k;
             }
+            if st == 1 {
+                let f = self.players[k].u32_(0x138);
+                if f & 8 != 0 {
+                    self.stop_time = 1;
+                }
+                if self.globals.boss_type < 0 && f & 0x200 != 0 {
+                    self.globals.enemy_shrink = crate::numeric::mul_rz(self.globals.enemy_shrink, f32::from_bits(0x3f2a_c083)).unwrap_or(self.globals.enemy_shrink);
+                }
+            }
+            self.players[k].set_u16(0x93e, 0);
         }
+        self.globals.num_active_players = total;
+        self.globals.num_in_game_players = in_game.clamp(0, 4);
     }
 
     /// Rotator (type 12) case of ProcessItems 0x1566c0: the bound object

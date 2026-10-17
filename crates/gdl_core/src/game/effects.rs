@@ -1231,7 +1231,20 @@ impl Game {
             }
             5 => {
                 if flags & 0x800 == 0 && st == 0x1f {
-                    return unsupported("DamageItem kind 5 chain");
+                    // Shot switches: +0xe2 |= 0xf along the +0xf8 chain
+                    // (native slot + 1).
+                    result = 1;
+                    let mut k = Some(slot);
+                    let mut guard = 0;
+                    while let Some(s) = k {
+                        let v = self.items.records[s].u8_(0xe2) | 0xf;
+                        self.items.records[s].set_u8(0xe2, v);
+                        k = self.items.records[s].u32_(0xf8).checked_sub(1).map(|v| v as usize);
+                        guard += 1;
+                        if self.items.records.len() < guard {
+                            return unsupported("DamageItem kind 5 chain cycle");
+                        }
+                    }
                 }
             }
             10 if 0 <= result => {
@@ -1482,30 +1495,61 @@ impl Game {
         Ok(true)
     }
 
-    /// SuicideExplosion 0x17e938(damage, position) for CurWorld 7/0xb:
-    /// POISONEXP1 (0x19) blast, radius 7.5, flags 0x2b, damage flags 0x800.
+    /// SuicideExplosion 0x17e938(damage, position): CurWorld 7/0xb a
+    /// POISONEXP1 (0x19) blast (radius 7.5, damage flags 0x800), otherwise
+    /// effect 0x16 (radius 6, flags 0x421) plus flame 0x1c; then 0x50.
     pub fn suicide_explosion(&mut self, damage: f32, position: V3) -> R<()> {
-        if self.globals.cur_world != 7 && self.globals.cur_world != 0xb {
-            return unsupported("SuicideExplosion outside worlds 7/0xb");
+        // SuicideExplosion 0x17e938. ScaleFX/SfxSetMorph/SfxSetLight are
+        // presentation; every effect still takes a slot.
+        if self.globals.cur_world == 7 || self.globals.cur_world == 0xb {
+            let Some(i) = self.start_fx_missile(0.0, 0x19, position, [0.0; 3], 0x2b, 0, 4, 0)? else {
+                return unsupported("SuicideExplosion without POISONEXP1 (the original writes through effect -1)");
+            };
+            self.sfx_set_damage(i, damage, 7.5, 0.0, 0x800, 0);
+            if let Some(n) = self.effects.nodes[i].as_mut() {
+                n.position[1] = sub(n.position[1], 1.0)?;
+            }
+        } else {
+            let Some(h) = self.effects.tables.headers.get(0x16).copied().flatten() else { return Ok(()) };
+            let i = self.start_fx_tree(0.0, Visual::Header(0x16), h.frames, h.timing, Some(position), 0x29)?;
+            self.fx_mut(i).set_u32(fx::KIND, 0x16);
+            self.fx_mut(i).set_u32(fx::HIT_SOUND, 4);
+            self.sfx_set_damage(i, damage, 6.0, 0.0, 0x421, 0);
+            self.start_fx_missile(0.0, 0x1c, position, [0.0; 3], 0, 0, 0, 0)?;
         }
-        let h = self.effects.tables.headers.get(0x19).copied().flatten().ok_or_else(|| Unsupported("POISONEXP1 header".into()))?;
-        let i = self.start_fx_tree(0.0, Visual::Header(0x19), h.frames, h.timing, Some(position), 0x2b)?;
-        let r = self.fx_mut(i);
-        r.set_u32(fx::KIND, 0x19);
-        r.set_f32(fx::GRAVITY, 0.0);
-        r.set_f32(fx::RADIUS, 0.0);
-        r.set_i16(fx::HIT_FX, 0);
-        r.set_u32(fx::HIT_SOUND, 4);
-        r.set_u32(fx::WALL_SOUND, 0);
-        r.set_f32(fx::DAMAGE, damage);
-        r.set_u32(fx::DAMAGE_FLAGS, 0x800);
-        r.set_f32(fx::BLAST, 7.5);
-        r.set_f32(fx::FADE, 0.0);
-        r.set_i16(fx::OWNER, 0);
-        if let Some(n) = self.effects.nodes[i].as_mut() {
-            n.position[1] = sub(n.position[1], 1.0)?;
+        if let Some(k) = self.start_fx_missile(0.0, 0x50, position, [0.0; 3], 0, 0, 0, 0)? {
+            self.fx_mut(k).set_f32(fx::FADE_IN, 0.5);
         }
         Ok(())
+    }
+
+    /// StartFXMissile 0x17e278(time, header, position, velocity, flags, hit
+    /// fx, hit sound, wall sound): StartFXSub then SfxSetPhysics(0, 0, …);
+    /// None (-1) when the header was never initialised.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_fx_missile(&mut self, time: f32, header: usize, position: V3, vel: V3, flags: u32, hit_fx: i16, hit_sound: u32, wall_sound: u32) -> R<Option<usize>> {
+        let Some(h) = self.effects.tables.headers.get(header).copied().flatten() else { return Ok(None) };
+        let i = self.start_fx_tree(time, Visual::Header(header), h.frames, h.timing, Some(position), flags)?;
+        let r = self.fx_mut(i);
+        r.set_u32(fx::KIND, header as u32);
+        r.set_f32(fx::GRAVITY, 0.0);
+        r.set_f32(fx::RADIUS, 0.0);
+        r.set_v3(fx::VELOCITY, vel);
+        r.set_i16(fx::HIT_FX, hit_fx);
+        r.set_u32(fx::HIT_SOUND, hit_sound);
+        r.set_u32(fx::WALL_SOUND, wall_sound);
+        Ok(Some(i))
+    }
+
+    /// SfxSetDamage 0x17dfb0(damage, blast, fade, effect, flags, owner).
+    pub(crate) fn sfx_set_damage(&mut self, i: usize, damage: f32, blast: f32, fade: f32, flags: u32, owner: i16) {
+        let flags = if 4 < flags & 0xf { flags & 0xffff_fff3 } else { flags };
+        let r = self.fx_mut(i);
+        r.set_f32(fx::DAMAGE, damage);
+        r.set_u32(fx::DAMAGE_FLAGS, flags);
+        r.set_f32(fx::BLAST, blast);
+        r.set_f32(fx::FADE, fade);
+        r.set_i16(fx::OWNER, owner);
     }
 
     /// StartExplosion 0x17e590(damage, matrix translation, kind) for the
@@ -1591,6 +1635,20 @@ impl Game {
         r.set_f32(fx::RADIUS, 1.0);
         // +0xec: the carried item (native slot + 1).
         r.set_u32(0xec, item as u32 + 1);
+        Ok(i as i32)
+    }
+
+    /// StartDeathFX 0x17f7d0(parent, level, flags): effect 0x60 (level 2)
+    /// or 0x5f for 10 s, parented to Death's node
+    /// (presentation), linger until ATime + 0.5; -1 without the header.
+    pub(crate) fn start_death_fx(&mut self, level: i32) -> R<i32> {
+        let header = if level == 2 { 0x60 } else { 0x5f };
+        let Some(h) = self.effects.tables.headers.get(header).copied().flatten() else { return Ok(-1) };
+        let i = self.start_fx_tree(10.0, Visual::Header(header), h.frames, h.timing, None, 0)?;
+        let at = add(self.globals.atime, 0.5)?;
+        let r = self.fx_mut(i);
+        r.set_u32(fx::KIND, header as u32);
+        r.set_f32(fx::LINGER, at);
         Ok(i as i32)
     }
 

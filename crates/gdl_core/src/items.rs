@@ -136,6 +136,9 @@ pub struct ItemTables {
     pub generator_name_6: [u8; 4],
     /// rand_rot.216 EE 0x234380 (static local, 8 floats): rock spin rates.
     pub rand_rot_216: [f32; 8],
+    /// MAX_CRYSTALS 0x23f420 (9) and max_garg_items 0x23f598 (3).
+    pub max_crystals: Vec<i32>,
+    pub max_garg_items: Vec<i32>,
 }
 
 fn words(bytes: &[u8]) -> Vec<i32> {
@@ -181,6 +184,8 @@ impl ItemTables {
                 let b = elf.read(0x23_4380, 32)?;
                 std::array::from_fn(|k| f32::from_le_bytes(b[4 * k..4 * k + 4].try_into().unwrap()))
             },
+            max_crystals: words(elf.object("MAX_CRYSTALS")?),
+            max_garg_items: words(elf.object("max_garg_items")?),
         })
     }
 }
@@ -409,7 +414,7 @@ impl ItemWorld {
     }
 
     /// RandItemIdx 0x14fa10 with advance = 1.
-    fn rand_item_idx(&mut self, index: usize, count: u32) -> u32 {
+    pub(crate) fn rand_item_idx(&mut self, index: usize, count: u32) -> u32 {
         let r = if count == 0 { 0 } else { ((self.session.random_item_num >> 5).wrapping_add(index as u32)) % count };
         self.session.random_item_num = self.session.random_item_num.wrapping_add(0x1b7);
         r
