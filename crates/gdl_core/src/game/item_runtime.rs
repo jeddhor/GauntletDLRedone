@@ -202,6 +202,53 @@ impl Game {
         }
     }
 
+    /// Rotator (type 12) case of ProcessItems 0x1566c0: the bound object
+    /// (+0xf0) turns by vb_elapsed × +0xf4 per update; subtype 0 always
+    /// (unless LockCamReq and object flag 4), subtype 2 once triggered
+    /// ((+0xd8 & 0x1001) == 1) until the turned angle +0xfc reaches ±+0xf8,
+    /// then +0xd8 |= 0x1000. Subtype 1 only adds/removes a co-op camera
+    /// target (presentation). The node turn clears object flag 1.
+    fn process_rotator(&mut self, slot: usize) -> R<()> {
+        let r = self.items.records[slot].clone();
+        let sub_ = self.items.definitions[r.definition()].subtype();
+        let Some(o) = r.u32_(0xf0).checked_sub(1).map(|o| o as usize) else { return Ok(()) };
+        let vb = self.globals.vb_elapsed as f32;
+        let speed = r.f32_(0xf4);
+        let angle = match sub_ {
+            0 => {
+                if self.lock_cam_req != 0 && self.items.objects[o].flags_10 & 4 != 0 {
+                    return Ok(());
+                }
+                mul(vb, speed)?
+            }
+            2 => {
+                if r.u16_(0xd8) & 0x1001 != 1 {
+                    return Ok(());
+                }
+                let (limit, turned) = (r.f32_(0xf8), r.f32_(0xfc));
+                let more = if 0.0 <= speed { turned < limit } else { -limit < turned };
+                let at = self.collision.object_matrix(o)?[3];
+                let at = [at[0], at[1], at[2]];
+                if !more {
+                    self.audio_rotator(2, at)?;
+                    let rr = &mut self.items.records[slot];
+                    rr.or_u16(0xd8, 0x1000);
+                    rr.set_u8(0xde, 2);
+                    return Ok(());
+                }
+                self.audio_rotator(0, at)?;
+                let a = mul(vb, speed)?;
+                self.items.records[slot].set_f32(0xfc, add(a, turned)?);
+                a
+            }
+            _ => return Ok(()),
+        };
+        self.items.records[slot].set_u8(0xde, 2);
+        self.items.objects[o].flags_10 &= 0xffff_fffe;
+        self.collision.yaw_object(o, angle).map_err(|e| super::Unsupported(format!("rotator: {e:?}")))?;
+        Ok(())
+    }
+
     /// trans_enemy 0x139888: check_enemy_pos at `to` (+0x244 lift). A free
     /// position returns -1; otherwise the enemy is removed (+0xc8 = 0; the
     /// MBTreeSetFlags(…, 2, 0) calls on +0x70/+0x1f0 are presentation) and 0
@@ -530,7 +577,7 @@ impl Game {
                 }
                 9 => self.process_exit(slot)?,
                 10 => self.process_type10(slot)?,
-                0xc => return unsupported("rotators (item type 12)"),
+                0xc => self.process_rotator(slot)?,
                 _ => {}
             }
         }

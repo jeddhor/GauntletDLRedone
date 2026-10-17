@@ -19,6 +19,18 @@ GAME_START = 'private/reference/start-states/poison-fields-game-v6.json'
 SIM_START = 'private/reference/start-states/poison-fields-sor-v2.json'
 
 
+def level_index(wdata, code):
+    import struct
+    directory, count = struct.unpack_from('<II', wdata, 0)
+    for i in range(count):
+        tag, off, n, _ = struct.unpack_from('<4I', wdata, directory + 16 * i)
+        if tag.to_bytes(4, 'big') == b'LEVL':
+            for k in range(n):
+                if wdata[off + 0x10c * k + 8: off + 0x10c * k + 12].split(b'\0')[0].decode() == code:
+                    return k
+    raise SystemExit(f'no LEVL record {code}')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('report')
@@ -33,13 +45,17 @@ def main():
                'K': (11, 'SKY'), 'S': (12, 'SECRET')}  # ELF worlddatas 0x23deb0
     number, wad = letters[a.world]
     w, wd = resolve([f'LEVELS/LEVEL{a.world}{a.level}/WORLDS.PS2', f'WDATA/{wad}.WAD'])
+    # LoadWorldData 0x161b98: level_data = LEVL record [wave & 0xff]; the
+    # level directory is the record's code (GetLevelDesc). Records are not
+    # stored in level-number order (CASTLE: A1, A6, A2, ...).
+    index = level_index(wd.read_bytes(), f'{a.world}{a.level}')
     proposed = json.loads(pathlib.Path('private/reports/wad-independent.json').read_text())
     known = {n.upper() for e in proposed['entries'] for n in e['proposed_names']}
     items = next(f'ITEMS/LEVEL{x}/ANIM.PS2' for x in (f'{a.world}{a.level}', a.world) if f'ITEMS/LEVEL{x}/ANIM.PS2' in known)
     tmp = pathlib.Path(a.report + '.enemies.json')
     if tmp.exists():
         tmp.unlink()
-    subprocess.run(['target/release/gdl_tools', 'level-enemies', str(wd), str(a.level - 1), str(tmp)], check=True)
+    subprocess.run(['target/release/gdl_tools', 'level-enemies', str(wd), str(index), str(tmp)], check=True)
     kinds = json.loads(tmp.read_text())['enemy_types']['kind']
     tmp.unlink()
     elf = ELF.read_bytes()
@@ -53,7 +69,7 @@ def main():
     monsters = [(t, p) for t, p in prefixes.items() if f'MONSTERS/{p}/ANIM.PS2' in known]
     ia, wp, pw, clips, rom, *mons = resolve([items, 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2',
                                              'AUDIO/AUDATPS2.ROM'] + [f'MONSTERS/{p}/ANIM.PS2' for _, p in monsters])
-    cmd = ['target/release/gdl_tools', 'game-run', str(w), str(wd), str(a.level - 1), str(ELF), GAME_START, str(ia),
+    cmd = ['target/release/gdl_tools', 'game-run', str(w), str(wd), str(index), str(ELF), GAME_START, str(ia),
            str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}']
     cmd += [f'{t}={path}:{p}' for (t, p), path in zip(monsters, mons)]
     # HYPOTHESIS: the MBOX object tables loaded for the level (the original

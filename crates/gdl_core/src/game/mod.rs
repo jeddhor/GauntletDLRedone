@@ -125,6 +125,8 @@ pub enum Event {
     Audio { cue: &'static str, player: Option<usize>, arg: i32 },
     /// A sound request (AudioSFX/SFX2/SFX3/queue): ID = bank << 16 | call.
     Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, queue: bool },
+    /// AudioLOOP(id, position, volume, priority): a looping sound.
+    LoopSound { id: i32, position: [f32; 3], volume: i32, priority: i32 },
     /// AudioSuicideYellKill-style stop of every playing instance of an ID.
     StopSound { id: i32 },
     /// Expired item (ExpireItem 0x1537b0) with its fade mode.
@@ -201,6 +203,8 @@ pub struct Game {
     pub randpottype: i32,
     /// ActivePlayerMask 0x220154 (SetPlayerVars 0x125ef8).
     pub active_player_mask: u32,
+    /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).
+    pub lock_cam_req: i32,
     /// Enemy tree alpha (presentation; see enemy_mod_alpha).
     pub enemy_alpha: Vec<i32>,
     /// Labels of the loaded MBOX object tables (MBOX_FindObject_Sub).

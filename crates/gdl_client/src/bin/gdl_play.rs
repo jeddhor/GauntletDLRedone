@@ -447,6 +447,10 @@ fn simulate(
                     let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
                     a.play(*id, *volume, pan, *priority, *queue);
                 }
+                Event::LoopSound { id, position, volume, priority } => {
+                    let pan = ((Vec3::from_array(*position) - me).dot(right) / 20.0).clamp(-1.0, 1.0);
+                    a.play_loop(*id, *volume, pan, *priority);
+                }
                 Event::StopSound { id } => a.stop(*id),
                 _ => {}
             }

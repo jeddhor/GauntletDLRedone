@@ -60,6 +60,11 @@ pub struct SoundTables {
     barrel: Vec<i32>,
     /// snd_351 0x23d488 / snd_355 0x23d4c0: poison / explosive barrel per world.
     poison_barrel: Vec<i32>,
+    /// snd1_370 0x23d568 / snd2_371 0x23d5a0: rotator loop / stop per world.
+    rotator_loop: Vec<i32>,
+    rotator_stop: Vec<i32>,
+    /// Loop IDs started and not yet killed (AudioSoundExists).
+    pub loops: std::collections::BTreeSet<i32>,
     barrel_explode: Vec<i32>,
     rock: Vec<i32>,
     leaf: Vec<i32>,
@@ -108,6 +113,9 @@ impl SoundTables {
             tile: t(0x23_d248, 392)?,
             barrel: t(0x23_d450, 56)?,
             poison_barrel: t(0x23_d488, 56)?,
+            rotator_loop: t(0x23_d568, 56)?,
+            rotator_stop: t(0x23_d5a0, 56)?,
+            loops: Default::default(),
             barrel_explode: t(0x23_d4c0, 56)?,
             rock: t(0x23_d4f8, 56)?,
             leaf: t(0x23_d530, 56)?,
@@ -472,6 +480,28 @@ impl Game {
         let id = self.world_tab(&self.sounds.barrel, 1, 0);
         self.sfx3(id, pos, 0xe0, 0x55)
     }
+    /// AudioRotator 0x160020(mode, position): mode 0 keeps the world's loop
+    /// running (AudioLOOP 0xe0/0x72; the AudioTrackPan update is
+    /// presentation); otherwise kill it, and mode 2+ plays the stop sound.
+    pub fn audio_rotator(&mut self, mode: i32, pos: V3) -> R<()> {
+        let lp = self.world_tab(&self.sounds.rotator_loop, 1, 0);
+        let stop = self.world_tab(&self.sounds.rotator_stop, 1, 0);
+        let mode = if self.globals.start_of_stage != 0 || self.globals.end_of_stage != 0 { 0 } else { mode };
+        if mode == 0 {
+            if self.sound_on() && 0 <= lp && self.sounds.loops.insert(lp) {
+                self.events.push(Event::LoopSound { id: lp, position: pos, volume: 0xe0, priority: 0x72 });
+            }
+            return Ok(());
+        }
+        if self.sounds.loops.remove(&lp) {
+            self.events.push(Event::StopSound { id: lp });
+        }
+        if 1 < mode {
+            self.sfx(stop, Some(pos), 0xe0, 0);
+        }
+        Ok(())
+    }
+
     /// AudioPoisonBarrel 0x15fed8.
     pub fn audio_poison_barrel(&mut self, pos: V3) -> R<()> {
         let id = self.world_tab(&self.sounds.poison_barrel, 1, 0);

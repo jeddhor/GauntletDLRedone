@@ -452,7 +452,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let sounds: Vec<String> = game.events.iter().filter(|e| matches!(e, gdl_core::game::Event::Sound { .. })).take(200).map(|e| format!("{e:?}")).collect();
         let events: Vec<String> = game.events.iter().filter(|e| !matches!(e, gdl_core::game::Event::Audio { .. } | gdl_core::game::Event::Sound { .. })).take(400).map(|e| format!("{e:?}")).collect();
-        let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,"sounds":sounds,
+        let generators: Vec<_> = game.items.records.iter().enumerate()
+            .filter(|(_, r)| r.active() && game.items.definitions[r.definition()].kind() == 3)
+            .map(|(k, r)| serde_json::json!({"slot":k,"name":String::from_utf8_lossy(game.items.definitions[r.definition()].name()),
+                "type":r.i16_(0xf0),"count":r.i8_(0xf2),"max":r.i8_(0xf3),"level":r.i8_(0xf6),"logic":r.i8_(0xf7),
+                "d8":r.u16_(0xd8),"pos":r.v3(0x60)})).collect();
+        let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,
+            "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
             "potions_override":opts.get("potions")});

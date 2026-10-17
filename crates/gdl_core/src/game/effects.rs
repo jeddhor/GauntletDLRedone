@@ -1303,7 +1303,16 @@ impl Game {
         if self.enemy_start_missile(i, target, from, kind)? {
             match kind {
                 0 => self.sfx3(0x30, from, 0x7f, 0x7e)?,
-                2 if self.enemies[i].i32_(e::TYPE) == 2 => return unsupported("AudioDemonFireBall"),
+                2 if self.enemies[i].i32_(e::TYPE) == 2 => {
+                    // AudioDemonFireBall 0x15fcb8.
+                    let id = match self.globals.cur_world {
+                        3 => 0x27_0032,
+                        4 => 0x28_0000,
+                        6 => 0x38_001f,
+                        _ => 0x26_0027,
+                    };
+                    self.sfx3(id, from, 0x7f, 0x32)?
+                }
                 2 => self.sfx3(0x32, from, 0x7f, 0x7e)?,
                 _ => {}
             }

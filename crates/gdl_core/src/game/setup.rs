@@ -281,6 +281,7 @@ impl Game {
             randpottype: s.extra.randpottype,
             active_player_mask: 0,
             enemy_alpha: vec![0xff; 25],
+            lock_cam_req: 0,
             mb_objects: inp.mb_objects,
             sounds: {
                 let slots: Vec<(i32, i32, String)> = (0..8)

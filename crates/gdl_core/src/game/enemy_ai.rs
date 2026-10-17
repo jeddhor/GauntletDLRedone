@@ -924,6 +924,77 @@ impl Game {
         Ok(())
     }
 
+    /// move_logic16 0x13ecd8: ranged attacker (action 0x18 on the +0x334
+    /// timer); inside 0.6 × range it backs off (action 0x16 at speed 0.8,
+    /// heading away plus an offset_step5 step per +0x36c contact) until
+    /// beyond 0.8 × range.
+    fn move_logic16(&mut self, i: usize) -> R<()> {
+        let mut off = 0.0f32;
+        let contact_before = self.enemies[i].i32_(0x36c);
+        if self.found_suicide_bomber(i)? {
+            self.enemies[i].set_i16(e::LOGIC, 0x18);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let f = self.get_face_ang(i, true)?;
+        self.enemies[i].set_f32(0x260, f);
+        let in_reach = match usize::try_from(self.enemies[i].i16_(0x288)) {
+            Ok(p) if self.enemies[i].i16_(0x2f0) != 0 => {
+                let dy = sub(self.ef(i, 0x44), self.players[p].f32_(0x54))?;
+                (-10.0..=10.0).contains(&dy)
+            }
+            _ => false,
+        };
+        if in_reach {
+            let range = self.ef(i, 0x314);
+            if self.enemies[i].i32_(0x330) == 0 {
+                if self.ef(i, 0x290) <= mul(range, f32::from_bits(0x3f19_999a))? {
+                    self.enemies[i].set_i32(0x330, 1);
+                }
+            } else if mul(range, f32::from_bits(0x3f4c_cccd))? < self.ef(i, 0x290) {
+                self.enemies[i].set_i32(0x330, 0);
+            } else if 0 < self.enemies[i].i32_(0x36c) {
+                let k = self.enemies[i].i32_(0x338);
+                if k < 8 {
+                    off = *usize::try_from(k).ok().and_then(|k| self.offset_step5.get(k)).ok_or_else(|| super::Unsupported("offset_step5 index".into()))?;
+                    self.enemies[i].set_i32(0x338, k + 1);
+                    self.enemies[i].set_i32(0x36c, 0);
+                } else {
+                    self.enemies[i].set_i32(0x330, 0);
+                }
+            }
+            let t = self.enemies[i].i32_(0x334);
+            if t < 1 {
+                if self.enemies[i].i32_(0x330) == 0 {
+                    self.request_enemy_action(i, 0x18);
+                } else {
+                    let a = wrap(add(add(self.ef(i, 0x260), PI)?, off)?)?;
+                    self.request_enemy_action(i, 0x16);
+                    if (self.enemies[i].i32_(0xe0) as u32).wrapping_sub(0x16) < 2 {
+                        self.set_enemy_trans(f32::from_bits(0x3f4c_cccd), a, i)?;
+                    }
+                    self.enemies[i].set_i32(0x36c, 0);
+                }
+            } else {
+                self.enemies[i].set_i32(0x334, t - self.globals.vb_elapsed);
+            }
+        }
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)?;
+        if self.enemies[i].i16_(0x294) != 0 {
+            self.enemies[i].set_i32(0x36c, 0);
+        }
+        if contact_before < 1 && 0 < self.enemies[i].i32_(0x36c) {
+            let h = self.ef(i, 0x260);
+            self.enemies[i].set_f32(0x268, h);
+            self.enemies[i].set_i32(0x338, 0);
+        }
+        Ok(())
+    }
+
     /// move_logic29 0x13cf40: keep a 8–18 band from the target (+0x330: 0
     /// hold, 1 back off, 2 close in), stepping through offset_step5 on each
     /// +0x36c contact, attacking (0xc/0xe alternating, 0x10 at level 3+)
@@ -1072,6 +1143,7 @@ impl Game {
             7 => self.move_logic07(i)?,
             0x12 => self.move_logic18(i)?,
             0xe => self.move_logic14(i)?,
+            0x10 => self.move_logic16(i)?,
             0x11 => self.move_logic_turret(i, false)?,
             0x17 => self.move_logic_turret(i, true)?,
             0x1d => self.move_logic29(i)?,

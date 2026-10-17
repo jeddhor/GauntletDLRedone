@@ -115,6 +115,27 @@ killing nearby zombies and a generator.
 Critters (GENERAL/GOLEM/GAR/DEATH), shield reflection,
 blocked08/10/20, move_logic 03/08–13/15/16/19–22/24–28 except those listed, bosses, power/turbo melee (event bits 0xf0), dash attack 0x3e, turbo powers, shields, transporters' destinations,
 wave exits (SaveStage), camera logic, save/load, co-op.
-Realm sweep (level 1 of each realm A–K, 900-update scripted wander, interim
-player, 2026-10-16): no unsupported path in any realm. Not ported: the
-CurWorld 10 StartExplosion fireworks, SetPlayerVars' other writes.
+- move_logic16 0x13ecd8 (ranged 0x18 attacks on the +0x334 timer; inside
+  0.6 × range it backs off with action 0x16 at speed 0.8 until beyond 0.8 ×
+  range), AudioDemonFireBall 0x15fcb8.
+- Rotators (item type 12, ProcessItems 0x1566c0): the bound object turns by
+  vb_elapsed × +0xf4 per update via YawMat3 0x1d5388 on its node matrix
+  (subtype 0 continuously unless LockCamReq and object flag 4; subtype 2 once
+  triggered until +0xfc reaches ±+0xf8, then +0xd8 |= 0x1000; subtype 1 is a
+  co-op camera target, presentation). The object's flag 1 is cleared so
+  collision uses the full matrix. Native composition of rotated nodes with
+  their parents (rows × parent rows) is not verified against GetWorldMat.
+  AudioRotator 0x160020 (snd1_370 0x23d568 loop, snd2_371 0x23d5a0 stop).
+- Level records: LoadWorldData 0x161b98 sets level_data = LEVL[wave & 0xff];
+  the level directory is the record's code (GetLevelDesc 0x162750,
+  "levels/level%s"). Records are not in level-number order (CASTLE: A1, A6,
+  A2, A3, A4, A5), so tools select the record by code.
+
+Level sweep (every level of realms A–K, 600-update scripted wander, interim
+player, 2026-10-16): no unsupported path outside the boss arenas; G5 stops at
+the ActivateNearestEnemy boss trigger. The boss arenas (A5, B6, C5, D5, E2,
+F2, G5, H4, I5, J5, K5) have no generators. FOREST.WAD's LEVL multipliers
+(+0xcc..+0xdc) are all 0.0 (no run-time writer found), so D1–D4 generators
+get max 0 and spawn nothing in this transcription — unchecked against a
+reference. Not ported: the CurWorld 10 StartExplosion fireworks,
+SetPlayerVars' other writes.

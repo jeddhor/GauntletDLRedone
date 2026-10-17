@@ -144,6 +144,15 @@ impl AudioOut {
 
     /// Start sound `id` with request volume, pan (−1..1) and priority.
     pub fn play(&mut self, id: i32, volume: i32, pan: f32, priority: i32, queued: bool) {
+        self.play_ex(id, volume, pan, priority, queued, false);
+    }
+
+    /// AudioLOOP: the call's chain repeats until stopped.
+    pub fn play_loop(&mut self, id: i32, volume: i32, pan: f32, priority: i32) {
+        self.play_ex(id, volume, pan, priority, false, true);
+    }
+
+    fn play_ex(&mut self, id: i32, volume: i32, pan: f32, priority: i32, queued: bool, force_loop: bool) {
         let (b, call) = AudioRom::split(id);
         let Some((vbk, pcm)) = self.bank(b) else { return };
         let Some(c) = vbk.calls.get(call) else { return };
@@ -167,6 +176,7 @@ impl AudioOut {
         if chain.is_empty() {
             return;
         }
+        loops |= force_loop;
         let g = (volume.max(0) as f32 / 256.0) * (f32::from(c.volume) / 127.0);
         let pan = pan.clamp(-1.0, 1.0);
         let gain = [g * (1.0 - pan.max(0.0)), g * (1.0 + pan.min(0.0))];

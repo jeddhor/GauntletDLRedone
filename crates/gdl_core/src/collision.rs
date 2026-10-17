@@ -68,6 +68,9 @@ pub struct CollisionWorld {
     pub runtime_exclusion: Vec<i8>,
     /// Node translation y of root offset objects driven by item wobjs.
     pub node_y: Vec<Option<f32>>,
+    /// Node rotation rows 0..2 changed at run time (rotators' YawMat3);
+    /// None = the identity rest rotation.
+    pub node_rot: Vec<Option<[V3; 3]>>,
     grid: CollisionGrid,
     min_x: f32,
     min_z: f32,
@@ -190,7 +193,9 @@ impl CollisionWorld {
         let runtime_flags = objects.iter().map(|o| o.flags).collect();
         let runtime_exclusion = objects.iter().map(|o| o.exclusion).collect();
         let node_y = vec![None; objects.len()];
+        let node_rot = vec![None; objects.len()];
         Ok(Self {
+            node_rot,
             dynamic,
             runtime_flags,
             runtime_exclusion,
@@ -428,6 +433,9 @@ impl CollisionWorld {
     /// animations are not ported) and node translation; root offset objects
     /// take the item-driven y.
     pub fn object_matrix(&self, o: usize) -> R<[[f32; 4]; 4]> {
+        if self.rotated_chain(o) {
+            return self.object_matrix_rotated(o);
+        }
         let ob = &self.objects[o];
         let local_t = match (ob.parent, self.node_y[o]) {
             (None, Some(y)) => [ob.position[0], y, ob.position[2]],
@@ -441,6 +449,51 @@ impl CollisionWorld {
             _ => local_t,
         };
         Ok([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [t[0], t[1], t[2], 1.0]])
+    }
+
+    fn rotated_chain(&self, o: usize) -> bool {
+        let mut k = Some(o);
+        while let Some(i) = k {
+            if self.node_rot[i].is_some() {
+                return true;
+            }
+            k = if self.objects[i].flags & 0x100_0000 != 0 { self.objects[i].parent } else { None };
+        }
+        false
+    }
+
+    /// object_matrix with run-time rotations: local rows × parent rows and
+    /// local translation × parent rows + parent translation (row vectors).
+    /// The original GetWorldMat operation order is not verified.
+    fn object_matrix_rotated(&self, o: usize) -> R<[[f32; 4]; 4]> {
+        let ob = &self.objects[o];
+        let t = match (ob.parent, self.node_y[o]) {
+            (None, Some(y)) => [ob.position[0], y, ob.position[2]],
+            _ => ob.position,
+        };
+        let rows = self.node_rot[o].unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        let local = [[rows[0][0], rows[0][1], rows[0][2], 0.0], [rows[1][0], rows[1][1], rows[1][2], 0.0], [rows[2][0], rows[2][1], rows[2][2], 0.0], [t[0], t[1], t[2], 1.0]];
+        match ob.parent {
+            Some(p) if ob.flags & 0x100_0000 != 0 => {
+                let pm = self.object_matrix(p)?;
+                let mut out = [[0.0f32; 4]; 4];
+                for r in 0..4 {
+                    for c in 0..3 {
+                        let v = add(add(mul(local[r][0], pm[0][c])?, mul(local[r][1], pm[1][c])?)?, mul(local[r][2], pm[2][c])?)?;
+                        out[r][c] = if r == 3 { add(v, pm[3][c])? } else { v };
+                    }
+                }
+                out[3][3] = 1.0;
+                Ok(out)
+            }
+            _ => Ok(local),
+        }
+    }
+
+    /// YawMat3 0x1d5388 on an object's node rotation (rows 0 and 2).
+    pub fn yaw_object(&mut self, o: usize, a: f32) -> R<()> {
+        let m = self.node_rot[o].get_or_insert([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        yaw_mat3(m, a)
     }
 
     /// WorldDynCollide/WorldObjCollide for dynamic objects. Candidates are all
@@ -1132,8 +1185,38 @@ fn finish(tri: &Triangle, local: V3, distance: f32) -> R<Option<(f32, V3)>> {
     Ok(Some((distance, vadd(world, tri.origin)?)))
 }
 
+/// YawMat3 0x1d5388: no-op below |a| < 0.0001 (0x38d1b717); otherwise
+/// row0' = row0·cos − row2·sin and row2' = row2·cos + row0·sin per column.
+pub fn yaw_mat3(m: &mut [V3; 3], a: f32) -> R<()> {
+    if a.abs() < f32::from_bits(0x38d1_b717) {
+        return Ok(());
+    }
+    let s = crate::libm::sinf(a).map_err(|_| UnsupportedCollision("sinf domain"))?;
+    let c = crate::libm::cosf(a).map_err(|_| UnsupportedCollision("cosf domain"))?;
+    let [r0, _, r2] = m;
+    for (x, z) in r0.iter_mut().zip(r2.iter_mut()) {
+        let f5 = *z;
+        *z = add(mul(f5, c)?, mul(*x, s)?)?;
+        *x = sub(mul(*x, c)?, mul(f5, s)?)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn yaw_mat3_rotates_rows_zero_and_two() {
+        // Synthetic: a quarter turn maps row 0 (1,0,0) to (cos, 0, sin).
+        let mut m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        super::yaw_mat3(&mut m, std::f32::consts::FRAC_PI_2).unwrap();
+        assert!(m[0][0].abs() < 1e-6 && (m[0][2] + 1.0).abs() < 1e-6);
+        assert!((m[2][0] - 1.0).abs() < 1e-6 && m[2][2].abs() < 1e-6);
+        assert_eq!(m[1], [0.0, 1.0, 0.0]);
+        let before = m;
+        super::yaw_mat3(&mut m, 0.00005).unwrap();
+        assert_eq!(m, before);
+    }
     use super::*;
     fn flat() -> Triangle {
         Triangle {
