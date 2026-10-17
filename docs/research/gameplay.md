@@ -144,5 +144,10 @@ wave exits (SaveStage), camera logic, save/load, co-op.
 Level sweep (every level of realms A–K, 600-update scripted wander, interim
 player, 2026-10-16): no unsupported path outside the boss arenas; G5 stops at
 the ActivateNearestEnemy boss trigger. The boss arenas (A5, B6, C5, D5, E2,
-F2, G5, H4, I5, J5, K5) have no generators. Not ported: the CurWorld 10 StartExplosion fireworks,
-SetPlayerVars' other writes.
+F2, G5, H4, I5, J5, K5) have no generators. Fireworks (CurWorld 10 explosive barrels, StartExplosion 0x17e810 →
+StartFirework 0x17e4d8): three kind-0 effects with random size, speed and
+direction; at expiry (flag 0x10000000) the MBPsysFirework burst is
+presentation but its RandInt/Random draws are kept. Destroyed or shot
+potions (DamageItem / PlayerDamagedItem) call start_magic(0.8, player or -1);
+player -1 uses power × 20 and size 0.8 without potion audio. Not ported:
+SetPlayerVars' other writes, StartMagicHealFX for players above level 74.

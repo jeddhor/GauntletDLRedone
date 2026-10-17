@@ -1060,7 +1060,15 @@ impl Game {
         let r = &self.items.records[slot];
         let d = &self.items.definitions[r.definition()];
         match d.kind() {
-            1 if r.i16_(0xda) < 1 && d.subtype() == 4 => unsupported("start_magic from a shot potion"),
+            1 if r.i16_(0xda) < 1 && d.subtype() == 4 => {
+                // start_magic(0.8, player, item +0x50, definition +0x3c, 0),
+                // NewHelp(0xe), DeleteItem(item, 1).
+                let (at, fl) = (r.v3(0x50), d.i32_(0x3c) as u32);
+                self.start_magic(f32::from_bits(0x3f4c_cccd), p as i32, at, fl, 0)?;
+                self.help(0xe, p);
+                self.delete_item(slot, true);
+                Ok(())
+            }
             3 => {
                 if destroyed {
                     self.players[p].set_i32(0x8f0, 0);
@@ -1141,7 +1149,13 @@ impl Game {
         match kind {
             1 => match st {
                 3 if result == -2 => return unsupported("DamageItem explosive potion swap"),
-                4 if result == 0 => return unsupported("start_magic from a destroyed potion"),
+                4 if result == 0 => {
+                    // start_magic(0.8, -1, item +0x50, definition +0x3c, 0).
+                    let r = &self.items.records[slot];
+                    let (at, fl) = (r.v3(0x50), self.items.definitions[r.definition()].i32_(0x3c) as u32);
+                    self.start_magic(f32::from_bits(0x3f4c_cccd), -1, at, fl, 0)?;
+                    self.delete_item(slot, true);
+                }
                 _ if flags & 0x400 != 0 && 5.0 <= dmg => return unsupported("DamageItem magic on powerup"),
                 _ => {}
             },
@@ -1274,19 +1288,31 @@ impl Game {
         Ok(result as f32)
     }
 
-    /// start_magic(power, player, position, potion flags, mode) for a player;
-    /// mode 0 is the ordinary potion blast (StartMagicFX 0x17eb50).
-    pub fn start_magic(&mut self, power: f32, p: usize, position: V3, flags: u32, mode: i32) -> R<()> {
+    /// start_magic 0x134408(power, player, position, potion flags, mode);
+    /// mode 0 is the ordinary potion blast (StartMagicFX 0x17eb50). Player
+    /// -1 (a destroyed potion item): power × 20, size factor 0.8, mode 0, no
+    /// potion audio.
+    pub fn start_magic(&mut self, power: f32, player: i32, position: V3, flags: u32, mode: i32) -> R<()> {
         let mut flags = flags;
-        let mut k = 1.0;
-        let mut power = mul(power, self.players[p].f32_(0x120))?;
-        if damage_color(flags) == p as i32 {
-            k = f32::from_bits(0x3f8c_cccd);
-            power = mul(power, f32::from_bits(0x3f8c_cccd))?;
-        }
-        if 0x18 < self.players[p].i32_(0x2ac0) {
-            flags |= 0x80_0000;
-        }
+        let mut mode = mode;
+        let (k, power) = match usize::try_from(player) {
+            Err(_) => {
+                mode = 0;
+                (f32::from_bits(0x3f4c_cccd), mul(power, 20.0)?)
+            }
+            Ok(p) => {
+                let mut k = 1.0;
+                let mut power = mul(power, self.players[p].f32_(0x120))?;
+                if damage_color(flags) == player {
+                    k = f32::from_bits(0x3f8c_cccd);
+                    power = mul(power, f32::from_bits(0x3f8c_cccd))?;
+                }
+                if 0x18 < self.players[p].i32_(0x2ac0) {
+                    flags |= 0x80_0000;
+                }
+                (k, power)
+            }
+        };
         let mut colour = flags & 0xf;
         if colour == 0 {
             let r = self.randpottype;
@@ -1317,13 +1343,15 @@ impl Game {
         r.set_u32(fx::DAMAGE_FLAGS, df);
         r.set_f32(fx::BLAST, power);
         r.set_f32(fx::FADE, 0.0);
-        r.set_i16(fx::OWNER, p as i16 + 1);
+        r.set_i16(fx::OWNER, player as i16 + 1);
         // PlaceEffectOnFloor (y only; the blast tests x/z) and lights: presentation.
-        self.audio_potion(colour as usize, position, 0);
+        if 0 <= player {
+            self.audio_potion(colour as usize, position, 0);
+        }
         Ok(())
     }
 
-    /// Random 0x1d6b00: (rand() & 0x7fff) × x / 32767.
+    /// Random 0x1d6ad8: (rand() & 0x7fff) × x / 32767.
     pub(crate) fn random_pub(&mut self, x: f32) -> R<f32> {
         self.random(x)
     }
@@ -1490,9 +1518,6 @@ impl Game {
             0x19 => (6.5, 0x800, 0.0),
             k => return unsupported(format!("StartExplosion kind {k:#x}")),
         };
-        if self.globals.cur_world == 10 && kind == 0x18 {
-            return unsupported("StartExplosion fireworks (CurWorld 10)");
-        }
         let h = self.effects.tables.headers.get(kind as usize).copied().flatten().ok_or_else(|| Unsupported(format!("effect header {kind:#x}")))?;
         let i = self.start_fx_tree(0.0, Visual::Header(kind as usize), h.frames, h.timing, Some(position), 0x2b)?;
         let flags = if 4 < flags & 0xf { flags & 0xffff_fff3 } else { flags };
@@ -1511,6 +1536,40 @@ impl Game {
         if let Some(n) = self.effects.nodes[i].as_mut() {
             n.position[1] = add(n.position[1], lift)?;
         }
+        if self.globals.cur_world == 10 && kind == 0x18 {
+            // Three fireworks (0x17e810): size 0.6 + Random(0.5), speed 6 +
+            // Random(3), yaw Random(2π) − π and pitch −(π/3 + Random(0.524))
+            // applied to (0, 0, 1).
+            for _ in 0..3 {
+                let size = add(self.random(0.5)?, f32::from_bits(0x3f19_999a))?;
+                let speed = add(self.random(3.0)?, 6.0)?;
+                let yaw = add(self.random(f32::from_bits(0x40c9_0fdb))?, f32::from_bits(0xc049_0fdb))?;
+                let pitch = add(self.random(f32::from_bits(0x3f06_0a92))?, f32::from_bits(0x3f86_0a92))?;
+                let v = super::critter_ai::yaw_vec3(yaw, [0.0, 0.0, 1.0])?;
+                let v = super::critter_ai::pitch_vec3(-pitch, v)?;
+                let vel = [mul(speed, v[0])?, mul(speed, v[1])?, mul(speed, v[2])?];
+                self.start_firework(size, 6.0, position, vel, 0xb4)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// StartFirework 0x17e4d8: StartFXMissile(duration `size`, kind 0,
+    /// position, velocity, flags 0x10020000, hit fx/sounds -1), +0xb8 and
+    /// +0xc4 from the arguments; MBPsysFlame is presentation. No damage.
+    fn start_firework(&mut self, size: f32, b8: f32, position: V3, vel: V3, c4: i16) -> R<()> {
+        let Some(h) = self.effects.tables.headers.first().copied().flatten() else { return unsupported("effect header 0 for a firework") };
+        let i = self.start_fx_tree(size, Visual::Header(0), h.frames, h.timing, Some(position), 0x1002_0000)?;
+        let r = self.fx_mut(i);
+        r.set_u32(fx::KIND, 0);
+        r.set_f32(fx::GRAVITY, 0.0);
+        r.set_f32(fx::RADIUS, 0.0);
+        r.set_v3(fx::VELOCITY, vel);
+        r.set_i16(fx::HIT_FX, -1);
+        r.set_i32(fx::HIT_SOUND, -1);
+        r.set_i32(fx::WALL_SOUND, -1);
+        r.set_f32(fx::BLAST, b8);
+        r.set_i16(fx::HITS, c4);
         Ok(())
     }
 
@@ -2041,7 +2100,15 @@ impl Game {
         if 0.0 < self.fx(i).f32_(fx::BLAST) && f & 0x4020 == 0 && sub(self.fx(i).f32_(fx::END), f32::from_bits(0x3d88_9a02))? <= atime {
             result = 1;
             if f & 0x1000_0000 != 0 {
-                return unsupported("firework effect");
+                // Firework burst: MBPsysFirework is presentation, but its
+                // RandInt(6) ×2, RandInt(+0xc4 >> 1) and Random(0.5) advance
+                // the generator; the effect then ends (result -2).
+                let n = u32::try_from(self.fx(i).i16_(fx::HITS) >> 1).map_err(|_| Unsupported("firework RandInt range".into()))?;
+                for k in [6, 6, n] {
+                    self.rng.rand_int(k).ok_or_else(|| Unsupported("RandInt(0)".into()))?;
+                }
+                self.random(0.5)?;
+                result = -2;
             }
         }
         if pierce != 0 {

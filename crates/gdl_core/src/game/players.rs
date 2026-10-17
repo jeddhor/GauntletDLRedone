@@ -263,7 +263,7 @@ impl Game {
         let colour = self.players[p].u32_(0x2a98 + 4 * count as usize);
         self.players[p].set_i32(0x1a18, count - 1);
         let pos = self.players[p].v3(0x50);
-        self.start_magic(1.0, p, pos, colour, 0)?;
+        self.start_magic(1.0, p as i32, pos, colour, 0)?;
         self.players[p].set_u16(0x92e, 0x80);
         Ok(())
     }
