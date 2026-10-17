@@ -260,7 +260,14 @@ impl Game {
                     }
                 }
                 if self.globals.cur_world == 0xd && r.u8_(0xf6) == 0xf0 {
-                    return unsupported("tower Sumner hint trigger");
+                    // Sumner's hint pad: SumnerHintsActivate once a player
+                    // stands on it (+0xe2 low bits), at most once per visit.
+                    let e2 = self.items.records[slot].u8_(0xe2);
+                    if e2 & 0xf == 0 {
+                        self.items.records[slot].set_u8(0xe2, 0);
+                    } else if e2 & 0x10 == 0 && self.sumner_hints_activate(idx) {
+                        self.items.records[slot].set_u8(0xe2, e2 | 0x10);
+                    }
                 }
                 0
             }
@@ -708,6 +715,24 @@ impl Game {
         let i = self.start_fx_tree(0.0, super::effects::Visual::Header(header), h.frames, h.timing, Some(position), 0)?;
         self.fx_mut(i).set_u32(0x60, header as u32);
         Ok(())
+    }
+
+    /// SumnerHintsActivate: the first call starts Sumner's 2 s hint
+    /// animation (SumnerDanim 3, presentation); once Time passes it the
+    /// HintMenu opens (UI event) and the call reports true.
+    fn sumner_hints_activate(&mut self, player: usize) -> bool {
+        let time = self.globals.time;
+        if self.sumner_hint_time == 0.0 {
+            self.sumner_hint_time = time + 2.0;
+            self.events.push(Event::SumnerAnim { player });
+            false
+        } else if self.sumner_hint_time <= time {
+            self.events.push(Event::HintMenu { player });
+            self.sumner_hint_time = 0.0;
+            true
+        } else {
+            false
+        }
     }
 
     fn finish_grab(&mut self, slot: usize, expire: bool, df: i8) -> R<()> {

@@ -277,6 +277,7 @@ impl Game {
             no_enemy_slot: false,
             stop_time: s.extra.stop_time,
             max_stop_time: 0.0,
+            sumner_hint_time: 0.0,
             old_enemy_shrink: 1.0,
             boss_is_dying: s.extra.boss_is_dying,
             suicide_bomber_index: -1,

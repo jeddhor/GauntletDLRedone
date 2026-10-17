@@ -125,6 +125,9 @@ pub struct Globals {
 pub enum Event {
     /// NewHelp(id, player): help/hint text; player usize::MAX = −1 (all).
     Help { id: i32, player: usize },
+    /// Sumner's hint animation starts / the HintMenu opens (tower UI).
+    SumnerAnim { player: usize },
+    HintMenu { player: usize },
     /// A world object hidden by WorldObjectExplode (presentation).
     ObjectHidden { object: usize },
     /// ScrollMessageBox(player mask, -1, text, -1): the blocking scroll
@@ -176,6 +179,8 @@ pub struct Game {
     pub stop_time: i32,
     /// MaxStopTime 0x22c4f8 (time-stop powerup duration) and OldEnemyShrink.
     pub max_stop_time: f32,
+    /// SumnerHintTime (tower hint pad timer).
+    pub sumner_hint_time: f32,
     pub old_enemy_shrink: f32,
     pub boss_is_dying: i32,
     pub suicide_bomber_index: i32,

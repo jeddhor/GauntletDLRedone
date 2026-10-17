@@ -48,7 +48,7 @@ def main():
     a = ap.parse_args()
     letters = {'A': (1, 'CASTLE'), 'B': (2, 'MOUNT'), 'C': (3, 'DESERT'), 'D': (4, 'FOREST'), 'E': (5, 'TEMPLE'),
                'F': (6, 'HELL'), 'G': (7, 'TOWN'), 'H': (8, 'BATTLE'), 'I': (9, 'ICE'), 'J': (10, 'DREAM'),
-               'K': (11, 'SKY'), 'S': (12, 'SECRET')}  # ELF worlddatas 0x23deb0
+               'K': (11, 'SKY'), 'S': (12, 'SECRET'), 'L': (0xd, 'TOWER')}  # ELF worlddatas 0x23deb0
     number, wad = letters[a.world]
     w, wd = resolve([f'LEVELS/LEVEL{a.world}{a.level}/WORLDS.PS2', f'WDATA/{wad}.WAD'])
     # LoadWorldData 0x161b98: level_data = LEVL record [wave & 0xff]; the
