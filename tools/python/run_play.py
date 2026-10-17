@@ -130,6 +130,10 @@ def critter_files(level, world, known, wdata_bytes):
             model = f'MONSTERS/{desc}/ANIM.PS2'
         if desc and model in known:
             entry['anim'] = str(resolve([model])[0])
+            # The model package directory, drawn by the client (library key).
+            lib = model.rsplit('/', 1)[0]
+            if f'{lib}/OBJECTS.PS2' in known:
+                entry['lib'] = lib
         out.append(entry)
     return out
 
@@ -204,6 +208,10 @@ def main():
         levels.append(dict(name=code, index=index, worlds=str(resolve([f'LEVELS/LEVEL{code}/WORLDS.PS2'])[0]),
                            level=package(f'LEVELS/LEVEL{code}', anim=False), items=[f'ITEMS_{n[5:]}' for n in items],
                            critters=critter_files(level_kinds(wdata, index), world, known, wdata.read_bytes())))
+    for lv in levels:
+        for c in lv['critters']:
+            if 'lib' in c:
+                packages.setdefault(c['lib'], package(c['lib']))
     monsters = realm_monsters(wdata, [r[0] for r in records], known)
     for _, prefix in monsters:
         packages[prefix] = package(f'MONSTERS/{prefix}')

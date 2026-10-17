@@ -1,3 +1,36 @@
+# Development checkpoint — 2026-10-17
+
+Continuing the user's request to work through M11–M17 until a playable build
+exists; the user will test at the end of M17. Latest source commit: find with
+`bash tools/git-local.sh log -1 --oneline`.
+
+## Current position (2026-10-17)
+
+- Critter engine (research/critters.md): all eleven bosses run headless, the
+  chimera with child heads (A5), fire cones (B6/C5/F2/K5), statue critters
+  (golems, gargoyles, generals) with CritterGolemAI, non-boss collision and
+  lookout waypoints (the native G1 lookout table equals the fixture's).
+- Level data: ResolveWorldData defaults/difficulty are applied (the fixture's
+  live G1 LEVL record matches; G1 item comparison 393/519 exact, was 384);
+  the Forest realm now has generators and boss health.
+- Simulation camera follows player 0 each update (HYPOTHESIS; do_camera not
+  ported), so placed enemies and statues spawn along the player's route.
+- Level sweep: every one of the 51 levels (realms A–K) runs a 1400-update
+  scripted interim player (tools/python/game_run.py) without unsupported paths.
+- gdl_play smoke on Xvfb :191 (realm G): title, start, walking, enemies attack.
+  Golem/gargoyle/general models load from their MONSTERS/<desc>/<dir>
+  packages (run_play `lib`).
+- Verification: 50 core + 25 formats + 2 client Rust tests (synthetic),
+  Clippy clean, release build. Fixture memory checks: LEVL record, lookouts,
+  item records. No new PCSX2 encounter comparisons.
+
+Known interim limits: interim player controller (melee holds still, hit
+reactions interrupt throws), WeapThrowFx placeholder, wave exits/secret realm
+(SaveStage/LoadStage) and co-op (M16) not ported, original menus (M17) not
+started, saves (M18).
+
+---
+
 # Development checkpoint — 2026-10-16
 
 Continuing the user's request (2026-10-15/16) to work through M11–M17 until a

@@ -66,8 +66,9 @@ struct LevelSource {
     package: Value,
     /// Item packages, level-specific first (names in `packages`).
     items: Vec<String>,
-    /// Critter files (CRITTER/*.WAD) with their model ANIM.PS2.
-    critters: Vec<(String, Option<String>)>,
+    /// Critter files (CRITTER/*.WAD) with their model ANIM.PS2 and the
+    /// library (package name) that draws the model.
+    critters: Vec<(String, Option<String>, Option<String>)>,
 }
 
 /// Inputs to (re)build the native game for a level; the current geometry.
@@ -126,6 +127,7 @@ struct CritterPart {
 fn present_critters(
     mut commands: Commands,
     sim: Res<Sim>,
+    session: Res<Session>,
     libs: Res<Libraries>,
     mut slots: Query<(Entity, &mut CritterSlot, &mut Visibility, Option<&Children>)>,
     mut parts: Query<(&CritterPart, &mut Transform)>,
@@ -150,7 +152,9 @@ fn present_critters(
         let t = &model.0.trees[tree];
         if slot.shown != Some(cr.ty) {
             commands.entity(entity).despawn_related::<Children>();
-            let lib_name = t.prefix.clone();
+            // The configured model package (golems, gargoyles, generals),
+            // else a package named after the tree prefix (bosses).
+            let lib_name = session.levels.get(session.current).and_then(|l| l.critters.get(cr.ty.0)).and_then(|c| c.2.clone()).unwrap_or_else(|| t.prefix.clone());
             if let Some(lib) = libs.0.get(&lib_name) {
                 for node in &t.nodes {
                     let label: String = (t.prefix.clone() + &node.label).chars().take(15).collect();
@@ -539,7 +543,7 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
         critters: lv
             .critters
             .iter()
-            .map(|(wad, model)| -> Result<_, Box<dyn Error>> {
+            .map(|(wad, model, _)| -> Result<_, Box<dyn Error>> {
                 let w = gdl_formats::critter::CritterWad::parse(&gdl_client::bounded_read(Path::new(wad))?)?;
                 let m = match model {
                     Some(m) => {
@@ -1058,7 +1062,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             items: l["items"].as_array().ok_or("level items")?.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
             critters: l["critters"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|c| Some((c["wad"].as_str()?.to_string(), c["anim"].as_str().map(String::from)))).collect())
+                .map(|a| a.iter().filter_map(|c| Some((c["wad"].as_str()?.to_string(), c["anim"].as_str().map(String::from), c["lib"].as_str().map(String::from)))).collect())
                 .unwrap_or_default(),
         });
     }

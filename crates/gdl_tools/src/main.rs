@@ -515,7 +515,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     .map(|(k, e)| serde_json::json!({"slot":k,"type":e.i32_(0),"state":e.i32_(0xc8),"pos":e.v3(0x40),
                         "action":e.u32_(0xe0),"logic":e.i16_(0x324),"health":e.f32_(0x214),"target":e.i16_(0x288)})).collect();
                 let effects: Vec<_> = (0..game.effects.num).filter(|&k| 0.0 < game.effects.slots[k].f32_(0x68))
-                    .map(|k| serde_json::json!({"slot":k,"node":game.effects.nodes[k],"flags":game.effects.slots[k].u32_(0x64)})).collect();
+                    .map(|k| { let r = &game.effects.slots[k]; serde_json::json!({"slot":k,"node":game.effects.nodes[k],"flags":r.u32_(0x64),
+                        "kind":r.u32_(0x60),"end":r.f32_(0x68),"vel":r.v3(0x80),"grav":r.f32_(0xa0),"dflags":r.u32_(0xb4),"owner":r.i16_(0xbc),"link":r.i16_(0xe8)}) }).collect();
                 let critters: Vec<_> = game.critters.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| serde_json::json!({
                     "slot":k,"state":c.rec.i32_(8),"health":c.rec.f32_(0x4f4),"move":c.rec.i16_(0x124),"next":c.rec.i16_(0x126),
                     "seq":c.clock.sequence,"frame":c.clock.frame,"pos":c.rec.v3(0x40),"target":c.rec.i16_(0x130),"ntargets":c.rec.i16_(0x136)}))).collect();
