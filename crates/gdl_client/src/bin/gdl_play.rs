@@ -83,6 +83,9 @@ struct Session {
     /// ANIM.PS2 path by package name (ITEMS, WEAPONS, POWERUPS).
     anim_paths: HashMap<String, String>,
     audio_rom: Option<gdl_formats::audio::AudioRom>,
+    /// Object labels of the shared packages (HYPOTHESIS: the original's
+    /// loaded MBOX tables); the level package's labels are added per level.
+    object_labels: std::collections::HashSet<String>,
     /// Seconds left on the level-complete banner, then the next level loads.
     banner: Option<(f32, String)>,
     /// Pending level index to build after the banner.
@@ -378,6 +381,7 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
         item_anims,
         effect_tables,
         audio_rom: session.audio_rom.clone(),
+        mb_objects: Some(session.object_labels.iter().cloned().chain(session.level.objects.definitions.iter().map(|d| d.label.clone())).collect()),
     })?;
     let tables = tables_from_elf(&elf)?;
     let mut sim = session.sim_start.clone();
@@ -895,6 +899,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         monster_paths,
         anim_paths,
         audio_rom,
+        object_labels: packages.values().chain([&character]).flat_map(|k| k.objects.definitions.iter().map(|d| d.label.clone())).collect(),
         banner: None,
         next: None,
         finished: None,

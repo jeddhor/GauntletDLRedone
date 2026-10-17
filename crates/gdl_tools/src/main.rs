@@ -382,6 +382,17 @@ fn run() -> Result<(), Box<dyn Error>> {
             audio_rom: match opts.get("rom") {
                 Some(p) => Some(gdl_formats::audio::AudioRom::parse(&bounded_read(Path::new(p), 4 * 1024 * 1024)?)?),
                 None => None,
+            },
+            mb_objects: match opts.get("objects") {
+                Some(list) => {
+                    let mut set = std::collections::HashSet::new();
+                    for p in list.split(',') {
+                        let o = gdl_formats::objects::Objects::parse(&bounded_read(Path::new(p), 64 * 1024 * 1024)?)?;
+                        set.extend(o.definitions.iter().map(|d| d.label.clone()));
+                    }
+                    Some(set)
+                }
+                None => None,
             } })?;
         // Optional scripted player: sim=START_SIM.json clips=SOR_CLIPS.PS2 script=LEVELS_HEX:UPDATES,...
         let mut driver = match (opts.get("sim"), opts.get("script")) {

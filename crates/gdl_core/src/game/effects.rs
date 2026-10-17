@@ -1069,7 +1069,7 @@ impl Game {
             }
         }
         let mut killed = false;
-        let (result, shown);
+        let (mut result, mut shown);
         if flags & 0x800 == 0 {
             let armor = self.items.records[slot].i8_(0xe3);
             if 0 <= armor {
@@ -1187,7 +1187,32 @@ impl Game {
                     self.items.records[slot].set_u16(0xf4, 1);
                 }
                 match st {
-                    0x29 | 0x2a | 0x2c | 0x2d => return unsupported("DamageItem rock/wall/explosive barrel"),
+                    0x29 => {
+                        if 0 <= self.items.records[slot].i16_(0xf2) {
+                            self.set_safe_rock(slot)?;
+                            killed = false;
+                        }
+                    }
+                    0x2a => {
+                        let h = i32::from(self.items.records[slot].i16_(0xe4));
+                        self.audio_explode_wall(at, h)?;
+                    }
+                    0x2c | 0x2d if killed => {
+                        self.items.records[slot].or_u16(0xd8, 1);
+                        let centre = self.items.records[slot].v3(0x40);
+                        let (k, kind) = if st == 0x2c { (30.0, 0x18) } else { (10.0, 0x19) };
+                        self.start_explosion(mul(self.level_f32(0xdc), k)?, centre, kind)?;
+                        if st == 0x2c {
+                            self.audio_barrel_explode(at)?;
+                        } else {
+                            self.audio_poison_barrel(at)?;
+                        }
+                        // MBOX_NewObject debris (0x2a88f8 / 0x2a8900): presentation.
+                        shown = false;
+                        result = -2;
+                        killed = false;
+                    }
+                    0x2c | 0x2d => self.sfx3(0x3c, at, 0x7f, 0x78)?,
                     _ => {
                         if killed {
                             self.items.records[slot].or_u16(0xd8, 1);
@@ -1403,6 +1428,90 @@ impl Game {
             n.position[1] = sub(n.position[1], 1.0)?;
         }
         Ok(())
+    }
+
+    /// StartExplosion 0x17e590(damage, matrix translation, kind) for the
+    /// barrel kinds 0x18 (radius 12, flags 0x421, +2 lift) and 0x19 (radius
+    /// 6.5, flags 0x800): StartFXMissile(0, kind, position, 0, 0x2b, 0, 4, 0)
+    /// then SfxSetDamage. ScaleFX/SfxSetMorph/SfxSetLight are presentation.
+    pub fn start_explosion(&mut self, damage: f32, position: V3, kind: u32) -> R<()> {
+        let (blast, flags, lift) = match kind {
+            0x18 => (12.0, 0x421u32, 2.0),
+            0x19 => (6.5, 0x800, 0.0),
+            k => return unsupported(format!("StartExplosion kind {k:#x}")),
+        };
+        if self.globals.cur_world == 10 && kind == 0x18 {
+            return unsupported("StartExplosion fireworks (CurWorld 10)");
+        }
+        let h = self.effects.tables.headers.get(kind as usize).copied().flatten().ok_or_else(|| Unsupported(format!("effect header {kind:#x}")))?;
+        let i = self.start_fx_tree(0.0, Visual::Header(kind as usize), h.frames, h.timing, Some(position), 0x2b)?;
+        let flags = if 4 < flags & 0xf { flags & 0xffff_fff3 } else { flags };
+        let r = self.fx_mut(i);
+        r.set_u32(fx::KIND, kind);
+        r.set_f32(fx::GRAVITY, 0.0);
+        r.set_f32(fx::RADIUS, 0.0);
+        r.set_i16(fx::HIT_FX, 0);
+        r.set_u32(fx::HIT_SOUND, 4);
+        r.set_u32(fx::WALL_SOUND, 0);
+        r.set_f32(fx::DAMAGE, damage);
+        r.set_u32(fx::DAMAGE_FLAGS, flags);
+        r.set_f32(fx::BLAST, blast);
+        r.set_f32(fx::FADE, 0.0);
+        r.set_i16(fx::OWNER, 0);
+        if let Some(n) = self.effects.nodes[i].as_mut() {
+            n.position[1] = add(n.position[1], lift)?;
+        }
+        Ok(())
+    }
+
+    /// SetSafeRock 0x153438: damage stage from health (+0xe4) against the
+    /// definition's +0x44; the model "<name><stage>" (then +"L1", +"ROOT")
+    /// must exist (MBOX_FindObject_Sub, strncmp 15) or the rock stops
+    /// staging (+0xf2 = -1).
+    fn set_safe_rock(&mut self, slot: usize) -> R<()> {
+        let r = &self.items.records[slot];
+        let def = &self.items.definitions[r.definition()];
+        let h = i32::from(r.i16_(0xe4));
+        let base = i32::from(def.i16_(0x44));
+        let stage: i16 = if h == 0 {
+            0
+        } else if base < h {
+            if h <= base << 1 { 2 } else { 3 }
+        } else {
+            1
+        };
+        if stage == r.i16_(0xf2) {
+            return Ok(());
+        }
+        let name = format!("{}{}", String::from_utf8_lossy(def.name()), stage);
+        self.items.records[slot].set_i16(0xf2, stage);
+        let found = self.mb_object_exists(&name)? || self.mb_object_exists(&format!("{name}L1"))? || self.mb_object_exists(&format!("{name}L1ROOT"))?;
+        let pos = self.items.records[slot].v3(0x40);
+        if !found {
+            // MBTreeSetFlags(tree, 1, 1): hidden (presentation).
+            self.items.records[slot].set_i16(0xf2, -1);
+            self.events.push(Event::ItemModel { slot, level: 0xff });
+        } else {
+            // MBSetObject: model swap (presentation).
+            self.events.push(Event::ItemModel { slot, level: stage as u8 });
+            if stage != 0 {
+                return Ok(());
+            }
+            self.items.records[slot].and_u16(0xd8, 0xfffe);
+            self.items.records[slot].set_u8(0xe3, 0xff);
+        }
+        if stage == 0 {
+            // StartFXNoLoop(0x1e): non-damaging effect (presentation).
+            self.events.push(Event::Effect { header: 0x1e, position: pos });
+        }
+        Ok(())
+    }
+
+    /// MBOX_FindObject_Sub over the loaded object tables (objcmp = strncmp 15).
+    fn mb_object_exists(&self, name: &str) -> R<bool> {
+        let Some(set) = self.mb_objects.as_ref() else { return unsupported("MBOX object lookup without loaded object names") };
+        let key: String = name.chars().take(15).collect();
+        Ok(set.contains(&key))
     }
 
     /// MissileCollidePlayer 0x190880(radius, from, to): first active player hit.

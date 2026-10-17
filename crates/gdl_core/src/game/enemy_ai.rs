@@ -924,6 +924,95 @@ impl Game {
         Ok(())
     }
 
+    /// move_logic29 0x13cf40: keep a 8–18 band from the target (+0x330: 0
+    /// hold, 1 back off, 2 close in), stepping through offset_step5 on each
+    /// +0x36c contact, attacking (0xc/0xe alternating, 0x10 at level 3+)
+    /// when its +0x334 timer runs out in the hold band.
+    fn move_logic29(&mut self, i: usize) -> R<()> {
+        let mut off = 0.0f32;
+        let contact_before = self.enemies[i].i32_(0x36c);
+        if self.found_suicide_bomber(i)? {
+            self.enemies[i].set_i16(e::LOGIC, 0x18);
+            return self.do_ai(i);
+        }
+        if 0 <= self.enemies[i].i16_(0x288) && self.ef(i, 0x290) <= 6.0 {
+            self.enemies[i].set_i16(e::LOGIC, 7);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let f = self.get_face_ang(i, true)?;
+        self.enemies[i].set_f32(0x260, f);
+        let in_reach = match usize::try_from(self.enemies[i].i16_(0x288)) {
+            Ok(p) if self.enemies[i].i16_(0x2f0) != 0 => {
+                let dy = sub(self.ef(i, 0x44), self.players[p].f32_(0x54))?;
+                (-10.0..=10.0).contains(&dy)
+            }
+            _ => false,
+        };
+        if in_reach {
+            let d = self.ef(i, 0x290);
+            if self.enemies[i].i32_(0x330) == 0 {
+                if d <= 8.0 {
+                    self.enemies[i].set_i32(0x330, 1);
+                }
+                if 18.0 < self.ef(i, 0x290) {
+                    self.enemies[i].set_i32(0x330, 2);
+                }
+            } else {
+                let back = if self.enemies[i].i32_(0x330) == 1 { 10.0 < d } else { d <= 16.0 };
+                if back {
+                    self.enemies[i].set_i32(0x330, 0);
+                }
+                if self.enemies[i].i32_(0x330) != 0 && 0 < self.enemies[i].i32_(0x36c) {
+                    let k = self.enemies[i].i32_(0x338);
+                    if k < 8 {
+                        off = *usize::try_from(k).ok().and_then(|k| self.offset_step5.get(k)).ok_or_else(|| super::Unsupported("offset_step5 index".into()))?;
+                        self.enemies[i].set_i32(0x338, k + 1);
+                        self.enemies[i].set_i32(0x36c, 0);
+                    } else {
+                        self.enemies[i].set_i32(0x330, 0);
+                    }
+                }
+            }
+            let t = self.enemies[i].i32_(0x334);
+            if t < 1 {
+                let mode = self.enemies[i].i32_(0x330);
+                if mode == 0 || self.enemies[i].i16_(0x212) == 1 {
+                    if self.enemies[i].i16_(0x21a) < 3 {
+                        let n = self.enemies[i].u32_(0x33c).wrapping_add(1);
+                        self.enemies[i].set_u32(0x33c, n);
+                        self.request_enemy_action(i, if n & 1 == 0 { 0xe } else { 0xc });
+                    } else {
+                        self.request_enemy_action(i, 0x10);
+                    }
+                } else {
+                    let h = self.ef(i, 0x260);
+                    let a = if mode == 1 { add(add(h, PI)?, off)? } else { add(off, h)? };
+                    let a = wrap(a)?;
+                    self.set_enemy_trans(f32::from_bits(0x3f4c_cccd), a, i)?;
+                    self.request_enemy_action(i, 3);
+                    self.enemies[i].set_i32(0x36c, 0);
+                }
+            } else {
+                self.enemies[i].set_i32(0x334, t - self.globals.vb_elapsed);
+            }
+        }
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)?;
+        if self.enemies[i].i16_(0x294) != 0 {
+            self.enemies[i].set_i32(0x36c, 0);
+        }
+        if contact_before < 1 && 0 < self.enemies[i].i32_(0x36c) {
+            let h = self.ef(i, 0x260);
+            self.enemies[i].set_f32(0x268, h);
+            self.enemies[i].set_i32(0x338, 0);
+        }
+        Ok(())
+    }
+
     /// move_logic02 (+45°, then logic 4) and move_logic04 (−45°, then
     /// logic 2): face the target player, else step the heading every
     /// brain period; after four steps switch to the sibling logic.
@@ -985,11 +1074,22 @@ impl Game {
             0xe => self.move_logic14(i)?,
             0x11 => self.move_logic_turret(i, false)?,
             0x17 => self.move_logic_turret(i, true)?,
+            0x1d => self.move_logic29(i)?,
             0x1e => self.move_logic30(i)?,
             l if (0..0x20).contains(&l) => return unsupported(format!("move_logic{l:02}")),
             _ => self.kill_enemy(i)?,
         }
         Ok(())
+    }
+
+    /// enemy_mod_alpha 0x13b110: tree alpha ± delta·vb_elapsed in 0..=255.
+    /// Only enemy_mod_alpha reads enemy tree alpha, so this is presentation
+    /// state (`enemy_alpha`; the initial tree alpha 255 is a HYPOTHESIS).
+    fn enemy_mod_alpha(&mut self, i: usize, delta: i32) {
+        let a = self.enemy_alpha[i];
+        if (delta < 1 || a < 0xff) && (delta < 0 || a != 0) {
+            self.enemy_alpha[i] = (delta * self.globals.vb_elapsed + a).clamp(0, 0xff);
+        }
     }
 
     /// enemy_ai_control: returns true when the enemy was removed.
@@ -1013,7 +1113,34 @@ impl Game {
             self.enemies[i].set_i32(0xe4, 3);
         }
         if self.enemies[i].i32_(e::TYPE) == 0x18 {
-            return unsupported("phasing enemy alpha (type 0x18)");
+            // Phasing (type 0x18): +0x2e8 alternates fade-out (positive) and
+            // fade-in (negative) periods of RandInt(60) + 60 updates.
+            let st = self.enemies[i].i32_(0xe0);
+            if (st as u32).wrapping_sub(3) < 2 || st == 0 {
+                let t = self.enemies[i].i16_(0x2e8);
+                let vb = self.globals.vb_elapsed as i16;
+                let rand60 = |g: &mut Self| g.rng.rand_int(0x3c).map(|r| r as i16 + 0x3c).ok_or_else(|| super::Unsupported("RandInt(60)".into()));
+                if t == 0 {
+                    self.enemy_mod_alpha(i, -16);
+                    let r = rand60(self)?;
+                    self.enemies[i].set_i16(0x2e8, r);
+                } else if t < 1 {
+                    self.enemy_mod_alpha(i, 16);
+                    let n = t.wrapping_add(vb);
+                    self.enemies[i].set_i16(0x2e8, if 0 < n { 0 } else { n });
+                } else {
+                    self.enemy_mod_alpha(i, -16);
+                    let n = t.wrapping_sub(vb);
+                    self.enemies[i].set_i16(0x2e8, n);
+                    if n < 0 {
+                        let r = rand60(self)?;
+                        self.enemies[i].set_i16(0x2e8, -r);
+                    }
+                }
+            } else {
+                self.enemy_mod_alpha(i, -16);
+                self.enemies[i].set_i16(0x2e8, 0);
+            }
         }
         Ok(self.enemies[i].i32_(e::STATE) == 0)
     }

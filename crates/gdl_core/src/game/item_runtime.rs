@@ -189,6 +189,19 @@ impl Game {
         Ok(())
     }
 
+    /// SetPlayerVars 0x125ef8, ActivePlayerMask part only: players whose
+    /// +0xfc state is 1 or 5. Its other writes (0x220158, 0x22015c/0x2201a4,
+    /// player +0x93e) are not ported (unknowns.md).
+    pub(crate) fn set_player_vars(&mut self) {
+        self.active_player_mask = 0;
+        for (k, pl) in self.players.iter().enumerate().take(4) {
+            let st = pl.i32_(0xfc);
+            if st == 1 || st == 5 {
+                self.active_player_mask |= 1 << k;
+            }
+        }
+    }
+
     /// trans_enemy 0x139888: check_enemy_pos at `to` (+0x244 lift). A free
     /// position returns -1; otherwise the enemy is removed (+0xc8 = 0; the
     /// MBTreeSetFlags(…, 2, 0) calls on +0x70/+0x1f0 are presentation) and 0
@@ -418,6 +431,9 @@ impl Game {
         self.find_enemy_slot_probe()?;
         if self.globals.end_of_stage == 0 {
             self.exit_state = 0;
+        }
+        if self.globals.num_in_game_players == 0 {
+            self.set_player_vars();
         }
         let vb = self.globals.vb_elapsed as i16;
         let n = self.items.records.len();
@@ -946,7 +962,17 @@ impl Game {
         let flags = self.items.records[slot].u16_(0xf4);
         let mut state = self.items.records[slot].i8_(0xde);
         if flags & 0x400 != 0 {
-            return unsupported("all-players trigger (ActivePlayerMask)");
+            // All active players must stand on it (0x1563f4); the bound
+            // object's +0x10 bit 0x04000000 mirrors the result.
+            let all = touched == self.active_player_mask;
+            if !all {
+                self.items.records[slot].set_u8(0xe2, 0);
+                touched = 0;
+            }
+            if let Some(o) = bound {
+                let f = &mut self.items.objects[o].flags_10;
+                *f = if all { *f | 0x0400_0000 } else { *f & 0xfbff_ffff };
+            }
         }
         match bound {
             None => {

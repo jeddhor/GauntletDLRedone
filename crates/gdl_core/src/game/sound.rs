@@ -21,6 +21,7 @@ type V3 = [f32; 3];
 pub struct Stage {
     pub bank: String,
     pub word_10: i16,
+    /// Stage +0x12: world sound for AudioEffect 5 and AudioExplodeWall.
     pub enter_sound: i16,
     pub stream: String,
     pub areas: i16,
@@ -57,6 +58,9 @@ pub struct SoundTables {
     potion: Vec<i32>,
     tile: Vec<i32>,
     barrel: Vec<i32>,
+    /// snd_351 0x23d488 / snd_355 0x23d4c0: poison / explosive barrel per world.
+    poison_barrel: Vec<i32>,
+    barrel_explode: Vec<i32>,
     rock: Vec<i32>,
     leaf: Vec<i32>,
     door: Vec<i32>,
@@ -103,6 +107,8 @@ impl SoundTables {
             potion: t(0x23_d3d0, 40)?,
             tile: t(0x23_d248, 392)?,
             barrel: t(0x23_d450, 56)?,
+            poison_barrel: t(0x23_d488, 56)?,
+            barrel_explode: t(0x23_d4c0, 56)?,
             rock: t(0x23_d4f8, 56)?,
             leaf: t(0x23_d530, 56)?,
             door: t(0x23_d6b8, 224)?,
@@ -465,6 +471,31 @@ impl Game {
     pub fn audio_wood_barrel(&mut self, pos: V3) -> R<()> {
         let id = self.world_tab(&self.sounds.barrel, 1, 0);
         self.sfx3(id, pos, 0xe0, 0x55)
+    }
+    /// AudioPoisonBarrel 0x15fed8.
+    pub fn audio_poison_barrel(&mut self, pos: V3) -> R<()> {
+        let id = self.world_tab(&self.sounds.poison_barrel, 1, 0);
+        if id < 0 {
+            return Ok(());
+        }
+        self.sfx3(id, pos, 0xe0, 0x55)
+    }
+    /// AudioBarrelExplode 0x15ff10.
+    pub fn audio_barrel_explode(&mut self, pos: V3) -> R<()> {
+        let id = self.world_tab(&self.sounds.barrel_explode, 1, 0);
+        if id < 0 {
+            return Ok(());
+        }
+        self.sfx3(id, pos, 0xe0, 0x55)
+    }
+    /// AudioExplodeWall 0x161068(position, health): the stage record's
+    /// +0x12 world sound while standing, else 0x2e.
+    pub fn audio_explode_wall(&mut self, pos: V3, health: i32) -> R<()> {
+        if 0 < health {
+            let k = self.sounds.stage.as_ref().map_or(-1, |s| i32::from(s.enter_sound));
+            return self.play_world_sound(k, pos);
+        }
+        self.sfx3(0x2e, pos, 0x7f, 0x18)
     }
     pub fn audio_rock_fall(&mut self, pos: V3) -> R<()> {
         let w = self.globals.cur_world;

@@ -168,6 +168,9 @@ pub struct LevelInputs<'a> {
     pub effect_tables: super::effects::EffectTables,
     /// AUDIO/AUDATPS2.ROM; None disables sound events.
     pub audio_rom: Option<gdl_formats::audio::AudioRom>,
+    /// Object labels of every loaded package (OBJECTS definitions); None
+    /// makes the paths that search them unsupported.
+    pub mb_objects: Option<std::collections::HashSet<String>>,
 }
 
 /// Per-enemy (visible, near-visible) query.
@@ -276,6 +279,9 @@ impl Game {
             target_cone_mode: s.extra.target_cone_mode,
             level_done: None,
             randpottype: s.extra.randpottype,
+            active_player_mask: 0,
+            enemy_alpha: vec![0xff; 25],
+            mb_objects: inp.mb_objects,
             sounds: {
                 let slots: Vec<(i32, i32, String)> = (0..8)
                     .map(|k| {
@@ -297,6 +303,8 @@ impl Game {
             },
             log: FrameLog::default(),
         };
+        // AddItemInstList calls SetPlayerVars before placing the items.
+        game.set_player_vars();
         for slot in 0..item_count {
             let name = String::from_utf8_lossy(game.items.definitions[game.items.records[slot].definition()].name()).into_owned();
             if let Some(clips) = inp.item_anims.get(&name) {

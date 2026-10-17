@@ -36,6 +36,27 @@ closure; the interim player driver), ProcessEffects.
   newest in +0xf5), place_logic14 0x154390 (alternating ±π/4, +0x330 = ±1).
   trans_enemy removes the spawn (+0xc8 = 0) when check_enemy_pos fails; its
   MBTreeSetFlags calls are presentation.
+- move_logic29 0x13cf40 (hold an 8–18 band: +0x330 0 hold / 1 back off / 2
+  close in at speed 0.8 with offset_step5 steps on +0x36c contacts; attacks
+  0xc/0xe alternating via +0x33c, 0x10 at level 3+, on the +0x334 timer).
+- Phasing enemies (type 0x18, enemy_ai_control 0x13b208): +0x2e8 alternates
+  fade-out (positive) and fade-in (negative) periods of RandInt(60) + 60
+  while +0xe0 is 0/3/4. enemy_mod_alpha 0x13b110 is the only reader of enemy
+  tree alpha, so alpha is presentation (`enemy_alpha`).
+- ActivePlayerMask 0x220154: SetPlayerVars 0x125ef8 ORs 1 << k for players
+  whose +0xfc is 1 or 5 (sllv in the delay slot at 0x125f94); called from
+  game_main, AddItemInstList and ProcessItems when NumInGamePlayers 0x20f98c
+  is 0. Trigger flag 0x400 (0x1563f4) requires the touched mask to equal it
+  and mirrors the result in the bound object's +0x10 bit 0x04000000.
+- DamageItem kind 10: rocks 0x29 (SetSafeRock 0x153438: stage from +0xe4
+  against definition +0x44, model "<name><stage>"/+"L1"/+"L1ROOT" must exist
+  — MBOX_FindObject_Sub, objcmp = strncmp 15 — else +0xf2 = -1), walls 0x2a
+  (AudioExplodeWall: stage +0x12 world sound or 0x2e), explosive/poison
+  barrels 0x2c/0x2d (StartExplosion 0x17e590 kinds 0x18/0x19: radius 12 /
+  6.5, damage flags 0x421 / 0x800, damage level_data+0xdc × 30 / × 10; jump
+  table 0x2ab980 verified; snd_355 0x23d4c0 / snd_351 0x23d488).
+  The object-name set is a HYPOTHESIS: the labels of every package the
+  runner loads (the original load list is not traced).
 - Effects/missiles: FindEffectIdx/DeleteEffect/ZeroEffect, StartFXTree,
   ChangeEffect, StartMissile/PlayerStartMissile, CalcTargetDir,
   GetAttackDir, PlayerGetTarget, closest_enemy/closest_generator,
@@ -92,9 +113,8 @@ killing nearby zombies and a generator.
 ## Not ported (known)
 
 Critters (GENERAL/GOLEM/GAR/DEATH), shield reflection,
-blocked08/10/20, move_logic 03/08–13/15/16/19–22/24–29 except those listed, bosses, power/turbo melee (event bits 0xf0), dash attack 0x3e, turbo powers, shields, transporters' destinations,
+blocked08/10/20, move_logic 03/08–13/15/16/19–22/24–28 except those listed, bosses, power/turbo melee (event bits 0xf0), dash attack 0x3e, turbo powers, shields, transporters' destinations,
 wave exits (SaveStage), camera logic, save/load, co-op.
-Realm sweep (level 1 of each realm, 900-update scripted wander, interim
-player): B, D, E, H, I, K clean; A stops at DamageItem rock/wall/explosive
-barrel, C at move_logic29 and the ActivePlayerMask all-players trigger, F at
-the phasing enemy alpha (type 0x18), J at the ActivePlayerMask trigger.
+Realm sweep (level 1 of each realm A–K, 900-update scripted wander, interim
+player, 2026-10-16): no unsupported path in any realm. Not ported: the
+CurWorld 10 StartExplosion fireworks, SetPlayerVars' other writes.

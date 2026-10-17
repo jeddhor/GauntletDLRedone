@@ -56,6 +56,12 @@ def main():
     cmd = ['target/release/gdl_tools', 'game-run', str(w), str(wd), str(a.level - 1), str(ELF), GAME_START, str(ia),
            str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}']
     cmd += [f'{t}={path}:{p}' for (t, p), path in zip(monsters, mons)]
+    # HYPOTHESIS: the MBOX object tables loaded for the level (the original
+    # load list is not traced); used by MBOX_FindObject_Sub lookups.
+    obj = [n for n in [f'LEVELS/LEVEL{a.world}{a.level}/OBJECTS.PS2', f'ITEMS/LEVEL{a.world}{a.level}/OBJECTS.PS2',
+                       f'ITEMS/LEVEL{a.world}/OBJECTS.PS2', 'WEAPONS/OBJECTS.PS2', 'POWERUPS/OBJECTS.PS2']
+           + [f'MONSTERS/{p}/OBJECTS.PS2' for _, p in monsters] if n in known]
+    cmd += ['objects=' + ','.join(str(x) for x in resolve(obj))]
     if a.world != 'G':
         cmd += [f'world={number}']
     print('monsters', monsters, 'missing', sorted(set(prefixes.values()) - {p for _, p in monsters}))

@@ -28,6 +28,9 @@ replaced by a plausible gameplay rule or generated asset.
 | Animation numeric policy | Native finite numeric/channel subset matches walking/attack keys and2,011 evaluated records | Local matrices now match2,170 observations; bounded animation selection matches42 updates; world helper has three qualified calls; recover render scale/attachments, mirror and remaining events; exceptional numeric domains and long interpolation gaps remain |
 | Native saves/campaign/co-op/audio | Not implemented | Follow dependencies M10–M18; no release-scope claims yet |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
+| Loaded MBOX object tables | SetSafeRock/ItemFindMBObjectL1 search every loaded model table; native uses the labels of all runner packages (HYPOTHESIS) | Trace the level's package load list (LoadLevel) and model_count |
+| SetPlayerVars side writes | ActivePlayerMask ported; 0x220158, 0x22015c/0x2201a4 scale and player +0x93e zeroing not ported; ProcessItems' 0x220170 → 0x220160 store not ported | Identify consumers before porting |
+| Enemy tree alpha at spawn | enemy_alpha starts at 255 (HYPOTHESIS); presentation only | Read MBTreeGetAlpha for a fresh tree in a capture |
 
 External data consultation cannot establish PS2 offsets or behavior without local
 verification. Four unnamed archive entries remain after two new hash/name matches;

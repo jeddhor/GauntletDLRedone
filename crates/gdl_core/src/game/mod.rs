@@ -199,6 +199,12 @@ pub struct Game {
     pub level_done: Option<i32>,
     /// randpottype 0x221540: rotating colour for untyped potions.
     pub randpottype: i32,
+    /// ActivePlayerMask 0x220154 (SetPlayerVars 0x125ef8).
+    pub active_player_mask: u32,
+    /// Enemy tree alpha (presentation; see enemy_mod_alpha).
+    pub enemy_alpha: Vec<i32>,
+    /// Labels of the loaded MBOX object tables (MBOX_FindObject_Sub).
+    pub mb_objects: Option<std::collections::HashSet<String>>,
     pub sounds: sound::SoundTables,
     pub log: setup::FrameLog,
 }
