@@ -175,6 +175,15 @@ impl Game {
                 return Ok(());
             }
         }
+        if let Some(pos) = self.grabbed_position(p)? {
+            // Parented to a critter node (status +0x93c 0x20): the node moves
+            // the player; movement input is not applied (INTERIM: the
+            // original's parented PlayerMotion path is not ported).
+            d.sim.position = pos;
+            d.previous_levels = levels;
+            self.sync_player_record(p, &d.sim)?;
+            return Ok(());
+        }
         let edges = levels & !d.previous_levels;
         d.previous_levels = levels;
         let from = self.players[p].v3(0x50);

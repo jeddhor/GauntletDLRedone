@@ -63,15 +63,13 @@ impl Game {
             }
             7 => {
                 if which == 1 {
-                    if self.crit(i).rec.i16_(c::GRABBED) < 0 && 0 <= self.critter_node_player_collide(i, &drec, false)? {
-                        return unsupported("CritterGrabPlayer (PlayerSetGrabbed)");
-                    }
+                    self.critter_grab_player(i, &drec)?;
                     if first {
                         let base = self.crit(i).rec.v3(c::NODE_POS);
                         self.critter_do_damage_fx(i, d, false, Some(base))?;
                     }
-                } else if which == 2 && 0 <= self.crit(i).rec.i16_(c::GRABBED) {
-                    return unsupported("CritterReleasePlayer");
+                } else if which == 2 {
+                    self.critter_release_player(i, &drec)?;
                 }
             }
             8 => {
@@ -177,6 +175,64 @@ impl Game {
             n += 1;
         }
         Ok(n)
+    }
+
+    /// CritterGrabPlayer 0x19c038 with PlayerSetGrabbed 0x136cf8 /
+    /// PlayerSetParent 0x136c58: the player is parented to the transition
+    /// node at DAMG +0x20 − player +0x810 (status +0x93c |= 0x20, +0x8ac |= 0x4000).
+    fn critter_grab_player(&mut self, i: usize, drec: &[u8]) -> R<()> {
+        if 0 <= self.crit(i).rec.i16_(c::GRABBED) {
+            return Ok(());
+        }
+        let p = self.critter_node_player_collide(i, drec, false)?;
+        let Ok(p) = usize::try_from(p) else { return Ok(()) };
+        let o = v3(drec, 0x20);
+        let co = self.players[p].v3(0x810);
+        let local = [sub(o[0], co[0])?, sub(o[1], co[1])?, sub(o[2], co[2])?];
+        let pos = self.players[p].v3(0x50);
+        self.players[p].set_v3(0xf0, pos);
+        self.players[p].or_u16(0x93c, 0x20);
+        self.players[p].or_u32(0x8ac, 0x4000);
+        let node = self.crit(i).node_dc;
+        self.player_grab[p] = Some((i, node, local));
+        self.crit_mut(i).rec.set_i16(c::GRABBED, p as i16);
+        let s_ = CritterFile::i16_pub(drec, 0x42);
+        if let Ok(s_) = usize::try_from(s_) {
+            // The effect is parented to the player's node (presentation).
+            self.critter_do_sfx(i, s_, None, false)?;
+        }
+        Ok(())
+    }
+
+    /// CritterReleasePlayer 0x19c0e8 with PlayerUnsetGrabbed 0x136df0:
+    /// thrown along the critter's forward (−0.1 y) × DAMG +0x30.
+    fn critter_release_player(&mut self, i: usize, drec: &[u8]) -> R<()> {
+        let Ok(p) = usize::try_from(self.crit(i).rec.i16_(c::GRABBED)) else { return Ok(()) };
+        self.player_grab[p] = None;
+        self.players[p].and_u16(0x93c, 0xffdf);
+        self.players[p].and_u32(0x8ac, 0xffff_bfff);
+        let f = self.crit(i).rec.v3(c::MATRIX + 0x20);
+        let mut d = [f[0], -0.1, f[2]];
+        crate::collision::normal_vector_pub(&mut d)?;
+        let k = CritterFile::f32_pub(drec, 0x30);
+        let dir = [mul(d[0], k)?, mul(d[1], k)?, mul(d[2], k)?];
+        self.critter_damage_player(i, p, drec, 0x8050, dir, false)?;
+        self.crit_mut(i).rec.set_i16(c::GRABBED, -1);
+        Ok(())
+    }
+
+    /// The grabbed player's world position this update (GetObjWorldMat of
+    /// the parented node), or None when not grabbed.
+    pub fn grabbed_position(&self, p: usize) -> R<Option<V3>> {
+        let Some((i, node, local)) = self.player_grab[p] else { return Ok(None) };
+        let Some(Some(_)) = self.critters.get(i) else { return Ok(None) };
+        let root = self.critter_root_pub(i);
+        let cr = self.crit(i);
+        let m = match node {
+            Some(n) => crate::tree_pose::node_world(&cr.parents, &cr.locals, root, n, Some(local)).map_err(|e| Unsupported(e.0))?,
+            None => root,
+        };
+        Ok(Some([m[12], m[13], m[14]]))
     }
 
     /// CritterDamagePlayer 0x19b910.

@@ -231,6 +231,8 @@ pub struct Game {
     pub good_wiz_timer: f32,
     pub good_wiz_alpha: i32,
     pub auto_exit_timer: i32,
+    /// Players parented to a critter node by a grab: (critter, node, offset).
+    pub player_grab: [Option<(usize, Option<usize>, [f32; 3])>; 4],
     /// SpewItems (item slot, velocity), at most 0x20.
     pub spew_items: Vec<(Option<usize>, [f32; 3])>,
     /// Where BossDeath placed the boss key effect.

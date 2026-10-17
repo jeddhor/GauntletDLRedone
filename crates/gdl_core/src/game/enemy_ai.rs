@@ -1602,6 +1602,12 @@ impl Game {
 
     /// find_closest_item(position, kind filter): nearest blocking item and its xz distance.
     fn find_closest_item(&self, r: f32, p: V3) -> R<(Option<usize>, f32)> {
+        self.find_closest_item_kind(r, p, 0)
+    }
+
+    /// find_closest_item 0x1545a0 with a kind filter (kind 4 skips placed
+    /// enemies already activated, +0xf8 bit 1).
+    pub(crate) fn find_closest_item_kind(&self, r: f32, p: V3, kind: i32) -> R<(Option<usize>, f32)> {
         let mut best = 100_000.0;
         let mut found = None;
         for slot in self.grid.items_near(&self.items, r, p)? {
@@ -1610,7 +1616,13 @@ impl Game {
                 continue;
             }
             let d = &self.items.definitions[rec.definition()];
-            if d.i16_(8) == 0 || d.kind() == -1 || rec.u8_(0xe1) != 0 || self.skip_item(slot) {
+            if d.i16_(8) == 0 {
+                continue;
+            }
+            if kind != 0 && (d.kind() != kind || (kind == 4 && rec.u32_(0xf8) & 1 != 0)) {
+                continue;
+            }
+            if d.kind() == -1 || rec.u8_(0xe1) != 0 || self.skip_item(slot) {
                 continue;
             }
             let ip = rec.v3(0x60);

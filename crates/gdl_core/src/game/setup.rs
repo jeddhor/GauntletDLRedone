@@ -315,6 +315,7 @@ impl Game {
             good_wiz_alpha: 0,
             auto_exit_timer: 0,
             spew_items: Vec::new(),
+            player_grab: [None; 4],
             mb_objects: inp.mb_objects,
             sounds: {
                 let slots: Vec<(i32, i32, String)> = (0..8)

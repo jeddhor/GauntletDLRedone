@@ -1095,7 +1095,14 @@ impl Game {
                 self.audio("ShakeCamera", None, 0);
             }
             if flags & 0x2000 != 0 {
-                return unsupported("ActivateNearestEnemy trigger");
+                // ActivateNearestEnemy 0x1546f8(trigger +0x40).
+                let at = self.items.records[slot].v3(0x40);
+                if let (Some(k), d) = self.find_closest_item_kind(10.0, at, 4)?
+                    && d < 10.0
+                {
+                    let v = self.items.records[k].u32_(0xf8) | 1;
+                    self.items.records[k].set_u32(0xf8, v);
+                }
             }
             if 0 <= r.i16_(0x102) && touched != 0 {
                 self.audio("TriggerCameraActivate", None, i32::from(r.i16_(0x102)));
