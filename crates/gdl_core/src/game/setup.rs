@@ -278,6 +278,7 @@ impl Game {
             stop_time: s.extra.stop_time,
             max_stop_time: 0.0,
             sumner_hint_time: 0.0,
+            world_crystal: inp.elf.object("WorldCrystal").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
             old_enemy_shrink: 1.0,
             boss_is_dying: s.extra.boss_is_dying,
             suicide_bomber_index: -1,
@@ -402,6 +403,10 @@ impl Game {
         }
         game.update_camera(&s.camera);
         game.camera_rest = Some(s.camera.clone());
+        if game.globals.cur_world == 0xd {
+            // init_next_level → EnterTower after the items are placed.
+            game.enter_tower().map_err(|e| format!("EnterTower: {}", e.0))?;
+        }
         Ok(game)
     }
 

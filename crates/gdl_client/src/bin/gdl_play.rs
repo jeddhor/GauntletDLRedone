@@ -57,11 +57,17 @@ struct Sources {
 #[derive(Resource, Default)]
 struct Libraries(HashMap<String, Library>);
 
-/// One playable level of the realm (config entry).
+/// One playable level (config entry).
 struct LevelSource {
     name: String,
     /// LEVL record index (CurLevel; the exit wave's low byte).
     index: usize,
+    /// CurWorld (the exit wave's high byte), its WDATA and realm label.
+    world: i32,
+    wdata: std::path::PathBuf,
+    title: String,
+    /// Monster packages of the level's realm (names in `packages`).
+    monsters: Vec<String>,
     worlds: std::path::PathBuf,
     package: Value,
     /// Item packages, level-specific first (names in `packages`).
@@ -75,7 +81,8 @@ struct LevelSource {
 #[derive(Resource)]
 struct Session {
     elf_bytes: Vec<u8>,
-    wdata_bytes: Vec<u8>,
+    /// Package config entries by name; packages load per level.
+    package_cfg: HashMap<String, Value>,
     /// Start-state JSON (v5); later levels replace player 0 and CurLevel.
     start: Value,
     levels: Vec<LevelSource>,
@@ -83,6 +90,8 @@ struct Session {
     world_number: i32,
     /// Realm label for the HUD (config "title").
     title: String,
+    /// CurWorld of the level played before this one (LastWorldPlayed).
+    last_world: i32,
     current: usize,
     world: World,
     level: Package,
@@ -498,20 +507,20 @@ fn spawn_level(
 /// record and are entered at the level's start locator (get_player_pos).
 fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::record::Record>) -> Result<(Game, PlayerDriver), Box<dyn Error>> {
     let elf = gdl_formats::elf::Elf::parse(&session.elf_bytes)?;
-    let wdata = gdl_formats::wdata::WorldData::parse(&session.wdata_bytes)?;
     let lv = &session.levels[idx];
+    let wdata = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&lv.wdata)?)?;
     let mut start = session.start.clone();
     if let Some(r) = carry {
         start["players"][0] = Value::String(r.0.iter().map(|b| format!("{b:02x}")).collect());
     }
     // The save is G1 (world 7, record 0); any other level enters at its
     // start locator with CurWorld/CurLevel set (the session tables follow).
-    let from_save = carry.is_none() && session.world_number == 7 && lv.index == 0;
-    start["globals"]["cur_world"] = Value::from(session.world_number);
+    let from_save = carry.is_none() && lv.world == 7 && lv.index == 0;
+    start["globals"]["cur_world"] = Value::from(lv.world);
     start["globals"]["cur_level"] = Value::from(lv.index as i64);
     let start: setup::StartState = serde_json::from_value(start)?;
     let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
-    for (t, prefix, path) in &session.monster_paths {
+    for (t, prefix, path) in session.monster_paths.iter().filter(|m| lv.monsters.contains(&m.1)) {
         let anim = Animations::parse(&gdl_client::bounded_read(Path::new(path))?)?;
         setup::enemy_trees(&mut enemy_anims, *t, prefix, &anim);
     }
@@ -559,7 +568,23 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
     let tables = tables_from_elf(&elf)?;
     let mut sim = session.sim_start.clone();
     if !from_save {
-        let loc = session.world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("level has no player start locator")?;
+        // EnterTower: SetPlayerStartPos(GetWorldOrder(LastWorldPlayed)) puts
+        // a returning player at that realm's wing (WorldOrder 0x23f4c8);
+        // WorldOpen's check is not ported (HYPOTHESIS: the start is open).
+        let mut id = 0;
+        if lv.world == 0xd
+            && let Ok(order) = elf.object("WorldOrder")
+        {
+            let order: Vec<i32> = order.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect();
+            id = order.iter().position(|&w| w == session.last_world).unwrap_or(0) as i16;
+        }
+        let loc = session
+            .world
+            .locators
+            .iter()
+            .find(|l| l.kind == 7 && l.id == id)
+            .or_else(|| session.world.locators.iter().find(|l| l.kind == 7 && l.id == 0))
+            .ok_or("level has no player start locator")?;
         game.place_player_start(0, &mut sim, loc.position, loc.rotation[1]).map_err(|e| e.to_string())?;
         sim.current_action = 0;
         sim.requested_action = 0;
@@ -1035,10 +1060,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     if rig.trees.len() != 1 || clips.trees.len() != 1 || rig.trees[0].nodes.len() != clips.trees[0].nodes.len() {
         return Err("character rig and clip trees must correspond".into());
     }
-    let mut packages = HashMap::new();
     let mut anim_paths = HashMap::new();
     for (name, v) in cfg["packages"].as_object().ok_or("config packages")? {
-        packages.insert(name.clone(), load_package(v)?);
         if let Some(a) = v["anim"].as_str() {
             anim_paths.insert(name.clone(), a.to_string());
         }
@@ -1057,6 +1080,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         levels.push(LevelSource {
             name: l["name"].as_str().ok_or("level name")?.to_string(),
             index: l["index"].as_u64().ok_or("level index")? as usize,
+            world: l["world"].as_i64().ok_or("level world")? as i32,
+            wdata: l["wdata"].as_str().ok_or("level wdata")?.into(),
+            title: l["title"].as_str().unwrap_or("").to_string(),
+            monsters: l["monsters"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default(),
             worlds: l["worlds"].as_str().ok_or("level worlds")?.into(),
             package: l["level"].clone(),
             items: l["items"].as_array().ok_or("level items")?.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
@@ -1067,6 +1094,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         });
     }
     let first = levels.first().ok_or("no levels")?;
+    let package_cfg: HashMap<String, Value> = cfg["packages"].as_object().ok_or("config packages")?.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut packages = HashMap::new();
+    let first_labels = load_level_packages(&mut packages, &package_cfg, first)?;
     let audio_cfg = &cfg["audio"];
     let audio_rom = match audio_cfg["rom"].as_str() {
         Some(p) => Some(gdl_formats::audio::AudioRom::parse(&gdl_client::bounded_read(Path::new(p))?)?),
@@ -1076,15 +1106,22 @@ fn run() -> Result<(), Box<dyn Error>> {
         audio_cfg[k].as_object().map_or(HashMap::new(), |m| m.iter().filter_map(|(n, v)| Some((n.to_uppercase(), v.as_str()?.into()))).collect())
     };
     let audio = audio_rom.clone().map(|rom| gdl_client::audio::AudioOut::new(rom, paths("banks"), paths("streams")));
+    let (first_world, first_level, world_number, title) = (
+        World::parse(&gdl_client::bounded_read(&first.worlds)?)?,
+        load_package(&first.package)?,
+        first.world,
+        first.title.clone(),
+    );
     let session = Session {
         elf_bytes: gdl_client::bounded_read(&p("elf")?)?,
-        wdata_bytes: gdl_client::bounded_read(&p("wdata")?)?,
+        package_cfg,
         start: serde_json::from_slice(&gdl_client::bounded_read(&p("game_start")?)?)?,
-        world: World::parse(&gdl_client::bounded_read(&first.worlds)?)?,
-        level: load_package(&first.package)?,
+        world: first_world,
+        level: first_level,
         levels,
-        world_number: cfg["world"].as_i64().unwrap_or(7) as i32,
-        title: cfg["title"].as_str().unwrap_or("The Poison Fields").to_string(),
+        world_number,
+        title,
+        last_world: 0,
         current: 0,
         sim_start: player,
         action_map,
@@ -1092,7 +1129,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         monster_paths,
         anim_paths,
         audio_rom,
-        object_labels: packages.values().chain([&character]).flat_map(|k| k.objects.definitions.iter().map(|d| d.label.clone())).collect(),
+        object_labels: first_labels.into_iter().chain(character.objects.definitions.iter().map(|d| d.label.clone())).collect(),
         banner: None,
         next: None,
         finished: None,
@@ -1146,6 +1183,30 @@ fn ui_input(keys: Res<ButtonInput<KeyCode>>, mut ui: ResMut<Ui>) {
     }
 }
 
+/// Package names a level draws or reads: the shared packages, its item
+/// packages, its realm's monsters and its critter models.
+fn level_packages(lv: &LevelSource) -> Vec<String> {
+    let mut v: Vec<String> = ["POWERUPS", "WEAPONS", "SFXYEL"].iter().map(|s| s.to_string()).collect();
+    v.extend(lv.items.iter().cloned());
+    v.extend(lv.monsters.iter().cloned());
+    v.extend(lv.critters.iter().filter_map(|c| c.2.clone()));
+    v
+}
+
+/// Loads the level's packages that are not cached yet; returns the object
+/// labels of the level's packages (the MBOX tables the level searches).
+fn load_level_packages(cache: &mut HashMap<String, Package>, cfg: &HashMap<String, Value>, lv: &LevelSource) -> Result<std::collections::HashSet<String>, Box<dyn Error>> {
+    let mut labels = std::collections::HashSet::new();
+    for name in level_packages(lv) {
+        if !cache.contains_key(&name) {
+            let v = cfg.get(&name).ok_or_else(|| format!("package {name} not configured"))?;
+            cache.insert(name.clone(), load_package(v)?);
+        }
+        labels.extend(cache[&name].objects.definitions.iter().map(|d| d.label.clone()));
+    }
+    Ok(labels)
+}
+
 /// Level complete → banner → next level (exit destination wave), or the
 /// end of the playable realm. Enter continues after death (interim).
 #[allow(clippy::too_many_arguments)]
@@ -1161,6 +1222,9 @@ fn advance_level(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
+    mut sources: ResMut<Sources>,
+    mut libraries: ResMut<Libraries>,
+    mut frames: ResMut<EnemyFrames>,
 ) {
     if keys.just_pressed(KeyCode::Enter) && sim.game.players[0].f32_(0x1a10) <= 0.0 {
         // INTERIM continue: restore the start-state health and play on.
@@ -1178,8 +1242,8 @@ fn advance_level(
     }
     if keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
         // DEBUG: act as if the exit portal (destination: next level) was used.
-        let next = session.levels.get(session.current + 1).map_or(0xff, |l| l.index as i32);
-        sim.game.level_done = Some(session.world_number << 8 | next);
+        let next = session.levels.get(session.current + 1).map_or(session.world_number << 8 | 0xff, |l| l.world << 8 | l.index as i32);
+        sim.game.level_done = Some(next);
     }
     if session.banner.is_none()
         && session.finished.is_none()
@@ -1188,9 +1252,15 @@ fn advance_level(
         let world = wave >> 8;
         let level = (wave & 0xff) as usize;
         let name = session.levels[session.current].name.clone();
-        if let Some(k) = session.levels.iter().position(|l| l.index == level).filter(|_| world == session.world_number) {
+        // game_main → PlayersSetWaveFinished(PrevWorld, PrevLevel) for the
+        // level just completed (realm progress, tower exits).
+        let (cw, cl) = (session.world_number, session.levels[session.current].index as i32);
+        let (l90, l92) = (sim.game.level_i16(0x90), sim.game.level_i16(0x92));
+        sim.game.players_set_wave_finished(cw, cl, l90, l92);
+        if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world) {
             session.next = Some(k);
-            session.banner = Some((3.0, format!("{name} COMPLETE - entering {}", session.levels[k].name)));
+            let to = if session.levels[k].world == session.world_number { session.levels[k].name.clone() } else { format!("{} {}", session.levels[k].title, session.levels[k].name) };
+            session.banner = Some((3.0, format!("{name} COMPLETE - entering {to}")));
         } else if wave == gdl_core::game::boss::TOWER_WAVE {
             session.finished = Some(format!(
                 "{} COMPLETE!\nThe boss is defeated; the game would return to the hub (not ported yet).\nThanks for testing! (Esc to quit)",
@@ -1213,6 +1283,24 @@ fn advance_level(
     let loaded = (|| -> Result<(), Box<dyn Error>> {
         session.world = World::parse(&gdl_client::bounded_read(&session.levels[idx].worlds)?)?;
         session.level = load_package(&session.levels[idx].package)?;
+        // Packages of a realm not seen yet load now (libraries and frames too).
+        let labels = load_level_packages(&mut sources.packages, &session.package_cfg, &session.levels[idx])?;
+        for name in level_packages(&session.levels[idx]) {
+            if !libraries.0.contains_key(&name) {
+                let pkg = &sources.packages[&name];
+                libraries.0.insert(name.clone(), build_library(pkg, &mut meshes, &mut images, &mut materials));
+                if sources.monsters.values().any(|m| *m == name) {
+                    frames.0.insert(name.clone(), enemy_frames(pkg));
+                }
+            }
+        }
+        let character: Vec<String> = sources.character.objects.definitions.iter().map(|d| d.label.clone()).collect();
+        session.object_labels = labels.into_iter().chain(character).collect();
+        if session.world_number != 0xd {
+            session.last_world = session.world_number;
+        }
+        session.world_number = session.levels[idx].world;
+        session.title = session.levels[idx].title.clone();
         Ok(())
     })();
     let carry = sim.game.players[0].clone();

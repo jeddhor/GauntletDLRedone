@@ -54,7 +54,7 @@ def audio_config():
 
 REALMS = {'A': (1, 'CASTLE'), 'B': (2, 'MOUNT'), 'C': (3, 'DESERT'), 'D': (4, 'FOREST'), 'E': (5, 'TEMPLE'),
           'F': (6, 'HELL'), 'G': (7, 'TOWN'), 'H': (8, 'BATTLE'), 'I': (9, 'ICE'), 'J': (10, 'DREAM'),
-          'K': (11, 'SKY')}  # ELF worlddatas 0x23deb0
+          'K': (11, 'SKY'), 'L': (0xd, 'TOWER')}  # ELF worlddatas 0x23deb0
 
 
 def levl_records(wdata):
@@ -173,6 +173,7 @@ def main():
     parser.add_argument('--virtual', action='store_true', help='run inside the authenticated Xvfb session')
     parser.add_argument('--realm', default='G', choices=sorted(REALMS), help='realm letter (G: The Poison Fields)')
     parser.add_argument('--level', help='first level code, e.g. A2 (default: the realm\'s first level)')
+    parser.add_argument('--campaign', action='store_true', help='start in the Tower with every realm reachable')
     args = parser.parse_args()
     source = json.loads(pathlib.Path('profiles/ps2/slus-20047.json').read_text())
     if hashlib.sha256(ELF.read_bytes()).hexdigest() != source['executable']['sha256']:
@@ -190,38 +191,54 @@ def main():
             out['anim'] = str(paths[3])
         return out
 
-    world, wad = REALMS[args.realm]
-    wdata, rig, clips = resolve([f'WDATA/{wad}.WAD', 'PLAYERS/SOR/YEL00/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2'])
+    _, rig, clips = resolve(['WDATA/TOWN.WAD', 'PLAYERS/SOR/YEL00/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2'])
     known = known_names()
-    # Every level in level-code order; the boss arena last (the critter engine
-    # is ported for single-type bosses; the chimera's heads are not).
-    records = sorted(levl_records(wdata.read_bytes()), key=lambda r: (0 <= r[2], int(r[1][1:])))
-    if args.level:
-        records = [r for r in records if r[1] >= args.level.upper()] or records
     packages = dict(POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), SFXYEL=package('PLAYERS/SOR/SFXYEL'))
-    levels = []
-    for index, code, _ in records:
-        # HYPOTHESIS: the level's own ITEMS package and the realm's are both loaded.
-        items = [f'LEVEL{x}' for x in (code, args.realm) if f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
-        for name in items:
-            packages.setdefault(f'ITEMS_{name[5:]}', package(f'ITEMS/{name}'))
-        levels.append(dict(name=code, index=index, worlds=str(resolve([f'LEVELS/LEVEL{code}/WORLDS.PS2'])[0]),
-                           level=package(f'LEVELS/LEVEL{code}', anim=False), items=[f'ITEMS_{n[5:]}' for n in items],
-                           critters=critter_files(level_kinds(wdata, index), world, known, wdata.read_bytes())))
-    for lv in levels:
-        for c in lv['critters']:
-            if 'lib' in c:
-                packages.setdefault(c['lib'], package(c['lib']))
-    monsters = realm_monsters(wdata, [r[0] for r in records], known)
-    for _, prefix in monsters:
-        packages[prefix] = package(f'MONSTERS/{prefix}')
+    monsters = {}
+
+    def realm_levels(letter, first=None):
+        """Config entries of one realm's levels (level-code order, boss last)."""
+        world, wad = REALMS[letter]
+        wdata, = resolve([f'WDATA/{wad}.WAD'])
+        records = sorted(levl_records(wdata.read_bytes()), key=lambda r: (0 <= r[2], int(r[1][1:])))
+        # Records without level files (TOWER.WAD's L2) are skipped.
+        records = [r for r in records if f'LEVELS/LEVEL{r[1]}/WORLDS.PS2' in known]
+        if first:
+            records = [r for r in records if r[1] >= first.upper()] or records
+        title = 'The Poison Fields' if letter == 'G' else ('The Tower' if letter == 'L' else f'{wad.title()} realm ({letter})')
+        realm_m = realm_monsters(wdata, [r[0] for r in records], known)
+        for t, prefix in realm_m:
+            monsters[t] = prefix
+            packages.setdefault(prefix, package(f'MONSTERS/{prefix}'))
+        out = []
+        for index, code, _ in records:
+            # HYPOTHESIS: the level's own ITEMS package and the realm's are both loaded.
+            items = [f'LEVEL{x}' for x in (code, letter) if f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
+            for name in items:
+                packages.setdefault(f'ITEMS_{name[5:]}', package(f'ITEMS/{name}'))
+            critters = critter_files(level_kinds(wdata, index), world, known, wdata.read_bytes())
+            for c in critters:
+                if 'lib' in c:
+                    packages.setdefault(c['lib'], package(c['lib']))
+            out.append(dict(name=code, index=index, world=world, wdata=str(wdata), title=title,
+                            worlds=str(resolve([f'LEVELS/LEVEL{code}/WORLDS.PS2'])[0]),
+                            level=package(f'LEVELS/LEVEL{code}', anim=False), items=[f'ITEMS_{n[5:]}' for n in items],
+                            monsters=[p for _, p in realm_m], critters=critters))
+        return out
+
+    if args.campaign:
+        # The Tower (hub) first, then every realm; exits and the boss's
+        # TowerWave choose the next level by destination wave.
+        levels = realm_levels('L')
+        for letter in 'ABCDEFGHIJK':
+            levels += realm_levels(letter)
+    else:
+        levels = realm_levels(args.realm, args.level)
     config = dict(
-        sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), wdata=str(wdata), levels=levels, world=world,
-        # Realm label: the project's name for G, else the WDATA file name.
-        title='The Poison Fields' if args.realm == 'G' else f'{wad.title()} realm ({args.realm})',
+        sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), levels=levels,
         character=package('PLAYERS/SOR/YEL00', anim=False),
         character_rig=str(rig), character_clips=str(clips), packages=packages,
-        monsters=[dict(type=t, package=p) for t, p in monsters],
+        monsters=[dict(type=t, package=p) for t, p in sorted(monsters.items())],
         audio=audio_config())
     CONFIG.write_text(json.dumps(config, indent=1) + '\n')
     env = os.environ.copy()

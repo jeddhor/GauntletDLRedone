@@ -16,6 +16,10 @@ session with "COMPLETE" (the hub is not ported), any other realm's wave ends it
 too. The HUD names other realms by their WDATA file
 (e.g. "Castle realm (A)").
 
+Campaign: `python3 tools/python/run_play.py --campaign` starts in the Tower
+(hub) with every realm configured; realm portals open per the save's
+progress, a defeated boss returns to the Tower. Packages load per level.
+
 Controls: Enter starts from the title prompt; arrows/WASD move, Space/K
 throw, E/L use a potion (magic), P pauses, F1 toggles the diagnostics block,
 stand still in the exit portal to leave the level, Enter continues after death

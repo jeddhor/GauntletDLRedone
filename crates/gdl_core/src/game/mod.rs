@@ -19,6 +19,7 @@ pub mod players;
 pub mod progress;
 pub mod record;
 pub mod setup;
+pub mod tower;
 pub mod sound;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
@@ -128,6 +129,8 @@ pub enum Event {
     /// Sumner's hint animation starts / the HintMenu opens (tower UI).
     SumnerAnim { player: usize },
     HintMenu { player: usize },
+    /// HideExits disabled a tower exit (the inactive model is presentation).
+    ExitHidden { slot: usize },
     /// A world object hidden by WorldObjectExplode (presentation).
     ObjectHidden { object: usize },
     /// ScrollMessageBox(player mask, -1, text, -1): the blocking scroll
@@ -179,6 +182,8 @@ pub struct Game {
     pub stop_time: i32,
     /// MaxStopTime 0x22c4f8 (time-stop powerup duration) and OldEnemyShrink.
     pub max_stop_time: f32,
+    /// WorldCrystal 0x23f500: the crystal index each realm's door needs.
+    pub world_crystal: Vec<i32>,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
     pub old_enemy_shrink: f32,
@@ -276,6 +281,9 @@ pub struct Game {
 impl Game {
     pub fn level_f32(&self, o: usize) -> f32 {
         f32::from_le_bytes(self.level[o..o + 4].try_into().unwrap())
+    }
+    pub fn level_i16(&self, o: usize) -> i16 {
+        i16::from_le_bytes([self.level[o], self.level[o + 1]])
     }
     pub fn level_u32(&self, o: usize) -> u32 {
         u32::from_le_bytes(self.level[o..o + 4].try_into().unwrap())

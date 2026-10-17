@@ -144,6 +144,16 @@ wave exits (SaveStage), camera logic, save/load, co-op.
   0x2c0025, Death's touch (do_enemy_attack type 0x1e, AddExp kind -2 =
   amount × LevelDeltaExp × 0.01, StartDeathFX) and dissolve, the time-stop
   and trigger-camera enemy paths of do_enemies, MaxStopTime.
+- Tower hub (game/tower.rs, level L1, CurWorld 0xd): EnterTower opens the
+  doors for delivered gargoyle items / crystals (ActivateSpecialTrigger) and
+  HideExits disables exits to unreached levels (wave byte bit n−1) and to
+  closed realms (WorldOpen: Temple/Hell/Battle need shards, Hell all runes).
+  PlayersSetWaveFinished records each completed level. With the fixture save
+  (G1 in progress) the tower offers the first level of A, B, C, D, G, I, J
+  and K. Not modelled: Sumner (secret character), TowerCheckMessages
+  speeches/window cameras, shard/rune display, exit model swaps. The client's
+  campaign mode (`run_play.py --campaign`) starts in the tower; exits and the
+  boss TowerWave pick the next level by (world, level).
 - Camera (HYPOTHESIS, do_camera not ported): the simulation camera follows
   player 0's rest pose after every update; it gates placed-enemy spawns and
   item activation. It was previously fixed at the level start, so placed
