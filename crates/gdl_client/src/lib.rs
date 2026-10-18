@@ -3,6 +3,8 @@
 //! double sided, base textures with source vertex colours; lightmaps and GS
 //! blending are not applied.
 pub mod audio;
+pub mod catalog;
+pub mod menu;
 
 use bevy::{
     asset::RenderAssetUsages,

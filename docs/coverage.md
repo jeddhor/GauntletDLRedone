@@ -1,7 +1,8 @@
 # Milestone acceptance ledger
 
-This is a native reconstruction in progress. No native playable encounter,
-campaign, save system, or multiplayer gameplay is currently implemented.
+This is a native reconstruction in progress. An interim native build plays the
+campaign from the Tower with native saves and labelled interim parts; no
+milestone gate from M12 on is accepted yet.
 Content denominators remain provisional and do not indicate reachability.
 
 | Milestone | Status | Evidence / remaining exit requirement |
@@ -23,8 +24,8 @@ Content denominators remain provisional and do not indicate reachability.
 | M14 Content expansion | Not implemented | Private archive-family catalog exists; reachable content/support matrix pending |
 | M15 Bosses/endgame | Partial | Critter engine (research/critters.md): boss AI, attacks, damage, BOSSGEN, death, coin spew, good-wizard timing, auto exit; grab and fire cones (B6/C5/F2/K5 run headless); the lich (G5) and the chimera with its child heads (A5) complete headless; golems, gargoyles and generals spawn from statues with CritterGolemAI, collision and waypoints. Tower hub: exits gated by progress, campaign mode (EnterTower doors, HideExits); endgame and Sumner speeches pending |
 | M16 Local multiplayer | Partial (interim) | Up to four local players (keyboard set 2, gamepads via bevy_gilrs); joining players copy player 1's record (PLACEHOLDER), averaged camera (HYPOTHESIS); original join/drop, character select, camera and ownership rules pending |
-| M17 Audio/UI completion | Partial | Native audio (AUDATPS2.ROM/VBK/ADS decoders, ~35 cue ports, ALSA mixer; research/audio.md); interim title/pause/HUD/banners; original menus, front end and attention-area music pending |
-| M18 Saves/migrations | Not implemented | Native durable save/recovery contract pending |
+| M17 Audio/UI completion | Partial | Native audio (AUDATPS2.ROM/VBK/ADS decoders, ~35 cue ports, ALSA mixer; research/audio.md). Front end with the original menu structure and labels (title, Start/Options, Settings/Audio volumes, Tower and realm pause menus, Manage Character, Quit Level/Game) as labelled native text presentation; player select with all eight base classes and colours, name entry, saved characters and capture import (research/saves.md). Original SELECT/TITLE scenes, fonts, text ROM tables, shop, inventory, hints, compass/controls/screen options, credits, original HUD and attention-area music pending |
+| M18 Saves/migrations | Partial | Native saves (gdl_core::save): versioned envelopes keeping the original 0x1074-byte region, SHA-256, atomic replace with `.bak`, recovery from `.tmp`/`.bak`, schema-0 raw-save migration, refusal of other schemas/revisions; character records ported (game::profile) and checked against the captured record (profile-check). PS2 import: from the savestate capture; memory-card reader read-only, no original card save available to decode. Recovery UI beyond the status line, multi-player ownership and DirInfo pending |
 | M19 Enhancements | Deferred | Fidelity prerequisites not accepted |
 | M20 Platform/performance QA | Not reached | Linux asset-inspector smoke only; Windows and gameplay performance untested |
 | M21 Release/importer | Not reached | No qualified gameplay package or fresh-install supported-revision importer |

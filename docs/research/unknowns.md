@@ -21,12 +21,19 @@ replaced by a plausible gameplay rule or generated asset.
 | RNG reproducibility | Main loop reseeds using CPU time in static path | Observe actual seed calls and consumers with frame/timing context |
 | Damage/enemy rules | Transcribed natively (gameplay.md); headless synthetic scenarios run G1–G4 without unsupported paths | Controlled reference encounter captures (enemy spawn, hit, kill, generator damage) and first-divergence comparison |
 | Player action production | Ordinary throw subset native; magic/turbo/melee requests come from animation events not yet produced natively | Recover PlayerMotion's pad → requested action and DoPlayerAction event production for magic and melee |
-| Derived combat stats | PlayerUpdateAtts attribute words match the save; +0x128/+0x12c derivation (LoadPlyrData) unknown | Export LoadPlyrData and compare across a captured level-up |
+| Derived combat stats | Resolved: check_player_atts' Get<Att> ranges reproduce +0x118..+0x12c of the captured record (profile-check); the words refresh only through load_player_atts, as in the original | — |
 | Enemy per-frame objects | OANIM node type 2; client matches object stems to sequences by frame count | Decode the OANIM channel data at the tree's blocks |
 | Reference stepping transport | Xvfb F10 verifies one vblank per step; paused PINE reads repeat | Tie captures to actual guest function/update edges; verify debugger sample |
 | Reference scenario coverage | Full-heap reload guard; idle/movement/attack-state/one-key schedules repeat | Recover complete attack events and transition/game-save scenarios |
 | Animation numeric policy | Native finite numeric/channel subset matches walking/attack keys and2,011 evaluated records | Local matrices now match2,170 observations; bounded animation selection matches42 updates; world helper has three qualified calls; recover render scale/attachments, mirror and remaining events; exceptional numeric domains and long interpolation gaps remain |
-| Native saves/campaign/co-op/audio | Not implemented | Follow dependencies M10–M18; no release-scope claims yet |
+| Native saves | Implemented (research/saves.md): envelopes, backups, recovery, raw-save migration; synthetic tests and the PELE record check | Power-loss interruption on real storage not testable here; multi-player ownership (co-op players save nothing) |
+| Original memory-card saves | Reader is structural only; the user's cards are unformatted and the private copy is empty | Decode a real BASLUS-20047save file when one exists (a copied card) and compare with the savestate region |
+| Level-start runtime fields | profile::level_start ports load_player_geo/load_player stores; +0x800/+0x804 (100.0 in the capture), +0x7b8..+0x7d0, +0x974..+0x980 and reset_player_powerups are not reproduced | Trace the writers of +0x800 and +0x974 and port reset_player_powerups |
+| Secret characters and Sumner | Classes 8–15 and Sumner (player_sumner_desc) refused at load | Port the unlock rules, per-colour clip packages and the Sumner branches |
+| Front-end presentation | Menus are native text with the original structure/labels; TEXT/ENGLISH.ROM tables, FNT fonts, SELECT/TITLE scenes not decoded | Decode the ROM tables and fonts; port the select scene |
+| Shop, inventory, hints, settings | Not ported (menus say so) | Port write_shop_menu/do_shop, the inventory screen, hint_menu and the controls/screen/compass options |
+| Death and continue | Interim: health from the class entry; kill_player/PlayerRestoreState and the continue screen not ported | Port kill_player and the continue flow |
+| Missile textures across packages | Thrown trees whose textures live in another package draw magenta (Sorceress WND_THROW1) | Resolve textures through a global MBOX texture namespace |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 | Loaded MBOX object tables | SetSafeRock/ItemFindMBObjectL1 search every loaded model table; native uses the labels of all runner packages (HYPOTHESIS) | Trace the level's package load list (LoadLevel) and model_count |
 | SetPlayerVars side writes | StopTime, EnemyShrink, ActivePlayerMask, +0x93e and SetNumPlayers ported; NumVirtualPlayers' 0x20f954 override and NumLivePlayers not captured; ProcessItems' 0x220170 → 0x220160 store not ported | Capture 0x20f954 |

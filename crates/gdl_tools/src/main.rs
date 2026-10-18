@@ -251,6 +251,62 @@ fn run() -> Result<(), Box<dyn Error>> {
         serde_json::to_writer_pretty(&mut file, &serde_json::json!({"source_sha256":hash(&b),"report":report}))?;
         return Ok(());
     }
+    if args.len() == 20 && args[0] == "profile-check" {
+        // profile-check GAME_START.json SLUS_200.47 CLASS_ANIM.PS2 PDATA×16 (class order):
+        // rebuild player 0 from its save region (PlayerLoadSaveFile path) and
+        // list the record offsets that differ from the captured record (stdout).
+        use gdl_core::game::profile;
+        let start: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;
+        let elf_bytes = bounded_read(Path::new(&args[2]), 16 * 1024 * 1024)?;
+        let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
+        let tables = gdl_core::player_class::ClassTables::from_elf(&elf)?;
+        let mut pdats = Vec::new();
+        for a in &args[4..20] {
+            pdats.push(gdl_formats::pdata::PlayerData::parse(&bounded_read(Path::new(a), 1024 * 1024)?)?.pdat);
+        }
+        let pdats = profile::Pdats(pdats);
+        let h = start["players"][0].as_str().ok_or("players[0]")?;
+        let captured: Vec<u8> = (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16)).collect::<Result<_, _>>()?;
+        let region = &captured[profile::SAVE_START..profile::SAVE_START + profile::SAVE_LEN];
+        println!("summary {:?}", profile::summary(region));
+        let (mut r, controls) = profile::load_character(0, region, &pdats, &tables).map_err(|e| e.to_string())?;
+        let anim = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(&args[3]), 64 * 1024 * 1024)?)?;
+        let heart = elf.object("heart_rate")?.first().copied().unwrap_or(0);
+        // init_next_level for G1 (game_wave 0x700): level start, then PlayerSaveState(k, 1).
+        profile::level_start(&mut r, &pdats, &tables.action_map(&anim), 0x700, heart).map_err(|e| e.to_string())?;
+        profile::player_save_state(&mut r, true, 7, 0, &controls);
+        println!("controls {controls:?} heart_rate {heart}");
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for o in (0..captured.len()).step_by(4) {
+            if captured[o..o + 4] != r.0[o..o + 4] {
+                match runs.last_mut() {
+                    Some(l) if l.1 == o => l.1 = o + 4,
+                    _ => runs.push((o, o + 4)),
+                }
+            }
+        }
+        for (a, b) in runs {
+            let w = |v: &[u8], o: usize| u32::from_le_bytes(v[o..o + 4].try_into().unwrap());
+            println!("{a:#06x}..{b:#06x} captured {:#010x} native {:#010x}", w(&captured, a), w(&r.0, a));
+        }
+        return Ok(());
+    }
+    if args.len() == 2 && args[0] == "memcard-list" {
+        // memcard-list CARD.ps2: read-only directory listing with file hashes (stdout).
+        let b = bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?;
+        let card = gdl_formats::memcard::MemoryCard::parse(&b)?;
+        println!("card sha256 {} stride {} flags {:#x}", hash(&b), card.superblock.stride, card.superblock.card_flags);
+        for d in card.root()? {
+            println!("{:#06x} {:>8} {}", d.mode, d.length, d.name);
+            if d.is_dir() {
+                for f in card.list(&d)? {
+                    let h = if f.is_dir() { String::new() } else { hash(&card.read(&f)?) };
+                    println!("    {:#06x} {:>8} {} {}", f.mode, f.length, f.name, h);
+                }
+            }
+        }
+        return Ok(());
+    }
     if args.len() == 2 && args[0] == "anim-trees" {
         // anim-trees ANIM.PS2: tree labels with sequence label/frames/timing (stdout).
         let anim = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;

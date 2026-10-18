@@ -210,7 +210,8 @@ impl Game {
         if s.schema_version != 6 || s.players.len() != 4 {
             return Err("start state v6 expected".into());
         }
-        let class = s.classes.first().cloned().flatten().ok_or("player 0 class data")?;
+        let class0 = s.classes.first().cloned().flatten().ok_or("player 0 class data")?;
+        let classes: [ClassData; 4] = std::array::from_fn(|k| s.classes.get(k).cloned().flatten().unwrap_or_else(|| class0.clone()));
         let g = &s.globals;
         let world_kind = if g.cur_world == 0xd { 0xd } else { 0 };
         let types = crate::level::enemy_types(inp.wdata, level, world_kind, s.extra.mode_950)?;
@@ -304,7 +305,7 @@ impl Game {
             start_enemyinfo: s.extra.start_enemyinfo != 0,
             exit_state: 0,
             enemy_anim_data: inp.enemy_anims,
-            class,
+            classes,
             effects: super::effects::Effects::new(inp.effect_tables),
             boss_crit_inst: s.extra.boss_crit_inst,
             target_cone_mode: s.extra.target_cone_mode,
@@ -560,7 +561,7 @@ impl Game {
         self.players[player].set_u32(0x880, best.map_or(0, |(s, _)| s as u32 + 1));
         if let Some(g) = self.players[player].u32_(0x888).checked_sub(1) {
             if self.players[player].i32_(0xfc) == 1 {
-                let class = self.class.clone();
+                let class = self.classes[player].clone();
                 self.grab_powerup(player, g as usize, &class)?;
             }
             self.players[player].set_u32(0x888, 0);

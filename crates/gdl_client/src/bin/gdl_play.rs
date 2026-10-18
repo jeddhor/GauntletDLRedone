@@ -1,6 +1,14 @@
-//! INTERIM PLAYTEST, not the M12 slice: the Yellow Sorceress in the Poison
-//! Fields with the native gameplay simulation (gdl_core::game): generators,
-//! zombies and mages, items and pickups, chests, missiles and damage.
+//! INTERIM PLAYTEST build with the front end (M17 interim) and native
+//! saves (M18): title → player select (saved characters, a new character
+//! of any of the eight base classes and colours, or the PS2 capture's
+//! character imported) → the Tower and every realm, with the original pause
+//! menus and saving through the Tower's Manage Character entry.
+//!
+//! Characters: the original save region and class records (game::profile:
+//! player_get_from_save / player_store_in_save / level start), the class
+//! model players/<cls>/<colour><level/10>0, the class clips
+//! players/<cls>/anim and the thrown missile <PlayerMissileDesc>_THROW<n>.
+//! Saves: gdl_core::save (versioned envelopes, backups, recovery).
 //!
 //! Simulation: game_main order with the ported item/enemy/effect systems and
 //! the interim player driver (see gdl_core::game::players for its labels).
@@ -10,11 +18,14 @@
 //! sequences (the OANIM channel is not decoded), missiles drawn with the
 //! SFXYEL WEAP_TW_Y rest pose, hit sparks as short glows. Audio: original
 //! banks and music through gdl_client::audio (approximate mixing).
-use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*, sprite::Anchor};
+use bevy::{core_pipeline::tonemapping::Tonemapping, ecs::system::RunSystemOnce, ecs::world::World as EcsWorld, prelude::*, sprite::Anchor};
+use gdl_client::menu::{Action, Entry, Key, Menu};
 use gdl_core::{
     controls::{direction_levels, tables_from_elf},
-    game::{effects::Visual, players::PlayerDriver, setup, Event, Game},
+    game::{effects::Visual, pickups::ClassData, players::PlayerDriver, profile, record::Record, setup, Event, Game},
+    player_class::ClassTables,
     player_sim::PlayerSim,
+    save::SaveStore,
 };
 use gdl_formats::{animation::Animations, objects::Objects, texdef::TextureTable, world::World};
 use serde_json::Value;
@@ -58,6 +69,7 @@ struct Sources {
 struct Libraries(HashMap<String, Library>);
 
 /// One playable level (config entry).
+#[derive(Clone)]
 struct LevelSource {
     name: String,
     /// LEVL record index (CurLevel; the exit wave's low byte).
@@ -111,10 +123,70 @@ struct Session {
     /// Pending level index to build after the banner.
     next: Option<usize>,
     finished: Option<String>,
+    /// The played character: save slot, controller options (save
+    /// +0x190c..), class record, class records of every class, heart_rate.
+    slot: u32,
+    controls: profile::ControlOptions,
+    class_data: ClassData,
+    pdats: profile::Pdats,
+    heart_rate: u8,
+    /// Character packages: the SFX package name, the thrown-missile tree
+    /// (package, label) and the model tier (level / 10) the body uses.
+    sfx: String,
+    throw: (String, String),
+    tier: i32,
+    class: u32,
+    colour: usize,
 }
 
 #[derive(Component)]
 struct LevelEntity;
+
+/// Which part of the program is active.
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Front,
+    Playing,
+}
+
+fn playing(s: Res<Screen>) -> bool {
+    *s == Screen::Playing
+}
+
+/// Configuration parsed once; every game starts from clones of it.
+struct Base {
+    package_cfg: HashMap<String, Value>,
+    start: Value,
+    levels: Vec<LevelSource>,
+    sim_template: PlayerSim,
+    monster_paths: Vec<(i32, String, String)>,
+    monsters: HashMap<i32, String>,
+    anim_paths: HashMap<String, String>,
+    audio_rom: Option<gdl_formats::audio::AudioRom>,
+    shared_labels: std::collections::HashSet<String>,
+}
+
+/// Front end: menu, save store, class tables and the asset catalog.
+#[derive(Resource)]
+struct Front {
+    menu: Menu,
+    store: SaveStore,
+    catalog: gdl_client::catalog::Catalog,
+    elf_bytes: Vec<u8>,
+    tables: ClassTables,
+    pdats: profile::Pdats,
+    /// PlayerMissileDesc 0x24db80: per class "<NAME>\0" + ten tier chars.
+    missile_desc: Vec<Vec<u8>>,
+    heart_rate: u8,
+    /// The PS2 capture's player 0 save region and its sha256 (import source).
+    capture: Option<(Vec<u8>, String)>,
+    game_opts: Vec<u8>,
+    base: Base,
+}
+
+/// Front-end text (menus) drawn over everything.
+#[derive(Component)]
+struct FrontText;
 
 /// A critter instance slot (CritterInsts index) and the type it shows.
 #[derive(Component)]
@@ -441,49 +513,8 @@ fn enemy_frames(pkg: &Package) -> HashMap<String, Vec<Vec<String>>> {
     out
 }
 
-#[allow(clippy::too_many_arguments)]
-fn setup(
-    mut commands: Commands,
-    sources: Res<Sources>,
-    session: Res<Session>,
-    sim: Res<Sim>,
-    presentation: Res<Presentation>,
-    mut libraries: ResMut<Libraries>,
-    mut frames: ResMut<EnemyFrames>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let root = commands.spawn((Transform::from_scale(MIRROR), Visibility::default(), MirrorRoot)).id();
-    spawn_level(&mut commands, root, &session, sim.game.items.records.len(), &mut meshes, &mut images, &mut materials);
-    let character = &sources.character;
-    let (cache, unknown, _) = gdl_client::materials_for(&character.objects, &character.table, &character.textures, &mut images, &mut materials, true);
-    let (parts, _) = gdl_client::object_meshes(&character.objects, &cache, &unknown, &mut meshes);
-    // One body per player slot (co-op players use the same model: the
-    // character select is not ported).
-    for slot in 0..4 {
-        let vis = if slot == 0 { Visibility::default() } else { Visibility::Hidden };
-        let body = commands.spawn((CharacterRoot(slot), Transform::default(), vis)).id();
-        commands.entity(root).add_child(body);
-        let tree = &sources.rig.trees[0];
-        for node in &tree.nodes {
-            let label: String = (tree.prefix.clone() + &node.label).chars().take(16).collect();
-            for def in character.objects.definitions.iter().filter(|d| d.label == label) {
-                for (mesh, material) in parts.get(&(def.object_index as u32)).into_iter().flatten() {
-                    let child = commands
-                        .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(node.index as usize, slot)))
-                        .id();
-                    commands.entity(body).add_child(child);
-                }
-            }
-        }
-    }
-    for (name, pkg) in &sources.packages {
-        libraries.0.insert(name.clone(), build_library(pkg, &mut meshes, &mut images, &mut materials));
-        if sources.monsters.values().any(|m| m == name) {
-            frames.0.insert(name.clone(), enemy_frames(pkg));
-        }
-    }
+/// Cameras and text overlays (always present).
+fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
     commands.spawn((
         Camera3d::default(),
         Tonemapping::None,
@@ -508,6 +539,70 @@ fn setup(
         Transform::from_xyz(0.0, 40.0, 0.0),
         Banner,
     ));
+    commands.spawn((
+        Text2d::new(String::new()),
+        TextFont { font_size: 26.0, ..default() },
+        TextColor(Color::srgb(1.0, 0.95, 0.7)),
+        Anchor::CENTER,
+        Transform::from_xyz(0.0, 0.0, 1.0),
+        FrontText,
+    ));
+}
+
+/// The character body of every player slot (co-op players use player 1's
+/// model: their character select is not ported).
+fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>) {
+    let character = &sources.character;
+    let (cache, unknown, _) = gdl_client::materials_for(&character.objects, &character.table, &character.textures, images, materials, true);
+    let (parts, _) = gdl_client::object_meshes(&character.objects, &cache, &unknown, meshes);
+    for slot in 0..4 {
+        let vis = if slot == 0 { Visibility::default() } else { Visibility::Hidden };
+        let body = commands.spawn((CharacterRoot(slot), Transform::default(), vis)).id();
+        commands.entity(root).add_child(body);
+        let tree = &sources.rig.trees[0];
+        // Rig nodes pose by the class clip node of the same label (the root,
+        // "UNNAMED" in the model, is clip node 0).
+        let clip_nodes = &sources.clips.trees[0].nodes;
+        for node in &tree.nodes {
+            let pose = if node.index == 0 { Some(0) } else { clip_nodes.iter().position(|c| c.label == node.label) };
+            let Some(pose) = pose else { continue };
+            let label: String = (tree.prefix.clone() + &node.label).chars().take(16).collect();
+            for def in character.objects.definitions.iter().filter(|d| d.label == label) {
+                for (mesh, material) in parts.get(&(def.object_index as u32)).into_iter().flatten() {
+                    let child = commands
+                        .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot)))
+                        .id();
+                    commands.entity(body).add_child(child);
+                }
+            }
+        }
+    }
+}
+
+/// The game scene: level geometry, entity slots, bodies and libraries.
+#[allow(clippy::too_many_arguments)]
+fn setup(
+    mut commands: Commands,
+    sources: Res<Sources>,
+    session: Res<Session>,
+    sim: Res<Sim>,
+    mut libraries: ResMut<Libraries>,
+    mut frames: ResMut<EnemyFrames>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let root = commands.spawn((Transform::from_scale(MIRROR), Visibility::default(), MirrorRoot)).id();
+    spawn_level(&mut commands, root, &session, sim.game.items.records.len(), &mut meshes, &mut images, &mut materials);
+    spawn_bodies(&mut commands, root, &sources, &mut meshes, &mut images, &mut materials);
+    for (name, pkg) in &sources.packages {
+        if !libraries.0.contains_key(name) {
+            libraries.0.insert(name.clone(), build_library(pkg, &mut meshes, &mut images, &mut materials));
+        }
+        if sources.monsters.values().any(|m| m == name) && !frames.0.contains_key(name) {
+            frames.0.insert(name.clone(), enemy_frames(pkg));
+        }
+    }
 }
 
 /// Level geometry (original translation-only placements) and entity slots.
@@ -555,19 +650,39 @@ fn spawn_level(
     }
 }
 
-/// Build the native game for level `idx`; later levels carry player 0's
-/// record and are entered at the level's start locator (get_player_pos).
-fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::record::Record>) -> Result<(Game, PlayerDriver), Box<dyn Error>> {
+/// The interim player simulation of a character: the captured template
+/// with the record's class values (speed +0x124, collision offset +0x81c,
+/// radius +0x828, height +0x82c, scales +0x964/+0x968/+0x96c).
+fn class_sim(template: &PlayerSim, r: &Record) -> PlayerSim {
+    let mut sim = template.clone();
+    sim.stats.speed_124 = r.f32_(0x124);
+    sim.stats.radius_828 = r.f32_(0x828);
+    sim.stats.height_82c = r.f32_(0x82c);
+    sim.stats.scale_964 = r.f32_(0x964);
+    sim.stats.turn_968 = r.f32_(0x968);
+    sim.stats.scale_96c = r.f32_(0x96c);
+    sim.collision_offset_81c = r.v3(0x81c);
+    sim
+}
+
+/// Build the native game for level `idx` with player 0's record `carry`,
+/// entered at the level's start locator (get_player_pos). init_next_level's
+/// record steps run first: load_player_geo/load_player (profile::level_start)
+/// and PlayerSaveState (the Tower: without the backup copy; the
+/// Underworld 0xc: not called).
+fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<(Game, PlayerDriver), Box<dyn Error>> {
     let elf = gdl_formats::elf::Elf::parse(&session.elf_bytes)?;
     let lv = &session.levels[idx];
     let wdata = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&lv.wdata)?)?;
     let mut start = session.start.clone();
-    if let Some(r) = carry {
-        start["players"][0] = Value::String(r.0.iter().map(|b| format!("{b:02x}")).collect());
+    let mut record = carry.clone();
+    let game_wave = lv.world << 8 | lv.index as i32;
+    profile::level_start(&mut record, &session.pdats, &session.action_map, game_wave, session.heart_rate).map_err(|e| e.to_string())?;
+    if lv.world != 0xc {
+        profile::player_save_state(&mut record, lv.world != 0xd, lv.world, lv.index as i32, &session.controls);
     }
-    // The save is G1 (world 7, record 0); any other level enters at its
-    // start locator with CurWorld/CurLevel set (the session tables follow).
-    let from_save = carry.is_none() && lv.world == 7 && lv.index == 0;
+    start["players"][0] = Value::String(record.0.iter().map(|b| format!("{b:02x}")).collect());
+    start["classes"][0] = serde_json::to_value(&session.class_data)?;
     start["globals"]["cur_world"] = Value::from(lv.world);
     start["globals"]["cur_level"] = Value::from(lv.index as i64);
     let start: setup::StartState = serde_json::from_value(start)?;
@@ -618,8 +733,8 @@ fn build_game(session: &Session, idx: usize, carry: Option<&gdl_core::game::reco
             .collect::<Result<Vec<_>, _>>()?,
     })?;
     let tables = tables_from_elf(&elf)?;
-    let mut sim = session.sim_start.clone();
-    if !from_save {
+    let mut sim = class_sim(&session.sim_start, &record);
+    {
         // EnterTower: SetPlayerStartPos(GetWorldOrder(LastWorldPlayed)) puts
         // a returning player at that realm's wing (WorldOrder 0x23f4c8);
         // WorldOpen's check is not ported (HYPOTHESIS: the start is open).
@@ -912,8 +1027,8 @@ fn present_world(
                 tf.scale *= node.scale;
                 match node.visual {
                     Visual::Missile { .. } => {
-                        let key = "WEAP_TW_Y".to_string();
-                        let parts = (slot.key.as_deref() != Some("WEAP_TW_Y")).then(|| missile_parts(&sources, &libs));
+                        let key = session.throw.1.clone();
+                        let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| missile_parts(&sources, &libs, &session.throw));
                         (Some(key), parts, tf)
                     }
                     Visual::Header(_) => {
@@ -962,10 +1077,12 @@ fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Mo
     out
 }
 
-/// The Yellow Sorceress missile tree (SFXYEL WEAP_TW_Y) at rest pose.
-fn missile_parts(sources: &Sources, libs: &Libraries) -> Vec<(Vec3, Parts)> {
-    let (Some(p), Some(lib)) = (sources.packages.get("SFXYEL"), libs.0.get("SFXYEL")) else { return Vec::new() };
-    let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == "WEAP_TW_Y")) else { return Vec::new() };
+/// The character's thrown missile tree (InitPlayerMissiles: the
+/// "<PlayerMissileDesc>_THROW<n>" tree of the SFX or model package) at rest
+/// pose (presentation; the tree is not animated).
+fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) -> Vec<(Vec3, Parts)> {
+    let (Some(p), Some(lib)) = (sources.packages.get(&throw.0), libs.0.get(&throw.0)) else { return Vec::new() };
+    let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == throw.1)) else { return Vec::new() };
     let mut out = Vec::new();
     for node in &tree.nodes {
         let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
@@ -1035,12 +1152,7 @@ fn present_player(
     mut hud: Query<&mut Text2d, (With<Hud>, Without<Banner>)>,
     mut banner: Query<&mut Text2d, (With<Banner>, Without<Hud>)>,
     ui: Res<Ui>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut exit: MessageWriter<AppExit>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
-        exit.write(AppExit::Success);
-    }
     let drivers: [Option<&PlayerDriver>; 4] = [Some(&sim.driver), sim.coop[0].as_ref(), sim.coop[1].as_ref(), sim.coop[2].as_ref()];
     let poses: Vec<_> = drivers.iter().map(|d| d.and_then(|d| gdl_client::rig_pose(&sources.clips, &sources.clip_bytes, d.anim.clip, d.anim.frame).ok())).collect();
     for (root, mut t, mut vis) in &mut body {
@@ -1078,8 +1190,8 @@ fn present_player(
     let p = &g.players[0];
     let health = p.f32_(0x1a10);
     if let Ok(mut text) = banner.single_mut() {
-        text.0 = if !ui.started {
-            format!("GAUNTLET: DARK LEGACY\nnative reconstruction - interim playtest\n\nYellow Sorceress - {}\n\nPress Enter to start", session.title)
+        text.0 = if ui.paused {
+            String::new()
         } else if let Some(f) = &session.finished {
             f.clone()
         } else if let Some((_, b)) = &session.banner {
@@ -1088,8 +1200,6 @@ fn present_player(
             format!("SIMULATION STOPPED\n{e}")
         } else if health <= 0.0 {
             "YOU DIED\npress Enter to continue".to_string()
-        } else if ui.paused {
-            "PAUSED (P)".to_string()
         } else {
             String::new()
         };
@@ -1103,13 +1213,16 @@ fn present_player(
             .filter(|r| r.active() && g.items.definitions[r.definition()].kind() == 3 && r.u8_(0xf6) != 0)
             .count();
         let mut t = format!(
-            "YELLOW SORCERESS   level {}   exp {}\n\
+            "{} {}   level {}   exp {}   slot {}\n\
              HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}\n\
              {} {}   kills {}   enemies {}   generators {}\n\
              {}\n\
-             P1 move: arrows/WASD  throw: Space/K  potion: E/L | P2 (join: R) TFGH, R, Y | pads: D-pad, South, East | P pause  F1  Esc",
+             P1 move: arrows/WASD  throw: Space/K  potion: E/L | P2 (join: R) TFGH, R, Y | pads: D-pad, South, East | Esc/P/Start: menu  F1",
+            gdl_client::menu::COLOUR_NAMES.get(session.colour).copied().unwrap_or("?"),
+            gdl_client::menu::CLASS_NAMES.get(session.class as usize).copied().unwrap_or("?"),
             p.i32_(0x2ac0),
             p.i32_(0x1a1c),
+            session.slot,
             health,
             p.i32_(0x1a20),
             p.i32_(0x1a14),
@@ -1130,7 +1243,7 @@ fn present_player(
             t.push_str(&format!(
                 "\n\nINTERIM PLAYTEST (not the M12 slice). missiles thrown {}\n\
                  Native: item/enemy/generator/missile/damage/pickup/magic/exp/exit/sound-cue systems, movement + collision\n\
-                 Interim/presentation: start state from your save, player action map + clip clock, camera, unlit materials,\n\
+                 Interim/presentation: session globals from the capture, player clip clock, camera, unlit materials, menus,\n\
                  enemy frame objects, item rest poses, approximate audio mixing, magic without animation, melee holds the player still, boss pose without blending\n\
                  Enter after death: interim continue   F9: debug skip to next level{}",
                 sim.driver.missiles_started,
@@ -1138,6 +1251,394 @@ fn present_player(
             ));
         }
         text.0 = t;
+    }
+}
+
+/// Verified file paths of one package label prefix as a package config entry.
+fn package_entry(cat: &gdl_client::catalog::Catalog, prefix: &str, anim: bool) -> Result<Value, Box<dyn Error>> {
+    let mut v = serde_json::Map::new();
+    let mut files = vec![("objects", "OBJECTS.PS2"), ("texdef", "TEXDEF.PS2"), ("textures", "TEXTURES.PS2")];
+    if anim {
+        files.push(("anim", "ANIM.PS2"));
+    }
+    for (k, f) in files {
+        let label = format!("{prefix}/{f}");
+        cat.read(&label)?;
+        v.insert(k.into(), Value::String(cat.path(&label)?.to_string_lossy().into_owned()));
+    }
+    Ok(Value::Object(v))
+}
+
+/// A character's packages (load_player_model_sub / load_player_model):
+/// players/<cls>/<colour><tier>0 (model and rig), players/<cls>/anim (clips),
+/// players/<cls>/sfx<colour>; the thrown-missile tree (InitPlayerMissiles).
+struct CharacterAssets {
+    model_name: String,
+    model: Value,
+    sfx_name: String,
+    sfx: Value,
+    clips_label: String,
+    throw: (String, String),
+}
+
+const COLOUR_TAGS: [&str; 4] = ["YEL", "BLU", "RED", "GRE"];
+
+fn character_assets(front: &Front, class: u32, colour: usize, tier: i32) -> Result<CharacterAssets, Box<dyn Error>> {
+    let cls = gdl_core::player_class::CLASS_TAGS.get(class as usize).ok_or("class")?.to_uppercase();
+    let col = COLOUR_TAGS.get(colour).ok_or("colour")?;
+    let model_name = format!("PLAYERS/{cls}/{col}{tier}0");
+    let sfx_name = format!("PLAYERS/{cls}/SFX{col}");
+    let clips_label = format!("PLAYERS/{cls}/ANIM/ANIM.PS2");
+    front.catalog.read(&clips_label)?;
+    let desc = front.missile_desc.get(class as usize).ok_or("missile desc")?;
+    let name = String::from_utf8_lossy(&desc[..desc.iter().position(|&c| c == 0).unwrap_or(3)]).into_owned();
+    let ch = desc.get(4 + tier as usize).copied().unwrap_or(b'1');
+    let throw = if ch == b'0' { (model_name.clone(), format!("{name}_THROW0")) } else { (sfx_name.clone(), format!("{name}_THROW{}", ch as char)) };
+    Ok(CharacterAssets {
+        model: package_entry(&front.catalog, &model_name, true)?,
+        sfx: package_entry(&front.catalog, &sfx_name, true)?,
+        model_name,
+        sfx_name,
+        clips_label,
+        throw,
+    })
+}
+
+/// The rig/clip pair of a character: the model ANIM tree sharing the most
+/// node labels with the class clip tree (the model package also holds the
+/// missile tree; some tiers omit nodes, e.g. VAL BLU30 lacks FLAP04/FLAP08).
+/// Model package, rig, class clips and the clip file bytes.
+type Rig = (Package, Animations, Animations, Vec<u8>);
+
+fn character_rig(front: &Front, ch: &CharacterAssets) -> Result<Rig, Box<dyn Error>> {
+    let character = load_package(&ch.model)?;
+    let clip_bytes = front.catalog.read(&ch.clips_label)?;
+    let clips = Animations::parse(&clip_bytes)?;
+    let mut rig = Animations::parse(&gdl_client::bounded_read(Path::new(ch.model["anim"].as_str().ok_or("rig path")?))?)?;
+    let clip_labels: std::collections::HashSet<&str> = clips.trees.first().ok_or("class clips without a tree")?.nodes.iter().map(|n| n.label.as_str()).collect();
+    let overlap = |t: &gdl_formats::animation::Tree| t.nodes.iter().filter(|n| clip_labels.contains(n.label.as_str())).count();
+    let best = (0..rig.trees.len()).max_by_key(|&k| overlap(&rig.trees[k])).ok_or("model without trees")?;
+    if overlap(&rig.trees[best]) * 2 < clip_labels.len() {
+        return Err(format!("{}: no rig tree matching the class clips", ch.model_name).into());
+    }
+    let tree = rig.trees.swap_remove(best);
+    rig.trees = vec![tree];
+    Ok((character, rig, clips, clip_bytes))
+}
+
+fn refresh_saves(front: &mut Front) {
+    let mut imported = false;
+    front.menu.saves = front
+        .store
+        .list()
+        .into_iter()
+        .map(|l| {
+            if let (Ok(x), Some((_, sha))) = (front.store.load(l.slot), front.capture.as_ref())
+                && x.save.source == format!("imported:capture:{sha}")
+            {
+                imported = true;
+            }
+            let label = match &l.summary {
+                Some(s) => format!(
+                    "{:<8} {} {}  level {}{}",
+                    s.name,
+                    gdl_client::menu::COLOUR_NAMES.get(s.colour as usize).copied().unwrap_or("?"),
+                    gdl_client::menu::CLASS_NAMES.get(s.class as usize).copied().unwrap_or("SECRET CHARACTER"),
+                    s.level,
+                    l.problem.as_ref().map_or(String::new(), |_| "  (recovered from backup)".into())
+                ),
+                None => format!("slot {} unreadable: {}", l.slot, l.problem.unwrap_or_default()),
+            };
+            Entry { slot: l.slot, label }
+        })
+        .collect();
+    front.menu.import = match &front.capture {
+        Some((region, _)) if !imported => profile::summary(region).map(|s| format!("{} (PS2 savestate capture)", s.name)),
+        _ => None,
+    };
+}
+
+/// Load save `slot` and enter the Tower with that character.
+fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
+    let (session, sources, game, driver, recovered) = {
+        let front = world.resource::<Front>();
+        let loaded = front.store.load(slot)?;
+        let region = loaded.save.region()?;
+        let (record, controls) = profile::load_character(0, &region, &front.pdats, &front.tables).map_err(|e| e.to_string())?;
+        let class = record.u32_(0xc);
+        let colour = record.u32_(4) as usize;
+        if 8 <= class {
+            return Err("this character is one of the secret characters, which are not supported yet".into());
+        }
+        let tier = (record.i32_(0x2ac0) / 10).clamp(0, 9);
+        let ch = character_assets(front, class, colour, tier)?;
+        let (character, rig, clips, clip_bytes) = character_rig(front, &ch)?;
+        let b = &front.base;
+        let idx = b.levels.iter().position(|l| l.world == 0xd).unwrap_or(0);
+        let first = &b.levels[idx];
+        let mut packages = HashMap::new();
+        let first_labels = load_level_packages(&mut packages, &b.package_cfg, first)?;
+        let sfx_pkg = load_package(&ch.sfx)?;
+        let model_pkg = load_package(&ch.model)?;
+        let character_labels: Vec<String> = sfx_pkg.objects.definitions.iter().chain(character.objects.definitions.iter()).map(|d| d.label.clone()).collect();
+        packages.insert(ch.sfx_name.clone(), sfx_pkg);
+        packages.insert(ch.model_name.clone(), model_pkg);
+        let session = Session {
+            elf_bytes: front.elf_bytes.clone(),
+            package_cfg: b.package_cfg.clone(),
+            start: b.start.clone(),
+            world: World::parse(&gdl_client::bounded_read(&first.worlds)?)?,
+            level: load_package(&first.package)?,
+            levels: b.levels.clone(),
+            world_number: first.world,
+            title: first.title.clone(),
+            last_world: 0,
+            current: idx,
+            sim_start: b.sim_template.clone(),
+            action_map: front.tables.action_map(&clips),
+            clip_timings: setup::clips_of(&clips, 0),
+            monster_paths: b.monster_paths.clone(),
+            anim_paths: b.anim_paths.clone(),
+            audio_rom: b.audio_rom.clone(),
+            object_labels: first_labels.into_iter().chain(b.shared_labels.iter().cloned()).chain(character_labels).collect(),
+            banner: None,
+            next: None,
+            finished: None,
+            slot,
+            controls,
+            class_data: ClassData::from_pdat(front.pdats.get(class).ok_or("PDAT")?)?,
+            pdats: front.pdats.clone(),
+            heart_rate: front.heart_rate,
+            sfx: ch.sfx_name.clone(),
+            throw: ch.throw.clone(),
+            tier,
+            class,
+            colour,
+        };
+        let (game, driver) = build_game(&session, idx, &record)?;
+        let sources = Sources { character, clips, clip_bytes, rig, packages, monsters: b.monsters.clone() };
+        (session, sources, game, driver, loaded.recovered)
+    };
+    let attention = Vec3::from_array(game.players[0].v3(0x810));
+    let stage = game.sounds.stage.as_ref().map(|s| s.stream_name(0, 0));
+    world.resource_mut::<Presentation>().attention = attention;
+    world.insert_resource(sources);
+    world.insert_resource(session);
+    world.insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3] });
+    world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
+    if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
+        a.stop_all();
+        if let Some(st) = stage {
+            a.music(&st);
+        }
+    }
+    if let Some((path, why)) = recovered {
+        world.resource_mut::<Sim>().last_event = format!("save recovered from {} ({why})", path.display());
+    }
+    *world.resource_mut::<Ui>() = Ui { started: true, paused: false, details: false };
+    *world.resource_mut::<Screen>() = Screen::Playing;
+    Ok(())
+}
+
+/// Quit Game (init_over: every player inactivated) → the title.
+fn end_game(world: &mut EcsWorld) {
+    let roots: Vec<Entity> = world.query_filtered::<Entity, With<MirrorRoot>>().iter(world).collect();
+    for r in roots {
+        world.despawn(r);
+    }
+    world.remove_resource::<Sim>();
+    world.remove_resource::<Session>();
+    world.remove_resource::<Sources>();
+    if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
+        a.stop_all();
+    }
+    *world.resource_mut::<Ui>() = Ui::default();
+    *world.resource_mut::<Screen>() = Screen::Front;
+    let mut front = world.resource_mut::<Front>();
+    front.menu.page = gdl_client::menu::Page::Title { at: 0 };
+    refresh_saves(&mut front);
+}
+
+/// Menu keys this frame (keyboard and every gamepad), and the pause toggle.
+fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
+    let mut out = Vec::new();
+    let mut toggle = false;
+    let keys = world.resource::<ButtonInput<KeyCode>>();
+    let pressed = |k: KeyCode| keys.just_pressed(k);
+    if naming {
+        for (k, c) in [
+            (KeyCode::KeyA, 'A'), (KeyCode::KeyB, 'B'), (KeyCode::KeyC, 'C'), (KeyCode::KeyD, 'D'), (KeyCode::KeyE, 'E'), (KeyCode::KeyF, 'F'), (KeyCode::KeyG, 'G'),
+            (KeyCode::KeyH, 'H'), (KeyCode::KeyI, 'I'), (KeyCode::KeyJ, 'J'), (KeyCode::KeyK, 'K'), (KeyCode::KeyL, 'L'), (KeyCode::KeyM, 'M'), (KeyCode::KeyN, 'N'),
+            (KeyCode::KeyO, 'O'), (KeyCode::KeyP, 'P'), (KeyCode::KeyQ, 'Q'), (KeyCode::KeyR, 'R'), (KeyCode::KeyS, 'S'), (KeyCode::KeyT, 'T'), (KeyCode::KeyU, 'U'),
+            (KeyCode::KeyV, 'V'), (KeyCode::KeyW, 'W'), (KeyCode::KeyX, 'X'), (KeyCode::KeyY, 'Y'), (KeyCode::KeyZ, 'Z'), (KeyCode::Digit0, '0'), (KeyCode::Digit1, '1'),
+            (KeyCode::Digit2, '2'), (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'), (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'),
+            (KeyCode::Digit8, '8'), (KeyCode::Digit9, '9'),
+        ] {
+            if pressed(k) {
+                out.push(Key::Char(c));
+            }
+        }
+        if pressed(KeyCode::Backspace) {
+            out.push(Key::Erase);
+        }
+        if pressed(KeyCode::Enter) {
+            out.push(Key::Accept);
+        }
+        if pressed(KeyCode::Escape) {
+            out.push(Key::Back);
+        }
+    } else {
+        for (ks, key) in [
+            (&[KeyCode::ArrowUp, KeyCode::KeyW][..], Key::Up),
+            (&[KeyCode::ArrowDown, KeyCode::KeyS][..], Key::Down),
+            (&[KeyCode::ArrowLeft, KeyCode::KeyA][..], Key::Left),
+            (&[KeyCode::ArrowRight, KeyCode::KeyD][..], Key::Right),
+            (&[KeyCode::Enter, KeyCode::Space][..], Key::Accept),
+            (&[KeyCode::Escape, KeyCode::Backspace][..], Key::Back),
+        ] {
+            if ks.iter().any(|&k| pressed(k)) {
+                out.push(key);
+            }
+        }
+        toggle = pressed(KeyCode::Escape) || pressed(KeyCode::KeyP);
+    }
+    let mut pads = world.query::<&Gamepad>();
+    for g in pads.iter(world) {
+        for (b, key) in [
+            (GamepadButton::DPadUp, Key::Up),
+            (GamepadButton::DPadDown, Key::Down),
+            (GamepadButton::DPadLeft, Key::Left),
+            (GamepadButton::DPadRight, Key::Right),
+            (GamepadButton::South, Key::Accept),
+            (GamepadButton::East, Key::Back),
+        ] {
+            if g.just_pressed(b) {
+                out.push(key);
+            }
+        }
+        toggle |= g.just_pressed(GamepadButton::Start);
+    }
+    (out, toggle)
+}
+
+fn act(world: &mut EcsWorld, action: Action) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        match action {
+            Action::Play { slot } => start_game(world, slot)?,
+            Action::Create { class, colour, name } => {
+                let slot = {
+                    let front = world.resource::<Front>();
+                    let r = profile::new_character(0, &name, class, colour, &front.pdats, &front.tables).map_err(|e| e.to_string())?;
+                    let region = profile::save_region(&r, &[0, 2, 1, 1]);
+                    let slot = front.store.free_slot()?;
+                    front.store.store(slot, "new", &region)?;
+                    slot
+                };
+                start_game(world, slot)?;
+            }
+            Action::Import => {
+                let mut front = world.resource_mut::<Front>();
+                let (region, sha) = front.capture.clone().ok_or("no capture to import")?;
+                let slot = front.store.free_slot()?;
+                front.store.store(slot, &format!("imported:capture:{sha}"), &region)?;
+                front.menu.status = format!("imported into slot {slot} (the capture file is unchanged)");
+                refresh_saves(&mut front);
+            }
+            Action::Resume => world.resource_mut::<Ui>().paused = false,
+            Action::Save => {
+                let (slot, region) = {
+                    let session = world.resource::<Session>();
+                    let mut r = world.resource::<Sim>().game.players[0].clone();
+                    // init_player_select → player_store_in_save, then the file write.
+                    profile::player_store_in_save(&mut r, &session.controls);
+                    (session.slot, r.0[profile::SAVE_START..profile::SAVE_START + profile::SAVE_LEN].to_vec())
+                };
+                let mut front = world.resource_mut::<Front>();
+                let e = front.store.store(slot, "", &region)?;
+                front.menu.status = format!("saved to slot {slot} (version {})", e.sequence + 1);
+            }
+            Action::QuitLevel => {
+                world.resource_mut::<Ui>().paused = false;
+                let mut session = world.resource_mut::<Session>();
+                if session.world_number != 0xd
+                    && let Some(k) = session.levels.iter().position(|l| l.world == 0xd)
+                {
+                    session.next = Some(k);
+                    session.banner = Some((1.5, "Returning to the Tower".into()));
+                }
+            }
+            Action::QuitGame => end_game(world),
+            Action::Exit => {
+                world.write_message(AppExit::Success);
+            }
+            Action::Volumes { music, sfx } => {
+                if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
+                    a.set_volumes(music, sfx);
+                }
+                let mut front = world.resource_mut::<Front>();
+                front.game_opts[0..4].copy_from_slice(&i32::from(sfx).to_le_bytes());
+                front.game_opts[4..8].copy_from_slice(&i32::from(music).to_le_bytes());
+                let opts = front.game_opts.clone();
+                front.store.store_options(&opts)?;
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        world.resource_mut::<Front>().menu.status = format!("ERROR: {e}");
+    }
+}
+
+/// Front end and pause menus (exclusive: it starts and ends games).
+fn front_system(world: &mut EcsWorld) {
+    let screen = *world.resource::<Screen>();
+    let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
+    let (keys, toggle) = menu_keys(world, naming);
+    if screen == Screen::Playing {
+        let paused = world.resource::<Ui>().paused;
+        let blocked = world.get_resource::<Session>().is_some_and(|s| s.banner.is_some() || s.finished.is_some());
+        if !paused {
+            if toggle && !blocked {
+                let tower = world.resource::<Session>().world_number == 0xd;
+                let mut front = world.resource_mut::<Front>();
+                front.menu.status.clear();
+                front.menu.pause(tower);
+                world.resource_mut::<Ui>().paused = true;
+            }
+            if world.resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::F1) {
+                let mut ui = world.resource_mut::<Ui>();
+                ui.details = !ui.details;
+            }
+            return;
+        }
+        if toggle && matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Paused { .. }) {
+            world.resource_mut::<Ui>().paused = false;
+            return;
+        }
+    } else if keys.contains(&Key::Back) && matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::PressStart) {
+        world.write_message(AppExit::Success);
+        return;
+    }
+    for k in keys {
+        let action = world.resource_mut::<Front>().menu.input(k);
+        if let Some(a) = action {
+            act(world, a);
+        }
+        if *world.resource::<Screen>() != screen {
+            break;
+        }
+    }
+    if *world.resource::<Screen>() == Screen::Playing && !world.resource::<Front>().menu.is_paused() {
+        world.resource_mut::<Ui>().paused = false;
+    }
+}
+
+fn front_text(screen: Res<Screen>, ui: Res<Ui>, front: Res<Front>, mut text: Query<&mut Text2d, With<FrontText>>) {
+    let Ok(mut t) = text.single_mut() else { return };
+    let show = *screen == Screen::Front || ui.paused;
+    let want = if show { front.menu.text() } else { String::new() };
+    if t.0 != want {
+        t.0 = want;
     }
 }
 
@@ -1159,14 +1660,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         fov: serde_json::from_value(pr["camera_fov"].clone())?,
         attention: vec3(&pr["attention_offset_810"])?,
     };
-    let action_map: Vec<[i64; 2]> = serde_json::from_value(pr["action_map"].clone())?;
-    let character = load_package(&cfg["character"])?;
-    let rig = Animations::parse(&gdl_client::bounded_read(&p("character_rig")?)?)?;
-    let clip_bytes = gdl_client::bounded_read(&p("character_clips")?)?;
-    let clips = Animations::parse(&clip_bytes)?;
-    if rig.trees.len() != 1 || clips.trees.len() != 1 || rig.trees[0].nodes.len() != clips.trees[0].nodes.len() {
-        return Err("character rig and clip trees must correspond".into());
-    }
     let mut anim_paths = HashMap::new();
     for (name, v) in cfg["packages"].as_object().ok_or("config packages")? {
         if let Some(a) = v["anim"].as_str() {
@@ -1200,10 +1693,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .unwrap_or_default(),
         });
     }
-    let first = levels.first().ok_or("no levels")?;
+    if !levels.iter().any(|l| l.world == 0xd) {
+        return Err("the configuration has no Tower level (run_play.py builds the campaign by default)".into());
+    }
     let package_cfg: HashMap<String, Value> = cfg["packages"].as_object().ok_or("config packages")?.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let mut packages = HashMap::new();
-    let first_labels = load_level_packages(&mut packages, &package_cfg, first)?;
     let audio_cfg = &cfg["audio"];
     let audio_rom = match audio_cfg["rom"].as_str() {
         Some(p) => Some(gdl_formats::audio::AudioRom::parse(&gdl_client::bounded_read(Path::new(p))?)?),
@@ -1212,48 +1705,68 @@ fn run() -> Result<(), Box<dyn Error>> {
     let paths = |k: &str| -> HashMap<String, std::path::PathBuf> {
         audio_cfg[k].as_object().map_or(HashMap::new(), |m| m.iter().filter_map(|(n, v)| Some((n.to_uppercase(), v.as_str()?.into()))).collect())
     };
-    let audio = audio_rom.clone().map(|rom| gdl_client::audio::AudioOut::new(rom, paths("banks"), paths("streams")));
-    let (first_world, first_level, world_number, title) = (
-        World::parse(&gdl_client::bounded_read(&first.worlds)?)?,
-        load_package(&first.package)?,
-        first.world,
-        first.title.clone(),
-    );
-    let session = Session {
-        elf_bytes: gdl_client::bounded_read(&p("elf")?)?,
-        package_cfg,
-        start: serde_json::from_slice(&gdl_client::bounded_read(&p("game_start")?)?)?,
-        world: first_world,
-        level: first_level,
-        levels,
-        world_number,
-        title,
-        last_world: 0,
-        current: 0,
-        sim_start: player,
-        action_map,
-        clip_timings: setup::clips_of(&clips, 0),
-        monster_paths,
-        anim_paths,
-        audio_rom,
-        object_labels: first_labels.into_iter().chain(character.objects.definitions.iter().map(|d| d.label.clone())).collect(),
-        banner: None,
-        next: None,
-        finished: None,
-    };
-    let (game, driver) = build_game(&session, 0, None)?;
-    let mut audio = audio;
-    if let (Some(a), Some(stage)) = (audio.as_mut(), game.sounds.stage.as_ref()) {
-        a.music(&stage.stream_name(0, 0));
+    let mut audio = audio_rom.clone().map(|rom| gdl_client::audio::AudioOut::new(rom, paths("banks"), paths("streams")));
+    let elf_bytes = gdl_client::bounded_read(&p("elf")?)?;
+    let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
+    let tables = ClassTables::from_elf(&elf)?;
+    let heart_rate = elf.object("heart_rate")?.first().copied().unwrap_or(0);
+    let missile_desc: Vec<Vec<u8>> = elf.object("PlayerMissileDesc")?.chunks_exact(0x14).map(<[u8]>::to_vec).collect();
+    let cat_cfg = &cfg["catalog"];
+    let catalog = gdl_client::catalog::Catalog::open(
+        Path::new(cat_cfg["names"].as_str().ok_or("catalog names")?),
+        Path::new(cat_cfg["archive"].as_str().ok_or("catalog archive")?),
+        Path::new(cat_cfg["root"].as_str().ok_or("catalog root")?),
+    )?;
+    let mut pdats = Vec::new();
+    for tag in &gdl_core::player_class::CLASS_TAGS[..16] {
+        let label = format!("PDATA/{}.WAD", tag.to_uppercase());
+        pdats.push(gdl_formats::pdata::PlayerData::parse(&catalog.read(&label)?)?.pdat);
     }
+    let start: Value = serde_json::from_slice(&gdl_client::bounded_read(&p("game_start")?)?)?;
+    // The PS2 savestate capture's player 0 save region (import source).
+    let capture = start["players"][0].as_str().and_then(|h| {
+        let b: Vec<u8> = (0..h.len()).step_by(2).filter_map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok()).collect();
+        let r = b.get(profile::SAVE_START..profile::SAVE_START + profile::SAVE_LEN)?.to_vec();
+        let sha = gdl_core::save::sha256(&r);
+        Some((r, sha))
+    });
+    let store = SaveStore::open(p("saves")?)?;
+    // GameOpts: the stored block, else the captured session's GamePrefs
+    // (sfx 128, music 128, stereo 1, …).
+    let game_opts = store.load_options().unwrap_or_else(|| {
+        let mut o = vec![0u8; gdl_core::save::GAME_OPTS_LEN];
+        for (k, v) in [128i32, 128, 1, 0, 0, 1, 0, 0].iter().enumerate() {
+            o[4 * k..4 * k + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        o
+    });
+    let word = |k: usize| i32::from_le_bytes(game_opts[4 * k..4 * k + 4].try_into().unwrap()).clamp(0, 255) as u8;
+    let (sfx_v, music_v) = (word(0), word(1));
+    if let Some(a) = audio.as_mut() {
+        a.set_volumes(music_v, sfx_v);
+    }
+    let shared_labels = std::collections::HashSet::new();
+    let mut front = Front {
+        menu: Menu::new(music_v, sfx_v),
+        store,
+        catalog,
+        elf_bytes,
+        tables,
+        pdats: profile::Pdats(pdats),
+        missile_desc,
+        heart_rate,
+        capture,
+        game_opts,
+        base: Base { package_cfg, start, levels, sim_template: player, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
+    };
+    refresh_saves(&mut front);
     let mut app = App::new();
     if let Some(a) = audio {
         app.insert_non_send_resource(a);
     }
     app
-        .insert_resource(Sources { character, clips, clip_bytes, rig, packages, monsters })
-        .insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3] })
-        .insert_resource(session)
+        .insert_resource(front)
+        .insert_resource(Screen::Front)
         .insert_resource(presentation)
         .init_resource::<Libraries>()
         .init_resource::<EnemyFrames>()
@@ -1261,39 +1774,32 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(ClearColor(Color::srgb(0.035, 0.04, 0.05)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Gauntlet: Dark Legacy - INTERIM native playtest".into(),
+                title: "Gauntlet: Dark Legacy - INTERIM native build".into(),
                 resolution: (1280, 896).into(),
                 ..default()
             }),
             ..default()
         }))
-        .add_systems(Startup, setup)
-        .add_systems(FixedUpdate, simulate)
         .init_resource::<Ui>()
-        .add_systems(Update, (ui_input, advance_level, present_world, present_world_nodes, hide_exploded_nodes, present_critters, present_sparks, present_player).chain())
+        .add_systems(Startup, setup_static)
+        .add_systems(FixedUpdate, simulate.run_if(playing))
+        .add_systems(
+            Update,
+            (
+                front_system,
+                (advance_level, present_world, present_world_nodes, hide_exploded_nodes, present_critters, present_sparks, present_player).chain().run_if(playing),
+                front_text,
+            )
+                .chain(),
+        )
         .run();
     Ok(())
-}
-
-fn ui_input(keys: Res<ButtonInput<KeyCode>>, mut ui: ResMut<Ui>) {
-    if !ui.started {
-        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-            ui.started = true;
-        }
-        return;
-    }
-    if keys.just_pressed(KeyCode::KeyP) {
-        ui.paused = !ui.paused;
-    }
-    if keys.just_pressed(KeyCode::F1) {
-        ui.details = !ui.details;
-    }
 }
 
 /// Package names a level draws or reads: the shared packages, its item
 /// packages, its realm's monsters and its critter models.
 fn level_packages(lv: &LevelSource) -> Vec<String> {
-    let mut v: Vec<String> = ["POWERUPS", "WEAPONS", "SFXYEL"].iter().map(|s| s.to_string()).collect();
+    let mut v: Vec<String> = ["POWERUPS", "WEAPONS"].iter().map(|s| s.to_string()).collect();
     v.extend(lv.items.iter().cloned());
     v.extend(lv.monsters.iter().cloned());
     v.extend(lv.critters.iter().filter_map(|c| c.2.clone()));
@@ -1316,38 +1822,32 @@ fn load_level_packages(cache: &mut HashMap<String, Package>, cfg: &HashMap<Strin
 
 /// Level complete → banner → next level (exit destination wave), or the
 /// end of the playable realm. Enter continues after death (interim).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn advance_level(
     mut commands: Commands,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mut session: ResMut<Session>,
     mut sim: ResMut<Sim>,
-    old: Query<Entity, With<LevelEntity>>,
-    root: Query<Entity, With<MirrorRoot>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    (old, root, bodies): (Query<Entity, With<LevelEntity>>, Query<Entity, With<MirrorRoot>>, Query<Entity, With<CharacterRoot>>),
+    (mut meshes, mut images, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
     mut sources: ResMut<Sources>,
     mut libraries: ResMut<Libraries>,
     mut frames: ResMut<EnemyFrames>,
+    (front, ui): (Res<Front>, Res<Ui>),
 ) {
-    if keys.just_pressed(KeyCode::Enter) && sim.game.players[0].f32_(0x1a10) <= 0.0 {
-        // INTERIM continue: restore the start-state health and play on.
-        let start_health = session.start["players"][0]
-            .as_str()
-            .and_then(|h| h.get(0x1a10 * 2..0x1a10 * 2 + 8))
-            .and_then(|h| u32::from_str_radix(h, 16).ok())
-            .map(|v| f32::from_bits(v.swap_bytes()));
-        if let Some(h) = start_health {
-            let p = &mut sim.game.players[0];
-            p.set_f32(0x1a10, h);
-            p.set_i32(0xfc, 1);
-            sim.last_event = "continued (interim: start health restored)".into();
-        }
+    if !ui.paused && keys.just_pressed(KeyCode::Enter) && sim.game.players[0].f32_(0x1a10) <= 0.0 {
+        // INTERIM continue: the class entry's health as last stored
+        // (player_store_in_save at the level start), else 500.
+        let p = &mut sim.game.players[0];
+        let e = profile::CLASS_ATTS + 0x18 * p.u32_(0xc) as usize + 4;
+        let h = p.f32_(e);
+        p.set_f32(0x1a10, if 0.0 < h { h } else { 500.0 });
+        p.set_i32(0xfc, 1);
+        sim.last_event = "continued (interim: level-start health restored)".into();
     }
-    if keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
+    if !ui.paused && keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
         // DEBUG: act as if the exit portal (destination: next level) was used.
         let next = session.levels.get(session.current + 1).map_or(session.world_number << 8 | 0xff, |l| l.world << 8 | l.index as i32);
         sim.game.level_done = Some(next);
@@ -1402,7 +1902,8 @@ fn advance_level(
             }
         }
         let character: Vec<String> = sources.character.objects.definitions.iter().map(|d| d.label.clone()).collect();
-        session.object_labels = labels.into_iter().chain(character).collect();
+        let sfx: Vec<String> = sources.packages.get(&session.sfx).map(|p| p.objects.definitions.iter().map(|d| d.label.clone()).collect()).unwrap_or_default();
+        session.object_labels = labels.into_iter().chain(character).chain(sfx).collect();
         if session.world_number != 0xd {
             session.last_world = session.world_number;
         }
@@ -1412,7 +1913,30 @@ fn advance_level(
     })();
     let carry = sim.game.players[0].clone();
     let coop_carry: Vec<Option<gdl_core::game::record::Record>> = (1..4).map(|k| sim.coop[k - 1].as_ref().map(|_| sim.game.players[k].clone())).collect();
-    match loaded.and_then(|_| build_game(&session, idx, Some(&carry))) {
+    // load_player: the model follows the level tier (level / 10).
+    let tier = (carry.i32_(0x2ac0) / 10).clamp(0, 9);
+    let mut new_body = false;
+    let loaded = loaded.and_then(|_| {
+        if tier != session.tier {
+            let ch = character_assets(&front, session.class, session.colour, tier)?;
+            let (character, rig, clips, clip_bytes) = character_rig(&front, &ch)?;
+            sources.packages.insert(ch.model_name.clone(), load_package(&ch.model)?);
+            if let Some(pkg) = sources.packages.get(&ch.model_name)
+                && !libraries.0.contains_key(&ch.model_name)
+            {
+                libraries.0.insert(ch.model_name.clone(), build_library(pkg, &mut meshes, &mut images, &mut materials));
+            }
+            sources.character = character;
+            sources.rig = rig;
+            sources.clips = clips;
+            sources.clip_bytes = clip_bytes;
+            session.throw = ch.throw;
+            session.tier = tier;
+            new_body = true;
+        }
+        Ok(())
+    });
+    match loaded.and_then(|_| build_game(&session, idx, &carry)) {
         Ok((mut game, mut driver)) => {
             // Co-op players keep their records and enter beside player 1.
             for (k, rec) in coop_carry.iter().enumerate() {
@@ -1444,6 +1968,12 @@ fn advance_level(
             if let Ok(root) = root.single() {
                 let n = sim.game.items.records.len();
                 spawn_level(&mut commands, root, &session, n, &mut meshes, &mut images, &mut materials);
+                if new_body {
+                    for b in &bodies {
+                        commands.entity(b).despawn();
+                    }
+                    spawn_bodies(&mut commands, root, &sources, &mut meshes, &mut images, &mut materials);
+                }
             }
         }
         Err(e) => sim.error = Some(format!("loading level {}: {e}", session.levels[idx].name)),

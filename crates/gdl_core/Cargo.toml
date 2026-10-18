@@ -8,3 +8,5 @@ license.workspace = true
 [dependencies]
 serde.workspace = true
 gdl_formats = { path = "../gdl_formats" }
+serde_json.workspace = true
+sha2.workspace = true

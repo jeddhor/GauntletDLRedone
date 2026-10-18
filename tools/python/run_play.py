@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Launch the INTERIM native playtest (Yellow Sorceress; The Poison Fields by
-default, or any realm's regular levels with --realm) with the native gameplay
-simulation (enemies, generators, items, missiles).
+"""Launch the INTERIM native build: title → player select (saved characters,
+new characters of the eight base classes, or the PS2 capture's character
+imported) → the Tower and every realm, with native saves.
 
 Inputs are resolved from the verified private extraction by package label and
-decoded hash, plus the user's executable and the private start state exported
-from the preserved save. Runs on the current desktop by default; --virtual uses
-the project's authenticated Xvfb session for automated smoke tests.
+decoded hash (character packages are resolved and verified by the client from
+the same manifests), plus the user's executable and the private start state
+exported from the preserved save (session globals; the import source). Saves
+go to --save-dir (default $XDG_DATA_HOME/gdl-native/SLUS-20047/saves). Runs on
+the current desktop by default; --virtual uses the project's authenticated Xvfb
+session for automated smoke tests.
 """
 import argparse
 import hashlib
@@ -171,10 +174,11 @@ def realm_monsters(wdata_path, indices, known):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--virtual', action='store_true', help='run inside the authenticated Xvfb session')
-    parser.add_argument('--realm', default='G', choices=sorted(REALMS), help='realm letter (G: The Poison Fields)')
-    parser.add_argument('--level', help='first level code, e.g. A2 (default: the realm\'s first level)')
-    parser.add_argument('--campaign', action='store_true', help='start in the Tower with every realm reachable')
+    parser.add_argument('--save-dir', type=pathlib.Path, help='native save directory')
     args = parser.parse_args()
+    data_home = pathlib.Path(os.environ.get('XDG_DATA_HOME', pathlib.Path.home() / '.local/share'))
+    save_dir = args.save_dir or data_home / 'gdl-native' / 'SLUS-20047' / 'saves'
+    save_dir.mkdir(parents=True, exist_ok=True)
     source = json.loads(pathlib.Path('profiles/ps2/slus-20047.json').read_text())
     if hashlib.sha256(ELF.read_bytes()).hexdigest() != source['executable']['sha256']:
         raise ValueError('executable identity differs from the supported profile')
@@ -191,9 +195,8 @@ def main():
             out['anim'] = str(paths[3])
         return out
 
-    _, rig, clips = resolve(['WDATA/TOWN.WAD', 'PLAYERS/SOR/YEL00/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2'])
     known = known_names()
-    packages = dict(POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), SFXYEL=package('PLAYERS/SOR/SFXYEL'))
+    packages = dict(POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'))
     monsters = {}
 
     def realm_levels(letter, first=None):
@@ -226,18 +229,15 @@ def main():
                             monsters=[p for _, p in realm_m], critters=critters))
         return out
 
-    if args.campaign:
-        # The Tower (hub) first, then every realm; exits and the boss's
-        # TowerWave choose the next level by destination wave.
-        levels = realm_levels('L')
-        for letter in 'ABCDEFGHIJK':
-            levels += realm_levels(letter)
-    else:
-        levels = realm_levels(args.realm, args.level)
+    # The Tower (hub) first, then every realm; exits and the boss's
+    # TowerWave choose the next level by destination wave.
+    levels = realm_levels('L')
+    for letter in 'ABCDEFGHIJK':
+        levels += realm_levels(letter)
     config = dict(
         sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), levels=levels,
-        character=package('PLAYERS/SOR/YEL00', anim=False),
-        character_rig=str(rig), character_clips=str(clips), packages=packages,
+        catalog=dict(names='private/reports/wad-independent.json', archive='private/wad/manifest.json', root='private/wad'),
+        saves=str(save_dir), packages=packages,
         monsters=[dict(type=t, package=p) for t, p in sorted(monsters.items())],
         audio=audio_config())
     CONFIG.write_text(json.dumps(config, indent=1) + '\n')

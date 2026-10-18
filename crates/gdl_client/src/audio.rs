@@ -38,6 +38,8 @@ struct Mixer {
     queue: Vec<Voice>,
     music: Option<(Arc<Vec<i16>>, u32, u32, f64)>,
     music_gain: f32,
+    /// Settings → Audio sound volume (GamePrefs word 0) / 128.
+    sfx_gain: f32,
     out_rate: u32,
 }
 
@@ -86,9 +88,9 @@ impl Mixer {
                     continue;
                 }
                 let s = f32::from(pcm[i]) / 32768.0;
-                out[f * channels] += s * v.gain[0];
+                out[f * channels] += s * v.gain[0] * self.sfx_gain;
                 if 1 < channels {
-                    out[f * channels + 1] += s * v.gain[1];
+                    out[f * channels + 1] += s * v.gain[1] * self.sfx_gain;
                 }
                 v.pos += step;
                 f += 1;
@@ -114,7 +116,7 @@ pub struct AudioOut {
 
 impl AudioOut {
     pub fn new(rom: AudioRom, bank_paths: HashMap<String, PathBuf>, stream_paths: HashMap<String, PathBuf>) -> Self {
-        let mixer = Arc::new(Mutex::new(Mixer { music_gain: 0.5, out_rate: OUT_RATE, ..Default::default() }));
+        let mixer = Arc::new(Mutex::new(Mixer { music_gain: 0.5, sfx_gain: 1.0, out_rate: OUT_RATE, ..Default::default() }));
         let mut status = String::from("audio: no output device");
         let silent = std::env::var_os("GDL_NO_AUDIO").is_some();
         if silent {
@@ -214,6 +216,15 @@ impl AudioOut {
         }
     }
 
+    /// Settings → Audio: GamePrefs music (+4) and sound (+0) volumes, 128 =
+    /// the captured session's value (presentation scaling: gain × v / 128).
+    pub fn set_volumes(&mut self, music: u8, sfx: u8) {
+        if let Ok(mut m) = self.mixer.lock() {
+            m.music_gain = 0.5 * f32::from(music) / 128.0;
+            m.sfx_gain = f32::from(sfx) / 128.0;
+        }
+    }
+
     /// Loop a STREAMS/<name> music file.
     pub fn music(&mut self, name: &str) {
         let Some(path) = self.stream_paths.get(&name.to_uppercase()) else { return };
@@ -287,7 +298,7 @@ mod tests {
     #[test]
     fn mixer_plays_a_chain_once_and_resamples() {
         // Synthetic: 4 samples at 24 kHz into a 48 kHz output → 8 frames.
-        let mut m = Mixer { out_rate: 48_000, ..Default::default() };
+        let mut m = Mixer { out_rate: 48_000, sfx_gain: 1.0, ..Default::default() };
         m.voices.push(voice(vec![16384; 4], 24_000, false, false));
         let mut out = vec![0f32; 2 * 10];
         m.render(&mut out, 2);
@@ -300,7 +311,7 @@ mod tests {
 
     #[test]
     fn queued_lines_play_one_at_a_time_and_loops_persist() {
-        let mut m = Mixer { out_rate: 48_000, ..Default::default() };
+        let mut m = Mixer { out_rate: 48_000, sfx_gain: 1.0, ..Default::default() };
         m.queue.push(voice(vec![100; 2], 48_000, false, true));
         m.queue.push(voice(vec![100; 2], 48_000, false, true));
         m.voices.push(voice(vec![1; 2], 48_000, true, false));

@@ -46,6 +46,24 @@ pub struct ClassData {
     pub missile_origin_158: [f32; 3],
 }
 
+impl ClassData {
+    /// The class record as LoadPlyrData leaves it, from the disc PDAT
+    /// (PlayerData pointer words +4/+8/+0x24 stay as on the disc: the SFXX
+    /// and DAMG tables are read from their own chunks).
+    pub fn from_pdat(pdat: &[u8]) -> Result<Self, String> {
+        if pdat.len() < 0x164 {
+            return Err("PDAT shorter than its read fields".into());
+        }
+        let f = |o: usize| f32::from_le_bytes(pdat[o..o + 4].try_into().unwrap());
+        Ok(Self {
+            raw: pdat.to_vec(),
+            powerup_time_58: f(0x58),
+            missile_origin_5c: [f(0x5c), f(0x60), f(0x64)],
+            missile_origin_158: [f(0x158), f(0x15c), f(0x160)],
+        })
+    }
+}
+
 impl Game {
 
     /// ExpireItem: +0xda = mode (or 0x10 when negative), +0xd8 |= 0x100.

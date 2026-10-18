@@ -110,7 +110,7 @@ impl Game {
     /// PlayerUpdateAtts(player, character, NULL): attribute words from the
     /// class base + 5 per level (capped) + the character's bonus, below 999.
     pub fn player_update_atts(&mut self, p: usize) -> R<()> {
-        let class = self.class.raw.clone();
+        let class = self.classes[p].raw.clone();
         if class.len() < 0x48 {
             return super::unsupported("class record not captured");
         }

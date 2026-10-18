@@ -548,8 +548,8 @@ impl Game {
         let info = *self.effects.tables.missile_info.get(class).ok_or_else(|| Unsupported(format!("missile class {class}")))?;
         let damage = mul(power, pl.f32_(0x128))?;
         let offset = match origin_mode {
-            1 => self.class.missile_origin_5c,
-            2 => self.class.missile_origin_158,
+            1 => self.classes[player].missile_origin_5c,
+            2 => self.classes[player].missile_origin_158,
             _ => [0.0; 3],
         };
         // MulVecMat3(offset, out, player matrix +0x20).

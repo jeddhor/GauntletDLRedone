@@ -16,6 +16,7 @@ pub mod item_runtime;
 pub mod lookouts;
 pub mod pickups;
 pub mod players;
+pub mod profile;
 pub mod progress;
 pub mod record;
 pub mod setup;
@@ -222,7 +223,8 @@ pub struct Game {
     pub start_enemyinfo: bool,
     pub exit_state: i32,
     pub enemy_anim_data: enemy_ai::EnemyAnimData,
-    pub class: pickups::ClassData,
+    /// PlayerData[player]: the class record of each player slot.
+    pub classes: [pickups::ClassData; 4],
     pub effects: effects::Effects,
     /// BossCritInst 0x25d2c0 and the difficulty word 0x21edcc (index of
     /// diff_mul_tab.15 in ResolveWorldData; also PlayerGetTarget's cone).
