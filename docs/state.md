@@ -17,18 +17,21 @@ so progress can be saved; a "complete" build to test. Latest source commit:
   gdl_core::save stores versioned envelopes with SHA-256, `.bak`, recovery
   and raw-save migration; gdl_formats::memcard reads cards read-only (the
   user's cards are unformatted; no card save exists to decode).
-- M17 (interim presentation): original menu structure and labels as text,
-  Settings → Audio volumes (options.json), Tower Shop (do_shopping) and
-  Inventory (native summary), Quit Level / Quit Game.
+- M17 (interim presentation): original menu structure and labels as text
+  over the original title picture (TITLE00–03), Settings → Audio volumes
+  (options.json), Tower Shop (do_shopping) and Inventory (native summary),
+  Quit Level / Quit Game; text ROMs decoded (gdl_formats::textrom): in-game
+  NewHelp hints via helptab, scroll-item message boxes (SCROLL_E.ROM), the
+  hint menu (HINTS_E.ROM lists).
 - Simulation additions: PlayerProcessPowerups (powerup effects now apply),
   kill_player / PlayersSetWaveDied / drop_keys and the Tower restore,
   per-player class data from PDAT, per-class sim values from the record.
-- Verification: 90 Rust tests (synthetic: profile round trip, save
+- Verification: 93 Rust tests (synthetic: profile round trip, save
   recovery/migration, memory card, menu flow, shop table, PDAT); Clippy
   clean; 51-level sweep sw10 identical to sw8; actual-data profile check of
   the PELE record; Xvfb smoke tests of import, save (version 2 + .bak), new
   Red Warrior, realm entry, Quit Level, death → Tower, Shop purchase,
-  Inventory. No new PCSX2 comparisons.
+  Inventory, title picture, a chest hint. No new PCSX2 comparisons.
 - Not done (ledgers): original SELECT/TITLE scenes, fonts and text ROM
   tables, HUD, credits, hints, options other than audio, shop presentation,
   secret characters, Sumner, co-op character select, dying animation,
