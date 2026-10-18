@@ -152,6 +152,11 @@ records, follows the ROM's entry order) in a box that pauses the game until
 a button is pressed. PRESENTATION: hints show for 3 s and an id repeats
 after 20 s at the earliest (help_displayed/help_interval not ported).
 
+Hint menu: Sumner's hint pad (HintMenu event) opens hint_menu's four
+categories, mapped to HINTS_E.ROM lists GENERAL_HINTS, BOSS_HINTS,
+LEGEND_HINTS and RUNE_HINTS; every hint is paged in list order (NATIVE:
+next_general/boss/legend/rune_hint's progress-based choice is not ported).
+
 Title: TITLE00–03 assembled into the 512×384 title picture behind the
 menu (alpha forced opaque). NATIVE presentation (labelled): text menus instead of the SELECT/TITLE
 scenes, the save list, the import entry, "Save Character" in Manage

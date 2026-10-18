@@ -392,6 +392,8 @@ struct Sim {
     hint_shown: HashMap<i32, f64>,
     /// ScrollMessageBox: the game waits until the box is dismissed.
     message_box: Option<String>,
+    /// Sumner's hint pad asked for hint_menu.
+    hint_menu: bool,
 }
 
 /// One player slot's controls this update: the level word, attack edge
@@ -963,6 +965,7 @@ fn simulate(
                     }
                 }
             }
+            Event::HintMenu { .. } => sim.hint_menu = true,
             Event::ScrollMessage { text, .. } => {
                 // ScrollMessageBox: SCROLL_E.ROM entry `text` (HYPOTHESIS: the
                 // runtime ScrollText array follows the ROM's entry order).
@@ -1530,7 +1533,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.resource_mut::<Presentation>().attention = attention;
     world.insert_resource(sources);
     world.insert_resource(session);
-    world.insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3], dying: 0.0, hint: None, hint_shown: HashMap::new(), message_box: None });
+    world.insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3], dying: 0.0, hint: None, hint_shown: HashMap::new(), message_box: None, hint_menu: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -1800,6 +1803,11 @@ fn front_system(world: &mut EcsWorld) {
             }
             return;
         }
+        if std::mem::take(&mut world.resource_mut::<Sim>().hint_menu) && !world.resource::<Ui>().paused {
+            world.resource_mut::<Front>().menu.page = gdl_client::menu::Page::Hints { at: 0 };
+            world.resource_mut::<Ui>().paused = true;
+            return;
+        }
         let paused = world.resource::<Ui>().paused;
         let blocked = world.get_resource::<Session>().is_some_and(|s| s.banner.is_some() || s.finished.is_some());
         if !paused {
@@ -1991,6 +1999,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         base: Base { package_cfg, start, levels, sim_template: player, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
     refresh_saves(&mut front);
+    // hint_menu categories → HINTS_E.ROM lists (every line of every entry,
+    // in list order; NATIVE: next_*_hint's progress-based choice is not ported).
+    let hints_rom = gdl_formats::textrom::TextRom::parse(&front.catalog.read("TEXT/HINTS_E.ROM")?)?;
+    front.menu.hints = ["GENERAL_HINTS", "BOSS_HINTS", "LEGEND_HINTS", "RUNE_HINTS"]
+        .iter()
+        .map(|n| hints_rom.list(n).unwrap_or(&[]).iter().flat_map(|&k| hints_rom.entries[k].lines.iter().map(|l| l.replace('\r', ""))).collect())
+        .collect();
     let mut app = App::new();
     if let Some(a) = audio {
         app.insert_non_send_resource(a);

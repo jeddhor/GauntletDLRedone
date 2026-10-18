@@ -23,6 +23,8 @@ pub struct TextEntry {
 pub struct TextRom {
     pub fonts: Vec<String>,
     pub entries: Vec<TextEntry>,
+    /// LIST {count, start into LOFF} named by LDEF: entry indices per list.
+    pub lists: Vec<(String, Vec<usize>)>,
 }
 
 impl TextRom {
@@ -82,13 +84,32 @@ impl TextRom {
             let name = cstr(defs + r.u32(sdef + 4 * k) as usize, sdef)?;
             entries.push(TextEntry { name, first_line: first as u32, lines, font: r.u32(e + 8), scale: f32::from_bits(r.u32(e + 12)) });
         }
+        let mut lists = Vec::new();
+        if let (Some((list, n)), Some((loff, _)), Some((ldef, _))) = (chunk(b"LIST"), chunk(b"LOFF"), chunk(b"LDEF")) {
+            if 64 < n {
+                return Err(r.error(list, "list count policy exceeded"));
+            }
+            r.range(list, 8 * n)?;
+            r.range(ldef, 4 * n)?;
+            for k in 0..n {
+                let (c, start) = (r.u32(list + 8 * k) as usize, r.u32(list + 8 * k + 4) as usize);
+                r.range(loff + 4 * start, 4 * c)?;
+                let idx: Vec<usize> = (0..c).map(|i| r.u32(loff + 4 * (start + i)) as usize).filter(|&i| i < entries.len()).collect();
+                let name = cstr(defs + r.u32(ldef + 4 * k) as usize, sdef)?;
+                lists.push((name, idx));
+            }
+        }
         let mut fonts = Vec::new();
         if let Some((f, c)) = font {
             for k in 0..c.min(16) {
                 fonts.push(cstr(f + 20 * k, text)?);
             }
         }
-        Ok(Self { fonts, entries })
+        Ok(Self { fonts, entries, lists })
+    }
+
+    pub fn list(&self, name: &str) -> Option<&[usize]> {
+        self.lists.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_slice())
     }
 
     pub fn entry(&self, name: &str) -> Option<&TextEntry> {

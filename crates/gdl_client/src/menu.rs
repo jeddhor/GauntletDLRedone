@@ -74,6 +74,10 @@ pub enum Page {
     ConfirmQuit { at: usize },
     Shop { at: usize },
     Inventory,
+    /// hint_menu 0x21ea28 (Sumner's pad): category list, then a category's
+    /// hints one at a time.
+    Hints { at: usize },
+    HintText { list: usize, at: usize },
 }
 
 pub const CLASS_NAMES: [&str; 8] = ["WARRIOR", "VALKYRIE", "WIZARD", "ARCHER", "DWARF", "KNIGHT", "SORCERESS", "JESTER"];
@@ -83,6 +87,7 @@ const TITLE_OPTIONS: [&str; 5] = ["Audio", "Game Options", "Compass", "Controls"
 const TOWER_OPTIONS: [&str; 4] = ["Audio", "Compass", "Controls", "Screen"];
 const TOWER_MENU: [&str; 5] = ["Settings", "Manage Character", "Shop", "Inventory", "Quit Game"];
 const GAME_MENU: [&str; 2] = ["Settings", "Quit Level"];
+const HINT_MENU: [&str; 4] = ["General Hints", "Guardians", "Items of Legend", "Runestones"];
 
 pub struct Menu {
     pub page: Page,
@@ -98,6 +103,8 @@ pub struct Menu {
     pub gold: i32,
     /// Inventory text (native summary of the character record).
     pub inventory: String,
+    /// Hint categories (hint_menu order) with their hint texts.
+    pub hints: Vec<Vec<String>>,
 }
 
 fn wrap(at: usize, n: usize, up: bool) -> usize {
@@ -120,7 +127,7 @@ fn list(title: &str, items: &[String], at: usize) -> String {
 
 impl Menu {
     pub fn new(music: u8, sfx: u8) -> Self {
-        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new() }
+        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new() }
     }
 
     fn select_items(&self) -> Vec<String> {
@@ -139,7 +146,7 @@ impl Menu {
     }
 
     pub fn is_paused(&self) -> bool {
-        matches!(self.page, Page::Paused { .. } | Page::Manage { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory)
+        matches!(self.page, Page::Paused { .. } | Page::Manage { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory | Page::Hints { .. } | Page::HintText { .. })
     }
 
     pub fn input(&mut self, key: Key) -> Option<Action> {
@@ -305,6 +312,25 @@ impl Menu {
                 }
                 _ => None,
             },
+            Page::Hints { at } => {
+                match key {
+                    Key::Up | Key::Down => self.page = Page::Hints { at: wrap(at, HINT_MENU.len(), key == Key::Up) },
+                    Key::Accept => self.page = Page::HintText { list: at, at: 0 },
+                    Key::Back => return Some(Action::Resume),
+                    _ => {}
+                }
+                None
+            }
+            Page::HintText { list, at } => {
+                let n = self.hints.get(list).map_or(0, Vec::len);
+                match key {
+                    Key::Accept | Key::Right | Key::Down if at + 1 < n => self.page = Page::HintText { list, at: at + 1 },
+                    Key::Left | Key::Up => self.page = Page::HintText { list, at: at.saturating_sub(1) },
+                    Key::Accept | Key::Back => self.page = Page::Hints { at: list },
+                    _ => {}
+                }
+                None
+            }
             Page::Inventory => {
                 if matches!(key, Key::Back | Key::Accept) {
                     self.page = Page::Paused { tower: true, at: 3 };
@@ -353,6 +379,17 @@ impl Menu {
                 let first = at.saturating_sub(6).min(self.shop.len().saturating_sub(12));
                 let lines: Vec<String> = self.shop.iter().skip(first).take(12).cloned().collect();
                 list(&format!("SHOP          gold {}\n(- : not available now)", self.gold), &lines, at - first)
+            }
+            Page::Hints { at } => list("HINTS", &s(&HINT_MENU), *at),
+            Page::HintText { list: l, at } => {
+                let v = self.hints.get(*l);
+                format!(
+                    "{}  {}/{}\n\n{}\n\n(Enter: next, Esc: back)",
+                    HINT_MENU.get(*l).copied().unwrap_or(""),
+                    at + 1,
+                    v.map_or(0, Vec::len),
+                    v.and_then(|v| v.get(*at)).map_or("", String::as_str)
+                )
             }
             Page::Inventory => format!("INVENTORY\n\n{}\n\n(Enter / Esc to go back)", self.inventory),
             Page::ConfirmQuit { at } => list("QUIT GAME?\nprogress since your last save is lost", &s(&["No", "Yes"]), *at),
@@ -412,5 +449,19 @@ mod tests {
         m.input(Key::Accept);
         m.input(Key::Accept);
         assert_eq!(m.input(Key::Right), Some(Action::Volumes { music: 144, sfx: 128 }));
+    }
+
+    #[test]
+    fn hint_pages() {
+        let mut m = Menu::new(128, 128);
+        m.hints = vec![vec!["a".into(), "b".into()], vec![], vec![], vec![]];
+        m.page = Page::Hints { at: 0 };
+        m.input(Key::Accept);
+        assert!(m.text().contains("1/2"));
+        m.input(Key::Accept);
+        assert!(m.text().contains("2/2"));
+        m.input(Key::Accept);
+        assert_eq!(m.page, Page::Hints { at: 0 });
+        assert_eq!(m.input(Key::Back), Some(Action::Resume));
     }
 }
