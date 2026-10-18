@@ -30,6 +30,11 @@ pub struct TowerState {
     pub door_mtime: [f32; 9],
     pub garg_mtime: [f32; 3],
     pub sumner: Option<SumnerState>,
+    /// sumner_pidx (SumnerInit: 0) and sumner_speech_time.
+    pub sumner_pidx: i32,
+    pub sumner_speech_time: f32,
+    /// sumner_plyr_newlevel[4]: the level each player reached a new tier at.
+    pub plyr_newlevel: [i32; 4],
 }
 
 /// Sumner (the GWIZ tree of the level's item animations at lookout param 0):
@@ -294,6 +299,7 @@ impl Game {
         let Some(l) = self.lookouts.iter().find(|l| l.param == 0) else { return Ok(()) };
         let matrix = super::lookouts::lookout_matrix(l)?;
         self.tower.sumner = Some(SumnerState { matrix, danim: 0, anim_now: false, clock: super::setup::fresh_clock(), clips, current: 0 });
+        self.tower.sumner_pidx = 0;
         Ok(())
     }
 
@@ -435,11 +441,17 @@ impl Game {
             return Ok(());
         }
         if self.globals.game_mode == 0x4010 {
+            // SumnerDoSpeech: INTERIM — the speech runs down by SPF per update
+            // (its captions, ghost and camera are not ported).
+            if 0.0 < self.tower.sumner_speech_time && self.globals.cam_wait == 0 && self.globals.start_of_stage == 0 {
+                self.tower.sumner_speech_time = sub(self.tower.sumner_speech_time, self.globals.spf)?;
+            }
             self.sumner_animate()?;
         }
         if self.globals.cam_wait != 0 || self.globals.start_of_stage != 0 || self.globals.trig_cam_active != 0 || self.globals.paused != 0 {
             return Ok(());
         }
+        self.sumner_level_speech_start();
         if param {
             for k in 0..4 {
                 if self.players[k].i32_(0xfc) == 0 {
@@ -498,6 +510,45 @@ impl Game {
             }
         }
         Ok(())
+    }
+
+    /// SumnerLevelSpeechStart 0x174b08: for each present player, a new level
+    /// tier since the last Tower visit (the backup's class experience vs
+    /// +0x1a1c; reaching 99 always counts) queues Sumner's level speech;
+    /// both the backup and the class entry take the current experience.
+    fn sumner_level_speech_start(&mut self) -> i32 {
+        if self.tower.sumner_pidx < 0 || 0.0 < self.tower.sumner_speech_time {
+            return 0;
+        }
+        let mut n = 0;
+        for k in 0..4 {
+            self.tower.plyr_newlevel[k] = 0;
+            if self.players[k].i32_(0xfc) == 0 {
+                continue;
+            }
+            let c = self.players[k].u32_(0xc) as usize;
+            let exp = self.players[k].i32_(0x1a1c);
+            let old = crate::player_class::exp_to_level(self.players[k].i32_(0x1a38 + 0x18 * c));
+            let new = crate::player_class::exp_to_level(exp);
+            if new < 99 || 98 < old {
+                if old / 10 != new / 10 {
+                    self.tower.plyr_newlevel[k] = new;
+                    n += 1;
+                }
+            } else {
+                self.tower.plyr_newlevel[k] = new;
+                n += 1;
+            }
+            self.players[k].set_i32(0x1a38 + 0x18 * c, exp);
+            self.players[k].set_i32(0x9ac + 0x18 * c, exp);
+        }
+        if n != 0 {
+            // SumnerGhostStart, 0.5 s of speech, DisablePlayerControls: the
+            // caption presentation is not ported yet.
+            self.tower.sumner_speech_time = 0.5;
+            self.events.push(Event::SumnerAnim { player: usize::MAX });
+        }
+        n
     }
 
     /// crystal_sidx 0x23dd68 / garg_sidx 0x23dd90 (AudioCrystalSpeech /
