@@ -183,12 +183,54 @@ struct Front {
     game_opts: Vec<u8>,
     /// SHPDATA/SHOP.WAD ITEM records.
     shop: Vec<gdl_core::game::powerups::ShopItem>,
+    /// TEXT/ENGLISH.ROM, TEXT/SCROLL_E.ROM and helptab 0x24bf08 (+0x10 text
+    /// entry, +0x14 line or −1 for all lines).
+    english: gdl_formats::textrom::TextRom,
+    scrolls: gdl_formats::textrom::TextRom,
+    helptab: Vec<(i32, i32)>,
     base: Base,
 }
 
 /// Front-end text (menus) drawn over everything.
 #[derive(Component)]
 struct FrontText;
+
+/// The title picture (TITLE00–03) and the panel behind the menu text,
+/// shown on the front end only.
+#[derive(Component)]
+struct FrontBackdrop;
+
+/// TITLE/TEXDEF + TEXTURES: TITLE00 | TITLE01 over TITLE02 | TITLE03 as one
+/// 512×384 RGBA picture (the assembly of research/textures.md). Alpha is
+/// forced opaque (PRESENTATION: the original's TEXA/blending is unresolved).
+fn title_picture(cat: &gdl_client::catalog::Catalog) -> Result<Image, Box<dyn Error>> {
+    let table = TextureTable::parse(&cat.read("TITLE/TEXDEF.PS2")?)?;
+    let textures = cat.read("TITLE/TEXTURES.PS2")?;
+    let (w, h) = (512usize, 384usize);
+    let mut rgba = vec![0u8; w * h * 4];
+    for (label, x0, y0) in [("TITLE00", 0, 0), ("TITLE01", 256, 0), ("TITLE02", 0, 256), ("TITLE03", 256, 256)] {
+        let b = table.bitmaps.iter().find(|b| b.label == label).ok_or_else(|| format!("{label} missing"))?;
+        let px = b.decode_base_rgba(&textures)?;
+        let (bw, bh) = (b.width as usize, b.height as usize);
+        for y in 0..bh.min(h - y0) {
+            for x in 0..bw.min(w - x0) {
+                let s = 4 * (y * bw + x);
+                let d = 4 * ((y0 + y) * w + x0 + x);
+                rgba[d..d + 3].copy_from_slice(&px[s..s + 3]);
+                rgba[d + 3] = 255;
+            }
+        }
+    }
+    let mut image = Image::new(
+        bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+        bevy::render::render_resource::TextureDimension::D2,
+        rgba,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::default(),
+    );
+    image.sampler = bevy::image::ImageSampler::nearest();
+    Ok(image)
+}
 
 /// A critter instance slot (CritterInsts index) and the type it shows.
 #[derive(Component)]
@@ -345,6 +387,11 @@ struct Sim {
     coop_magic: [bool; 3],
     /// Seconds player 1 has been dying (state 8).
     dying: f32,
+    /// NewHelp text on screen (seconds left) and when each id last showed.
+    hint: Option<(f32, String)>,
+    hint_shown: HashMap<i32, f64>,
+    /// ScrollMessageBox: the game waits until the box is dismissed.
+    message_box: Option<String>,
 }
 
 /// One player slot's controls this update: the level word, attack edge
@@ -518,7 +565,14 @@ fn enemy_frames(pkg: &Package) -> HashMap<String, Vec<Vec<String>>> {
 }
 
 /// Cameras and text overlays (always present).
-fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
+fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: Res<Front>, mut images: ResMut<Assets<Image>>) {
+    match title_picture(&front.catalog) {
+        Ok(img) => {
+            commands.spawn((Sprite { image: images.add(img), custom_size: Some(Vec2::new(1194.0, 896.0)), ..default() }, Transform::from_xyz(0.0, 0.0, -2.0), FrontBackdrop));
+        }
+        Err(e) => eprintln!("title picture unavailable: {e}"),
+    }
+    commands.spawn((Sprite { color: Color::srgba(0.0, 0.0, 0.0, 0.6), custom_size: Some(Vec2::new(900.0, 290.0)), ..default() }, Transform::from_xyz(0.0, -300.0, -1.0), FrontBackdrop));
     commands.spawn((
         Camera3d::default(),
         Tonemapping::None,
@@ -794,8 +848,9 @@ fn simulate(
     presentation: Res<Presentation>,
     ui: Res<Ui>,
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
+    front: Res<Front>,
 ) {
-    if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started || ui.paused {
+    if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started || ui.paused || sim.message_box.is_some() {
         return;
     }
     let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().collect();
@@ -884,10 +939,47 @@ fn simulate(
             Event::GotIt { kind, amount, .. } => sim.last_event = format!("picked up (kind {kind}, amount {amount})"),
             Event::PlayerDied { .. } => sim.last_event = "YOU DIED".into(),
             Event::Audio { cue: "AudioEnemyDies", .. } => sim.kills += 1,
+            Event::Help { id, player } => {
+                // NewHelp(id): helptab entry → ENGLISH.ROM lines. PRESENTATION:
+                // help_displayed/help_interval are not ported; an id repeats
+                // after 20 s at the earliest.
+                let now = sim.game.globals.time as f64;
+                let recent = sim.hint_shown.get(&id).is_some_and(|t| now - t < 20.0);
+                if let Some(&(entry, line)) = usize::try_from(id).ok().and_then(|i| front.helptab.get(i))
+                    && !recent
+                    && let Some(e) = usize::try_from(entry).ok().and_then(|k| front.english.entries.get(k))
+                {
+                    let lines: Vec<&str> = match usize::try_from(line) {
+                        Ok(l) => e.lines.get(l).map(String::as_str).into_iter().collect(),
+                        Err(_) => e.lines.iter().map(String::as_str).collect(),
+                    };
+                    let p = sim.game.players.get(player).unwrap_or(&sim.game.players[0]);
+                    let class = gdl_client::menu::CLASS_NAMES.get(p.u32_(0xc) as usize).copied().unwrap_or("");
+                    let colour = gdl_client::menu::COLOUR_NAMES.get(p.u32_(4) as usize).copied().unwrap_or("");
+                    let text = lines.join("\n").replacen("%s", colour, 1).replacen("%s", class, 1).replace("%d", &p.i32_(0x2ac0).to_string());
+                    if !text.is_empty() {
+                        sim.hint = Some((3.0, text));
+                        sim.hint_shown.insert(id, now);
+                    }
+                }
+            }
+            Event::ScrollMessage { text, .. } => {
+                // ScrollMessageBox: SCROLL_E.ROM entry `text` (HYPOTHESIS: the
+                // runtime ScrollText array follows the ROM's entry order).
+                if let Some(e) = usize::try_from(text).ok().and_then(|k| front.scrolls.entries.get(k)) {
+                    sim.message_box = Some(e.lines.join("\n\n").replace('\r', ""));
+                }
+            }
             _ => {}
         }
     }
     let spf = sim.game.globals.spf;
+    if let Some((t, _)) = sim.hint.as_mut() {
+        *t -= spf;
+        if *t <= 0.0 {
+            sim.hint = None;
+        }
+    }
     sim.sparks.retain_mut(|(_, t)| {
         *t -= spf;
         0.0 < *t
@@ -1210,6 +1302,10 @@ fn present_player(
             format!("SIMULATION STOPPED\n{e}")
         } else if health <= 0.0 {
             "YOU DIED".to_string()
+        } else if let Some(m) = &sim.message_box {
+            format!("{m}\n\n(Enter)")
+        } else if let Some((_, h)) = &sim.hint {
+            h.clone()
         } else {
             String::new()
         };
@@ -1434,7 +1530,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.resource_mut::<Presentation>().attention = attention;
     world.insert_resource(sources);
     world.insert_resource(session);
-    world.insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3], dying: 0.0 });
+    world.insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3], dying: 0.0, hint: None, hint_shown: HashMap::new(), message_box: None });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -1698,6 +1794,12 @@ fn front_system(world: &mut EcsWorld) {
     let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
     let (keys, toggle) = menu_keys(world, naming);
     if screen == Screen::Playing {
+        if world.get_resource::<Sim>().is_some_and(|s| s.message_box.is_some()) {
+            if keys.contains(&Key::Accept) || keys.contains(&Key::Back) {
+                world.resource_mut::<Sim>().message_box = None;
+            }
+            return;
+        }
         let paused = world.resource::<Ui>().paused;
         let blocked = world.get_resource::<Session>().is_some_and(|s| s.banner.is_some() || s.finished.is_some());
         if !paused {
@@ -1736,8 +1838,22 @@ fn front_system(world: &mut EcsWorld) {
     }
 }
 
-fn front_text(screen: Res<Screen>, ui: Res<Ui>, front: Res<Front>, mut text: Query<&mut Text2d, With<FrontText>>) {
-    let Ok(mut t) = text.single_mut() else { return };
+fn front_text(
+    screen: Res<Screen>,
+    ui: Res<Ui>,
+    front: Res<Front>,
+    mut text: Query<(&mut Text2d, &mut Transform), With<FrontText>>,
+    mut backdrop: Query<&mut Visibility, With<FrontBackdrop>>,
+) {
+    for mut v in &mut backdrop {
+        let want = if *screen == Screen::Front { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != want {
+            *v = want;
+        }
+    }
+    let Ok((mut t, mut tf)) = text.single_mut() else { return };
+    // On the title the menu sits in the lower part, below the logo.
+    tf.translation.y = if *screen == Screen::Front { -300.0 } else { 0.0 };
     let show = *screen == Screen::Front || ui.paused;
     let want = if show { front.menu.text() } else { String::new() };
     if t.0 != want {
@@ -1834,6 +1950,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some((r, sha))
     });
     let shop = gdl_core::game::powerups::shop_items(&catalog.read("SHPDATA/SHOP.WAD")?)?;
+    let english = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/ENGLISH.ROM")?)?;
+    let scrolls = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/SCROLL_E.ROM")?)?;
+    let helptab: Vec<(i32, i32)> = elf
+        .object("helptab")?
+        .chunks_exact(0x1c)
+        .map(|r| (i32::from_le_bytes(r[0x10..0x14].try_into().unwrap()), i32::from_le_bytes(r[0x14..0x18].try_into().unwrap())))
+        .collect();
     let store = SaveStore::open(p("saves")?)?;
     // GameOpts: the stored block, else the captured session's GamePrefs
     // (sfx 128, music 128, stereo 1, …).
@@ -1862,6 +1985,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         capture,
         game_opts,
         shop,
+        english,
+        scrolls,
+        helptab,
         base: Base { package_cfg, start, levels, sim_template: player, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
     refresh_saves(&mut front);

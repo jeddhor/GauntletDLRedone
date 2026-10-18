@@ -329,8 +329,8 @@ impl Menu {
     pub fn text(&self) -> String {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let body = match &self.page {
-            Page::PressStart => "GAUNTLET: DARK LEGACY\n\n\nPress Start\n\n(Enter / Space / gamepad South)".to_string(),
-            Page::Title { at } => list("GAUNTLET: DARK LEGACY", &s(&TITLE_MENU), *at),
+            Page::PressStart => "Press Start\n\n(Enter / Space / gamepad South)".to_string(),
+            Page::Title { at } => list("", &s(&TITLE_MENU), *at),
             Page::Options { at, back } => {
                 let names: &[&str] = if matches!(**back, Page::Title { .. }) { &TITLE_OPTIONS } else { &TOWER_OPTIONS };
                 list("OPTIONS", &s(names), *at)

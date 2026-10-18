@@ -307,6 +307,15 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
+    if args.len() == 2 && args[0] == "text-rom" {
+        // text-rom FILE.ROM: named entries with their lines (stdout).
+        let rom = gdl_formats::textrom::TextRom::parse(&bounded_read(Path::new(&args[1]), 1024 * 1024)?)?;
+        println!("fonts {:?}", rom.fonts);
+        for (k, e) in rom.entries.iter().enumerate() {
+            println!("{k} {} font {} scale {} {:?}", e.name, e.font, e.scale, e.lines);
+        }
+        return Ok(());
+    }
     if args.len() == 2 && args[0] == "memcard-list" {
         // memcard-list CARD.ps2: read-only directory listing with file hashes (stdout).
         let b = bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?;

@@ -137,12 +137,23 @@ Original menu tables (ELF): title "Press Start" (0x2abed0) → title_menu
 Compass, Controls, Screen}; tower_menu {Settings, Manage Character, Shop,
 Inventory, Quit Game}; game_menu {Settings, Quit Level}; tower_options
 {Audio, Compass, Controls, Screen}; hint_menu {General Hints, Guardians,
-Items of Legend, Runestones}. TEXT/ENGLISH.ROM is an MB container (TEXT blob
-with TOFF/STRS/LOFF/LIST/DEFS/SDEF/LDEF tables, not decoded); the class and
-colour names and "SELECT A CHARACTER" / "TO BUILD A CHARACTER" /
-"ENTER INITIALS" are taken from its TEXT blob.
+Items of Legend, Runestones}. Text ROMs (gdl_formats::textrom; ENGLISH.ROM 194 entries, SCROLL_E.ROM
+57, HINTS_E.ROM 45; dumps private/reports/text-rom-*-v1.txt): MB containers
+with FONT names (20-byte records), TEXT lines, TOFF line offsets, STRS
+{line count, first line, font, scale} per entry, entry names in DEFS via
+SDEF offsets, and LIST/LOFF/LDEF named lists. The class and colour names
+and "SELECT A CHARACTER" / "TO BUILD A CHARACTER" / "ENTER INITIALS" come
+from ENGLISH.ROM. In game, NewHelp 0x18e710 ids go through helptab 0x24bf08
+(256 × 0x1c: +0x10 entry, +0x14 line or −1 for all lines; the capture holds
+the same values, num_helps 256) to ENGLISH.ROM lines (e.g. help 0 →
+USEMAGIC, 0x22 → LEVELUP); scroll items (ScrollMessageBox) show
+SCROLL_E.ROM entry n (HYPOTHESIS: the runtime ScrollText array, 0x44-byte
+records, follows the ROM's entry order) in a box that pauses the game until
+a button is pressed. PRESENTATION: hints show for 3 s and an id repeats
+after 20 s at the earliest (help_displayed/help_interval not ported).
 
-NATIVE presentation (labelled): text menus instead of the SELECT/TITLE
+Title: TITLE00–03 assembled into the 512×384 title picture behind the
+menu (alpha forced opaque). NATIVE presentation (labelled): text menus instead of the SELECT/TITLE
 scenes, the save list, the import entry, "Save Character" in Manage
 Character, the quit confirmation, volume steps. Not ported: Shop, Inventory,
 Compass, Controls, Screen, Game Options, hint menus, credits, the secret
