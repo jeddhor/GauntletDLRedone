@@ -1557,6 +1557,46 @@ fn refresh_shop(world: &mut EcsWorld) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Inventory page (NATIVE summary): level/experience, health, attributes,
+/// gold, keys, potions, runestones (+0x1a26 bits), shards (+0x1a24 bits),
+/// timed powerups (+0x144 slots) and completed levels per realm.
+fn inventory_text(r: &Record) -> String {
+    let level = r.i32_(0x2ac0);
+    let next = gdl_core::player_class::level_to_exp(level + 1);
+    let powerups = (0..8).filter(|k| 0.0 != r.f32_(0x144 + 16 * k)).count();
+    // worlddatas 0x23deb0 names, by CurWorld.
+    let realms = ["", "castle", "mount", "desert", "forest", "temple", "hell", "town", "battle", "ice", "dream", "sky"];
+    let class = r.u32_(0xc) as usize;
+    let mut waves = Vec::new();
+    for (w, name) in realms.iter().enumerate().skip(1) {
+        let bits = r.u8_(0x182c + 0xe * class + w);
+        if bits != 0 {
+            waves.push(format!("{name} {}", bits.count_ones()));
+        }
+    }
+    format!(
+        "level {level}   experience {} (next level at {next})\n\
+         health {:.0} / {:.0}\n\
+         strength {:.0}  armor {:.0}  magic {:.0}  speed {:.0}\n\
+         gold {}   keys {}   potions {}\n\
+         runestones {}   shards {}   timed powerups {powerups}\n\
+         levels completed: {}",
+        r.i32_(0x1a1c),
+        r.f32_(0x1a10),
+        gdl_core::player_class::max_health(level),
+        r.f32_(0x108),
+        r.f32_(0x10c),
+        r.f32_(0x110),
+        r.f32_(0x114),
+        r.i32_(0x1a20),
+        r.i32_(0x1a14),
+        r.i32_(0x1a18),
+        r.u16_(0x1a26).count_ones(),
+        r.u16_(0x1a24).count_ones(),
+        if waves.is_empty() { "none".to_string() } else { waves.join(", ") },
+    )
+}
+
 fn act(world: &mut EcsWorld, action: Action) {
     let result: Result<(), Box<dyn Error>> = (|| {
         match action {
@@ -1604,6 +1644,13 @@ fn act(world: &mut EcsWorld, action: Action) {
                 }
             }
             Action::QuitGame => end_game(world),
+            Action::OpenInventory => {
+                let text = inventory_text(&world.resource::<Sim>().game.players[0]);
+                let mut front = world.resource_mut::<Front>();
+                front.menu.inventory = text;
+                front.menu.status.clear();
+                front.menu.page = gdl_client::menu::Page::Inventory;
+            }
             Action::OpenShop => {
                 refresh_shop(world)?;
                 let mut front = world.resource_mut::<Front>();

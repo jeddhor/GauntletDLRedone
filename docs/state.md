@@ -1,3 +1,41 @@
+# Development checkpoint — 2026-10-18
+
+User request (2026-10-17): continue through the end of M17 and complete M18
+so progress can be saved; a "complete" build to test. Latest source commit:
+`bash tools/git-local.sh log -1 --oneline`.
+
+## Current position (2026-10-18)
+
+- Launch: `python3 tools/python/run_play.py` (desktop) or `--virtual`. The
+  build starts at "Press Start" → Start → SELECT A CHARACTER (saved
+  characters, new character of the eight base classes × four colours, or
+  "Import PELE" from the savestate capture) → the Tower. Saves:
+  `$XDG_DATA_HOME/gdl-native/SLUS-20047/saves` (`--save-dir` overrides).
+  Saving: Tower → Esc → Manage Character → Save Character.
+- M18 (research/saves.md): game::profile ports the character record and
+  save-region functions (checked: private/reports/profile-check-pele-v1.txt);
+  gdl_core::save stores versioned envelopes with SHA-256, `.bak`, recovery
+  and raw-save migration; gdl_formats::memcard reads cards read-only (the
+  user's cards are unformatted; no card save exists to decode).
+- M17 (interim presentation): original menu structure and labels as text,
+  Settings → Audio volumes (options.json), Tower Shop (do_shopping) and
+  Inventory (native summary), Quit Level / Quit Game.
+- Simulation additions: PlayerProcessPowerups (powerup effects now apply),
+  kill_player / PlayersSetWaveDied / drop_keys and the Tower restore,
+  per-player class data from PDAT, per-class sim values from the record.
+- Verification: 90 Rust tests (synthetic: profile round trip, save
+  recovery/migration, memory card, menu flow, shop table, PDAT); Clippy
+  clean; 51-level sweep sw10 identical to sw8; actual-data profile check of
+  the PELE record; Xvfb smoke tests of import, save (version 2 + .bak), new
+  Red Warrior, realm entry, Quit Level, death → Tower, Shop purchase,
+  Inventory. No new PCSX2 comparisons.
+- Not done (ledgers): original SELECT/TITLE scenes, fonts and text ROM
+  tables, HUD, credits, hints, options other than audio, shop presentation,
+  secret characters, Sumner, co-op character select, dying animation,
+  cross-package missile textures (Sorceress WND_THROW1 draws magenta).
+
+---
+
 # Development checkpoint — 2026-10-17
 
 Continuing the user's request to work through M11–M17 until a playable build

@@ -291,6 +291,22 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "objects-bitmaps" {
+        // objects-bitmaps OBJECTS.PS2 TEXDEF.PS2: each object bitmap record with
+        // its flags and the TEXDEF candidates (offset/format/size match) (stdout).
+        let o = gdl_formats::objects::Objects::parse(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;
+        let t = gdl_formats::texdef::TextureTable::parse(&bounded_read(Path::new(&args[2]), 64 * 1024 * 1024)?)?;
+        for b in &o.bitmap_records {
+            let c: Vec<String> = t
+                .bitmaps
+                .iter()
+                .filter(|x| x.texture_offset == b.texture_offset && x.format == b.format && x.width == b.width && x.height == b.height)
+                .map(|x| x.label.clone())
+                .collect();
+            println!("{} fmt {} flags {:#x} {}x{} off {:#x} candidates {:?}", b.index, b.format, b.flags, b.width, b.height, b.texture_offset, c);
+        }
+        return Ok(());
+    }
     if args.len() == 2 && args[0] == "memcard-list" {
         // memcard-list CARD.ps2: read-only directory listing with file hashes (stdout).
         let b = bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?;

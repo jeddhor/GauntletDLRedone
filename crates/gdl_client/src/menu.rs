@@ -47,6 +47,8 @@ pub enum Action {
     OpenShop,
     /// Buy shop entry `idx` (0 = leave).
     Buy { idx: usize },
+    /// Tower menu → Inventory: the host fills `inventory` and opens the page.
+    OpenInventory,
 }
 
 /// A save shown in the list.
@@ -71,6 +73,7 @@ pub enum Page {
     Manage { at: usize },
     ConfirmQuit { at: usize },
     Shop { at: usize },
+    Inventory,
 }
 
 pub const CLASS_NAMES: [&str; 8] = ["WARRIOR", "VALKYRIE", "WIZARD", "ARCHER", "DWARF", "KNIGHT", "SORCERESS", "JESTER"];
@@ -93,6 +96,8 @@ pub struct Menu {
     /// Shop lines (entry 0 = leave) and the player's gold.
     pub shop: Vec<String>,
     pub gold: i32,
+    /// Inventory text (native summary of the character record).
+    pub inventory: String,
 }
 
 fn wrap(at: usize, n: usize, up: bool) -> usize {
@@ -115,7 +120,7 @@ fn list(title: &str, items: &[String], at: usize) -> String {
 
 impl Menu {
     pub fn new(music: u8, sfx: u8) -> Self {
-        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0 }
+        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new() }
     }
 
     fn select_items(&self) -> Vec<String> {
@@ -134,7 +139,7 @@ impl Menu {
     }
 
     pub fn is_paused(&self) -> bool {
-        matches!(self.page, Page::Paused { .. } | Page::Manage { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. })
+        matches!(self.page, Page::Paused { .. } | Page::Manage { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory)
     }
 
     pub fn input(&mut self, key: Key) -> Option<Action> {
@@ -269,6 +274,7 @@ impl Menu {
                         "Quit Game" => self.page = Page::ConfirmQuit { at: 0 },
                         "Quit Level" => return Some(Action::QuitLevel),
                         "Shop" => return Some(Action::OpenShop),
+                        "Inventory" => return Some(Action::OpenInventory),
                         other => self.page = Page::NotPorted { what: other.to_string(), back: Box::new(page) },
                     },
                     _ => {}
@@ -299,6 +305,12 @@ impl Menu {
                 }
                 _ => None,
             },
+            Page::Inventory => {
+                if matches!(key, Key::Back | Key::Accept) {
+                    self.page = Page::Paused { tower: true, at: 3 };
+                }
+                None
+            }
             Page::ConfirmQuit { at } => match key {
                 Key::Up | Key::Down => {
                     self.page = Page::ConfirmQuit { at: wrap(at, 2, key == Key::Up) };
@@ -342,6 +354,7 @@ impl Menu {
                 let lines: Vec<String> = self.shop.iter().skip(first).take(12).cloned().collect();
                 list(&format!("SHOP          gold {}\n(- : not available now)", self.gold), &lines, at - first)
             }
+            Page::Inventory => format!("INVENTORY\n\n{}\n\n(Enter / Esc to go back)", self.inventory),
             Page::ConfirmQuit { at } => list("QUIT GAME?\nprogress since your last save is lost", &s(&["No", "Yes"]), *at),
         };
         if self.status.is_empty() { body } else { format!("{body}\n\n{}", self.status) }
