@@ -214,6 +214,12 @@ pub struct ItemSession {
     pub death_statue_anim: bool,
     pub critter_3_loaded: bool,
     pub critter_7_loaded: bool,
+    /// SetItem's Tower crystal test, evaluated by the caller from the
+    /// players at load: DemoMode != 0 || AnyPlayerHasAllCrystals(1).
+    pub tower_crystals_taken: bool,
+    /// PlayerWaves(player, 8) & 1 over the present players at load (the
+    /// Tower's 'h'/199 triggers start opened).
+    pub battle_wave_1_done: bool,
 }
 
 pub struct ItemWorld {
@@ -239,6 +245,8 @@ pub struct ItemWorld {
     /// MaxItems = instances + 500 (AddItemInstList).
     pub max_items: usize,
     pub world_has_gates: i32,
+    /// Objects whose world animation SetItem put at its last frame.
+    pub wanim_to_end: Vec<usize>,
     pub rune_item: Option<usize>,
     pub rune_pos: [f32; 3],
     pub quest_item: Option<usize>,
@@ -314,6 +322,7 @@ impl ItemWorld {
             object_child: world.nodes.iter().map(|n| usize::try_from(n.child).ok()).collect(),
             object_next: world.nodes.iter().map(|n| usize::try_from(n.next).ok()).collect(),
             max_items: world.items.len() + 500,
+            wanim_to_end: Vec::new(),
             object_node_y: collision.objects.iter().map(|o| o.position[1]).collect(),
             object_visible: vec![true; collision.objects.len()],
             object_exclusion: collision.objects.iter().map(|o| o.exclusion).collect(),
@@ -517,8 +526,10 @@ impl ItemWorld {
                     self.records[slot].set_u16(0xd8, 0xffff);
                     return Ok(());
                 }
-                0xf if self.session.cur_world == 0xd => {
-                    return err("tower crystal (DemoMode / AnyPlayerHasAllCrystals)");
+                0xf if self.session.cur_world == 0xd && self.session.tower_crystals_taken => {
+                    // Disabled: only +0xd8 is written.
+                    self.records[slot].set_u16(0xd8, 0xffff);
+                    return Ok(());
                 }
                 _ => {}
             }
@@ -745,8 +756,20 @@ impl ItemWorld {
                 r.set_u32(0xf8, 0);
                 r.set_u16(0x100, 0);
                 r.set_u16(0x102, 0xffff);
-                if bound.is_some() && self.session.cur_world == 0xd {
-                    return err("tower wave trigger (PlayerWaves/FindWobjWanim)");
+                // SetItem (Tower): triggers 'h' (0x68) and 199 whose players have
+                // finished wave 1 of world 8 open their object at once: flags
+                // 0xa00000, bytes 0x2f, and the object's world animation at its
+                // last frame (FindWobjWanim; applied by the game after load).
+                if let Some(o) = bound
+                    && self.session.cur_world == 0xd
+                    && matches!(r.u8_(0xf6), 0x68 | 0xc7)
+                    && self.session.battle_wave_1_done
+                {
+                    let ob = &mut self.objects[o];
+                    ob.byte_17 = 0x2f;
+                    ob.byte_16 = 0x2f;
+                    ob.flags_10 |= 0xa0_0000;
+                    self.wanim_to_end.push(o);
                 }
             }
             7 => self.world_has_gates += 1,

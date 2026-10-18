@@ -92,6 +92,39 @@ pub struct World {
     /// Locator list (header +0x5c offset, +0x58 count; 0x1c bytes each),
     /// read by AddLocatorInstList 0x150ac8 from the loaded header copy.
     pub locators: Vec<Locator>,
+    /// World animations (InitWorldInfo 0x11be78: header +0x64 animation
+    /// header, +0x68 count, +0x6c 16-byte entries; present when the version
+    /// byte of +0x60 is non-zero and +0x64 is set).
+    pub anims: Option<WorldAnims>,
+    /// The file (world animation keys are decoded from it at run time).
+    #[serde(skip)]
+    pub bytes: std::sync::Arc<Vec<u8>>,
+}
+
+/// SetupAnimHeader 0x1106f8 words (file offsets): compressed angle,
+/// position and scale tables, the key data base and two plain words.
+#[derive(Debug, Serialize, Clone)]
+pub struct WorldAnims {
+    pub header: u32,
+    pub angles: u32,
+    pub positions: u32,
+    pub scales: u32,
+    pub base: u32,
+    pub entries: Vec<WorldAnimEntry>,
+}
+
+/// One world animation: +0 object index, +2 frame count, +4 word, +6 flags
+/// (InitWorldInfo sets 0x101), +8 frame (f32), +0xc data offset → {u16
+/// transform flags, u16 channel count, i32 key data offset from `base`}.
+#[derive(Debug, Serialize, Clone)]
+pub struct WorldAnimEntry {
+    pub object: i16,
+    pub frames: i16,
+    pub word_04: i16,
+    pub data: u32,
+    pub transform_flags: u16,
+    pub channels: u16,
+    pub key_offset: u32,
 }
 /// One locator: kind 1/2 transmitter, 3/4 attention transmitter, 5 milestone,
 /// 6 boss, 7 player start, 8/10 lookout, 9 trigger camera.
@@ -226,7 +259,34 @@ impl World {
                 raw: bytes[p..p + 0x1c].to_vec(),
             });
         }
+        let anims = if r.u32(96) & 0xff != 0 && r.u32(100) != 0 {
+            let h = r.u32(100) as usize;
+            r.range(h, 0x1c)?;
+            let n = r.u32(104);
+            let table = r.table(r.u32(108), n, 16, 120)?;
+            let mut entries = Vec::new();
+            for p in table.step_by(16) {
+                let data = r.u32(p + 12);
+                r.range(data as usize, 8)?;
+                let key_offset = r.u32(data as usize + 4);
+                entries.push(WorldAnimEntry {
+                    object: r.i16(p),
+                    frames: r.i16(p + 2),
+                    word_04: r.i16(p + 4),
+                    data,
+                    transform_flags: r.u16(data as usize),
+                    channels: r.u16(data as usize + 2),
+                    key_offset,
+                });
+            }
+            let rel = |k: usize| h as u32 + r.u32(h + 4 * k);
+            Some(WorldAnims { header: h as u32, angles: rel(0), positions: rel(1), scales: rel(2), base: rel(3), entries })
+        } else {
+            None
+        };
         Ok(Self {
+            anims,
+            bytes: std::sync::Arc::new(bytes.to_vec()),
             raw_header: bytes[..120].to_vec(),
             min,
             max,

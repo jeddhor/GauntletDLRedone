@@ -316,6 +316,33 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "world-anim-eval" {
+        // world-anim-eval WORLDS.PS2 FRAMES.json: [[entry, frame], ...] → the
+        // DoWorldAnimSub local matrix of each entry at that frame (stdout JSON).
+        let world = gdl_formats::world::World::parse(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;
+        let frames: Vec<(usize, f32)> = serde_json::from_slice(&bounded_read(Path::new(&args[2]), 1024 * 1024)?)?;
+        let anims = world.anims.as_ref().ok_or("world without animations")?;
+        let set = gdl_core::game::world_anim::WorldAnimSet::new(world.bytes.clone(), anims);
+        let positions: Vec<[f32; 3]> = world.nodes.iter().map(|n| n.position).collect();
+        let col = gdl_core::collision::CollisionWorld::from_world(&world).map_err(|e| format!("{e:?}"))?;
+        let mut out = Vec::new();
+        for (k, frame) in frames {
+            let e = set.entries.get(k).ok_or("entry index")?;
+            let r = gdl_core::game::world_anim::eval_local(&set, e, frame, col.objects[e.object].position);
+            out.push(serde_json::json!({"entry": k, "frame": frame, "object": e.object, "file_position": positions[e.object],
+                "matrix": r.as_ref().ok(), "error": r.err().map(|e| e.0)}));
+        }
+        println!("{}", serde_json::to_string(&out)?);
+        return Ok(());
+    }
+    if args.len() == 2 && args[0] == "world-positions" {
+        // world-positions WORLDS.PS2: loaded object +0x1c positions (stdout JSON hex).
+        let world = gdl_formats::world::World::parse(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;
+        let col = gdl_core::collision::CollisionWorld::from_world(&world).map_err(|e| format!("{e:?}"))?;
+        let v: Vec<String> = col.objects.iter().map(|o| o.position.iter().map(|f| format!("{:08x}", f.to_bits())).collect()).collect();
+        println!("{}", serde_json::to_string(&v)?);
+        return Ok(());
+    }
     if args.len() == 2 && args[0] == "memcard-list" {
         // memcard-list CARD.ps2: read-only directory listing with file hashes (stdout).
         let b = bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?;
@@ -422,6 +449,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             death_statue_anim: int("death_statue_anim")? != 0,
             critter_3_loaded: int("critter_3_loaded")? != 0,
             critter_7_loaded: int("critter_7_loaded")? != 0,
+            tower_crystals_taken: session["tower_crystals_taken"].as_i64().unwrap_or(0) != 0,
+            battle_wave_1_done: session["battle_wave_1_done"].as_i64().unwrap_or(0) != 0,
         };
         let tables = gdl_core::items::ItemTables::from_elf(&elf)?;
         let mut collision = gdl_core::collision::CollisionWorld::from_world(&world)?;

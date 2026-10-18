@@ -110,7 +110,57 @@ impl Tree {
         })
     }
 }
-impl KeyTrack<'_> {
+impl<'a> KeyTrack<'a> {
+    /// A track outside an atree: world animations (DoWorldAnimSub) give the
+    /// key data start, transform flags, channel count, frame count and the
+    /// three compressed delta tables directly.
+    pub fn from_parts(bytes: &'a [u8], start: usize, flags: u16, channels: u16, frames: u16, tables: [usize; 3]) -> Result<Self, ParseError> {
+        let r = Reader { bytes, family: "ANIM keys" };
+        let known_flags = AXIS_FLAGS.iter().fold(0xe000, |v, bit| v | bit);
+        if flags & !known_flags != 0 || AXIS_FLAGS.iter().filter(|bit| flags & **bit != 0).count() != usize::from(channels) {
+            return Err(r.error(start, "unknown flags or channel count mismatch"));
+        }
+        let initial_only = flags & 0x4000 != 0;
+        let compressed = flags & 0x2000 != 0;
+        let bitmap = r.range(start, if initial_only { 0 } else { usize::from(frames).div_ceil(32) * 4 })?;
+        let initial_range = r.range(bitmap.end, usize::from(channels) * 4)?;
+        let mut initial = DEFAULT_CHANNELS;
+        let mut cursor = initial_range.start;
+        for (axis, bit) in AXIS_FLAGS.iter().enumerate() {
+            if flags & bit != 0 {
+                initial[axis] = r.float(cursor)?;
+                cursor += 4;
+            }
+        }
+        let mut key_frames = vec![0];
+        if !initial_only {
+            for frame in 1..frames {
+                if bytes[bitmap.start + usize::from(frame) / 8] & (1 << (frame % 8)) != 0 {
+                    key_frames.push(frame);
+                }
+            }
+        }
+        let size = (key_frames.len() - 1) * usize::from(channels) * if compressed { 1 } else { 4 };
+        let rows = r.range(initial_range.end, size)?;
+        Ok(KeyTrack {
+            frames,
+            initial_only,
+            compressed,
+            transform_flags: flags,
+            key_frames,
+            bitmap_file_offset: bitmap.start,
+            bitmap_raw: &bytes[bitmap],
+            initial_file_offset: initial_range.start,
+            initial_raw: &bytes[initial_range],
+            initial,
+            rows_file_offset: rows.start,
+            rows_raw: &bytes[rows],
+            channels: usize::from(channels),
+            tables,
+            bytes,
+        })
+    }
+
     /// Row ordinal 0 describes key_frames[1]. Only present axes are returned;
     /// absent axes use zero deltas or the original absolute defaults.
     pub fn row(&self, ordinal: usize) -> Result<[f32; 9], ParseError> {

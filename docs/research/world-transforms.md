@@ -91,3 +91,33 @@ previously misreported through combined-shell status. The fixture is fixed;
 separate successful native-motion-code-tests-v3.log and -clippy-v3.log plus
 paused-checkpoint-build.log and paused-checkpoint-python-tests.log establish the
 current result. No new world-function observation was added by this correction.
+
+## World animations (DoWorldAnimation)
+
+WORLDS.PS2 carries its own animation table (InitWorldInfo 0x11be78): header
++0x60 version 0xf00bab0N (N ≥ 1 enables it), +0x64 animation header
+(SetupAnimHeader: compressed angle/position/scale tables, key data base),
++0x68 count, +0x6c 16-byte entries {i16 object, i16 frames, i16, u16 flags,
+f32 frame, data offset → {u16 transform flags, u16 channels, i32 key offset}}.
+InitWorldInfo sets each entry's flags to 0x101 and its object's flag
+0x2000000. DoWorldAnimation 0x164808 (world_update's first step; skipped
+while trig_cam_delay is in 11..=0x1869e or no player is in game) runs
+DoWorldAnimSub 0x11ce80 per entry: object flags 0x200000 play, 0x100000
+reverse, both stop, neither loop; channels at the frame (GetAnimAngXYZVal,
+the same key format as atree sequences) build the node's local matrix
+(CreateRYPMatrix 0x1d6530, or CreatePYRMatrix 0x1d63f8 with transform flag
+0x8000; translation = the object's +0x1c + offset; scale); the frame moves
+by SPF × 30; flags 0x8000000 animating, 0x800000 at end, 0x400000 at start;
+looping objects with flags & 0x100f0000 == 0x50000 explode at each wrap.
+
+CreateWorldNode 0x11b9a0 sets the node translation from the file +0x1c and
+then sums the parent's +0x1c only for objects without 0x1000 or 0x1000000
+(the port previously exempted only 0x1000000); children inherit 0x2000000.
+
+Actual checks (tools/python/compare_world_anims.py; reports
+private/reports/wanim-check-{tower,g1}-v1.json): every running entry's node
+matrix in the captures equals the native evaluation bit for bit — Tower
+new-game capture 150/150, Poison Fields fixture 27/27 (entries resting at
+an end are evaluated at the clamped frame, the rest one SPF × 30 back).
+Every object's loaded +0x1c matches: G1 1,360/1,360, Tower 3,379/3,379.
+Not ported: DoTexMods (texture animation).

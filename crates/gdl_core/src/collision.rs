@@ -71,6 +71,11 @@ pub struct CollisionWorld {
     /// Node rotation rows 0..2 changed at run time (rotators' YawMat3);
     /// None = the identity rest rotation.
     pub node_rot: Vec<Option<[V3; 3]>>,
+    /// Node local matrix written by a world animation (DoWorldAnimSub):
+    /// rows 0..2 rotation, row 3 translation (the object's +0x1c position
+    /// plus the animated offset); the scale channel is kept separately.
+    pub node_local: Vec<Option<[[f32; 4]; 4]>>,
+    pub node_scale: Vec<Option<V3>>,
     grid: CollisionGrid,
     min_x: f32,
     min_z: f32,
@@ -149,17 +154,17 @@ impl CollisionWorld {
                 return Err(UnsupportedCollision("world parent depth"));
             }
             let own = w.nodes[i].position;
-            // Matrix objects (flag 0x1000000) keep their local file position;
-            // verified for all 41 such objects in the Poison Fields fixture.
-            if w.nodes[i].flags & 0x100_0000 != 0 {
+            // CreateWorldNode 0x11b9a0: objects with flag 0x1000 or 0x1000000
+            // keep their local file position; the others add their parent's
+            // (already final) +0x1c, even under such an object (Errorf only).
+            // Verified for all 41 matrix objects in the Poison Fields fixture
+            // and the Tower's world-animated 0x1000 objects.
+            if w.nodes[i].flags & 0x100_1000 != 0 {
                 out[i] = Some(own);
                 return Ok(own);
             }
             let v = match p[i] {
                 None => own,
-                Some(q) if w.nodes[q].flags & 0x100_0000 != 0 => {
-                    return Err(UnsupportedCollision("static object under a matrix object"));
-                }
                 Some(q) => {
                     let base = sum(q, w, p, out, depth + 1)?;
                     [add(base[0], own[0])?, add(base[1], own[1])?, add(base[2], own[2])?]
@@ -194,8 +199,12 @@ impl CollisionWorld {
         let runtime_exclusion = objects.iter().map(|o| o.exclusion).collect();
         let node_y = vec![None; objects.len()];
         let node_rot = vec![None; objects.len()];
+        let node_local = vec![None; objects.len()];
+        let node_scale = vec![None; objects.len()];
         Ok(Self {
             node_rot,
+            node_local,
+            node_scale,
             dynamic,
             runtime_flags,
             runtime_exclusion,
@@ -467,13 +476,13 @@ impl CollisionWorld {
 
     /// Whether item logic has moved this object (elevator y or rotation).
     pub fn object_moved(&self, o: usize) -> bool {
-        self.node_y[o].is_some() || self.node_rot[o].is_some()
+        self.node_y[o].is_some() || self.node_rot[o].is_some() || self.node_local[o].is_some()
     }
 
     fn rotated_chain(&self, o: usize) -> bool {
         let mut k = Some(o);
         while let Some(i) = k {
-            if self.node_rot[i].is_some() {
+            if self.node_rot[i].is_some() || self.node_local[i].is_some() {
                 return true;
             }
             k = if self.objects[i].flags & 0x100_0000 != 0 { self.objects[i].parent } else { None };
@@ -491,7 +500,10 @@ impl CollisionWorld {
             _ => ob.position,
         };
         let rows = self.node_rot[o].unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
-        let local = [[rows[0][0], rows[0][1], rows[0][2], 0.0], [rows[1][0], rows[1][1], rows[1][2], 0.0], [rows[2][0], rows[2][1], rows[2][2], 0.0], [t[0], t[1], t[2], 1.0]];
+        let local = match self.node_local[o] {
+            Some(m) => m,
+            None => [[rows[0][0], rows[0][1], rows[0][2], 0.0], [rows[1][0], rows[1][1], rows[1][2], 0.0], [rows[2][0], rows[2][1], rows[2][2], 0.0], [t[0], t[1], t[2], 1.0]],
+        };
         match ob.parent {
             Some(p) if ob.flags & 0x100_0000 != 0 => {
                 let pm = self.object_matrix(p)?;

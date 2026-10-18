@@ -29,9 +29,9 @@ RANGES = [(0x04, 0x4c), (0x50, 0x70), (0x74, 0x78), (0xc8, 0xe6), (0xe8, 0x110)]
 SKIP = {2: {0xf8, 0xfa}, 13: {0xf8, 0xfa}, 8: {0xda}}
 
 
-def run(worlds, wdata, session, out):
+def run(worlds, wdata, session, out, level=0):
     out.unlink(missing_ok=True)
-    subprocess.run(['target/release/gdl_tools', 'item-records', str(worlds), str(wdata), '0', str(ELF),
+    subprocess.run(['target/release/gdl_tools', 'item-records', str(worlds), str(wdata), str(level), str(ELF),
                     str(session), str(out)], check=True)
     return json.loads(out.read_text())
 
@@ -39,13 +39,17 @@ def run(worlds, wdata, session, out):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('report', type=pathlib.Path, help='new comparison report (private/reports/...)')
+    parser.add_argument('--fixture', type=pathlib.Path, default=FIXTURE)
+    parser.add_argument('--worlds', default='LEVELS/LEVELG1/WORLDS.PS2', help='WORLDS.PS2 package label')
+    parser.add_argument('--wdata', default='WDATA/TOWN.WAD', help='WDATA package label')
+    parser.add_argument('--level', type=int, default=0, help='LEVL record index')
     args = parser.parse_args()
     if args.report.exists():
         raise SystemExit(f'{args.report} exists')
-    m = frozen_memory(FIXTURE)
+    m = frozen_memory(args.fixture)
     u = lambda a: struct.unpack_from('<I', m, a)[0]
     i = lambda a: struct.unpack_from('<i', m, a)[0]
-    worlds, wdata = resolve(['LEVELS/LEVELG1/WORLDS.PS2', 'WDATA/TOWN.WAD'])
+    worlds, wdata = resolve([args.worlds, args.wdata])
     final_random = u(0x23c76c)
     session = dict(cur_world=i(0x23e180), mode_950=i(0x20f950), boss_type=i(0x25d2c4), num_virtual_players=i(0x20f990),
                    game_mode=u(0x20f978), global_958=i(0x20f958), global_970=i(0x20f970), random_item_num=final_random,
@@ -55,11 +59,11 @@ def main():
     scratch = args.report.with_suffix('.native.json')
     session_path = args.report.with_suffix('.session.json')
     session_path.write_text(json.dumps(session, indent=2) + '\n')
-    native = run(worlds, wdata, session_path, scratch)
+    native = run(worlds, wdata, session_path, scratch, args.level)
     if native['random_calls']:
         session['random_item_num'] = (final_random - 0x1b7 * native['random_calls']) & 0xffffffff
         session_path.write_text(json.dumps(session, indent=2) + '\n')
-        native = run(worlds, wdata, session_path, scratch)
+        native = run(worlds, wdata, session_path, scratch, args.level)
     items, count, defs, objs = u(ITEMS), u(NUM_ITEMS), u(DEFS), u(OBJECTS)
     records = [bytes.fromhex(r) for r in native['records']]
     mismatch = collections.Counter()

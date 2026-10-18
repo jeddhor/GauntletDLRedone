@@ -22,6 +22,7 @@ pub mod progress;
 pub mod record;
 pub mod setup;
 pub mod tower;
+pub mod world_anim;
 pub mod sound;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
@@ -87,6 +88,9 @@ pub struct Globals {
     pub options_4: u32,
     pub num_active_players: i32,
     pub num_in_game_players: i32,
+    /// trig_cam_delay 0x25d544 (DoWorldAnimation gate); serde default 0.
+    #[serde(default)]
+    pub trig_cam_delay: i32,
     pub num_virtual_players: i32,
     pub num_visible_enemies: i32,
     /// 0x20f958: forced player count for show_item.
@@ -189,6 +193,8 @@ pub struct Game {
     /// WorldNumLevels(CurWorld): HYPOTHESIS = the world's LEVL record count
     /// (the worlddatas field is filled at run time).
     pub world_num_levels: i32,
+    /// World animations of the level (WORLDS.PS2 table).
+    pub world_anims: world_anim::WorldAnimSet,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
     pub old_enemy_shrink: f32,

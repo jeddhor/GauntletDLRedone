@@ -188,6 +188,46 @@ fn critter_slot0_loaded(critters: &[super::critters::CritterInput], kind: i16) -
     })
 }
 
+/// SetItem's Tower crystal test at load: DemoMode or
+/// AnyPlayerHasAllCrystals(1) over the start records (state != 0; the class
+/// record's crystal count +0xd0a + 2 (i16): < 0 delivered, == MAX_CRYSTALS[1]
+/// complete, or the largest count >= MAX_CRYSTALS[1]).
+fn tower_crystals_taken(players: &[String], elf: &Elf, demo_mode: i32) -> Result<bool, Box<dyn std::error::Error>> {
+    if demo_mode != 0 {
+        return Ok(true);
+    }
+    let max = elf.object("MAX_CRYSTALS")?.get(4..8).map(|b| i32::from_le_bytes(b.try_into().unwrap())).ok_or("MAX_CRYSTALS")?;
+    let mut most = 0;
+    for h in players {
+        let b = hex(h)?;
+        if b.len() < PLAYER {
+            return Err("player record size".into());
+        }
+        let r = Record(b);
+        if r.i32_(0xfc) == 0 {
+            continue;
+        }
+        let c = i32::from(r.i16_(0xd0a + 0xb4 * r.u32_(0xc) as usize + 2));
+        if c < 0 || c == max {
+            return Ok(true);
+        }
+        most = most.max(c);
+    }
+    Ok(max <= most)
+}
+
+/// PlayerWaves(player, 8) & 1 over the start records with +0xfc != 0
+/// (the wave byte +0x182c + class × 0xe + 8).
+fn battle_wave_1_done(players: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
+    for h in players {
+        let r = Record(hex(h)?);
+        if r.0.len() == PLAYER && r.i32_(0xfc) != 0 && r.u8_(0x182c + 0xe * r.u32_(0xc) as usize + 8) & 1 != 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Per-enemy (visible, near-visible) query.
 pub type Visibility = dyn Fn(&Game, usize) -> (bool, bool);
 
@@ -239,6 +279,8 @@ impl Game {
             // the items).
             critter_3_loaded: critter_slot0_loaded(&inp.critters, 3),
             critter_7_loaded: critter_slot0_loaded(&inp.critters, 7),
+            tower_crystals_taken: tower_crystals_taken(&s.players, inp.elf, s.globals.demo_mode)?,
+            battle_wave_1_done: battle_wave_1_done(&s.players)?,
         };
         let mut collision = CollisionWorld::from_world(inp.world)?;
         let loaded = load_items(inp.world, &mut collision, ItemTables::from_elf(inp.elf)?, session, s.extra.vb_counter)?;
@@ -280,6 +322,10 @@ impl Game {
             max_stop_time: 0.0,
             sumner_hint_time: 0.0,
             world_num_levels: inp.wdata.levels.len() as i32,
+            world_anims: match &inp.world.anims {
+                Some(a) => super::world_anim::WorldAnimSet::new(inp.world.bytes.clone(), a),
+                None => Default::default(),
+            },
             world_crystal: inp.elf.object("WorldCrystal").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
             old_enemy_shrink: 1.0,
             boss_is_dying: s.extra.boss_is_dying,
@@ -378,6 +424,19 @@ impl Game {
             },
             log: FrameLog::default(),
         };
+        // InitWorldInfo: objects driven by a world animation get flag 0x2000000.
+        for e in game.world_anims.entries.iter().filter(|e| e.active) {
+            if let Some(o) = game.items.objects.get_mut(e.object) {
+                o.flags_10 |= 0x200_0000;
+            }
+        }
+        // SetItem's opened Tower triggers: their world animation at the end.
+        for o in std::mem::take(&mut game.items.wanim_to_end) {
+            if let Some(k) = game.find_wobj_wanim(o) {
+                let e = &mut game.world_anims.entries[k];
+                e.frame = (i32::from(e.frames) - 1) as f32;
+            }
+        }
         // AddItemInstList calls SetPlayerVars before placing the items.
         game.set_player_vars();
         // CritterLoadAllTypes / CritterInitAllMoves, then AddLocatorInstList's
@@ -484,6 +543,10 @@ impl Game {
         self.globals.time += spf;
         self.globals.atime += spf;
         self.globals.itime = (self.globals.time * 1000.0) as i32;
+        // world_update: DoWorldAnimation first (paused/help skip the update).
+        if let Err(e) = self.do_world_animation() {
+            self.log.note("world_update", &e);
+        }
         self.sync_collision();
         self.do_auto_exit();
         if let Err(e) = self.boss_world_update() {
