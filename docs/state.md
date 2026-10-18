@@ -1,3 +1,31 @@
+# Work plan — 2026-10-18 (user: keep going until every milestone is actually finished)
+
+User feedback on the 2026-10-18 build: renders but is not playable — the
+Tower's crystals and Sumner were missing, lighting is wrong. The interim
+build is not an end point. Order of work, each verified against the
+original (PCSX2 reference on Xvfb :191, private captures):
+
+1. Tower new-game flow: Tower item load (done: crystals, triggers), world
+   animations (done), TowerInit/new player, crystal hide/fade-in,
+   WelcomeMessage, crystal delivery (UnlockLevel), NeedCrystals at closed
+   doors, Sumner (GWIZ tree, SumnerAnimate, speeches, captions, ghost),
+   scroll items reading SCROLLS<level>.
+2. Camera: StandardCamera/move_camera/rotate_camera/limit_camera, stage
+   start/end, trigger cameras (crystal, Sumner, window, rune, item), boss
+   cameras; replaces the rest-pose hypothesis.
+3. Player: PlayerMotion and DoPlayerAction in full (movement on moving
+   floors, melee combos, block, turbo, magic with animation, hit reactions,
+   dying action), PlayerProcessScale/Familiar, join/continue flow.
+4. Rendering: lighting (vertex colour, MB point lights such as torches,
+   fog), GS blending/TEXA alpha, world particle systems (WorldPsysActivate),
+   effect trees, item/enemy animation (OANIM), texture animation (DoTexMods).
+5. Front end and HUD: FNT fonts, original HUD panels, scroll parchment,
+   original player select, shop screen, inventory, options, credits, movies.
+6. Audio completeness; secret characters; Sumner as a character;
+   multiplayer join/camera rules; remaining unported paths from sweeps.
+
+---
+
 # Development checkpoint — 2026-10-18
 
 User request (2026-10-17): continue through the end of M17 and complete M18

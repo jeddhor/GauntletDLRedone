@@ -615,6 +615,9 @@ impl Game {
                     if 0 < t {
                         self.items.records[slot].set_i16(0x100, t.wrapping_sub(vb));
                     }
+                    if subtype == 0xf && r.u16_(0xd8) & 0x800 != 0 {
+                        self.crystal_fade(slot)?;
+                    }
                 }
                 2 => self.process_chest(slot)?,
                 3 => self.process_generator(slot)?,
@@ -1030,13 +1033,23 @@ impl Game {
         let bound = r.u32_(0xf0).checked_sub(1).map(|o| o as usize);
         let prev_state = r.i8_(0xde);
         if flags & 0x40 != 0 {
-            if r.i8_(0xf6) >= 100 {
-                return unsupported("gargoyle-gated trigger");
-            }
-            // Crystal portals: crystal progression is not ported, so no player
-            // holds all crystals; TowerNeedCrystalsMsg is presentation.
-            if r.u8_(0xe2) != 0 {
-                self.items.records[slot].set_u8(0xe2, 0);
+            // Crystal doors (+0xf6 < 100): a touch without the realm's crystals
+            // shows NeedCrystals; gargoyle doors (+0xf6 − 0x65) NeedGargItems.
+            let f6 = i32::from(r.i8_(0xf6));
+            let e2 = r.u8_(0xe2);
+            if f6 < 100 {
+                if e2 != 0 && !self.any_player_has_all_crystals_pub(f6) {
+                    self.tower_need_msg(e2, f6.max(0) as usize, false)?;
+                    self.items.records[slot].set_u8(0xe2, 0);
+                }
+            } else {
+                let n = f6 - 0x65;
+                if e2 != 0 && !self.any_player_has_all_garg_items(n) {
+                    if n < 3 {
+                        self.tower_need_msg(e2, n.max(0) as usize, true)?;
+                    }
+                    self.items.records[slot].set_u8(0xe2, 0);
+                }
             }
             let e2 = self.items.records[slot].u8_(0xe2);
             let mut s = Some(slot);

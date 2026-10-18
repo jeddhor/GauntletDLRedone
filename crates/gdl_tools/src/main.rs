@@ -343,6 +343,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         println!("{}", serde_json::to_string(&v)?);
         return Ok(());
     }
+    if args.len() == 2 && args[0] == "lookouts" {
+        // lookouts WORLDS.PS2: lookout records with CreateYPRMatrix(rotation) + position (stdout JSON).
+        let world = gdl_formats::world::World::parse(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;
+        let mut out = Vec::new();
+        for l in gdl_core::game::lookouts::build(&world.locators) {
+            let m = gdl_core::game::lookouts::lookout_matrix(&l).map_err(|e| e.0)?;
+            out.push(serde_json::json!({"param": l.param, "next": l.next, "position": l.position, "rows": m}));
+        }
+        println!("{}", serde_json::to_string(&out)?);
+        return Ok(());
+    }
     if args.len() == 2 && args[0] == "memcard-list" {
         // memcard-list CARD.ps2: read-only directory listing with file hashes (stdout).
         let b = bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?;
@@ -451,6 +462,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             critter_7_loaded: int("critter_7_loaded")? != 0,
             tower_crystals_taken: session["tower_crystals_taken"].as_i64().unwrap_or(0) != 0,
             battle_wave_1_done: session["battle_wave_1_done"].as_i64().unwrap_or(0) != 0,
+            tower_new_player: session["tower_new_player"].as_i64().unwrap_or(0) != 0,
         };
         let tables = gdl_core::items::ItemTables::from_elf(&elf)?;
         let mut collision = gdl_core::collision::CollisionWorld::from_world(&world)?;
@@ -598,6 +610,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             // DEBUG override recorded in the report scope.
             game.players[0].set_i32(0x1a18, n.parse()?);
         }
+        if let Some(v) = opts.get("crystals") {
+            // DEBUG: player 0's crystal count for realm index N, "N:COUNT".
+            let (n, c) = v.split_once(':').ok_or("crystals=N:COUNT")?;
+            let o = 0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n.parse::<usize>()?;
+            game.players[0].set_i16(o, c.parse()?);
+        }
         let mut script: Vec<u32> = Vec::new();
         if let Some(sc) = opts.get("script") {
             for part in sc.split(',') {
@@ -650,7 +668,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             "lookouts":game.lookouts.iter().map(|l| serde_json::json!({"pos":l.position,"next":l.next,"param":l.param})).collect::<Vec<_>>(),
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
-            "potions_override":opts.get("potions"),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport")});
+            "potions_override":opts.get("potions"),"crystals_override":opts.get("crystals"),
+            "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport")});
         let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
         serde_json::to_writer_pretty(&mut file, &report)?;
         file.write_all(b"\n")?;

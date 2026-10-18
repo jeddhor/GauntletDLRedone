@@ -91,6 +91,17 @@ pub struct Globals {
     /// trig_cam_delay 0x25d544 (DoWorldAnimation gate); serde default 0.
     #[serde(default)]
     pub trig_cam_delay: i32,
+    /// TowerCounter 0x23f41c (Tower entries this session; EnterTower adds 1),
+    /// WelcomeFlag (init_next_level: 0 unless DemoMode; −1 once handled),
+    /// LastFinishedWorld/Level (GarmMessage). Carried across levels.
+    #[serde(default)]
+    pub tower_counter: i32,
+    #[serde(default)]
+    pub welcome_flag: i32,
+    #[serde(default)]
+    pub last_finished_world: i32,
+    #[serde(default)]
+    pub last_finished_level: i32,
     pub num_virtual_players: i32,
     pub num_visible_enemies: i32,
     /// 0x20f958: forced player count for show_item.
@@ -139,9 +150,16 @@ pub enum Event {
     ExitHidden { slot: usize },
     /// A world object hidden by WorldObjectExplode (presentation).
     ObjectHidden { object: usize },
-    /// ScrollMessageBox(player mask, -1, text, -1): the blocking scroll
-    /// message UI (presentation; the original pauses the game while shown).
+    /// ScrollMessageBox(player mask, -1, text, -1): line `text` of the
+    /// level's SCROLLS<code> entry (SetScrollLevelMsgList); the original
+    /// pauses the game while the box is shown.
     ScrollMessage { player_mask: u32, text: i32 },
+    /// ScrollMessageBox(mask, FindScrollMessage(name), line, audio): a named
+    /// SCROLL_E.ROM entry, one line or every line (None) as pages.
+    ScrollNamed { player_mask: u32, name: &'static str, line: Option<usize>, audio: i32 },
+    /// A trigger camera the original activates here (camera system not
+    /// ported yet): "crystal", "sumner", "window", "rune".
+    CameraRequest { kind: &'static str, arg: i32 },
     /// add_got_it(player, kind, amount): HUD pickup notice.
     GotIt { player: usize, kind: i32, amount: i32 },
     /// Audio* calls, by original function name (cues not yet transcribed).
@@ -195,6 +213,12 @@ pub struct Game {
     pub world_num_levels: i32,
     /// World animations of the level (WORLDS.PS2 table).
     pub world_anims: world_anim::WorldAnimSet,
+    /// Tower state (TowerInit, welcome, crystal fade, deliveries, Sumner).
+    pub tower: tower::TowerState,
+    /// crystal_sidx / garg_sidx sound tables (Sumner's delivery speeches).
+    pub speech_tables: std::collections::HashMap<&'static str, Vec<i32>>,
+    /// MBTreeGetAlpha of item trees the simulation reads (Tower crystals).
+    pub item_alpha: std::collections::HashMap<usize, i32>,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
     pub old_enemy_shrink: f32,

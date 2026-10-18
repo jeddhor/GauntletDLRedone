@@ -12,6 +12,8 @@ pub const MAX_LOOKOUTS: usize = 0x14;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lookout {
     pub position: [f32; 3],
+    /// Locator +0x10..+0x18 (the record's matrix is built from it).
+    pub rotation: [f32; 3],
     pub next: i16,
     pub param: i16,
 }
@@ -22,7 +24,7 @@ pub fn build(locators: &[Locator]) -> Vec<Lookout> {
         .iter()
         .filter(|l| l.kind == 8 || l.kind == 10)
         .take(MAX_LOOKOUTS)
-        .map(|l| Lookout { position: l.position, next: l.id, param: i16::from(l.byte_01) })
+        .map(|l| Lookout { position: l.position, rotation: l.rotation, next: l.id, param: i16::from(l.byte_01) })
         .collect()
 }
 
@@ -58,4 +60,18 @@ impl Game {
         let n = usize::try_from(self.lookouts.get(k)?.next).ok()?;
         (n != k).then_some(n)
     }
+}
+
+/// add_arrow(2, 0, 1, rotation, position, record) 0x14ff70: the lookout record's
+/// matrix — CreateYPRMatrix(FixAngle(−x), FixAngle(y + π), z) with the
+/// locator position as translation (no FloorPos for arrow type 2).
+pub fn lookout_matrix(l: &Lookout) -> Result<[[f32; 4]; 4], super::Unsupported> {
+    let a = [
+        super::enemy_ai::fix_angle(-l.rotation[0])?,
+        super::enemy_ai::fix_angle(crate::numeric::add_guarded_rz(l.rotation[1], std::f32::consts::PI).map_err(|e| super::Unsupported(format!("{e:?}")))?)?,
+        l.rotation[2],
+    ];
+    let mut m = super::enemy_ai::create_ypr_matrix(a)?;
+    m[3] = [l.position[0], l.position[1], l.position[2], 1.0];
+    Ok(m)
 }

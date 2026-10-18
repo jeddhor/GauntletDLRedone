@@ -220,6 +220,8 @@ pub struct ItemSession {
     /// PlayerWaves(player, 8) & 1 over the present players at load (the
     /// Tower's 'h'/199 triggers start opened).
     pub battle_wave_1_done: bool,
+    /// TowerInit's TowerNewPlayer (SetItem hides the Tower crystals).
+    pub tower_new_player: bool,
 }
 
 pub struct ItemWorld {
@@ -247,6 +249,8 @@ pub struct ItemWorld {
     pub world_has_gates: i32,
     /// Objects whose world animation SetItem put at its last frame.
     pub wanim_to_end: Vec<usize>,
+    /// Item slots whose tree SetItem set to alpha 0xff (MBTreeSetAlpha).
+    pub alpha_full: Vec<usize>,
     pub rune_item: Option<usize>,
     pub rune_pos: [f32; 3],
     pub quest_item: Option<usize>,
@@ -323,6 +327,7 @@ impl ItemWorld {
             object_next: world.nodes.iter().map(|n| usize::try_from(n.next).ok()).collect(),
             max_items: world.items.len() + 500,
             wanim_to_end: Vec::new(),
+            alpha_full: Vec::new(),
             object_node_y: collision.objects.iter().map(|o| o.position[1]).collect(),
             object_visible: vec![true; collision.objects.len()],
             object_exclusion: collision.objects.iter().map(|o| o.exclusion).collect(),
@@ -878,6 +883,11 @@ impl ItemWorld {
         Self::update_offsets(&mut r)?;
         if kind == 8 {
             r.set_u8(0x97, r.u8_(0x97) | 4);
+        } else if kind == 1 && subtype == 0xf && self.session.cur_world == 0xd && self.session.tower_new_player {
+            // A new player's Tower crystals start hidden (0x800, tree alpha
+            // 0xff) until the welcome fades them in (ProcessItems).
+            r.or_u16(0xd8, 0x800);
+            self.alpha_full.push(slot);
         }
         self.records[slot] = r;
         Ok(())

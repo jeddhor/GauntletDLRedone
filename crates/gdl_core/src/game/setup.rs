@@ -281,6 +281,10 @@ impl Game {
             critter_7_loaded: critter_slot0_loaded(&inp.critters, 7),
             tower_crystals_taken: tower_crystals_taken(&s.players, inp.elf, s.globals.demo_mode)?,
             battle_wave_1_done: battle_wave_1_done(&s.players)?,
+            tower_new_player: g.cur_world == 0xd && {
+                let recs: Vec<Record> = s.players.iter().map(|h| hex(h).map(Record)).collect::<Result<_, _>>()?;
+                super::tower::tower_new_player(g.tower_counter, &recs)
+            },
         };
         let mut collision = CollisionWorld::from_world(inp.world)?;
         let loaded = load_items(inp.world, &mut collision, ItemTables::from_elf(inp.elf)?, session, s.extra.vb_counter)?;
@@ -322,6 +326,12 @@ impl Game {
             max_stop_time: 0.0,
             sumner_hint_time: 0.0,
             world_num_levels: inp.wdata.levels.len() as i32,
+            tower: super::tower::TowerState::default(),
+            item_alpha: std::collections::HashMap::new(),
+            speech_tables: ["crystal_sidx", "garg_sidx"]
+                .into_iter()
+                .map(|n| (n, inp.elf.object(n).map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default()))
+                .collect(),
             world_anims: match &inp.world.anims {
                 Some(a) => super::world_anim::WorldAnimSet::new(inp.world.bytes.clone(), a),
                 None => Default::default(),
@@ -429,6 +439,23 @@ impl Game {
             if let Some(o) = game.items.objects.get_mut(e.object) {
                 o.flags_10 |= 0x200_0000;
             }
+        }
+        // TowerInit (init_next_level, before the items) and the crystals
+        // SetItem hid for a new player (tree alpha 0xff).
+        game.tower.new_player = game.items.session.tower_new_player;
+        game.tower.crystal_active_time = if game.tower.new_player { 0.0 } else { -1.0 };
+        for slot in std::mem::take(&mut game.items.alpha_full) {
+            game.item_alpha.insert(slot, 0xff);
+        }
+        // init_next_level: WelcomeFlag = 0 outside DemoMode.
+        if game.globals.demo_mode == 0 {
+            game.globals.welcome_flag = 0;
+        }
+        // GauntWorldInit → SumnerInit (Tower: the GWIZ tree).
+        if game.globals.cur_world == 0xd
+            && let Some(clips) = inp.item_anims.get("GWIZ")
+        {
+            game.sumner_init(clips.clone()).map_err(|e| format!("SumnerInit: {}", e.0))?;
         }
         // SetItem's opened Tower triggers: their world animation at the end.
         for o in std::mem::take(&mut game.items.wanim_to_end) {
@@ -571,6 +598,11 @@ impl Game {
         };
         if let Err(e) = self.do_enemies(vis) {
             self.log.note("do_enemies", &e);
+        }
+        // do_players: the welcome block first.
+        self.welcome_check();
+        if let Err(e) = self.tower_check_messages(false) {
+            self.log.note("do_players", &e);
         }
         if let Err(e) = players(self) {
             self.log.note("do_players", &e);

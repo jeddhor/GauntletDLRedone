@@ -161,10 +161,21 @@ pub fn object_meshes(
 /// Source local matrices for every node at a clip frame, composed with host
 /// products for presentation (not accepted VU world-transform arithmetic).
 pub fn rig_pose(animations: &Animations, bytes: &[u8], sequence: usize, frame: f32) -> Result<Vec<Mat4>, Box<dyn Error>> {
-    let tree = &animations.trees[0];
+    tree_pose(animations, 0, bytes, sequence, frame, false)
+}
+
+/// Node world matrices (relative to the tree root) of tree `tree_index` at
+/// `frame` of `sequence`. With `rest_others`, non-skeletal nodes keep their
+/// initial position instead of failing (item trees mix node types).
+pub fn tree_pose(animations: &Animations, tree_index: usize, bytes: &[u8], sequence: usize, frame: f32, rest_others: bool) -> Result<Vec<Mat4>, Box<dyn Error>> {
+    let tree = animations.trees.get(tree_index).ok_or("tree index")?;
     let mut locals = Vec::new();
     for node in &tree.nodes {
         if node.node_type != 1 {
+            if rest_others {
+                locals.push(Mat4::from_translation(Vec3::from_array(node.initial_position)));
+                continue;
+            }
             return Err("pose evaluation supports skeletal nodes only".into());
         }
         let track = tree.key_track(bytes, node.index, sequence as u32)?;

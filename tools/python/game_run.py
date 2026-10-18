@@ -43,6 +43,7 @@ def main():
     ap.add_argument('--world', default='G', help='world letter (A-K, S); G is The Poison Fields')
     ap.add_argument('--script')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
+    ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
     ap.add_argument('--boss-health', help='DEBUG: set the boss critter health')
     ap.add_argument('--teleport', help='DEBUG: start player 0 at x,y,z')
     a = ap.parse_args()
@@ -99,6 +100,8 @@ def main():
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
     if a.potions:
         cmd += [f'potions={a.potions}']
+    if a.crystals:
+        cmd += [f'crystals={a.crystals}']
     if a.teleport:
         cmd += [f'teleport={a.teleport}']
     if a.boss_health:

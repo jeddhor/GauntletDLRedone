@@ -252,7 +252,7 @@ impl Game {
     }
 
     /// AudioQueAdd4 / AudioVQueAdd4: queued (serialised) voice line.
-    fn queue(&mut self, id: i32, volume: i32, priority: i32) {
+    pub(crate) fn queue(&mut self, id: i32, volume: i32, priority: i32) {
         if self.sound_on() && 0 <= id {
             self.events.push(Event::Sound { id, position: None, volume, priority, queue: true });
         }

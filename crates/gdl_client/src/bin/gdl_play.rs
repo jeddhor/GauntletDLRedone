@@ -46,6 +46,7 @@ struct Package {
     table: TextureTable,
     textures: Vec<u8>,
     anim: Option<Animations>,
+    anim_bytes: Vec<u8>,
 }
 
 /// GPU-side view of a package: object parts by definition label.
@@ -137,6 +138,9 @@ struct Session {
     tier: i32,
     class: u32,
     colour: usize,
+    /// Session globals carried from level to level: TowerCounter,
+    /// LastFinishedWorld, LastFinishedLevel.
+    carried: [i32; 3],
 }
 
 #[derive(Component)]
@@ -316,6 +320,68 @@ fn present_critters(
     }
 }
 
+/// Sumner (SumnerInit's GWIZ tree) and one of his tree nodes.
+#[derive(Component)]
+struct SumnerRoot;
+#[derive(Component)]
+struct SumnerPart(usize);
+
+/// Sumner drawn from the GWIZ tree of the level's item package at his
+/// lookout matrix, posed by his animation clock (presentation of
+/// game::tower::SumnerState).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn present_sumner(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    session: Res<Session>,
+    sources: Res<Sources>,
+    libs: Res<Libraries>,
+    root: Query<Entity, With<MirrorRoot>>,
+    mut body: Query<(Entity, &mut Transform), (With<SumnerRoot>, Without<SumnerPart>)>,
+    mut parts: Query<(&SumnerPart, &mut Transform), Without<SumnerRoot>>,
+) {
+    let Some(s) = sim.game.tower.sumner.as_ref() else { return };
+    let items = &session.levels[session.current].items;
+    let Some((pkg_name, pkg, ti)) = items.iter().find_map(|n| {
+        let p = sources.packages.get(n)?;
+        let ti = p.anim.as_ref()?.trees.iter().position(|t| t.label == "GWIZ")?;
+        Some((n.clone(), p, ti))
+    }) else {
+        return;
+    };
+    let anim = pkg.anim.as_ref().unwrap();
+    let tree = &anim.trees[ti];
+    let m = s.matrix;
+    let tf = record_transform([Vec3::new(m[0][0], m[0][1], m[0][2]), Vec3::new(m[1][0], m[1][1], m[1][2]), Vec3::new(m[2][0], m[2][1], m[2][2])], Vec3::new(m[3][0], m[3][1], m[3][2]));
+    if body.is_empty() {
+        let (Ok(root), Some(lib)) = (root.single(), libs.0.get(&pkg_name)) else { return };
+        let b = commands.spawn((SumnerRoot, tf, Visibility::default(), LevelEntity)).id();
+        commands.entity(root).add_child(b);
+        for node in &tree.nodes {
+            let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
+            if let Some(list) = lib.by_label.get(&label) {
+                let holder = commands.spawn((SumnerPart(node.index as usize), Transform::default(), Visibility::default())).id();
+                for (mesh, material) in list {
+                    let c = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+                    commands.entity(holder).add_child(c);
+                }
+                commands.entity(b).add_child(holder);
+            }
+        }
+        return;
+    }
+    for (_, mut t) in &mut body {
+        *t = tf;
+    }
+    if let Ok(pose) = gdl_client::tree_pose(anim, ti, &pkg.anim_bytes, s.current as usize, s.clock.frame.max(0.0), true) {
+        for (part, mut t) in &mut parts {
+            if let Some(mat) = pose.get(part.0) {
+                *t = Transform::from_matrix(*mat);
+            }
+        }
+    }
+}
+
 /// A world-geometry node drawn at `rest` (summed file position).
 #[derive(Component)]
 struct WorldNode {
@@ -391,7 +457,7 @@ struct Sim {
     hint: Option<(f32, String)>,
     hint_shown: HashMap<i32, f64>,
     /// ScrollMessageBox: the game waits until the box is dismissed.
-    message_box: Option<String>,
+    message_box: Option<(Vec<String>, usize)>,
     /// Sumner's hint pad asked for hint_menu.
     hint_menu: bool,
 }
@@ -495,6 +561,10 @@ fn load_package(p: &Value) -> Result<Package, Box<dyn Error>> {
         anim: match p["anim"].as_str() {
             Some(a) => Some(Animations::parse(&gdl_client::bounded_read(Path::new(a))?)?),
             None => None,
+        },
+        anim_bytes: match p["anim"].as_str() {
+            Some(a) => gdl_client::bounded_read(Path::new(a))?,
+            None => Vec::new(),
         },
     })
 }
@@ -750,6 +820,9 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<(Game, Pl
     start["players"][0] = Value::String(record.0.iter().map(|b| format!("{b:02x}")).collect());
     start["classes"][0] = serde_json::to_value(&session.class_data)?;
     start["globals"]["cur_world"] = Value::from(lv.world);
+    start["globals"]["tower_counter"] = Value::from(session.carried[0]);
+    start["globals"]["last_finished_world"] = Value::from(session.carried[1]);
+    start["globals"]["last_finished_level"] = Value::from(session.carried[2]);
     start["globals"]["cur_level"] = Value::from(lv.index as i64);
     let start: setup::StartState = serde_json::from_value(start)?;
     let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
@@ -967,12 +1040,27 @@ fn simulate(
             }
             Event::HintMenu { .. } => sim.hint_menu = true,
             Event::ScrollMessage { text, .. } => {
-                // ScrollMessageBox: SCROLL_E.ROM entry `text` (HYPOTHESIS: the
-                // runtime ScrollText array follows the ROM's entry order).
-                if let Some(e) = usize::try_from(text).ok().and_then(|k| front.scrolls.entries.get(k)) {
-                    sim.message_box = Some(e.lines.join("\n\n").replace('\r', ""));
+                // A scroll item: line `text` of SCROLLS<level code>
+                // (SetScrollLevelMsgList(level_data + 8)).
+                let code = format!("SCROLLS{}", session.levels[session.current].name);
+                if let Some(line) = front.scrolls.entry(&code).and_then(|e| usize::try_from(text).ok().and_then(|k| e.lines.get(k))) {
+                    sim.message_box = Some((vec![line.replace('\r', "")], 0));
                 }
             }
+            Event::ScrollNamed { name, line, .. } => {
+                // FindScrollMessage(name): SCROLL_E.ROM entries are upper case.
+                if let Some(e) = front.scrolls.entry(&name.to_uppercase()) {
+                    let pages: Vec<String> = match line {
+                        Some(k) => e.lines.get(k).into_iter().cloned().collect(),
+                        None => e.lines.clone(),
+                    };
+                    let pages: Vec<String> = pages.into_iter().map(|p| p.replace('\r', "")).collect();
+                    if !pages.is_empty() {
+                        sim.message_box = Some((pages, 0));
+                    }
+                }
+            }
+            Event::CameraRequest { kind, .. } => sim.last_event = format!("camera: {kind} (trigger cameras not ported yet)"),
             _ => {}
         }
     }
@@ -1096,7 +1184,8 @@ fn present_world(
                 };
                 let d = &g.items.definitions[r.definition()];
                 let kind = d.kind();
-                if !r.active() || r.u16_(0xd8) & 0x8100 != 0 || kind == 4 || kind == 13 || kind == 5 || kind == 7 {
+                // 0x800: a Tower crystal still hidden (its tree alpha fades in).
+                if !r.active() || r.u16_(0xd8) & 0x8900 != 0 || kind == 4 || kind == 13 || kind == 5 || kind == 7 {
                     *vis = Visibility::Hidden;
                     continue;
                 }
@@ -1305,8 +1394,8 @@ fn present_player(
             format!("SIMULATION STOPPED\n{e}")
         } else if health <= 0.0 {
             "YOU DIED".to_string()
-        } else if let Some(m) = &sim.message_box {
-            format!("{m}\n\n(Enter)")
+        } else if let Some((pages, k)) = &sim.message_box {
+            format!("{}\n\n(Enter{})", pages.get(*k).map_or("", String::as_str), if k + 1 < pages.len() { ": next" } else { "" })
         } else if let Some((_, h)) = &sim.hint {
             h.clone()
         } else {
@@ -1523,6 +1612,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             tier,
             class,
             colour,
+            carried: [0, -1, -1],
         };
         let (game, driver) = build_game(&session, idx, &record)?;
         let sources = Sources { character, clips, clip_bytes, rig, packages, monsters: b.monsters.clone() };
@@ -1799,7 +1889,14 @@ fn front_system(world: &mut EcsWorld) {
     if screen == Screen::Playing {
         if world.get_resource::<Sim>().is_some_and(|s| s.message_box.is_some()) {
             if keys.contains(&Key::Accept) || keys.contains(&Key::Back) {
-                world.resource_mut::<Sim>().message_box = None;
+                let mut sim = world.resource_mut::<Sim>();
+                if let Some((pages, k)) = sim.message_box.as_mut()
+                    && *k + 1 < pages.len()
+                {
+                    *k += 1;
+                } else {
+                    sim.message_box = None;
+                }
             }
             return;
         }
@@ -2033,7 +2130,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             Update,
             (
                 front_system,
-                (advance_level, present_world, present_world_nodes, hide_exploded_nodes, present_critters, present_sparks, present_player).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
                 front_text,
             )
                 .chain(),
@@ -2169,6 +2266,12 @@ fn advance_level(
         session.title = session.levels[idx].title.clone();
         Ok(())
     })();
+    // Session globals into the next level; leaving the Tower runs EndTower.
+    if sim.game.globals.cur_world == 0xd && session.levels[idx].world != 0xd {
+        sim.game.end_tower();
+    }
+    let g = &sim.game.globals;
+    session.carried = [g.tower_counter, g.last_finished_world, g.last_finished_level];
     let carry = sim.game.players[0].clone();
     let coop_carry: Vec<Option<gdl_core::game::record::Record>> = (1..4).map(|k| sim.coop[k - 1].as_ref().map(|_| sim.game.players[k].clone())).collect();
     // load_player: the model follows the level tier (level / 10).
