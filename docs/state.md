@@ -26,7 +26,7 @@ so progress can be saved; a "complete" build to test. Latest source commit:
 - Simulation additions: PlayerProcessPowerups (powerup effects now apply),
   kill_player / PlayersSetWaveDied / drop_keys and the Tower restore,
   per-player class data from PDAT, per-class sim values from the record.
-- Verification: 93 Rust tests (synthetic: profile round trip, save
+- Verification: 92 Rust tests (synthetic: profile round trip, save
   recovery/migration, memory card, menu flow, shop table, PDAT); Clippy
   clean; 51-level sweep sw10 identical to sw8; actual-data profile check of
   the PELE record; Xvfb smoke tests of import, save (version 2 + .bak), new
