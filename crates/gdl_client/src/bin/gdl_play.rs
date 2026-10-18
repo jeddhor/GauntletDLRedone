@@ -181,6 +181,8 @@ struct Front {
     /// The PS2 capture's player 0 save region and its sha256 (import source).
     capture: Option<(Vec<u8>, String)>,
     game_opts: Vec<u8>,
+    /// SHPDATA/SHOP.WAD ITEM records.
+    shop: Vec<gdl_core::game::powerups::ShopItem>,
     base: Base,
 }
 
@@ -341,6 +343,8 @@ struct Sim {
     /// Co-op players 1–3 (interim drivers) and their potion-button state.
     coop: [Option<PlayerDriver>; 3],
     coop_magic: [bool; 3],
+    /// Seconds player 1 has been dying (state 8).
+    dying: f32,
 }
 
 /// One player slot's controls this update: the level word, attack edge
@@ -676,6 +680,12 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<(Game, Pl
     let wdata = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&lv.wdata)?)?;
     let mut start = session.start.clone();
     let mut record = carry.clone();
+    if lv.world == 0xd && record.i32_(0xfc) == 0xb {
+        // init_next_level: a player who died (state 0xb) gets the level-start
+        // backup back (PlayerRestoreState) and plays again.
+        profile::player_restore_state(&mut record, &session.pdats, &gdl_core::player_class::ClassTables::from_elf(&elf)?).map_err(|e| e.to_string())?;
+        record.set_i32(0xfc, 1);
+    }
     let game_wave = lv.world << 8 | lv.index as i32;
     profile::level_start(&mut record, &session.pdats, &session.action_map, game_wave, session.heart_rate).map_err(|e| e.to_string())?;
     if lv.world != 0xc {
@@ -1199,7 +1209,7 @@ fn present_player(
         } else if let Some(e) = &sim.error {
             format!("SIMULATION STOPPED\n{e}")
         } else if health <= 0.0 {
-            "YOU DIED\npress Enter to continue".to_string()
+            "YOU DIED".to_string()
         } else {
             String::new()
         };
@@ -1424,7 +1434,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.resource_mut::<Presentation>().attention = attention;
     world.insert_resource(sources);
     world.insert_resource(session);
-    world.insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3] });
+    world.insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3], dying: 0.0 });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -1521,6 +1531,32 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
     (out, toggle)
 }
 
+/// Shop lines: entry 0 leaves; others show the item (its SHP_ model name),
+/// price and "-" when make_skiplist excludes it.
+fn refresh_shop(world: &mut EcsWorld) -> Result<(), Box<dyn Error>> {
+    let items = world.resource::<Front>().shop.clone();
+    let (skip, gold) = {
+        let sim = world.resource::<Sim>();
+        (sim.game.shop_skiplist(0, &items).map_err(|e| e.0)?, sim.game.players[0].i32_(0x1a20))
+    };
+    let lines = items
+        .iter()
+        .enumerate()
+        .map(|(k, it)| {
+            if k == 0 {
+                "Done".to_string()
+            } else {
+                let name = it.name.trim_start_matches("SHP_").trim_start_matches("shp_").replace('_', " ").to_uppercase();
+                format!("{name:<20} {:>5} {}", it.price, if skip[k] { "-" } else { " " })
+            }
+        })
+        .collect();
+    let mut front = world.resource_mut::<Front>();
+    front.menu.shop = lines;
+    front.menu.gold = gold;
+    Ok(())
+}
+
 fn act(world: &mut EcsWorld, action: Action) {
     let result: Result<(), Box<dyn Error>> = (|| {
         match action {
@@ -1568,6 +1604,26 @@ fn act(world: &mut EcsWorld, action: Action) {
                 }
             }
             Action::QuitGame => end_game(world),
+            Action::OpenShop => {
+                refresh_shop(world)?;
+                let mut front = world.resource_mut::<Front>();
+                front.menu.status.clear();
+                front.menu.page = gdl_client::menu::Page::Shop { at: 0 };
+            }
+            Action::Buy { idx } => {
+                let items = world.resource::<Front>().shop.clone();
+                let result = world.resource_mut::<Sim>().game.shop_buy(0, &items, idx).map_err(|e| e.0)?;
+                use gdl_core::game::powerups::Purchase;
+                {
+                    let mut front = world.resource_mut::<Front>();
+                    match result {
+                        Purchase::Leave => front.menu.page = gdl_client::menu::Page::Paused { tower: true, at: 2 },
+                        Purchase::Bought => front.menu.status = format!("bought {}", items[idx].name),
+                        Purchase::Refused => front.menu.status = "not available (gold, room or full health)".into(),
+                    }
+                }
+                refresh_shop(world)?;
+            }
             Action::Exit => {
                 world.write_message(AppExit::Success);
             }
@@ -1730,6 +1786,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let sha = gdl_core::save::sha256(&r);
         Some((r, sha))
     });
+    let shop = gdl_core::game::powerups::shop_items(&catalog.read("SHPDATA/SHOP.WAD")?)?;
     let store = SaveStore::open(p("saves")?)?;
     // GameOpts: the stored block, else the captured session's GamePrefs
     // (sfx 128, music 128, stereo 1, …).
@@ -1757,6 +1814,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         heart_rate,
         capture,
         game_opts,
+        shop,
         base: Base { package_cfg, start, levels, sim_template: player, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
     refresh_saves(&mut front);
@@ -1837,15 +1895,27 @@ fn advance_level(
     mut frames: ResMut<EnemyFrames>,
     (front, ui): (Res<Front>, Res<Ui>),
 ) {
-    if !ui.paused && keys.just_pressed(KeyCode::Enter) && sim.game.players[0].f32_(0x1a10) <= 0.0 {
-        // INTERIM continue: the class entry's health as last stored
-        // (player_store_in_save at the level start), else 500.
-        let p = &mut sim.game.players[0];
-        let e = profile::CLASS_ATTS + 0x18 * p.u32_(0xc) as usize + 4;
-        let h = p.f32_(e);
-        p.set_f32(0x1a10, if 0.0 < h { h } else { 500.0 });
-        p.set_i32(0xfc, 1);
-        sim.last_event = "continued (interim: level-start health restored)".into();
+    if !ui.paused && sim.game.players[0].i32_(0xfc) == 8 && session.banner.is_none() {
+        // INTERIM: the dying action (0x7e) and its counter are not animated;
+        // kill_player runs after two seconds.
+        sim.dying += time.delta_secs();
+        if 2.0 <= sim.dying {
+            sim.dying = 0.0;
+            if let Err(e) = sim.game.kill_player(0) {
+                sim.error = Some(format!("kill_player: {}", e.0));
+            } else if sim.game.players[0].i32_(0xfc) == 1 {
+                // The Tower: PlayerRestoreState.
+                let p = sim.game.players[0].clone();
+                sim.driver.sim.stats.speed_124 = p.f32_(0x124);
+                sim.last_event = "restored to the last Tower entry".into();
+            } else if !(0..4).any(|k| matches!(sim.game.players[k].i32_(0xfc), 1 | 4 | 8)) {
+                // Nobody playing: game_main goes to TowerWave.
+                if let Some(k) = session.levels.iter().position(|l| l.world == 0xd) {
+                    session.next = Some(k);
+                    session.banner = Some((3.0, "YOU DIED - back to the Tower (the level's gains are lost)".into()));
+                }
+            }
+        }
     }
     if !ui.paused && keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
         // DEBUG: act as if the exit portal (destination: next level) was used.

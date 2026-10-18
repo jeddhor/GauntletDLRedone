@@ -16,6 +16,7 @@ pub mod item_runtime;
 pub mod lookouts;
 pub mod pickups;
 pub mod players;
+pub mod powerups;
 pub mod profile;
 pub mod progress;
 pub mod record;
@@ -185,6 +186,9 @@ pub struct Game {
     pub max_stop_time: f32,
     /// WorldCrystal 0x23f500: the crystal index each realm's door needs.
     pub world_crystal: Vec<i32>,
+    /// WorldNumLevels(CurWorld): HYPOTHESIS = the world's LEVL record count
+    /// (the worlddatas field is filled at run time).
+    pub world_num_levels: i32,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
     pub old_enemy_shrink: f32,
@@ -225,6 +229,9 @@ pub struct Game {
     pub enemy_anim_data: enemy_ai::EnemyAnimData,
     /// PlayerData[player]: the class record of each player slot.
     pub classes: [pickups::ClassData; 4],
+    /// fight_range … missilespd_range and PActionDesc (check_player_atts,
+    /// PlayerProcessPowerups).
+    pub class_tables: crate::player_class::ClassTables,
     pub effects: effects::Effects,
     /// BossCritInst 0x25d2c0 and the difficulty word 0x21edcc (index of
     /// diff_mul_tab.15 in ResolveWorldData; also PlayerGetTarget's cone).

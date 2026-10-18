@@ -183,3 +183,26 @@ presentation but its RandInt/Random draws are kept. Destroyed or shot
 potions (DamageItem / PlayerDamagedItem) call start_magic(0.8, player or -1);
 player -1 uses power × 20 and size 0.8 without potion audio. Not ported:
 SetPlayerVars' other writes, StartMagicHealFX for players above level 74.
+
+## Powerups and the shop (game::powerups)
+
+PlayerProcessPowerups 0x12d040 runs every update for players in states 1/4
+(called from drive_player before motion): the combat words +0x118..+0x12c
+are re-derived from the attributes (so level-ups and bought bonuses take
+effect, and the interim motion uses +0x124), the flag words +0x130 (weapon
+element, longest-lasting element wins), +0x134 (shields) and +0x138 (powerup
+bits) are rebuilt from the eight slots +0x144 + 16k {time, kind, amount,
+flags}, timers count down by SPF outside the Tower (3 × SPF while a boss is
+active, frozen otherwise on boss levels), kind 7 adds speed, kind 8 magic,
+kind 9 flag 0x80000 refills the turbo meter +0x800 to at most 100, and the
+words are clamped to the class ranges. Before this port the flag words were
+never rebuilt, so picked-up shields, shots and amulets had no effect.
+
+Shop (do_shopping 0x18a898): ITEM records of SHPDATA/SHOP.WAD (31; entry 0
+leaves), kinds 1 key, 3 potion (random colour 1..4), 5–8 +10 bonus to
+fight/speed/armor/magic (PlayerInc* + the +0x98c..+0x998 shop counters),
+0x11 heal by the record's amount, the rest PlayerAddPowerup with the
+original amounts/times/flags. make_skiplist's loop reads one record past
+the table in the original; the native table stops at its end.
+
+Death (kill_player 0x131a98): see research/saves.md and playtest.md.

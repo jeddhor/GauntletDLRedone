@@ -18,7 +18,10 @@ volume (stored in options.json); the other entries say "not ported yet".
 
 In game, Esc / P / gamepad Start opens the original pause menu: in the Tower
 Settings, Manage Character, Shop, Inventory, Quit Game; in a realm Settings,
-Quit Level. Manage Character → Save Character writes the character to its
+Quit Level. Shop lists SHPDATA/SHOP.WAD's items with their prices ("-" marks
+items make_skiplist excludes: unaffordable, full key ring/potions, full
+health, attribute at 999); buying follows do_shopping (keys, potions,
+powerups, +10 attribute bonuses, healing). Manage Character → Save Character writes the character to its
 slot (player_store_in_save; the previous version is kept as `.bak`). Quit
 Level returns to the Tower; Quit Game returns to the title without saving
 (as the original, progress since the last save is lost). Saves live in
@@ -35,8 +38,12 @@ ported); the camera follows the living players' average (HYPOTHESIS).
 
 Controls: arrows/WASD move, Space/K throw, E/L use a potion (magic), F1
 toggles the diagnostics block, stand still in the exit portal to leave the
-level, Enter continues after death (interim: the class entry's level-start
-health), F9 debug-skips to the next level. Menus: arrows/WASD or D-pad,
+level, F9 debug-skips to the next level. Death (kill_player): in a realm the
+player is out (keys dropped, powerups cleared); with nobody left the game
+returns to the Tower and restores the level-start state (gold and items found
+in that level are lost, as PlayerRestoreState does); in the Tower the
+player is restored at once. INTERIM: the dying animation is replaced by a
+two-second wait. Menus: arrows/WASD or D-pad,
 Enter/Space or South to accept, Esc/Backspace or East to go back; Esc on the
 "Press Start" screen exits. The HUD shows colour/class, level, experience,
 save slot, health, gold, keys, potions, kills, active enemies and standing
@@ -95,3 +102,8 @@ Character → Save Character ("saved to slot 1 (version 2)", `.bak` written) →
 Quit Game → Create a new character (Warrior, Red, "BRAVE") → slot 2 enters
 the Tower with the warrior model → F9 into Castle A1 (enemies engage, death,
 continue) → Esc → Quit Level → back in the Tower.
+
+Shop and death smoke test on Xvfb (2026-10-18): Tower → Esc → Shop shows the
+31-entry table with prices; buying a potion took 250 gold and added a potion.
+Castle A1 → killed by the castle's enemies → "YOU DIED - back to the Tower"
+→ the Tower with the level-start health and gold.

@@ -175,6 +175,10 @@ impl Game {
                 return Ok(());
             }
         }
+        // do_players (states 1 and 4): update_player_milestone, then
+        // PlayerProcessPowerups; the interim motion uses the re-derived speed.
+        self.player_process_powerups(p)?;
+        d.sim.stats.speed_124 = self.players[p].f32_(0x124);
         if let Some(pos) = self.grabbed_position(p)? {
             // Parented to a critter node (status +0x93c 0x20): the node moves
             // the player; movement input is not applied (INTERIM: the
@@ -566,6 +570,57 @@ impl Game {
         r.set_f32(0x86c, s.facing);
         r.set_u32(0x89c, s.floor_object_89c.map_or(0, |o| o as u32 + 1));
         r.set_u32(0x1e0, s.current_action);
+        Ok(())
+    }
+
+    /// kill_player 0x131a98, after the dying state. In the Tower the
+    /// player plays on with PlayerRestoreState; elsewhere PlayersSetWaveDied,
+    /// player_set_continue (+0xfc = 0xb, +0x2ad4 = 1), health 0, drop_keys
+    /// and init_player_powerups. The level-start backup is restored when the
+    /// player is next in the Tower (init_next_level).
+    pub fn kill_player(&mut self, p: usize) -> R<()> {
+        let class = self.players[p].u32_(0xc) as usize;
+        if self.globals.cur_world == 0xd {
+            self.players[p].set_i32(0xfc, 1);
+            // The class record is the player's PDAT (player_get_from_save
+            // reads the current class only).
+            let mut v = vec![Vec::new(); 16];
+            if let Some(slot) = v.get_mut(class) {
+                *slot = self.classes[p].raw.clone();
+            }
+            super::profile::player_restore_state(&mut self.players[p], &super::profile::Pdats(v), &self.class_tables).map_err(|e| Unsupported(e.to_string()))?;
+            return Ok(());
+        }
+        // PlayersSetWaveDied(p, CurWorld, CurLevel): the last level of the
+        // world (the boss) marks the backup's class record +0x14 (else +0x16).
+        if self.globals.cur_level == self.world_num_levels - 1 {
+            let o = 0x1d8c + 0xb4 * class;
+            let bit = 1u16 << (self.globals.cur_world & 0x1f);
+            if self.players[p].u16_(o) & bit == 0 {
+                let v = self.players[p].u16_(o) | bit;
+                self.players[p].set_u16(o, v);
+            } else {
+                let v = self.players[p].u16_(o + 2) | bit;
+                self.players[p].set_u16(o + 2, v);
+            }
+        }
+        self.players[p].set_i32(0xfc, 0xb);
+        self.players[p].set_i32(0x2ad4, 1);
+        self.players[p].set_f32(0x1a10, 0.0);
+        // drop_keys: a KEY (one) or KEYRING item with +0xf4 = count at the
+        // player's position; boss levels just lose them.
+        let keys = self.players[p].i32_(0x1a14);
+        if 0 < keys && self.globals.boss_type < 0 {
+            let name: &[u8] = if keys == 1 { b"KEY" } else { b"KEYRING" };
+            if let Some(def) = self.items.definitions.iter().position(|d| d.name() == name) {
+                let m = [self.players[p].v3(0x20), self.players[p].v3(0x30), self.players[p].v3(0x40)];
+                let at = self.players[p].v3(0x50);
+                let slot = self.add_item_sub(def, Some((m, at)))?;
+                self.items.records[slot].set_i32(0xf4, keys);
+            }
+        }
+        self.players[p].set_i32(0x1a14, 0);
+        super::profile::init_player_powerups(&mut self.players[p]);
         Ok(())
     }
 }

@@ -21,7 +21,7 @@ replaced by a plausible gameplay rule or generated asset.
 | RNG reproducibility | Main loop reseeds using CPU time in static path | Observe actual seed calls and consumers with frame/timing context |
 | Damage/enemy rules | Transcribed natively (gameplay.md); headless synthetic scenarios run G1–G4 without unsupported paths | Controlled reference encounter captures (enemy spawn, hit, kill, generator damage) and first-divergence comparison |
 | Player action production | Ordinary throw subset native; magic/turbo/melee requests come from animation events not yet produced natively | Recover PlayerMotion's pad → requested action and DoPlayerAction event production for magic and melee |
-| Derived combat stats | Resolved: check_player_atts' Get<Att> ranges reproduce +0x118..+0x12c of the captured record (profile-check); the words refresh only through load_player_atts, as in the original | — |
+| Derived combat stats | Resolved: check_player_atts' Get<Att> ranges reproduce +0x118..+0x12c of the captured record (profile-check); PlayerProcessPowerups re-derives and clamps them every update | — |
 | Enemy per-frame objects | OANIM node type 2; client matches object stems to sequences by frame count | Decode the OANIM channel data at the tree's blocks |
 | Reference stepping transport | Xvfb F10 verifies one vblank per step; paused PINE reads repeat | Tie captures to actual guest function/update edges; verify debugger sample |
 | Reference scenario coverage | Full-heap reload guard; idle/movement/attack-state/one-key schedules repeat | Recover complete attack events and transition/game-save scenarios |
@@ -31,8 +31,9 @@ replaced by a plausible gameplay rule or generated asset.
 | Level-start runtime fields | profile::level_start ports load_player_geo/load_player stores; +0x800/+0x804 (100.0 in the capture), +0x7b8..+0x7d0, +0x974..+0x980 and reset_player_powerups are not reproduced | Trace the writers of +0x800 and +0x974 and port reset_player_powerups |
 | Secret characters and Sumner | Classes 8–15 and Sumner (player_sumner_desc) refused at load | Port the unlock rules, per-colour clip packages and the Sumner branches |
 | Front-end presentation | Menus are native text with the original structure/labels; TEXT/ENGLISH.ROM tables, FNT fonts, SELECT/TITLE scenes not decoded | Decode the ROM tables and fonts; port the select scene |
-| Shop, inventory, hints, settings | Not ported (menus say so) | Port write_shop_menu/do_shop, the inventory screen, hint_menu and the controls/screen/compass options |
-| Death and continue | Interim: health from the class entry; kill_player/PlayerRestoreState and the continue screen not ported | Port kill_player and the continue flow |
+| Shop presentation, inventory, hints, settings | Shop purchases ported with a text list (the 3D item display, shop music, final-stats screen and the shop on the way back to the Tower are not); inventory, hints and controls/screen/compass options not ported | Port draw_shop_screen/shop_show_*, the inventory screen, hint_menu and the options |
+| Death and continue | kill_player, PlayersSetWaveDied (WorldNumLevels = LEVL count, HYPOTHESIS), drop_keys, PlayerRestoreState in the Tower ported; the dying action 0x7e and its counter are replaced by a 2 s wait; the continue/join screen not ported | Port the dying action and the continue screen |
+| PlayerProcessPowerups presentation | Familiar (phoenix), growth scale (PlayerProcessScale), see-through, skin effects and attached models not ported | Port PlayerProcessFamiliar and PlayerProcessScale (simulation-relevant) |
 | Missile textures across packages | Thrown trees whose textures live in another package draw magenta (Sorceress WND_THROW1) | Resolve textures through a global MBOX texture namespace |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 | Loaded MBOX object tables | SetSafeRock/ItemFindMBObjectL1 search every loaded model table; native uses the labels of all runner packages (HYPOTHESIS) | Trace the level's package load list (LoadLevel) and model_count |
