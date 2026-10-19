@@ -329,7 +329,8 @@ impl Game {
         for i in 0..self.milestones.len() {
             let m = self.milestones[i];
             let d = [sub(pos[0], m[0])?, sub(pos[1], m[1])?, sub(pos[2], m[2])?];
-            if !(d[1].abs() < 3.5) || !(crate::vu0::fqdist(d[0], d[2])?.0 < 4.5) {
+            let near = d[1].abs() < 3.5 && crate::vu0::fqdist(d[0], d[2])?.0 < 4.5;
+            if !near {
                 continue;
             }
             let last = self.players[p].i32_(0x950);
@@ -522,7 +523,8 @@ impl Game {
                         } else {
                             if self.players[k].i32_(0x80c) == 1 {
                                 self.players[k].set_i32(0x80c, 2);
-                                return unsupported("PlayerUseLegendItem");
+                                let w = self.globals.cur_world;
+                                self.player_use_legend_item(k, w);
                             }
                             self.players[k].set_f32(0x7d4, 2.0);
                         }

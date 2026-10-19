@@ -42,6 +42,8 @@ def main():
     ap.add_argument('--level', type=int, default=1, help='level number (1-based)')
     ap.add_argument('--world', default='G', help='world letter (A-K, S); G is The Poison Fields')
     ap.add_argument('--script')
+    ap.add_argument('--legend', action='store_true', help='DEBUG: player 0 holds the legend item')
+    ap.add_argument('--quest', help='DEBUG: QuestItemState 2 at this update')
     ap.add_argument('--replay', help='per-update replay of a reference_trace --player trace')
     ap.add_argument('--pads', help='record-based players: MASK_HEX:UPDATES,... (bit i = joyGetStatus entry i of port 0)')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
@@ -110,6 +112,10 @@ def main():
         cmd += [f'crystals={a.crystals}']
     if a.teleport:
         cmd += [f'teleport={a.teleport}']
+    if a.legend:
+        cmd += ['legend=1']
+    if a.quest:
+        cmd += [f'quest={a.quest}']
     if a.boss_health:
         cmd += [f'boss_health={a.boss_health}']
     subprocess.run(cmd, check=True)

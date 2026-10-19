@@ -690,6 +690,20 @@ impl Game {
         }
     }
 
+    /// PlayerHasLegendItem 0x176d00(player, world): bit `world` of the
+    /// class record word +0xcf4 (players in state 0 have none).
+    pub fn player_has_legend_item(&self, k: usize, world: i32) -> bool {
+        let r = &self.players[k];
+        r.i32_(0xfc) != 0 && (r.u16_(0xcf4 + 0xb4 * r.u32_(p::CHARACTER) as usize) >> (world & 0x1f)) & 1 != 0
+    }
+
+    /// PlayerUseLegendItem 0x176e10(player, world): clears the bit.
+    pub fn player_use_legend_item(&mut self, k: usize, world: i32) {
+        let o = 0xcf4 + 0xb4 * self.players[k].u32_(p::CHARACTER) as usize;
+        let v = self.players[k].u16_(o) & !(1u16 << (world & 0xf));
+        self.players[k].set_u16(o, v);
+    }
+
     /// PlayerGiveLegendItem 0x176d88: a bit in the class record word at `o`.
     fn player_give_class_bit(&mut self, k: usize, o: usize, bit: i32) {
         let st = self.players[k].i32_(0xfc);

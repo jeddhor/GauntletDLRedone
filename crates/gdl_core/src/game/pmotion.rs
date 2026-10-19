@@ -1060,17 +1060,247 @@ impl Game {
         }
     }
 
-    /// The legend-item (+0x80c) request override before DoPlayerAction.
+    /// StartFXSub(time, header, position, flags, node flags) on the native
+    /// effect slots; −1 when the header was never initialised.
+    pub(crate) fn start_fx_sub(&mut self, time: f32, header: usize, at: Option<V3>, flags: u32) -> R<i32> {
+        let Some(h) = self.effects.tables.headers.get(header).copied().flatten() else { return Ok(-1) };
+        let k = self.start_fx_tree(time, super::effects::Visual::Header(header), h.frames, h.timing, at, flags)?;
+        self.fx_mut(k).set_u32(super::effects::fx::KIND, header as u32);
+        Ok(k as i32)
+    }
+
+    /// StartComboFX 0x17f0b0(position, colour a, colour b): ComboEffects[4]
+    /// then ComboEffects[a] (colours, ambient and light are presentation).
+    fn start_combo_fx(&mut self, at: V3, a: i32, b: i32) -> R<i32> {
+        let table = self.combo_effects.clone();
+        let mut k = -1;
+        if 0 <= b
+            && let Some(&h) = table.get(4)
+        {
+            k = self.start_fx_sub(0.0, h as usize, Some(at), 0)?;
+        }
+        if 0 <= a
+            && let Some(&h) = table.get(a as usize)
+        {
+            k = self.start_fx_sub(0.0, h as usize, Some(at), 0)?;
+        }
+        Ok(k)
+    }
+
+    /// The legend-item (+0x80c) stages before DoPlayerAction (0x14a8f0..).
     fn legend_item_actions(&mut self, p: usize, _cur: u32) -> R<()> {
-        if self.players[p].i32_(0x80c) != 0 && 0 <= self.globals.boss_type {
-            return unsupported("PlayerMotion legend item (QuestWeaponSfx / StartComboFX)");
+        let bt = self.globals.boss_type;
+        if self.players[p].i32_(0x80c) == 0 || bt < 0 {
+            return Ok(());
+        }
+        let me = self.players[p].u32_(0) as usize;
+        if self.quest_weapon_sfx < 0 && self.players[p].i32_(0x80c) < 4 {
+            // The quest weapon glow (header 0x5c, 999999 s) parented to the
+            // player's +0x6a8 hand node (0x21 < BossType < 0x28) or tree at
+            // (0, 8, 0); HYPOTHESIS: both follow the player's record.
+            let local = if (0x22..0x28).contains(&bt) { [0.0; 3] } else { [0.0, 8.0, 0.0] };
+            let k = self.start_fx_sub(f32::from_bits(0x4974_23f0), 0x5c, None, 0)?;
+            if 0 <= k
+                && let Some(n) = self.effects.nodes[k as usize].as_mut() {
+                    n.parent = Some(super::effects::EffectParent { player: p, local, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] });
+                }
+            self.quest_weapon_sfx = k;
+        }
+        if self.players[p].i32_(0x80c) == 2 {
+            let c = self.players[p].i32_(4);
+            let at = self.players[p].v3(0x60);
+            let k = self.start_combo_fx(at, c, c)?;
+            if 0 <= k {
+                // Effects +0x44 (the combo effect's scale) = 1/3.
+                self.fx_mut(k as usize).set_f32(0x44, f32::from_bits(0x3eaa_7efa));
+            }
+            self.players[p].set_i32(0x80c, 3);
+            self.players[p].set_i16(0x1d2, 0x3c);
+            self.audio("AudioLegendItem", Some(me), 0);
+        }
+        if self.players[p].i32_(0x80c) == 3 && self.players[p].i16_(0x1d2) < 1 {
+            self.players[p].set_i32(0x80c, 4);
+            self.audio("AudioLegendItem", Some(me), 1);
+        }
+        if 3 < self.players[p].i32_(0x80c) && self.players[p].u32_(0x8d8) & 0xffff_fffe == 0 {
+            let cur = self.players[p].u32_(0x1e0);
+            let (want, keep) = match bt {
+                0x22 | 0x23 | 0x26 | 0x27 => (99, cur.wrapping_sub(99) <= 1),
+                0x24 | 0x25 => (0x6b, cur == 0x6b),
+                _ => (0x73, cur.wrapping_sub(0x73) <= 1),
+            };
+            if !keep {
+                self.players[p].set_u32(0x1e0, 0);
+                self.players[p].set_u32(0x1e4, want);
+            }
         }
         Ok(())
     }
 
-    /// The +0x80c ≥ 4 boss finale effects (QuestWallSfx, CritterDamage).
-    fn legend_item_finale(&mut self, _p: usize) -> R<()> {
-        unsupported("PlayerMotion legend item finale")
+    /// The +0x80c ≥ 4 branch after DoPlayerAction (0x14ab00..0x14b3f4): once
+    /// the forced action raises an event, the legend item fires at the boss.
+    fn legend_item_finale(&mut self, p: usize) -> R<()> {
+        if self.players[p].u32_(0x8d8) & 0xffff_fffe == 0 {
+            return Ok(());
+        }
+        let me = self.players[p].u32_(0) as i32;
+        let bt = self.globals.boss_type;
+        if ((0x22..0x28).contains(&bt) || bt == 0x29)
+            && 0 <= self.quest_weapon_sfx {
+                self.delete_effect(self.quest_weapon_sfx as usize, true);
+                self.quest_weapon_sfx = -1;
+                self.players[p].set_u32(0x708, 0);
+            }
+        self.players[p].set_i32(0x80c, 0);
+        self.players[p].set_u32(0x8d8, 0);
+        self.audio("AudioLegendItem", Some(me as usize), 2);
+        let Ok(b) = usize::try_from(self.boss_crit_inst - 1) else {
+            return super::unsupported("legend item finale without BossCritInst");
+        };
+        let health = self.crit(b).rec.f32_(0x4f4);
+        let ten = f32::from_bits(0x3dcc_cccd);
+        let spin = [f32::from_bits(0x4149_0fdb), 0.0, f32::from_bits(0x3fc9_0fdb)];
+        // (damage, speed, gravity, radius, sfx flags, target node, aim point)
+        let mut damage = 0.0;
+        let mut speed = 0.0;
+        let (mut gravity, mut radius, mut sflags) = (0.0f32, 2.0f32, 0u32);
+        let mut target: Option<(usize, usize)> = None;
+        let mut aim = [0.0f32; 3];
+        let crit_pos = |g: &Self, o: usize| g.crit(b).rec.v3(o);
+        match bt {
+            0x22 => {
+                target = Some((b, self.crit(b).anim_root));
+                damage = mul(health, ten)?;
+                speed = 20.0;
+            }
+            0x23 => {
+                // BossCritInst +0xb60 → +0xb60 → +0xd4, then the node's first
+                // children (+0x78) to the last. HYPOTHESIS: the first child is
+                // the lowest tree index under the node.
+                let c2 = self.crit(b).child.and_then(|c1| self.crit(c1).child);
+                let Some(c2) = c2 else { return super::unsupported("BossType 0x23 without its chained critter") };
+                let Some(mut n) = self.crit(c2).node_d4 else { return super::unsupported("BossType 0x23 without +0xd4 node") };
+                let parents = self.crit(c2).parents.clone();
+                while let Some(k) = parents.iter().position(|&q| q == n as i32) {
+                    n = k;
+                }
+                target = Some((c2, n));
+                damage = mul(self.crit(c2).rec.f32_(0x4f4), 1.5)?;
+                speed = 20.0;
+            }
+            0x24 => {
+                let a = crit_pos(self, 0x50);
+                aim = [a[0], add(a[1], 0.0)?, a[2]];
+                speed = 20.0;
+                radius = 5.0;
+                gravity = 5.0;
+                damage = mul(health, ten)?;
+            }
+            0x25 => {
+                let k = self.start_fx_sub(0.0, 0x5d, Some([0.0, 0.0, 5.0]), 0)?;
+                if 0 <= k {
+                    if let Some(n) = self.effects.nodes[k as usize].as_mut() {
+                        n.parent = Some(super::effects::EffectParent { player: p, local: [0.0, 0.0, 5.0], local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] });
+                    }
+                    self.sfx_set_morph(k as usize, 3.0, 0x5a, 0);
+                }
+                // MBTreeSetColor/SetFlags and the boss tree's 0.8 scale: presentation.
+                damage = mul(health, ten)?;
+                self.critter_damage(damage, b, me, 0, None, None, 0)?;
+                self.crm_pub(b).set_f32(0xb50, 0.5);
+            }
+            0x26 => {
+                let Some(n) = self.crit(b).node_d8 else { return super::unsupported("BossType 0x26 without +0xd8 node") };
+                target = Some((b, n));
+                sflags = 0x2_0000;
+                damage = mul(health, ten)?;
+                speed = 20.0;
+            }
+            0x27 => {
+                let c = crit_pos(self, 0x460);
+                let at = [sub(c[0], 7.0)?, sub(c[1], 5.0)?, add(c[2], 85.0)?];
+                let k = self.start_fx_sub(0.0, 0x5a, Some(at), 0)?;
+                if 0 <= k {
+                    self.sfx_set_morph(k as usize, 30.0, 0x5b, 0);
+                    self.quest_wall_sfx = k;
+                }
+                damage = mul(health, ten)?;
+                self.critter_damage(damage, b, me, 0, None, None, 0)?;
+                self.crm_pub(b).set_f32(0xb50, 0.5);
+                let c = crit_pos(self, 0x460);
+                aim = [c[0], add(c[1], 10.0)?, c[2]];
+                gravity = 10.0;
+                speed = 20.0;
+            }
+            0x28 => {
+                let c = crit_pos(self, 0x460);
+                let at = [c[0], sub(c[1], 5.0)?, add(c[2], 10.0)?];
+                let k = self.start_fx_sub(0.0, 0x5d, Some(at), 0)?;
+                if 0 <= k {
+                    self.sfx_set_morph(k as usize, 30.0, 0x5a, 0);
+                    self.quest_wall_sfx = k;
+                }
+                damage = mul(health, ten)?;
+                self.critter_damage(500.0, b, me, 0, None, None, 0)?;
+                self.crm_pub(b).set_f32(0xb50, 0.25);
+            }
+            0x29 => {
+                let at = crit_pos(self, 0x460);
+                let k = self.start_fx_sub(0.0, 0x5d, Some(at), 0x100_0000)?;
+                if 0 <= k {
+                    self.sfx_set_morph(k as usize, 5.0, 0x5a, 0);
+                }
+                damage = mul(health, 0.25)?;
+                self.critter_damage(damage, b, me, 0, None, None, 0)?;
+            }
+            0x2a => {
+                let c = crit_pos(self, 0x460);
+                let at = [c[0], add(c[1], 17.0)?, add(c[2], 3.0)?];
+                let k = self.start_fx_sub(0.0, 0x5d, Some(at), 0)?;
+                if 0 <= k {
+                    self.sfx_set_morph(k as usize, 30.0, 0x5a, 0);
+                    self.quest_wall_sfx = k;
+                }
+                damage = mul(health, ten)?;
+                self.critter_damage(damage, b, me, 0, None, None, 0)?;
+                self.crm_pub(b).set_f32(0xb50, ten);
+            }
+            _ => {}
+        }
+        if 0.0 < speed {
+            let p60 = self.players[p].v3(0x60);
+            let k = if target.is_none() {
+                let mut d = [sub(aim[0], p60[0])?, sub(aim[1], p60[1])?, sub(aim[2], p60[2])?];
+                crate::collision::normal_vector_pub(&mut d)?;
+                let start = [add(d[0], p60[0])?, add(add(d[1], p60[1])?, 2.0)?, add(d[2], p60[2])?];
+                let k = self.start_fx_sub(6.0, 0x5d, Some(start), sflags | 8)?;
+                if 0 <= k {
+                    let v = [mul(speed, d[0])?, mul(speed, d[1])?, mul(speed, d[2])?];
+                    self.sfx_set_physics_pub(k as usize, gravity, radius, Some(v), Some(spin));
+                }
+                k
+            } else {
+                let f = self.players[p].v3(0x40);
+                let start = [add(f[0], p60[0])?, add(add(f[1], p60[1])?, 2.0)?, add(f[2], p60[2])?];
+                let k = self.start_fx_sub(6.0, 0x5d, Some(start), sflags | 8)?;
+                if 0 <= k {
+                    self.sfx_set_physics_pub(k as usize, 0.0, radius, None, Some(spin));
+                    // SfxSetHitTarget(speed, effect, node).
+                    let r = self.fx_mut(k as usize);
+                    r.set_f32(super::effects::fx::GRAVITY, speed);
+                    r.or_u32(super::effects::fx::FLAGS, 0x4000_0000);
+                    if let Some(n) = self.effects.nodes[k as usize].as_mut() {
+                        n.target = target;
+                    }
+                }
+                k
+            };
+            if 0 <= k {
+                self.sfx_set_damage(k as usize, damage, 0.0, 0.0, 0, me as i16);
+            }
+            // The PARTICLE1_A / CHIMKEY_PART particle system is presentation.
+        }
+        Ok(())
     }
 
     /// The +0x8d8 event word consumers (0x14b5c0..0x14c0f0).

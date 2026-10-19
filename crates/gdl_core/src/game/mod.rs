@@ -296,6 +296,13 @@ pub struct Game {
     pub player_water: Option<(usize, f32)>,
     /// partner_parent (PlyrSfxDoDamage → DoPlyrSfxSub's flag 0x2000 owner).
     pub partner_parent: Option<usize>,
+    /// QuestWeaponSfx 0x23e218 / QuestWallSfx 0x23e234 (effect slots, −1)
+    /// and QuestItemTimer.
+    pub quest_weapon_sfx: i32,
+    pub quest_wall_sfx: i32,
+    pub quest_item_timer: f32,
+    /// ComboEffects 0x2407f8 (EffectHeaders indices, ELF data).
+    pub combo_effects: Vec<i32>,
     pub item_anims: Vec<Option<item_runtime::ItemAnim>>,
     /// Culling view (MBWorldSphereClip inputs) derived from the StdCam.
     pub camera: Option<item_runtime::Camera>,

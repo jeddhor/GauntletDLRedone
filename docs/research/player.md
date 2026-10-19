@@ -92,13 +92,29 @@ FTZ; upstream claim from the pinned PCSX2 source). A knockback velocity
 decaying by ×0.667 per update reaches that range after a few hundred
 updates.
 
+## Legend items (boss endings)
+
+GauntWorldInit sets +0x80c = 1 and QuestItemState 1 for the first active
+player holding the world's legend item (PlayerHasLegendItem, class word
++0xcf4). world_update's machine (quest_item_update) moves 2 → 3 after 1 or
+3 s, 4 → 5, and 5 → 6 after 29 s; do_players (2/3) spends the item
+(PlayerUseLegendItem, +0x80c 2); PlayerMotion shows the weapon glow
+(QuestWeaponSfx), the combo effect, forces the use action (99 / 0x6b /
+0x73 by BossType) and on its event fires the finale per BossType (effects,
+CritterDamage, homing SfxSetHitTarget at the boss node); ProcessEffects'
+boss hit while 2/3 sets the per-boss timers. Exercised with the debug
+options legend=1 quest=N in all boss arenas (no unported path; not
+trace-checked). HYPOTHESIS: BossType 0x23's target is the lowest-index
+first child under the chained critter's +0xd4 node.
+
 ## Unported (Unsupported when reached)
 
 Team moves (0x58..0x5a, 0x88..0x93, PlayerSetParent/
-PlayerFacePlayer), the legend item (+0x80c, QuestWeaponSfx, finale), thunder
+PlayerFacePlayer), thunder
 hammer / breath / familiar events (0x2000000, 0x1000000, 0x10000000 with
-+0x138 0x80), PlayerDamagePlayer (versus), get_player_pos respawn (world
-bottom), players in states 2/3 (selecting/joining), inactivate_player,
++0x138 0x80), PlayerDamagePlayer (versus), get_player_pos beside another player and at
+the stage start, players in states 2/3 (selecting/joining), inactivate_player,
 setup_player_display, PlayerProcessFamiliar/Scale for boss state 5, rotating
-moving-floor parents. Non-fatal and logged each update:
-update_player_milestone (the Milestones table is not built yet).
+Milestones: AddLocatorInstList's kind-5 locators (FloorPos drop + 0.5),
+update_player_milestone's +0x950 history. Floor parents with rotation use
+MulMat4 with InvertMat4's rigid inverse.

@@ -359,6 +359,10 @@ impl Game {
             transporter_floor_y: None,
             player_water: None,
             partner_parent: None,
+            quest_weapon_sfx: -1,
+            quest_wall_sfx: -1,
+            quest_item_timer: 0.0,
+            combo_effects: inp.elf.object("ComboEffects").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
             item_anims: vec![None; item_count],
             camera: None,
             camera_rest: None,
@@ -527,6 +531,22 @@ impl Game {
         // The culling view comes from the StdCam once start_camera runs
         // (init_next_level: StdCamInit after the players are placed).
         game.camera_rest = Some(s.camera.clone());
+        // GauntWorldInit 0x162e38: QuestItemState 1 for the first active
+        // player holding this world's legend item (PlayerHasLegendItem).
+        game.globals.quest_item_state = 0;
+        game.quest_item_timer = 0.0;
+        if game.globals.boss_type < 0x2b {
+            for k in 0..4 {
+                if !matches!(game.players[k].i32_(0xfc), 1 | 3 | 5) {
+                    continue;
+                }
+                let has = game.globals.quest_item_state == 0 && game.player_has_legend_item(k, game.globals.cur_world);
+                game.players[k].set_i32(0x80c, i32::from(has));
+                if has {
+                    game.globals.quest_item_state = 1;
+                }
+            }
+        }
         // AddLocatorInstList: milestones (kind 5, at most 0x80; FatalErrorC past it).
         for l in inp.world.locators.iter().filter(|l| l.kind == 5) {
             if 0x80 <= game.milestones.len() {
@@ -602,6 +622,9 @@ impl Game {
         self.sync_collision();
         self.do_auto_exit();
         if let Err(e) = self.boss_world_update() {
+            self.log.note("world_update", &e);
+        }
+        if let Err(e) = self.quest_item_update() {
             self.log.note("world_update", &e);
         }
         if let Err(e) = self.world_update_stage_start() {

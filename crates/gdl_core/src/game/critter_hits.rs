@@ -729,6 +729,13 @@ impl Game {
     }
 
     fn sfx_set_physics(&mut self, k: usize, gravity: f32, radius: f32, vel: Option<V3>, spin: Option<V3>) {
+        if let Some(v) = vel
+            && let Ok(a) = crate::libm::atan2f(v[0], v[2])
+            && let Some(n) = self.effects.nodes[k].as_mut()
+        {
+            // YawMat3(atan2f(vx, vz), node): the node faces its velocity.
+            let _ = crate::collision::yaw_mat3(&mut n.matrix, a);
+        }
         let r = self.fx_mut(k);
         if let Some(v) = vel {
             r.set_v3(fx::VELOCITY, v);
@@ -971,11 +978,52 @@ impl Game {
                 out = Some(p);
             }
             let q = self.globals.quest_item_state;
-            if q.wrapping_sub(2) < 2 || (q == 5 && self.globals.boss_type == 0x23) {
-                return unsupported("legend item against a boss");
+            if q.wrapping_sub(2) < 2 {
+                // ProcessEffects 0x17c7c4: the legend-item hit on the boss.
+                match self.globals.boss_type {
+                    0x24 => {
+                        self.crm_pub(c_).set_i16(0xb4e, 0x708);
+                        // StartFXSub(28, 0x5a, (0, 6, 0), 0, 0x400880) parented
+                        // to the critter's +0xcc node: QuestWallSfx.
+                        let at = {
+                            let ar = self.crit(c_).anim_root;
+                            let m = self.critter_node_world(c_, ar, Some([0.0, 6.0, 0.0]))?;
+                            [m[12], m[13], m[14]]
+                        };
+                        self.quest_wall_sfx = match self.effects.tables.headers.get(0x5a).copied().flatten() {
+                            Some(h) => {
+                                let k2 = self.start_fx_tree(28.0, Visual::Header(0x5a), h.frames, h.timing, Some(at), 0)?;
+                                self.fx_mut(k2).set_u32(fx::KIND, 0x5a);
+                                k2 as i32
+                            }
+                            None => -1,
+                        };
+                        self.globals.quest_item_state = 4;
+                    }
+                    0x22 => {
+                        // +0xb48: the swapped texture (presentation).
+                        self.crm_pub(c_).set_i16(0xb4c, 0x4b0);
+                        self.globals.quest_item_state = 4;
+                    }
+                    0x26 => {
+                        // MBSetObject of the boss part (presentation).
+                        self.crm_pub(c_).set_i16(0xb4e, 18000);
+                    }
+                    _ => {}
+                }
+                self.audio("AudioLegendItem", None, 3);
+                if result < 2 {
+                    result = 2;
+                }
             }
-            if q == 5 && pierce {
-                result = 0;
+            if self.globals.quest_item_state == 5 {
+                if self.globals.boss_type != 0x23 {
+                    if pierce {
+                        result = 0;
+                    }
+                    return Ok((result, out));
+                }
+                self.globals.quest_item_state = 6;
             }
         } else if f32::from_bits(0x3d88_9a02) < sub(self.fx(k).f32_(fx::DURATION), age)? {
             result = -1;

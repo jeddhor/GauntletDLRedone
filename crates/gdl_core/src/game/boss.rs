@@ -62,6 +62,75 @@ impl Game {
         Ok(())
     }
 
+    /// world_update's QuestItemState machine (0x1639ac..0x163c60): 2 → 3
+    /// after a delay (1 s for 0x23 and 0x29/0x2a, else 3 s), 4 → 5 (timer),
+    /// 5 → 6 after 29 s for 0x24/0x26/0x27/0x28/0x2a, with the quest weapon
+    /// effect removed. The ambient flash and the wall effect's fade are
+    /// presentation.
+    pub(crate) fn quest_item_update(&mut self) -> R<()> {
+        if self.globals.boss_is_dead != 0 {
+            self.globals.quest_item_state = 99;
+        }
+        let time = self.globals.time;
+        let bt = self.globals.boss_type;
+        match self.globals.quest_item_state {
+            3 => {}
+            4 => {
+                self.globals.quest_item_state = 5;
+                self.quest_item_timer = time;
+                return Ok(());
+            }
+            5 => {
+                let left = sub(29.0, sub(time, self.quest_item_timer)?)?;
+                let mut done = false;
+                match bt {
+                    0x24 => done = left <= 0.0,
+                    0x26 => {
+                        if left <= 0.0 {
+                            // MBSetObject of the boss's +0xd8 part: presentation.
+                            if let Ok(b) = usize::try_from(self.boss_crit_inst - 1) {
+                                self.crm_pub(b).set_i16(0xb4e, 0);
+                            }
+                            self.globals.quest_item_state = 6;
+                        }
+                    }
+                    0x27 | 0x28 | 0x2a => {
+                        if left <= 0.0 {
+                            if let Ok(b) = usize::try_from(self.boss_crit_inst - 1) {
+                                self.crm_pub(b).set_f32(0xb50, 0.0);
+                            }
+                            done = true;
+                        }
+                    }
+                    _ => {}
+                }
+                if done {
+                    if 0 <= self.quest_weapon_sfx {
+                        self.delete_effect(self.quest_weapon_sfx as usize, true);
+                        self.quest_weapon_sfx = -1;
+                        self.audio("AudioLegendItem", None, 3);
+                        self.audio("AudioLegendItem", None, 4);
+                    }
+                    self.globals.quest_item_state = 6;
+                }
+                return Ok(());
+            }
+            2 => {
+                if self.quest_item_timer == 0.0 {
+                    let wait = if bt == 0x23 || (0x29..=0x2a).contains(&bt) { 1.0 } else { 3.0 };
+                    self.quest_item_timer = add(time, wait)?;
+                } else if self.quest_item_timer <= time {
+                    self.globals.quest_item_state = 3;
+                    self.quest_item_timer = 0.0;
+                }
+            }
+            _ => return Ok(()),
+        }
+        // SetAmbientSpecial(0.1, -0.8): the darkened screen while the item is up.
+        self.events.push(super::Event::AmbientSpecial { value: f32::from_bits(0xbf4c_cccd) });
+        Ok(())
+    }
+
     /// DoGoodWizard's state machine with placeholder speech lengths.
     fn do_good_wizard(&mut self) -> R<()> {
         let time = self.globals.time;

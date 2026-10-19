@@ -862,6 +862,18 @@ fn run() -> Result<(), Box<dyn Error>> {
             game.classes[0].sfxx = data.chunk("SFXX").map(|c| c.bytes.clone()).unwrap_or_default();
             game.classes[0].damg = data.chunk("DAMG").map(|c| c.bytes.clone()).unwrap_or_default();
         }
+        if opts.contains_key("legend") {
+            // DEBUG: player 0 holds this world's legend item (class word +0xcf4);
+            // GauntWorldInit's check then runs as at a level start.
+            let o = 0xcf4 + 0xb4 * game.players[0].u32_(0xc) as usize;
+            let w = game.globals.cur_world;
+            let v = game.players[0].u16_(o) | (1u16 << (w & 0xf));
+            game.players[0].set_u16(o, v);
+            if game.globals.quest_item_state == 0 && game.globals.boss_type < 0x2b && 0 <= game.globals.boss_type {
+                game.players[0].set_i32(0x80c, 1);
+                game.globals.quest_item_state = 1;
+            }
+        }
         if let Some(n) = opts.get("potions") {
             // DEBUG override recorded in the report scope.
             game.players[0].set_i32(0x1a18, n.parse()?);
@@ -1035,6 +1047,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                         pads[0].press(i);
                     }
                 }
+                if opts.get("quest").and_then(|v| v.parse::<usize>().ok()) == Some(f) {
+                    // DEBUG: the boss reached the legend-item stage (QuestItemState 2).
+                    game.globals.quest_item_state = 2;
+                }
                 game.step_with(None, &mut |g| {
                     g.update_controls(&pads)?;
                     g.do_players().map(|_| ())
@@ -1043,7 +1059,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let r = &game.players[0];
                     samples.push(serde_json::json!({"frame":f,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
                         "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),
-                        "turbo":r.f32_(0x800),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c)}));
+                        "turbo":r.f32_(0x800),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
+                        "legend":r.i32_(0x80c),"quest":game.globals.quest_item_state,"boss_dead":game.globals.boss_is_dead,
+                        "boss_health":usize::try_from(game.boss_crit_inst - 1).ok().and_then(|b| game.critters.get(b)).and_then(|c| c.as_ref()).map(|c| c.rec.f32_(0x4f4))}));
                 }
                 continue;
             }

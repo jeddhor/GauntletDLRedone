@@ -93,6 +93,8 @@ pub struct EffectNode {
     pub radius: f32,
     /// SfxSetParent to a player's node (psfx.rs): the effect follows it.
     pub parent: Option<EffectParent>,
+    /// SfxSetHitTarget's node (+0xe4): (critter, node index).
+    pub target: Option<(usize, usize)>,
 }
 
 /// An effect node parented to a player node: local position and rotation.
@@ -435,6 +437,7 @@ impl Game {
             start: atime,
             radius: 0.0,
             parent: None,
+            target: None,
         });
         let r = self.fx_mut(i);
         r.set_u32(0x14, 1);
@@ -1888,10 +1891,22 @@ impl Game {
         let mut moved = false;
         let mut splash = false;
         let flags = self.fx(i).u32_(fx::FLAGS);
-        if flags & 0x4000_0000 != 0 {
-            return unsupported("homing effect (0x40000000)");
-        }
-        if flags & 0xc000 != 0xc000 {
+        let homing = match (flags & 0x4000_0000 != 0, node.target) {
+            (true, Some((c, n))) if self.critters.get(c).is_some_and(Option::is_some) => {
+                // SfxSetHitTarget: steer at the target node at speed +0xa0.
+                let m = self.critter_node_world(c, n, None)?;
+                let mut d = [sub(m[12], from[0])?, sub(m[13], from[1])?, sub(m[14], from[2])?];
+                normal_vector(&mut d)?;
+                let speed = self.fx(i).f32_(fx::GRAVITY);
+                let v = [mul(d[0], speed)?, mul(d[1], speed)?, mul(d[2], speed)?];
+                self.fx_mut(i).set_v3(fx::VELOCITY, v);
+                to = [add(mul(v[0], spf)?, from[0])?, add(mul(v[1], spf)?, from[1])?, add(mul(v[2], spf)?, from[2])?];
+                moved = true;
+                true
+            }
+            _ => false,
+        };
+        if !homing && flags & 0xc000 != 0xc000 {
             let v = self.fx(i).v3(fx::VELOCITY);
             if v[0] != 0.0 || v[1] != 0.0 || v[2] != 0.0 {
                 to = [add(mul(v[0], spf)?, from[0])?, add(mul(v[1], spf)?, from[1])?, add(mul(v[2], spf)?, from[2])?];
