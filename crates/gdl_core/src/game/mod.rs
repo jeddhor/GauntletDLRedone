@@ -379,6 +379,13 @@ pub struct Game {
     pub world_dir: String,
     /// Lookouts 0x23bd20 / NumLookouts 0x23c720 (game/lookouts.rs).
     pub lookouts: Vec<lookouts::Lookout>,
+    /// Milestones 0x238510 (+0x30 position): AddLocatorInstList's kind-5
+    /// locators through add_arrow(0, …) (FloorPos(y, 0.2, position, 0) + 0.5).
+    pub milestones: Vec<[f32; 3]>,
+    /// PlayerStartPos 0x22c158 / PlayerStartYaw 0x22c164 (the level-start
+    /// placement) and PlayerInitStartPos[0] 0x234450 (the id-0 start locator).
+    pub player_start: ([f32; 3], f32),
+    pub player_init_start: [f32; 3],
     pub sounds: sound::SoundTables,
     pub log: setup::FrameLog,
 }

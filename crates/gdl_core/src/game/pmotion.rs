@@ -77,7 +77,8 @@ impl Game {
         let mut item: Option<usize> = None; // piStack_114
         let mut bounce = 0; // iStack_fc
         if self.players[p].v3(0x20).iter().chain(self.players[p].v3(0x30).iter()).chain(self.players[p].v3(0x40).iter()).any(|v| v.is_nan()) {
-            return unsupported("PlayerMotion CheckMat4 failure (get_player_pos)");
+            // FatalErrorC (non-fatal on retail) then get_player_pos.
+            self.get_player_pos(p)?;
         }
         self.players[p].and_u16(0x93c, 0xfffe);
         let cam = add(atan2f(self.globals.camera_90, self.globals.camera_98)?, PI)?;
@@ -190,7 +191,7 @@ impl Game {
             d[2] = c(z);
         }
         if self.players[p].f32_(0x54) <= self.globals.world_bottom {
-            return unsupported("PlayerMotion below WldBtm (get_player_pos respawn)");
+            self.get_player_pos(p)?;
         }
         let request = d;
         self.players[p].set_v3(0x860, d);

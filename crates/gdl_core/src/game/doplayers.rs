@@ -59,6 +59,9 @@ impl Game {
     /// Single-player level-start placement on the record (get_player_pos'
     /// PlayerStartPos path: FloorPos(y, 0.5, position, 1), the start yaw).
     pub fn place_player(&mut self, p: usize, start: V3, yaw: f32) -> R<()> {
+        // HYPOTHESIS: SetPlayerStartPos leaves PlayerStartPos/Yaw at the
+        // chosen start locator (the placement inputs).
+        self.player_start = (start, yaw);
         let (y, hit) = self.collision.floor_pos(start[1], 0.5, start, 1).map_err(|e| Unsupported(e.0.to_string()))?;
         let r = &mut self.players[p];
         r.set_v3(0x50, [start[0], y, start[2]]);
@@ -219,6 +222,97 @@ impl Game {
         };
         self.players[p].set_i16(0x1ce, v);
         0
+    }
+
+    /// test_location 0x14cc40(radius, position): FloorPos(WldBtm, r/2, pos,
+    /// 1) must hit within 3 of the position's y; then y takes the floor.
+    fn test_location(&mut self, r: f32, pos: &mut V3) -> R<bool> {
+        let wb = self.globals.world_bottom;
+        let (y, hit) = self.collision.floor_pos(wb, mul(r, 0.5)?, *pos, 1).map_err(|e| Unsupported(e.0.to_string()))?;
+        if hit.is_none() || 3.0 < sub(y, pos[1])?.abs() {
+            return Ok(false);
+        }
+        pos[1] = y;
+        Ok(true)
+    }
+
+    /// get_player_pos 0x14cef8(player, 0) outside the stage start: beside
+    /// another living player (Unsupported: try_location's screen test), or
+    /// at PlayerStartPos (then the 16 new_offset probes, then
+    /// PlayerInitStartPos[0]) with the start yaw.
+    pub(crate) fn get_player_pos(&mut self, p: usize) -> R<()> {
+        self.players[p].set_u32(0x89c, 0);
+        self.player_floor_parent[p] = None;
+        if !matches!(self.players[p].i32_(0xfc), 1 | 4) {
+            return Ok(());
+        }
+        self.get_obj_world_mat(p)?;
+        self.rng.rand_int(4);
+        if self.globals.game_mode == 0x400c || self.globals.start_of_stage != 0 {
+            return super::unsupported("get_player_pos at the stage start (player spreading)");
+        }
+        if (0..4).any(|k| k != p && matches!(self.players[k].i32_(0xfc), 1 | 4 | 8) && !self.player_clips[k].is_empty()) {
+            return super::unsupported("get_player_pos beside another player (try_location)");
+        }
+        // new_offset 0x234120 (16 × (x, z), ELF data).
+        const NEW_OFFSET: [[f32; 2]; 16] = [
+            [-2.0, -2.0], [-2.0, 0.0], [-2.0, 2.0], [0.0, -2.0], [0.0, 2.0], [2.0, -2.0], [2.0, 0.0], [2.0, 2.0],
+            [-2.0, -1.0], [-2.0, 1.0], [-1.0, -2.0], [-1.0, 2.0], [1.0, -2.0], [1.0, 2.0], [2.0, -1.0], [2.0, 1.0],
+        ];
+        let (start, yaw) = self.player_start;
+        let r = add(self.players[p].f32_(0x828), 0.5)?;
+        let mut pos = start;
+        if !self.test_location(r, &mut pos)? {
+            let mut found = false;
+            for o in NEW_OFFSET {
+                pos = [add(mul(r, o[0])?, start[0])?, start[1], add(mul(r, o[1])?, start[2])?];
+                if self.test_location(r, &mut pos)? {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                pos = self.player_init_start;
+            }
+        }
+        let (y, _) = self.collision.floor_pos(pos[1], 0.5, pos, 1).map_err(|e| Unsupported(e.0.to_string()))?;
+        self.players[p].set_f32(0x88c, y);
+        let mut m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        crate::collision::yaw_mat3(&mut m, yaw)?;
+        let r = &mut self.players[p];
+        for (i, row) in m.iter().enumerate() {
+            r.set_v3(0x20 + 0x10 * i, *row);
+            r.set_f32(0x2c + 0x10 * i, 0.0);
+        }
+        r.set_v3(0x50, [pos[0], y, pos[2]]);
+        r.set_f32(0x5c, 1.0);
+        r.set_v3(0xd8, [0.0, yaw, 0.0]);
+        r.set_u32(0x1dc, 0);
+        self.update_player_world_mat(p, false)
+    }
+
+    /// update_player_milestone 0x150fb8: the milestones within 3.5 (y) and
+    /// 4.5 (xz) push onto the five-entry history +0x950 (newest first). The
+    /// ShowMilestones debug arrows are presentation.
+    fn update_player_milestone(&mut self, p: usize) -> R<()> {
+        let pos = self.players[p].v3(0x50);
+        for i in 0..self.milestones.len() {
+            let m = self.milestones[i];
+            let d = [sub(pos[0], m[0])?, sub(pos[1], m[1])?, sub(pos[2], m[2])?];
+            if !(d[1].abs() < 3.5) || !(crate::vu0::fqdist(d[0], d[2])?.0 < 4.5) {
+                continue;
+            }
+            let last = self.players[p].i32_(0x950);
+            if 0 <= last && last == i as i32 {
+                continue;
+            }
+            for k in (1..5).rev() {
+                let v = self.players[p].i32_(0x950 + 4 * (k - 1));
+                self.players[p].set_i32(0x950 + 4 * k, v);
+            }
+            self.players[p].set_i32(0x950, i as i32);
+        }
+        Ok(())
     }
 
     fn player_selecting(&self, p: usize) -> bool {
@@ -411,7 +505,7 @@ impl Game {
                             self.players[k].set_i16(0x1d0, v.max(0));
                             // WriteName (the HUD name banner) is presentation.
                         }
-                    self.log.note("do_players", &Unsupported("update_player_milestone (Milestones table not built)".into()));
+                    self.update_player_milestone(k)?;
                     self.player_process_powerups(k)?;
                     self.player_motion(k)?;
                     let t = self.players[k].f32_(0x910);

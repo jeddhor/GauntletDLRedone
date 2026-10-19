@@ -434,6 +434,9 @@ impl Game {
             player_grab: [None; 4],
             mb_objects: inp.mb_objects,
             lookouts: super::lookouts::build(&inp.world.locators),
+            milestones: Vec::new(),
+            player_start: inp.world.locators.iter().find(|l| l.kind == 7 && l.id == 0).map_or(([0.0; 3], 0.0), |l| (l.position, l.rotation[1])),
+            player_init_start: inp.world.locators.iter().find(|l| l.kind == 7 && l.id == 0).map_or([0.0; 3], |l| l.position),
             enemy_slot_names: (0..8)
                 .map(|k| {
                     let name = types.data[k].and_then(|d| inp.wdata.enemies.get(d)).map(|e| {
@@ -524,6 +527,15 @@ impl Game {
         // The culling view comes from the StdCam once start_camera runs
         // (init_next_level: StdCamInit after the players are placed).
         game.camera_rest = Some(s.camera.clone());
+        // AddLocatorInstList: milestones (kind 5, at most 0x80; FatalErrorC past it).
+        for l in inp.world.locators.iter().filter(|l| l.kind == 5) {
+            if 0x80 <= game.milestones.len() {
+                return Err("more than 0x80 milestones (FatalErrorC)".into());
+            }
+            let (y, _) = game.collision.floor_pos(l.position[1], f32::from_bits(0x3e4c_cccd), l.position, 0)?;
+            let y = crate::numeric::add_guarded_rz(y, 0.5)?;
+            game.milestones.push([l.position[0], y, l.position[2]]);
+        }
         // AddLocatorInstList: LinkTriggerToCam for the kind-9 locators.
         game.link_trigger_cameras().map_err(|e| format!("LinkTriggerToCam: {}", e.0))?;
         if game.globals.cur_world == 0xd {
