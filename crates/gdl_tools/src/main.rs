@@ -856,6 +856,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 c.rec.set_f32(0x4f4, h);
             }
         }
+        if let Some(path) = opts.get("pdata") {
+            // PDATA/<CLS>.WAD of player 0's class: the SFXX/DAMG tables.
+            let data = gdl_formats::pdata::PlayerData::parse(&bounded_read(Path::new(path), 1024 * 1024)?)?;
+            game.classes[0].sfxx = data.chunk("SFXX").map(|c| c.bytes.clone()).unwrap_or_default();
+            game.classes[0].damg = data.chunk("DAMG").map(|c| c.bytes.clone()).unwrap_or_default();
+        }
         if let Some(n) = opts.get("potions") {
             // DEBUG override recorded in the report scope.
             game.players[0].set_i32(0x1a18, n.parse()?);

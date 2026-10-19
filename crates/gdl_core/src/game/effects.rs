@@ -91,6 +91,16 @@ pub struct EffectNode {
     pub start: f32,
     /// Current blast radius of an area effect (presentation reads it).
     pub radius: f32,
+    /// SfxSetParent to a player's node (psfx.rs): the effect follows it.
+    pub parent: Option<EffectParent>,
+}
+
+/// An effect node parented to a player node: local position and rotation.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct EffectParent {
+    pub player: usize,
+    pub local: V3,
+    pub local_matrix: [V3; 3],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -424,6 +434,7 @@ impl Game {
             visual,
             start: atime,
             radius: 0.0,
+            parent: None,
         });
         let r = self.fx_mut(i);
         r.set_u32(0x14, 1);
@@ -1849,6 +1860,20 @@ impl Game {
     }
 
     fn process_effect(&mut self, i: usize) -> R<()> {
+        if let Some(Some(par)) = self.effects.nodes[i].map(|n| n.parent) {
+            // The parent node's world transform this update (psfx.rs HYPOTHESIS).
+            let r = &self.players[par.player];
+            let rows = [r.v3(0x20), r.v3(0x30), r.v3(0x40)];
+            let base = r.v3(0x50);
+            let col = |v: V3, c: usize| -> R<f32> { Ok(add(add(mul(v[0], rows[0][c])?, mul(v[1], rows[1][c])?)?, mul(v[2], rows[2][c])?)?) };
+            let w = [add(col(par.local, 0)?, base[0])?, add(col(par.local, 1)?, base[1])?, add(col(par.local, 2)?, base[2])?];
+            let lm = par.local_matrix;
+            let m = [[col(lm[0], 0)?, col(lm[0], 1)?, col(lm[0], 2)?], [col(lm[1], 0)?, col(lm[1], 1)?, col(lm[1], 2)?], [col(lm[2], 0)?, col(lm[2], 1)?, col(lm[2], 2)?]];
+            if let Some(n) = self.effects.nodes[i].as_mut() {
+                n.position = w;
+                n.matrix = m;
+            }
+        }
         let Some(node) = self.effects.nodes[i] else { return Ok(()) };
         let spf = self.globals.spf;
         let atime = self.globals.atime;

@@ -44,6 +44,12 @@ pub struct ClassData {
     /// +0x5c and +0x158: PlayerStartMissile origin offsets (modes 1 and 2).
     pub missile_origin_5c: [f32; 3],
     pub missile_origin_158: [f32; 3],
+    /// PlayerData +4 / +8: the class WAD's SFXX (0x50 per entry) and DAMG
+    /// (0x58 per entry) tables (empty when not loaded).
+    #[serde(default, with = "super::record::hex_bytes")]
+    pub sfxx: Vec<u8>,
+    #[serde(default, with = "super::record::hex_bytes")]
+    pub damg: Vec<u8>,
 }
 
 impl ClassData {
@@ -60,6 +66,8 @@ impl ClassData {
             powerup_time_58: f(0x58),
             missile_origin_5c: [f(0x5c), f(0x60), f(0x64)],
             missile_origin_158: [f(0x158), f(0x15c), f(0x160)],
+            sfxx: Vec::new(),
+            damg: Vec::new(),
         })
     }
 }

@@ -25,6 +25,7 @@ pub mod players;
 pub mod powerups;
 pub mod profile;
 pub mod progress;
+pub mod psfx;
 pub mod record;
 pub mod setup;
 pub mod tower;
@@ -217,6 +218,8 @@ pub enum Event {
     /// player_lightrad/attn at the attention point + player_lightdy, colour
     /// player_light_color[+4].
     PlayerLight { player: usize },
+    /// SetAmbientSpecial(1/30, value): the class special's ambient flash.
+    AmbientSpecial { value: f32 },
 }
 
 pub struct Game {
@@ -291,6 +294,8 @@ pub struct Game {
     pub transporter_floor_y: Option<f32>,
     /// player_water_wobj / player_water_y 0x2341f0/0x2341f4.
     pub player_water: Option<(usize, f32)>,
+    /// partner_parent (PlyrSfxDoDamage → DoPlyrSfxSub's flag 0x2000 owner).
+    pub partner_parent: Option<usize>,
     pub item_anims: Vec<Option<item_runtime::ItemAnim>>,
     /// Culling view (MBWorldSphereClip inputs) derived from the StdCam.
     pub camera: Option<item_runtime::Camera>,

@@ -229,6 +229,8 @@ struct Front {
     elf_bytes: Vec<u8>,
     tables: ClassTables,
     pdats: profile::Pdats,
+    /// Per class: the PDATA WAD's SFXX and DAMG chunks.
+    class_fx: Vec<(Vec<u8>, Vec<u8>)>,
     /// PlayerMissileDesc 0x24db80: per class "<NAME>\0" + ten tier chars.
     missile_desc: Vec<Vec<u8>>,
     heart_rate: u8,
@@ -1665,7 +1667,13 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             finished: None,
             slot,
             controls,
-            class_data: ClassData::from_pdat(front.pdats.get(class).ok_or("PDAT")?)?,
+            class_data: {
+                let mut c = ClassData::from_pdat(front.pdats.get(class).ok_or("PDAT")?)?;
+                let (sfxx, damg) = front.class_fx.get(class as usize).cloned().unwrap_or_default();
+                c.sfxx = sfxx;
+                c.damg = damg;
+                c
+            },
             pdats: front.pdats.clone(),
             heart_rate: front.heart_rate,
             sfx: ch.sfx_name.clone(),
@@ -2101,9 +2109,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         Path::new(cat_cfg["root"].as_str().ok_or("catalog root")?),
     )?;
     let mut pdats = Vec::new();
+    let mut class_fx = Vec::new();
     for tag in &gdl_core::player_class::CLASS_TAGS[..16] {
         let label = format!("PDATA/{}.WAD", tag.to_uppercase());
-        pdats.push(gdl_formats::pdata::PlayerData::parse(&catalog.read(&label)?)?.pdat);
+        let data = gdl_formats::pdata::PlayerData::parse(&catalog.read(&label)?)?;
+        // PlayerData +4/+8: the SFXX and DAMG chunks (LoadPlyrData).
+        let chunk = |t: &str| data.chunk(t).map(|c| c.bytes.clone()).unwrap_or_default();
+        class_fx.push((chunk("SFXX"), chunk("DAMG")));
+        pdats.push(data.pdat);
     }
     let start: Value = serde_json::from_slice(&gdl_client::bounded_read(&p("game_start")?)?)?;
     // The PS2 savestate capture's player 0 save region (import source).
@@ -2144,6 +2157,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         elf_bytes,
         tables,
         pdats: profile::Pdats(pdats),
+        class_fx,
         missile_desc,
         heart_rate,
         capture,

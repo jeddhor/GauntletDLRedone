@@ -79,10 +79,10 @@ def main():
         if t in kinds and t >= 0:
             prefixes[t] = rec[0x14:0x24].split(b'\0')[0].decode()
     monsters = [(t, p) for t, p in prefixes.items() if f'MONSTERS/{p}/ANIM.PS2' in known]
-    ia, wp, pw, clips, rom, *mons = resolve([items, 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2',
-                                             'AUDIO/AUDATPS2.ROM'] + [f'MONSTERS/{p}/ANIM.PS2' for _, p in monsters])
+    ia, wp, pw, clips, rom, pdata, *mons = resolve([items, 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2',
+                                                    'AUDIO/AUDATPS2.ROM', 'PDATA/SOR.WAD'] + [f'MONSTERS/{p}/ANIM.PS2' for _, p in monsters])
     cmd = [TOOLS, 'game-run', str(w), str(wd), str(index), str(ELF), GAME_START, str(ia),
-           str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}']
+           str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}', f'pdata={pdata}']
     cmd += [f'{t}={path}:{p}' for (t, p), path in zip(monsters, mons)]
     # HYPOTHESIS: the MBOX object tables loaded for the level (the original
     # load list is not traced); used by MBOX_FindObject_Sub lookups.

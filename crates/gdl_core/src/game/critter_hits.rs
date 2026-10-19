@@ -652,6 +652,10 @@ impl Game {
     }
 
     /// SfxSetPhysics 0x17e000 (velocity orientation is presentation).
+    pub(crate) fn sfx_set_physics_pub(&mut self, k: usize, gravity: f32, radius: f32, vel: Option<V3>, spin: Option<V3>) {
+        self.sfx_set_physics(k, gravity, radius, vel, spin)
+    }
+
     fn sfx_set_physics(&mut self, k: usize, gravity: f32, radius: f32, vel: Option<V3>, spin: Option<V3>) {
         let r = self.fx_mut(k);
         if let Some(v) = vel {

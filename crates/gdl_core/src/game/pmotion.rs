@@ -41,18 +41,20 @@ impl Game {
     }
 
     /// The 0x89 / 0x8f team-move contact damage (PlayerDamageItem with
-    /// PlyrSfxDoDamage of the partner's class sfx +0x20).
-    fn team_move_item_hit(&mut self, p: usize, cur: u32, item: usize) -> R<()> {
+    /// PlyrSfxDoDamage of the partner's class DAMG +0x20 at the contact).
+    fn team_move_item_hit(&mut self, p: usize, cur: u32, item: usize, at: V3) -> R<()> {
         let dmg = if cur == 0x89 { 50.0 } else { 10.0 };
         self.player_damage_item(dmg, p, item, 0x20)?;
-        self.team_move_sfx(p)
+        self.team_move_sfx(p, at)
     }
 
-    fn team_move_sfx(&mut self, p: usize) -> R<()> {
-        if let Some(k) = ptr(self.players[p].u32_(0x690))
-            && 0 <= self.class_sfx(k, 0x20)
-        {
-            return unsupported("PlyrSfxDoDamage for a team move");
+    /// PlyrSfxDoDamage(−1, 1, partner, PlayerData[partner] +0x20, player, at).
+    fn team_move_sfx(&mut self, p: usize, at: V3) -> R<()> {
+        if let Some(k) = ptr(self.players[p].u32_(0x690)) {
+            let d = self.class_sfx(self.players[k].u32_(0) as usize, 0x20);
+            if 0 <= d {
+                self.plyr_sfx_do_damage(-1.0, 1.0, k, d, Some(p), Some(at))?;
+            }
         }
         Ok(())
     }
@@ -222,7 +224,7 @@ impl Game {
                             d[2] = 0.0;
                         }
                         if cur == 0x89 || cur == 0x8f {
-                            self.team_move_item_hit(p, cur, it)?;
+                            self.team_move_item_hit(p, cur, it, out)?;
                             bounce = 1;
                         }
                     }
@@ -372,7 +374,7 @@ impl Game {
                             d[2] = 0.0;
                         }
                         if cur == 0x89 || cur == 0x8f {
-                            self.team_move_item_hit(p, cur, it)?;
+                            self.team_move_item_hit(p, cur, it, to)?;
                             bounce = 1;
                         }
                     }
@@ -429,7 +431,7 @@ impl Game {
                                     let dmg = if cur == 0x89 { 50.0 } else { 20.0 };
                                     let r = self.player_damage_target(dmg, 1.0, p, e, 0x20, Some(out2), false)?;
                                     if 0 <= r {
-                                        self.team_move_sfx(p)?;
+                                        self.team_move_sfx(p, out2)?;
                                     }
                                     if crit4 || critter {
                                         bounce = 1;
@@ -1267,9 +1269,15 @@ impl Game {
             _ => return Ok(()),
         };
         let k = self.players[p].u32_(0) as usize;
+        let prev = self.players[p].f32_(0x974);
+        let frame = self.players[p].f32_(0xac);
+        let partner = ptr(self.players[p].u32_(0x690));
+        // 0x58: StartComboFX at the partner (presentation) when the action
+        // starts (+0x974 < 0, frame ≥ 0).
         for o in off.into_iter().filter(|&o| o != 0) {
-            if 0 <= self.class_sfx(k, o) {
-                return unsupported(format!("PlyrSfxDoDamage (class sfx +{o:#x}, action {:#x})", self.players[p].u32_(0x1e0)));
+            let d = self.class_sfx(k, o);
+            if 0 <= d {
+                self.plyr_sfx_do_damage(prev, frame, p, d, partner, None)?;
             }
         }
         Ok(())

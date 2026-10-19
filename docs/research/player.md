@@ -75,10 +75,26 @@ updates); moving-floor parents use the translation-only UnparentMatrix form.
 - Not covered by the trace: melee (no enemy in reach), magic/potions,
   powerups, knockback, transporters, moving floors, team moves, enemies.
 
+## Class effects (game/psfx.rs)
+
+PlyrSfxDoDamage/PlyrSfxDoDamageSub/DoPlyrSfx/DoPlyrSfxSub port the class
+special attacks (actions 0x23/0x25/0x3c/0x54/0x56/0x57/0x58/0x5a/99/0x7b)
+and the team-move contact effects from the PDATA WAD's DAMG and SFXX
+chunks; process_effect applies their damage. HYPOTHESIS: effects parented
+to the player's node follow the record matrix (the animated child node's
+pose is not applied). Not trace-checked yet.
+
+## Numeric domain
+
+EE FPU and VU arithmetic flush subnormal results to signed zero and read
+subnormal operands as zero (the reference's DenormalsAreZero sets DAZ and
+FTZ; upstream claim from the pinned PCSX2 source). A knockback velocity
+decaying by ×0.667 per update reaches that range after a few hundred
+updates.
+
 ## Unported (Unsupported when reached)
 
-PlyrSfxDoDamage (class special effects for actions 0x23/0x25/0x3c/0x54/0x56/
-0x57/0x58/0x5a/99/0x7b), team moves (0x58..0x5a, 0x88..0x93, PlayerSetParent/
+Team moves (0x58..0x5a, 0x88..0x93, PlayerSetParent/
 PlayerFacePlayer), the legend item (+0x80c, QuestWeaponSfx, finale), thunder
 hammer / breath / familiar events (0x2000000, 0x1000000, 0x10000000 with
 +0x138 0x80), PlayerDamagePlayer (versus), get_player_pos respawn (world

@@ -358,6 +358,7 @@ impl Game {
             player_node: [None; 4],
             transporter_floor_y: None,
             player_water: None,
+            partner_parent: None,
             item_anims: vec![None; item_count],
             camera: None,
             camera_rest: None,
