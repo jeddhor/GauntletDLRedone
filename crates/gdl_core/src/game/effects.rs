@@ -113,6 +113,9 @@ pub enum Visual {
     Header(usize),
     /// EnemyMissileTree[type][kind] ("<PREFIX>_ARROW/BOMB/FBALL").
     EnemyMissile { t: i32, kind: u8 },
+    /// FamiliarSpit[player] (the class SFX package's FAMILIAR_SPIT) or, for
+    /// the phoenix, weapon_anim's PHOENIX_FBALL.
+    Familiar { player: usize, phoenix: bool },
 }
 
 /// Static ELF tables read by the missile code.

@@ -560,7 +560,11 @@ impl Game {
                     if matches!(self.globals.game_mode, 0x4013 | 0x4017) {
                         if !self.player_clips[k].is_empty() {
                             self.do_player_action(k)?;
-                            return unsupported("PlayerProcessFamiliar / PlayerProcessScale (boss state 5)");
+                            // PlayerProcessFamiliar (the +0x720 tree marker)
+                            // and PlayerProcessScale (node scale, derived by
+                            // player_scale): presentation-side here.
+                            let lvl = self.players[k].i32_(0x2ac0);
+                            self.players[k].set_u32(0x720, u32::from(0x1e <= lvl));
                         }
                         result = false;
                     } else if self.globals.end_of_stage < 2 && self.globals.skip_wave == 0 && self.globals.quit_level == 0 {

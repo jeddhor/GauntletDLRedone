@@ -1285,7 +1285,9 @@ fn present_world(
                         let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| missile_parts(&sources, &libs, &session.throw));
                         (Some(key), parts, tf)
                     }
-                    Visual::Header(_) => {
+                    // Header and familiar effect trees are not drawn yet
+                    // (rendering work item, docs/state.md step 4).
+                    Visual::Header(_) | Visual::Familiar { .. } => {
                         *vis = Visibility::Hidden;
                         continue;
                     }

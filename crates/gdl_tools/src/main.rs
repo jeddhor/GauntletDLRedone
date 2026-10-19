@@ -862,6 +862,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             game.classes[0].sfxx = data.chunk("SFXX").map(|c| c.bytes.clone()).unwrap_or_default();
             game.classes[0].damg = data.chunk("DAMG").map(|c| c.bytes.clone()).unwrap_or_default();
         }
+        if let Some(v) = opts.get("plevel") {
+            // DEBUG: player 0's level (+0x2ac0).
+            game.players[0].set_i32(0x2ac0, v.parse()?);
+        }
         if opts.contains_key("legend") {
             // DEBUG: player 0 holds this world's legend item (class word +0xcf4);
             // GauntWorldInit's check then runs as at a level start.

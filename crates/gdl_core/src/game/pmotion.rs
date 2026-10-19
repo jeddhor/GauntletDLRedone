@@ -1310,16 +1310,60 @@ impl Game {
         let ev = self.players[p].u32_(0x8d8);
         let r138 = self.players[p].u32_(0x138);
         if ev & 0x200_0000 != 0 {
-            return unsupported("thunder hammer event (0x2000000)");
+            // The thunder hammer: StartFXSub(0, 0x1c, 0, 0x2a, 0x880) on the
+            // player's tree, SfxSetDamage(100, 35, 0.1, …, 0x20).
+            let k = self.start_fx_sub(0.0, 0x1c, None, 0x2a)?;
+            if 0 <= k {
+                self.parent_fx_to_player(k as usize, p, [0.0; 3]);
+                self.sfx_set_damage(k as usize, 100.0, 35.0, f32::from_bits(0x3dcc_cccd), 0x20, me + 1);
+            }
+            self.players[p].and_u32(0x8d8, 0xfdff_ffff);
+            self.player_use_powerup(1.0, p, 5, 0x1000_0000)?;
+            self.shake_camera(f32::from_bits(0x3e99_999a), 0, 0, 0x1e, 200);
+            self.audio("AudioThunderHammer", Some(p), 0);
         }
-        if ev & 0x100_0000 != 0 {
-            return unsupported("breath powerup event (0x1000000)");
+        if self.players[p].u32_(0x8d8) & 0x100_0000 != 0 {
+            // Breath weapons (+0x138): horn/mask 0x38, fire 0x34, electric
+            // 0x35, acid 0x36.
+            let (header, damage, flags) = if r138 & 0x3000 != 0 {
+                (0x38, 50.0, 0x21)
+            } else if r138 & 0x410 != 0 {
+                (0x34, 40.0, 0x21)
+            } else if r138 & 0x20 != 0 {
+                (0x35, 40.0, 0x24)
+            } else if r138 & 0x40 != 0 {
+                (0x36, 40.0, 0x22)
+            } else {
+                (0, 0.0, 0)
+            };
+            if header != 0 {
+                let k = self.start_fx_sub(0.0, header, None, 0x2a)?;
+                if 0 <= k {
+                    self.sfx_set_damage(k as usize, damage, 20.0, 0.0, flags, me + 1);
+                    let cue = if r138 & 0x3000 == 0 { "AudioPlayerBreath" } else if r138 & 0x1000 != 0 { "AudioHorn" } else { "AudioMask" };
+                    self.audio(cue, Some(p), 0);
+                    if r138 & 0x400 != 0 && self.players[p].u32_(0x768) != 0 {
+                        // The turbo dragon's own head node (powerup model).
+                        let t = sub(self.players[p].f32_(0x800), self.players[p].f32_(0x8e8))?;
+                        self.players[p].set_f32(0x800, t);
+                        self.players[p].set_f32(0x8e8, 0.0);
+                        self.audio("AudioPlayerTurbo", Some(p), 0);
+                    }
+                    // SfxSetParent(+0x6ac head node). HYPOTHESIS: the head sits
+                    // at the attention offset +0x810.
+                    let head = self.players[p].v3(0x810);
+                    self.parent_fx_to_player(k as usize, p, head);
+                    self.fx_mut(k as usize).set_f32(super::effects::fx::CONE, f32::from_bits(0x3f5d_b22d));
+                    self.player_use_powerup(1.0, p, 9, 0x70)?;
+                }
+            }
+            self.players[p].and_u32(0x8d8, 0xfeff_ffff);
         }
         let f1f0 = [sinf(facing)?, 0.0, cosf(facing)?];
         let mut ev = self.players[p].u32_(0x8d8);
         if ev & 0x1000_0000 != 0 {
             if r138 & 0x80 != 0 || self.players[p].u32_(0x720) != 0 {
-                return unsupported("StartFamiliarFireBall (familiar / +0x720)");
+                self.familiar_fireball(p, dist, f1f0, *aim, *target, *item)?;
             }
             self.players[p].and_u32(0x8d8, 0xefff_ffff);
             ev = self.players[p].u32_(0x8d8);
@@ -1468,6 +1512,72 @@ impl Game {
             self.players[p].and_u32(0x8d8, 0xfff9_ffff);
         }
         Ok(())
+    }
+
+    /// SfxSetParent(effect, player node) with a local offset.
+    pub(crate) fn parent_fx_to_player(&mut self, k: usize, p: usize, local: V3) {
+        if let Some(n) = self.effects.nodes[k].as_mut() {
+            n.parent = Some(super::effects::EffectParent { player: p, local, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] });
+        }
+    }
+
+    /// The familiar's fireball (0x14b940..0x14ba40, StartFamiliarFireBall
+    /// 0x17e370): from the class offset PDAT +0x170 in the player's frame,
+    /// GetAttackDir with charge 0.03, CalcTargetDir(50, 0.02, 10 / 0, −0.5 / 0).
+    fn familiar_fireball(&mut self, p: usize, dist: f32, facing: V3, aim: V3, target: i32, item: Option<usize>) -> R<()> {
+        let _ = dist;
+        let me = self.players[p].u32_(0) as usize;
+        let raw = self.classes[me].raw.clone();
+        let f = |o: usize| f32::from_le_bytes(raw[o..o + 4].try_into().unwrap());
+        // The tree's node scale (+0x40..+0x48): PlayerProcessScale's value.
+        let sc = self.player_scale(p);
+        let off = [mul(f(0x170), sc)?, mul(f(0x174), sc)?, mul(f(0x178), sc)?];
+        let r = &self.players[p];
+        let rows = [r.v3(0x20), r.v3(0x30), r.v3(0x40)];
+        let base = r.v3(0x50);
+        let col = |c: usize| -> R<f32> { Ok(add(add(mul(off[0], rows[0][c])?, mul(off[1], rows[1][c])?)?, mul(off[2], rows[2][c])?)?) };
+        let start = [add(col(0)?, base[0])?, add(col(1)?, base[1])?, add(col(2)?, base[2])?];
+        let mut dir = aim;
+        let flags = self.players[p].u32_(0x130);
+        let k = self.get_attack_dir(f32::from_bits(0x3cf5_c28f), p, facing, &mut dir, flags, target, item)?;
+        let mut vel = [mul(k, dir[0])?, mul(k, dir[1])?, mul(k, dir[2])?];
+        let gravity = if self.globals.boss_type < 0 {
+            super::effects::calc_target_dir(50.0, f32::from_bits(0x3ca3_d70a), 10.0, -0.5, &mut vel)?;
+            10.0
+        } else {
+            super::effects::calc_target_dir(50.0, f32::from_bits(0x3ca3_d70a), 0.0, 0.0, &mut vel)?;
+            0.0
+        };
+        let (kind, damage) = if self.players[p].u32_(0x138) & 0x80 == 0 {
+            let lvl = self.players[p].i32_(0x2ac0);
+            (me, add(mul((lvl - 0x19) as f32, f32::from_bits(0x3dcc_cccd))?, 2.5)?)
+        } else {
+            (4, 10.0)
+        };
+        // StartFXTree(3, FamiliarSpit[kind], start, 0x101000e, 0x880).
+        let visual = super::effects::Visual::Familiar { player: me, phoenix: kind == 4 };
+        let fx = self.start_fx_tree(3.0, visual, 0, 0, Some(start), 0x101_000e)?;
+        let v = [mul(35.0, vel[0])?, mul(35.0, vel[1])?, mul(35.0, vel[2])?];
+        self.sfx_set_physics_pub(fx, gravity, 1.0, Some(v), None);
+        // fam_dmg_type 0x240818: 0 for the class familiars, 0x11 for the phoenix.
+        let dtype = if kind == 4 { 0x11 } else { 0 };
+        self.sfx_set_damage(fx, damage, 0.0, 0.0, dtype, me as i16 + 1);
+        Ok(())
+    }
+
+    /// PlayerProcessScale's node scale: class 0xc 1.6, the giant powerup
+    /// (+0x138 0x100) 1.3, level > 98 1.2, otherwise 1.
+    pub(crate) fn player_scale(&self, p: usize) -> f32 {
+        let r = &self.players[p];
+        if r.u32_(0xc) == 0xc {
+            f32::from_bits(0x3fcc_cccd)
+        } else if r.u32_(0x138) & 0x100 != 0 {
+            f32::from_bits(0x3fa6_6666)
+        } else if 0x62 < r.i32_(0x2ac0) {
+            f32::from_bits(0x3f99_999a)
+        } else {
+            1.0
+        }
     }
 
     /// The team-move parenting switch on the class (0x14c44c).

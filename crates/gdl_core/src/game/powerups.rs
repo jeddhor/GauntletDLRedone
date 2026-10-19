@@ -142,6 +142,10 @@ impl Game {
                 _ => {}
             }
         }
+        // PlayerProcessFamiliar: the familiar tree +0x720 exists from level
+        // 30 (native marker 1; the tree itself is presentation).
+        let lvl = r.i32_(0x2ac0);
+        r.set_u32(0x720, u32::from(0x1e <= lvl));
         // The model/tree branch is presentation; in every path it ends with
         // +0x140 = +0x13c.
         let v = r.u32_(0x13c);
