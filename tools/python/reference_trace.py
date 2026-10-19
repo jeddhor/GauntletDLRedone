@@ -51,6 +51,7 @@ def main():
     parser.add_argument('--schedule', type=pathlib.Path, help='JSON list of bounded steps/keys segments')
     parser.add_argument('--animation', action='store_true', help='capture fixture-qualified SOR animation cache records')
     parser.add_argument('--movement', action='store_true', help='capture raw slot-0 player record, controls and camera block')
+    parser.add_argument('--stdcam', action='store_true', help='capture StdCamera, pb camera block, window record and camera inputs')
     parser.add_argument('--leave-held', action='store_true',
                         help='diagnostic: keep final keys held after the last step for a following debugger stop. '
                              'Release them with keyup while the render window has focus; releases delivered to '
@@ -115,6 +116,11 @@ def main():
                 from reference_animation import cache_probe
                 capture_animation, pose_regions = cache_probe(memory, profile)
                 regions.extend(pose_regions)
+            capture_stdcam = None
+            if args.stdcam:
+                from reference_stdcam import stdcam_probe
+                capture_stdcam, stdcam_regions = stdcam_probe(memory)
+                regions.extend(stdcam_regions)
             capture_movement = None
             if args.movement:
                 from reference_movement import movement_probe
@@ -135,6 +141,8 @@ def main():
                 samples[0]['animation'] = capture_animation(read)
             if capture_movement:
                 samples[0]['movement'] = capture_movement(read)
+            if capture_stdcam:
+                samples[0]['stdcam'] = capture_stdcam(read)
             for step, wanted in enumerate(step_keys, start=1):
                 for key in list(held):
                     if key not in wanted:
@@ -164,6 +172,8 @@ def main():
                     samples[-1]['animation'] = capture_animation(read)
                 if capture_movement:
                     samples[-1]['movement'] = capture_movement(read)
+                if capture_stdcam:
+                    samples[-1]['stdcam'] = capture_stdcam(read)
             report = dict(schema_version=2, source_profile=source['profile_id'], fixture_sha256=fixture_hash,
                           launch=launch, transport='Xvfb keyboard F10 + paused PINE; one verified vblank per step',
                           alignment='emulator vblank boundary, not a guaranteed guest-update edge',

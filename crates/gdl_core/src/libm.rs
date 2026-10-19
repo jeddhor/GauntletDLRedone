@@ -1,6 +1,6 @@
 //! Single-precision libm subset matching the SLUS-20047 ELF's atan2f/atanf/
-//! sinf/cosf instruction sequences (EE 0x1e7b50/0x1e9db0, 0x1e6eb8, 0x1e7350,
-//! 0x1e7160, reduction 0x1eae30, kernels 0x1ebdf0/0x1eb348). Their structure is
+//! sinf/cosf/tanf instruction sequences (EE 0x1e7b50/0x1e9db0, 0x1e6eb8, 0x1e7350,
+//! 0x1e7160, 0x1e7440, reduction 0x1eae30, kernels 0x1ebdf0/0x1eb348/0x1ebef8). Their structure is
 //! fdlibm/newlib-derived; this code was written independently from the reviewed
 //! instructions. Constants are the ELF's literal words and table bytes.
 //!
@@ -243,6 +243,78 @@ fn rem_pio2f(x: f32) -> Result<(i32, f32, f32)> {
     }
     let y1 = sub(sub(r, y0)?, w_)?;
     Ok(if hx < 0 { (-n, -y0, -y1) } else { (n, y0, y1) })
+}
+
+/// __kernel_tanf EE 0x1ebef8 coefficients T0..T12 (EE 0x2b9610).
+const TAN_T: [u32; 13] = [
+    0x3eaaaaab, 0x3e088889, 0x3d5d0dd1, 0x3cb327a4, 0x3c11371f, 0x3b6b6916, 0x3abede48, 0x3a1a26c8,
+    0x398137b9, 0x38a3f445, 0x3895c07a, 0xb79bae5f, 0x37d95384,
+];
+
+/// Kernel EE 0x1ebef8: tan(x + y) for |x| <= π/4 (`iy` 1) or −1/tan (`iy` −1).
+fn kernel_tan(mut x: f32, mut y: f32, iy: i32) -> Result<f32> {
+    let hx = x.to_bits() as i32;
+    let ix = hx & 0x7fff_ffff;
+    if ix <= 0x317f_ffff && x as i32 == 0 {
+        if (ix | (iy + 1)) == 0 {
+            // 1/fabsf(0): the EE divide-by-zero result is not modelled.
+            return div(1.0, fabs(x));
+        }
+        return if iy == 1 { Ok(x) } else { div(-1.0, x) };
+    }
+    let big = ix > 0x3f2c_a13f;
+    if big {
+        if hx < 0 {
+            x = -x;
+            y = -y;
+        }
+        let z = sub(w(0x3f49_0fda), x)?;
+        let lo = sub(w(0x3322_2168), y)?;
+        x = add(z, lo)?;
+        y = 0.0;
+    }
+    let t = TAN_T.map(w);
+    let z = mul(x, x)?;
+    let ww = mul(z, z)?;
+    let s = mul(z, x)?;
+    let poly = |hi: [usize; 5], last: usize| -> Result<f32> {
+        let mut acc = add(t[hi[4]], mul(ww, t[last])?)?;
+        for &k in hi[..4].iter().rev() {
+            acc = add(t[k], mul(ww, acc)?)?;
+        }
+        Ok(acc)
+    };
+    let r = poly([1, 3, 5, 7, 9], 11)?;
+    let v = poly([2, 4, 6, 8, 10], 12)?;
+    let inner = add(mul(s, add(r, mul(z, v)?)?)?, y)?;
+    let r = add(add(y, mul(z, inner)?)?, mul(t[0], s)?)?;
+    let wv = add(x, r)?;
+    if big {
+        let fv = iy as f32;
+        let sign = (1 - ((hx >> 30) & 2)) as f32;
+        let q = sub(div(mul(wv, wv)?, add(wv, fv)?)?, r)?;
+        let d = sub(x, q)?;
+        return mul(sign, sub(fv, add(d, d)?)?);
+    }
+    if iy == 1 {
+        return Ok(wv);
+    }
+    let trunc = |v: f32| w(v.to_bits() & 0xffff_f000);
+    let zz = trunc(wv);
+    let vv = sub(r, sub(zz, x)?)?;
+    let a = div(-1.0, wv)?;
+    let tt = trunc(a);
+    let ss = add(mul(tt, zz)?, 1.0)?;
+    add(tt, mul(a, add(ss, mul(tt, vv)?)?)?)
+}
+
+/// tanf at EE 0x1e7440.
+pub fn tanf(x: f32) -> Result<f32> {
+    if finite(x)?.to_bits() & 0x7fff_ffff <= 0x3f49_0fda {
+        return kernel_tan(x, 0.0, 1);
+    }
+    let (n, y0, y1) = rem_pio2f(x)?;
+    kernel_tan(y0, y1, 1 - ((n & 1) << 1))
 }
 
 /// sinf at EE 0x1e7350.

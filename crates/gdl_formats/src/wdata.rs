@@ -1,8 +1,9 @@
 //! Per-world gameplay WAD (wdata/*.wad): MB container (MBSetupWad 0x1d3f38 /
 //! MBGetFromWad 0x1d4008) with tagged chunks consumed by LoadWorldData
 //! 0x161b98: LEVL (0x10c-byte level records), ENMY (24-byte enemy entries) and
-//! SNDS (world sounds), AUDS (stage audio); CAMS/MAPS/BCAM/WRLD retained raw until
-//! their consumers are recovered.
+//! SNDS (world sounds), AUDS (stage audio), CAMS (camera parameters, 0x6c
+//! bytes; LEVL +0x58 selects one, ResolveWorldData 0x161738 points +0x60 at
+//! it); MAPS/BCAM/WRLD retained raw until their consumers are recovered.
 use crate::{binary::Reader, wad::ParseError};
 use serde::Serialize;
 
@@ -24,6 +25,8 @@ pub struct LevelRecord {
     pub boss_type: i32,
     /// +0x4c: six i16 ENMY indices (GetEnemyTypes 0x1628a0).
     pub enemy_indices: [i16; 6],
+    /// +0x58: CAMS index (ResolveWorldData clamps a negative one to 0).
+    pub camera_index: i16,
     /// +0xcc..+0xdc: generator/item multipliers read by SetItem 0x151878.
     pub multipliers_cc: [f32; 5],
     pub raw: Vec<u8>,
@@ -64,6 +67,26 @@ pub struct StageAudio {
     pub raw: Vec<u8>,
 }
 
+/// CAMS record (0x6c bytes) fields with known consumers (StdCam module
+/// 0x113358.., init_game_cam 0x16fec8, InitCamera 0x167748); all bytes in `raw`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CameraParams {
+    /// +0x08: TransGetYawPitch's multi-player pitch limit (negated).
+    pub pitch_08: f32,
+    /// +0x0c / +0x18: CamGetPlayerAvgPos clamp box (init_game_cam derives it
+    /// from the world bounds when the +0x24 byte is 0).
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    pub bounds_set: u8,
+    /// +0x2c: single-player distance (CalcDist); +0x30: radius (CamInit,
+    /// UpdateCam × ADJUST_MAX_RAD).
+    pub dist_2c: f32,
+    pub radius_30: f32,
+    /// +0x34: NumEnemies (init_game_cam).
+    pub num_enemies_34: i16,
+    pub raw: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WorldData {
     pub chunks: Vec<Chunk>,
@@ -71,6 +94,7 @@ pub struct WorldData {
     pub enemies: Vec<EnemyEntry>,
     pub sounds: Vec<WorldSound>,
     pub stages: Vec<StageAudio>,
+    pub cameras: Vec<CameraParams>,
     /// world_data +4 (WRLD chunk +4, 16 bytes): the realm's model directory
     /// name, e.g. "levelG" (GetCritterDesc, LevelEnemyDesc).
     pub world_dir: Option<String>,
@@ -111,6 +135,7 @@ impl WorldData {
                     code: r.label(p + 8, 4),
                     boss_type: r.i32(p + 0x44),
                     enemy_indices: std::array::from_fn(|i| r.i16(p + 0x4c + 2 * i)),
+                    camera_index: r.i16(p + 0x58).max(0),
                     multipliers_cc: [
                         r.float(p + 0xcc)?,
                         r.float(p + 0xd0)?,
@@ -170,6 +195,29 @@ impl WorldData {
                 });
             }
         }
+        let mut cameras = Vec::new();
+        if let Some(c) = find("CAMS") {
+            let range = r.table(c.offset, c.count, 0x6c, 8)?;
+            for p in range.step_by(0x6c) {
+                let v3 = |o: usize| -> Result<[f32; 3], ParseError> { Ok([r.float(o)?, r.float(o + 4)?, r.float(o + 8)?]) };
+                cameras.push(CameraParams {
+                    pitch_08: r.float(p + 8)?,
+                    min: v3(p + 0xc)?,
+                    max: v3(p + 0x18)?,
+                    bounds_set: bytes[p + 0x24],
+                    dist_2c: r.float(p + 0x2c)?,
+                    radius_30: r.float(p + 0x30)?,
+                    num_enemies_34: r.i16(p + 0x34),
+                    raw: bytes[p..p + 0x6c].to_vec(),
+                });
+            }
+        }
+        for level in &levels {
+            let k = i16::from_le_bytes([level.raw[0x58], level.raw[0x59]]);
+            if (k.max(0) as usize) >= cameras.len().max(1) && !cameras.is_empty() {
+                return Err(r.error(0, "level camera index outside CAMS"));
+            }
+        }
         let world_dir = match find("WRLD") {
             Some(c) => {
                 r.range(c.offset as usize + 4, 16)?;
@@ -177,7 +225,7 @@ impl WorldData {
             }
             None => None,
         };
-        Ok(Self { chunks, levels, enemies, sounds, stages, world_dir })
+        Ok(Self { chunks, levels, enemies, sounds, stages, cameras, world_dir })
     }
 }
 

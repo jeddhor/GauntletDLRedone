@@ -343,6 +343,209 @@ fn run() -> Result<(), Box<dyn Error>> {
         println!("{}", serde_json::to_string(&v)?);
         return Ok(());
     }
+    if args.len() == 7 && args[0] == "stdcam-replay" {
+        // stdcam-replay TRACE.json WORLDS.PS2 WDATA.WAD ELF LEVEL_CODE CUR_WORLD: for each
+        // traced camera update, start from the previous update's StdCamera record, rebuild
+        // the pb view from it (MBEndFrame), compare with the traced pb block, then run one
+        // UpdateCam with the traced player inputs and compare the record (stdout JSON).
+        use gdl_core::game::camera::{build_transmitters, o, CamConsts, CamCtx, Camera};
+        use gdl_core::game::record::Record;
+        let trace: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[1]), 256 * 1024 * 1024)?)?;
+        let world = gdl_formats::world::World::parse(&bounded_read(Path::new(&args[2]), 64 * 1024 * 1024)?)?;
+        let wdata = gdl_formats::wdata::WorldData::parse(&bounded_read(Path::new(&args[3]), 4 * 1024 * 1024)?)?;
+        let elf_bytes = bounded_read(Path::new(&args[4]), 16 * 1024 * 1024)?;
+        let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
+        let level = wdata.levels.iter().find(|l| std::ffi::OsStr::new(&l.code) == args[5]).ok_or("level code not in WDATA")?;
+        let params = wdata.cameras.get(level.camera_index as usize).ok_or("CAMS index")?;
+        let cur_world: i32 = args[6].to_str().ok_or("cur world")?.parse()?;
+        let hexb = |v: &serde_json::Value| -> Result<Vec<u8>, Box<dyn Error>> {
+            let s = v.as_str().ok_or("hex field")?;
+            Ok((0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<_, _>>()?)
+        };
+        let word = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        let samples = trace["samples"].as_array().ok_or("samples")?;
+        let mut cam = Camera::new(CamConsts::from_elf(&elf)?, build_transmitters(&world.locators, cur_world).map_err(|e| e.0)?, params, world.min, world.max).map_err(|e| e.0)?;
+        let mut last: Option<Vec<u8>> = None;
+        let (mut updates, mut pb_ok, mut std_ok) = (0, 0, 0);
+        let mut first_pb = None;
+        let mut first_std = None;
+        let mut per_update = Vec::new();
+        for s in samples {
+            let c = &s["stdcam"];
+            let std = hexb(&c["std"])?;
+            let Some(prev) = last.clone() else {
+                last = Some(std);
+                continue;
+            };
+            if prev == std {
+                continue;
+            }
+            last = Some(std.clone());
+            updates += 1;
+            cam.std = Record(prev);
+            cam.cur3d = i32::from_le_bytes(hexb(&c["Cur3DTransmitter"])?[..4].try_into()?);
+            // Cur3DTransmitter after the update is traced; the value before it is the
+            // previous update's (kept below).
+            if let Some(p) = per_update.last().and_then(|u: &serde_json::Value| u["cur3d_ref"].as_i64()) {
+                cam.cur3d = p as i32;
+            }
+            cam.refresh_view().map_err(|e| e.0)?;
+            let pb = hexb(&c["pb"])?;
+            let mut pb_diff = Vec::new();
+            for (name, base, m) in [("view", 0x210, cam.pb.view), ("inv", 0x250, cam.pb.inv), ("pv", 0x290, cam.pb.pv), ("wts", 0x2d0, cam.pb.wts), ("proj", 0x90, cam.pb.proj), ("vp", 0xd0, cam.pb.vp)] {
+                for (i, row) in m.iter().enumerate() {
+                    for (j, v) in row.iter().enumerate() {
+                        let r = word(&pb, base + 16 * i + 4 * j);
+                        if v.to_bits() != r {
+                            pb_diff.push(format!("{name}[{i}][{j}] {:08x}/{r:08x}", v.to_bits()));
+                        }
+                    }
+                }
+            }
+            if pb_diff.is_empty() {
+                pb_ok += 1;
+            } else if first_pb.is_none() {
+                first_pb = Some(serde_json::json!({"step": s["step"], "diff": pb_diff}));
+            }
+            let mut players: [Record; 4] = std::array::from_fn(|_| Record::zeroed(0x2b00));
+            for (k, pl) in players.iter_mut().enumerate() {
+                let b50 = hexb(&c[format!("player{k}_50")])?;
+                pl.0[0x50..0x80].copy_from_slice(&b50);
+                pl.0[0xfc..0x100].copy_from_slice(&hexb(&c[format!("player{k}_fc")])?);
+                pl.0[0x93c..0x940].copy_from_slice(&hexb(&c[format!("player{k}_93c")])?);
+            }
+            let g = |n: &str| -> Result<i32, Box<dyn Error>> { Ok(i32::from_le_bytes(hexb(&c[n])?[..4].try_into()?)) };
+            let ctx = CamCtx {
+                players: &players,
+                num_in_game_players: g("NumInGamePlayers")?,
+                spf: f32::from_bits(g("SPF")? as u32),
+                vb_elapsed: g("vb_elapsed")?,
+                paused: g("paused")?,
+                help: g("help")?,
+                game_mode: g("game_mode")? as u32,
+            };
+            let r = cam.update_once(&ctx);
+            let mut diff = Vec::new();
+            match r {
+                Err(e) => diff.push(format!("unsupported: {}", e.0)),
+                Ok(_) => {
+                    for off in (0..o::SIZE).step_by(4) {
+                        let (a, b) = (word(&cam.std.0, off), word(&std, off));
+                        if a != b {
+                            diff.push(format!("+{off:#05x} {:e}/{:e}", f32::from_bits(a), f32::from_bits(b)));
+                        }
+                    }
+                }
+            }
+            if diff.is_empty() {
+                std_ok += 1;
+            } else if first_std.is_none() {
+                first_std = Some(serde_json::json!({"step": s["step"], "diff": diff}));
+            }
+            per_update.push(serde_json::json!({"step": s["step"], "pb_diffs": pb_diff.len(), "std_diffs": diff.len(), "cur3d_ref": g("Cur3DTransmitter")?, "cur3d_native": cam.cur3d}));
+        }
+        let report = serde_json::json!({"updates": updates, "pb_exact": pb_ok, "std_exact": std_ok, "first_pb_divergence": first_pb, "first_std_divergence": first_std, "per_update": per_update});
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
+    if args.len() == 5 && args[0] == "camera-check" {
+        // camera-check FIXTURE.json WORLDS.PS2 WDATA.WAD ELF (compare_camera.py).
+        use gdl_core::game::camera::{build_transmitters, o, CamConsts, CamCtx, Camera};
+        use gdl_core::game::record::Record;
+        let fx: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?)?;
+        let bytes = |k: &str| -> Result<Vec<u8>, Box<dyn Error>> {
+            let s = fx[k].as_str().ok_or(format!("fixture {k}"))?;
+            Ok((0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<_, _>>()?)
+        };
+        let int = |k: &str| fx[k].as_i64().unwrap_or(0) as i32;
+        let world = gdl_formats::world::World::parse(&bounded_read(Path::new(&args[2]), 64 * 1024 * 1024)?)?;
+        let wdata = gdl_formats::wdata::WorldData::parse(&bounded_read(Path::new(&args[3]), 4 * 1024 * 1024)?)?;
+        let elf_bytes = bounded_read(Path::new(&args[4]), 16 * 1024 * 1024)?;
+        let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
+        let code = fx["level_code"].as_str().ok_or("level code")?;
+        let level = wdata.levels.iter().find(|l| l.code == code).ok_or("level code not in WDATA")?;
+        let params = wdata.cameras.get(level.camera_index as usize).ok_or("CAMS index")?;
+        let set = build_transmitters(&world.locators, int("cur_world")).map_err(|e| e.0)?;
+        let consts = CamConsts::from_elf(&elf)?;
+        let mut cam = Camera::new(consts, set, params, world.min, world.max).map_err(|e| e.0)?;
+        let ram_t = bytes("transmitters")?;
+        let mut t_mismatches = Vec::new();
+        if ram_t.len() / 0x40 != cam.transmitters.len() {
+            t_mismatches.push(format!("count native {} reference {}", cam.transmitters.len(), ram_t.len() / 0x40));
+        }
+        for (k, t) in cam.transmitters.iter().enumerate().take(ram_t.len() / 0x40) {
+            let r = &ram_t[0x40 * k..0x40 * k + 0x40];
+            let f = |o: usize| u32::from_le_bytes(r[o..o + 4].try_into().unwrap());
+            let native = [t.pos[0].to_bits(), t.pos[1].to_bits(), t.pos[2].to_bits(), t.pitch.to_bits(), t.yaw.to_bits(), t.roll.to_bits()];
+            let reference = [f(0x10), f(0x14), f(0x18), f(0x20), f(0x24), f(0x28)];
+            if r[0] != t.flag || r[1] != t.radius || u16::from_le_bytes([r[2], r[3]]) != t.word_02 || native != reference {
+                t_mismatches.push(format!("transmitter {k}: native flag {} radius {} {:08x?} reference {:02x?} {:08x?}", t.flag, t.radius, native, &r[..4], reference));
+            }
+        }
+        let cams = bytes("cams")?;
+        let fbits = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        let mut c_mismatches = Vec::new();
+        for k in 0..3 {
+            for (name, native, off) in [("min", cam.min[k], 0xc + 4 * k), ("max", cam.max[k], 0x18 + 4 * k)] {
+                if native.to_bits() != fbits(&cams, off) {
+                    c_mismatches.push(format!("CAMS {name}[{k}] native {native} reference {}", f32::from_bits(fbits(&cams, off))));
+                }
+            }
+        }
+        cam.std = Record(bytes("std")?);
+        cam.cur3d = int("cur3d");
+        cam.zoom_frames = int("zoom_frames");
+        cam.refresh_view().map_err(|e| e.0)?;
+        let pb = bytes("pb")?;
+        let win = bytes("win")?;
+        let mut pb_mismatches = Vec::new();
+        let mats = [("view 0x210", 0x210, cam.pb.view), ("inv 0x250", 0x250, cam.pb.inv), ("proj 0x90", 0x90, cam.pb.proj), ("vp 0xd0", 0xd0, cam.pb.vp), ("pv 0x290", 0x290, cam.pb.pv), ("wts 0x2d0", 0x2d0, cam.pb.wts)];
+        for (name, base, m) in mats {
+            for (i, row) in m.iter().enumerate() {
+                for (j, v) in row.iter().enumerate() {
+                    let r = fbits(&pb, base + 16 * i + 4 * j);
+                    if v.to_bits() != r {
+                        pb_mismatches.push(format!("{name}[{i}][{j}] native {v:e} ({:08x}) reference {:e} ({r:08x})", v.to_bits(), f32::from_bits(r)));
+                    }
+                }
+            }
+        }
+        for (name, native, off) in [("ang h", cam.pb.ang[0], 0x1c), ("ang v", cam.pb.ang[1], 0x20), ("forward x", cam.pb.cam_rows[2][0], 0x90), ("forward z", cam.pb.cam_rows[2][2], 0x98)] {
+            if native.to_bits() != fbits(&win, off) {
+                pb_mismatches.push(format!("MboxWinPtr {name} native {native:e} reference {:e}", f32::from_bits(fbits(&win, off))));
+            }
+        }
+        let players: Vec<Record> = (0..4)
+            .map(|k| -> Result<Record, Box<dyn Error>> {
+                let s = fx["players"][k].as_str().ok_or("player")?;
+                Ok(Record((0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<_, _>>()?))
+            })
+            .collect::<Result<_, _>>()?;
+        let players: [Record; 4] = players.try_into().map_err(|_| "players")?;
+        let ctx = CamCtx {
+            players: &players,
+            num_in_game_players: int("num_in_game_players"),
+            spf: fx["spf"].as_f64().ok_or("spf")? as f32,
+            vb_elapsed: int("vb_elapsed"),
+            paused: int("paused"),
+            help: int("help"),
+            game_mode: int("game_mode") as u32,
+        };
+        let before = cam.std.0.clone();
+        let moved = cam.update_once(&ctx).map_err(|e| e.0)?;
+        let mut s_mismatches = Vec::new();
+        for off in (0..o::SIZE).step_by(4) {
+            let (a, b) = (fbits(&cam.std.0, off), fbits(&before, off));
+            if a != b {
+                s_mismatches.push(format!("+{off:#05x} after {:e} ({a:08x}) captured {:e} ({b:08x})", f32::from_bits(a), f32::from_bits(b)));
+            }
+        }
+        let report = serde_json::json!({"level_code": code, "transmitters": cam.transmitters.len(), "transmitter_mismatches": t_mismatches,
+            "cams_mismatches": c_mismatches, "pb_mismatches": pb_mismatches, "quiet": !moved, "update_mismatches": s_mismatches,
+            "cur3d_after": cam.cur3d});
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
     if args.len() == 2 && args[0] == "lookouts" {
         // lookouts WORLDS.PS2: lookout records with CreateYPRMatrix(rotation) + position (stdout JSON).
         let world = gdl_formats::world::World::parse(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;

@@ -4,6 +4,7 @@
 //! presentation side effects (help text, audio, FX, HUD notices, vibration)
 //! are emitted as [`Event`]s instead of being performed.
 pub mod boss;
+pub mod camera;
 pub mod critter_ai;
 pub mod critter_hits;
 pub mod critter_move;
