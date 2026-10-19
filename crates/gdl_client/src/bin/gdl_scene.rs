@@ -60,12 +60,11 @@ fn setup(
     source: Res<SceneSource>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
 ) {
-    let (material_cache, unknown_material, unresolved_materials) =
-        gdl_client::materials_for(&source.objects, &source.table, &source.textures, &mut images, &mut materials, false);
-    let (cache, unsupported) =
-        gdl_client::object_meshes(&source.objects, &material_cache, &unknown_material, &mut meshes);
+    let set = gdl_client::materials_for(&source.objects, &source.table, &source.textures, &mut images, &mut materials);
+    let unresolved_materials = set.unresolved.clone();
+    let (cache, unsupported) = gdl_client::object_meshes(&source.objects, &set, &mut materials, &mut meshes);
     let triangles: usize = cache
         .values()
         .flatten()
@@ -144,7 +143,7 @@ fn setup(
         },
     ));
     commands.spawn((Text2d::new(format!(
-        "{} | {} DATA INSPECTOR | gameplay not implemented\nArrow keys: orbit   WASD: pan   Q/E: distance   P: detail   R: overview   Esc: close\nOpaque base textures + source vertex colors; double sided; lightmaps/GS blending unverified\n{placed} placed parts | {} unresolved bitmap records shown magenta\nOBJECTS {}  placement source {}",
+        "{} | {} DATA INSPECTOR | gameplay not implemented\nArrow keys: orbit   WASD: pan   Q/E: distance   P: detail   R: overview   Esc: close\nGS-state materials (texture x vertex colour, alpha test/blend, lightmaps); folded single pass\n{placed} placed parts | {} unresolved bitmap records shown magenta\nOBJECTS {}  placement source {}",
         source.label,if source.rig.is_some() {"ANIMATION"} else {"STATIC"},unresolved_materials.len(),&source.hashes[0][..12],&source.hashes[1][..12])),
         TextFont {font_size:15.0,..default()},TextColor(Color::WHITE),Anchor::TOP_LEFT,
         Transform::from_xyz(-580.0,380.0,0.0)));
@@ -496,6 +495,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 ..default()
             }),
         )
+        .add_plugins(gdl_client::GsMaterialPlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, (controls, animate_rig))
         .run();

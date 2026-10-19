@@ -1,7 +1,7 @@
 //! Shared original-data presentation helpers for the native inspectors and the
-//! interim playtest. Material choices are explicitly diagnostic: unlit, opaque,
-//! double sided, base textures with source vertex colours; lightmaps and GS
-//! blending are not applied.
+//! interim playtest. World materials follow the GS state observed in the G1
+//! dump (GsMaterial, docs/research/rendering.md); the folded single pass,
+//! level-0 filtering and the blending colour space are presentation choices.
 pub mod audio;
 pub mod catalog;
 pub mod menu;
@@ -9,9 +9,15 @@ pub mod menu;
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
-    mesh::Indices,
+    mesh::{Indices, MeshVertexBufferLayoutRef},
+    pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
-    render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
+    render::render_resource::{
+        AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, CompareFunction, Extent3d,
+        PrimitiveTopology, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDimension,
+        TextureFormat,
+    },
+    shader::ShaderRef,
 };
 use gdl_formats::{animation::Animations, objects::Objects, texdef::TextureTable};
 use std::{collections::HashMap, error::Error, fs, path::Path};
@@ -30,49 +36,258 @@ pub fn bounded_read(path: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(bytes)
 }
 
+/// GS vertex colour of a packed 16-bit colour, on the GS 0x80 = 1.0 scale.
+/// Observed in the G1 dump: 5-bit channel c reaches the GS as (c << 2) | (c >> 3)
+/// (every sampled value 66..127 fits), alpha bit 15 as 0x80.
+fn gs_vertex_color(packed: u16) -> [f32; 4] {
+    let channel = |c: u16| f32::from((c << 2) | (c >> 3)) / 128.0;
+    [channel(packed & 31), channel((packed >> 5) & 31), channel((packed >> 10) & 31), if packed & 0x8000 != 0 { 1.0 } else { 0.0 }]
+}
+
 pub fn mesh_for(part: &gdl_formats::objects::Part) -> Result<Mesh, Box<dyn Error>> {
     let geometry = part.decode_integer_geometry()?;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
+    let mut lightmap_uvs = Vec::new();
     let mut colors = Vec::new();
     let mut indices = Vec::new();
+    let with_lightmap = geometry.strips.iter().any(|s| !s.lightmap_uvs.is_empty());
     for strip in geometry.strips {
         let start = positions.len() as u32;
         indices.extend(strip.indices.iter().map(|i| i + start));
-        if strip.colors.is_empty() {
-            // White is a diagnostic multiplier for an absent source channel.
+        if strip.packed_colors.is_empty() {
+            // PLACEHOLDER: an absent colour stream modulates by 0x80 (1.0).
             colors.extend(vec![[1.0; 4]; strip.positions.len()]);
         } else {
-            colors.extend(strip.colors);
+            colors.extend(strip.packed_colors.iter().map(|&p| gs_vertex_color(p)));
+        }
+        if with_lightmap {
+            if strip.lightmap_uvs.len() == strip.positions.len() {
+                lightmap_uvs.extend(strip.lightmap_uvs);
+            } else {
+                return Err("part mixes strips with and without lightmap UVs".into());
+            }
         }
         positions.extend(strip.positions);
         normals.extend(strip.normals);
         uvs.extend(strip.uvs);
     }
-    Ok(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
-        .with_inserted_indices(Indices::U32(indices)))
+        .with_inserted_indices(Indices::U32(indices));
+    if with_lightmap {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, lightmap_uvs);
+    }
+    Ok(mesh)
 }
 
-/// Diagnostic materials keyed by bitmap record index, plus unresolved indices.
-/// With `alpha_cutout`, each texture is alpha-masked at half its own maximum
-/// source alpha (textures whose alpha is all zero stay opaque). This is a
-/// presentation choice for the playtest; original GS/TEXA alpha is unresolved.
+/// Registers the GS-equivalent material and its embedded shader.
+pub struct GsMaterialPlugin;
+
+impl Plugin for GsMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        bevy::asset::embedded_asset!(app, "gs.wgsl");
+        app.add_plugins(MaterialPlugin::<GsMaterial>::default());
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, ShaderType)]
+pub struct GsParams {
+    /// Constant colour in GS units (rgb 1.0 = 255, alpha 1.0 = 0x80).
+    pub tint: Vec4,
+    /// x: base texture bound, y: lightmap bound.
+    pub options: Vec4,
+}
+
+/// The observed G1 world material state folded into one pass (gs.wgsl):
+/// MODULATE texture × vertex colour, alpha test GREATER 1, standard alpha
+/// blending, then × lightmap CLUT alpha / 0x80. Double sided. Per-node draw
+/// state (`GsDraw`) follows setPrimInfo: GS draws write depth unless the node
+/// masks it, including translucent ones.
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+#[bind_group_data(GsDraw)]
+pub struct GsMaterial {
+    #[uniform(0)]
+    pub params: GsParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub base: Option<Handle<Image>>,
+    #[texture(3)]
+    #[sampler(4)]
+    pub lightmap: Option<Handle<Image>>,
+    pub alpha_mode: AlphaMode,
+    pub draw: GsDraw,
+}
+
+/// GS draw state chosen from MB node flags (setPrimInfo 0x1beea0,
+/// pbSetDORegs 0x1bfac8): ALPHA_1 0x48 (Cs·As + Cd) for flag 0x800000 on
+/// parts without a lightmap, ZBUF_1 ZMSK for flag 0x80, TEST_1 0x3001d
+/// (ZTST ALWAYS) for flag 0x40.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GsDraw {
+    pub additive: bool,
+    pub no_depth_write: bool,
+    pub depth_always: bool,
+}
+
+impl From<&GsMaterial> for GsDraw {
+    fn from(material: &GsMaterial) -> Self {
+        material.draw
+    }
+}
+
+impl GsDraw {
+    /// The draw state of a part under MB node flags `flags`. A lightmapped
+    /// part keeps ALPHA 0x44 (setLmapInfo's pb_lm_tex_alpha_reg); flag
+    /// 0x4000 disables the lightmap pass (pbSetDORegs).
+    pub fn from_node_flags(flags: u32, lightmapped: bool) -> Self {
+        let lightmapped = lightmapped && flags & 0x4000 == 0;
+        GsDraw {
+            additive: flags & 0x800000 != 0 && !lightmapped,
+            no_depth_write: flags & 0x80 != 0,
+            depth_always: flags & 0x40 != 0,
+        }
+    }
+}
+
+impl GsMaterial {
+    pub fn solid(color: Color, alpha_mode: AlphaMode) -> Self {
+        let c = color.to_srgba();
+        GsMaterial {
+            params: GsParams { tint: Vec4::new(c.red, c.green, c.blue, c.alpha), options: Vec4::ZERO },
+            base: None,
+            lightmap: None,
+            alpha_mode,
+            draw: GsDraw::default(),
+        }
+    }
+
+    /// This material under `draw` (lightmap dropped when flag 0x4000 asked).
+    pub fn with_draw(&self, flags: u32) -> Self {
+        let mut m = self.clone();
+        if flags & 0x4000 != 0 {
+            m.lightmap = None;
+            m.params.options.y = 0.0;
+        }
+        m.draw = GsDraw::from_node_flags(flags, m.lightmap.is_some());
+        if m.draw.additive {
+            m.alpha_mode = AlphaMode::Add;
+        } else if m.draw.no_depth_write && m.alpha_mode == AlphaMode::Opaque {
+            m.alpha_mode = AlphaMode::Blend;
+        }
+        m
+    }
+}
+
+impl Material for GsMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://gdl_client/gs.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let draw = key.bind_group_data;
+        descriptor.primitive.cull_mode = None;
+        if let Some(depth) = descriptor.depth_stencil.as_mut() {
+            depth.depth_write_enabled = !draw.no_depth_write;
+            if draw.depth_always {
+                depth.depth_compare = CompareFunction::Always;
+            }
+        }
+        if draw.additive
+            && let Some(target) = descriptor.fragment.as_mut().and_then(|f| f.targets.get_mut(0)).and_then(|t| t.as_mut())
+        {
+            target.blend = Some(BlendState {
+                color: BlendComponent { src_factor: BlendFactor::SrcAlpha, dst_factor: BlendFactor::One, operation: BlendOperation::Add },
+                alpha: BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add },
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Images of an OBJECTS package: base textures (with their alpha class) and
+/// format-146 lightmaps, keyed by bitmap record index.
+pub struct MaterialSet {
+    pub base: HashMap<u16, Handle<GsMaterial>>,
+    pub lightmaps: HashMap<u16, Handle<Image>>,
+    pub unknown: Handle<GsMaterial>,
+    pub unresolved: Vec<u32>,
+}
+
+/// GS CLAMP_1 of a bitmap record: flag 0x8 selected WMT CLAMP in every G1
+/// draw matched to a record (observed); flag 0x4 → WMS CLAMP is a HYPOTHESIS
+/// by symmetry (draws with both clamps were not matched to records).
+fn record_sampler(flags: u16) -> ImageSampler {
+    let mut sampler = ImageSamplerDescriptor::linear();
+    sampler.address_mode_u = if flags & 0x4 != 0 { ImageAddressMode::ClampToEdge } else { ImageAddressMode::Repeat };
+    sampler.address_mode_v = if flags & 0x8 != 0 { ImageAddressMode::ClampToEdge } else { ImageAddressMode::Repeat };
+    ImageSampler::Descriptor(sampler)
+}
+
+fn raw_image(width: u16, height: u16, data: Vec<u8>, format: TextureFormat, sampler: ImageSampler) -> Image {
+    let mut image = Image::new(
+        Extent3d { width: width as u32, height: height as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        format,
+        RenderAssetUsages::default(),
+    );
+    image.sampler = sampler;
+    image
+}
+
+/// GS-equivalent materials keyed by bitmap record index. Texels stay raw
+/// (Rgba8Unorm); 16-bit texel alpha becomes TEXA's TA1 0x80 / TA0 0 (the G1
+/// dump's TEXA). Base filtering is bilinear at level 0 (TEX1_1 MMAG/MMIN
+/// linear; the mipmap levels are not decoded). Lightmap texels carry the
+/// observed shared CLUT alpha 8 × index (DBP 0x2300 upload in the G1 dump;
+/// HYPOTHESIS for other packages).
 pub fn materials_for(
     objects: &Objects,
     table: &TextureTable,
     textures: &[u8],
     images: &mut Assets<Image>,
-    materials: &mut Assets<StandardMaterial>,
-    alpha_cutout: bool,
-) -> (HashMap<u16, Handle<StandardMaterial>>, Handle<StandardMaterial>, Vec<u32>) {
-    let mut cache = HashMap::new();
+    materials: &mut Assets<GsMaterial>,
+) -> MaterialSet {
+    let mut base = HashMap::new();
+    let mut lightmaps = HashMap::new();
     let mut unresolved = Vec::new();
     for bitmap in &objects.bitmap_records {
+        if bitmap.format == 146 {
+            match bitmap.decode_lightmap_indices(textures) {
+                Ok(indices) => {
+                    let alpha = indices.iter().map(|i| i * 8).collect();
+                    let mut sampler = ImageSamplerDescriptor::linear();
+                    sampler.set_address_mode(ImageAddressMode::Repeat);
+                    let image = raw_image(bitmap.width, bitmap.height, alpha, TextureFormat::R8Unorm, ImageSampler::Descriptor(sampler));
+                    lightmaps.insert(bitmap.index as u16, images.add(image));
+                }
+                Err(_) => unresolved.push(bitmap.index),
+            }
+            continue;
+        }
         let candidates: Vec<_> = table
             .bitmaps
             .iter()
@@ -88,68 +303,77 @@ pub fn materials_for(
         } else {
             None
         };
-        let mut alpha_mode = AlphaMode::Opaque;
-        if let (true, Some(rgba)) = (alpha_cutout, &decoded) {
-            let (min, max) = rgba.chunks_exact(4).fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[3]), hi.max(p[3])));
-            if max > 0 && min < max {
-                alpha_mode = AlphaMode::Mask(f32::from(max) / 510.0);
+        let Some(mut rgba) = decoded else {
+            unresolved.push(bitmap.index);
+            base.insert(bitmap.index as u16, materials.add(GsMaterial::solid(Color::srgb(1.0, 0.0, 0.8), AlphaMode::Opaque)));
+            continue;
+        };
+        if matches!(bitmap.format, 0 | 16 | 48) {
+            for p in rgba.chunks_exact_mut(4) {
+                p[3] = if p[3] != 0 { 0x80 } else { 0 };
             }
         }
-        let texture = decoded.map(|rgba| {
-            let mut image = Image::new(
-                Extent3d { width: bitmap.width as u32, height: bitmap.height as u32, depth_or_array_layers: 1 },
-                TextureDimension::D2,
-                rgba,
-                TextureFormat::Rgba8UnormSrgb,
-                RenderAssetUsages::default(),
-            );
-            let mut sampler = ImageSamplerDescriptor::nearest();
-            sampler.set_address_mode(ImageAddressMode::Repeat);
-            image.sampler = ImageSampler::Descriptor(sampler);
-            images.add(image)
-        });
-        if texture.is_none() {
-            unresolved.push(bitmap.index);
-        }
-        cache.insert(
+        // Opaque when every texel passes at full coverage; Mask when texels
+        // are either rejected by the alpha test or full; otherwise blended.
+        let opaque = rgba.chunks_exact(4).all(|p| p[3] >= 0x80);
+        let binary = rgba.chunks_exact(4).all(|p| p[3] <= 1 || p[3] >= 0x80);
+        let alpha_mode = if opaque {
+            AlphaMode::Opaque
+        } else if binary {
+            AlphaMode::Mask(0.5)
+        } else {
+            AlphaMode::Blend
+        };
+        let image = images.add(raw_image(bitmap.width, bitmap.height, rgba, TextureFormat::Rgba8Unorm, record_sampler(bitmap.flags)));
+        base.insert(
             bitmap.index as u16,
-            materials.add(StandardMaterial {
-                base_color: if texture.is_some() { Color::WHITE } else { Color::srgb(1.0, 0.0, 0.8) },
-                base_color_texture: texture,
-                unlit: true,
-                cull_mode: None,
+            materials.add(GsMaterial {
+                params: GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0) },
+                base: Some(image),
+                lightmap: None,
                 alpha_mode,
-                ..default()
+                draw: GsDraw::default(),
             }),
         );
     }
-    let unknown = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.0, 0.8),
-        unlit: true,
-        cull_mode: None,
-        ..default()
-    });
-    (cache, unknown, unresolved)
+    let unknown = materials.add(GsMaterial::solid(Color::srgb(1.0, 0.0, 0.8), AlphaMode::Opaque));
+    MaterialSet { base, lightmaps, unknown, unresolved }
 }
 
 /// Mesh/material handles for every object index, with unsupported parts listed.
+/// A part with a lightmap record and lightmap UVs gets its base material
+/// with the lightmap bound (one material per base/lightmap pair).
 #[allow(clippy::type_complexity)]
 pub fn object_meshes(
     objects: &Objects,
-    material_cache: &HashMap<u16, Handle<StandardMaterial>>,
-    unknown: &Handle<StandardMaterial>,
+    set: &MaterialSet,
+    materials: &mut Assets<GsMaterial>,
     meshes: &mut Assets<Mesh>,
-) -> (HashMap<u32, Vec<(Handle<Mesh>, Handle<StandardMaterial>)>>, Vec<String>) {
+) -> (HashMap<u32, Vec<(Handle<Mesh>, Handle<GsMaterial>)>>, Vec<String>) {
     let mut cache = HashMap::new();
+    let mut pairs: HashMap<(u16, u16), Handle<GsMaterial>> = HashMap::new();
     let mut unsupported = Vec::new();
     for object in &objects.objects {
         let mut parts = Vec::new();
         for part in &object.parts {
             match mesh_for(part) {
-                Ok(mesh) => parts.push((
-                    meshes.add(mesh),
-                    material_cache.get(&part.texture_index).cloned().unwrap_or_else(|| unknown.clone()),
-                )),
+                Ok(mesh) => {
+                    let base = set.base.get(&part.texture_index).cloned().unwrap_or_else(|| set.unknown.clone());
+                    let lightmap = set.lightmaps.get(&part.lightmap_index).filter(|_| mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_some());
+                    let material = match lightmap {
+                        Some(image) => pairs
+                            .entry((part.texture_index, part.lightmap_index))
+                            .or_insert_with(|| {
+                                let mut m = materials.get(&base).cloned().expect("base material");
+                                m.lightmap = Some(image.clone());
+                                m.params.options.y = 1.0;
+                                materials.add(m)
+                            })
+                            .clone(),
+                        None => base,
+                    };
+                    parts.push((meshes.add(mesh), material));
+                }
                 Err(error) => unsupported.push(format!("{}/{}: {error}", object.index, part.index)),
             }
         }

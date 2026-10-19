@@ -26,9 +26,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    team moves, legend items, thunder hammer/breath/familiar, respawn,
    milestones, join/continue), physical pad mapping measurement, and traces
    with melee/magic/powerups/knockback/transporters/moving floors (F).
-4. Rendering: lighting (vertex colour, MB point lights such as torches,
-   fog), GS blending/TEXA alpha, world particle systems (WorldPsysActivate),
-   effect trees, item/enemy animation (OANIM), texture animation (DoTexMods).
+4. Rendering (IN PROGRESS; research/rendering.md): DONE 2026-10-19 — GS
+   material state from the G1 dump and pbSetDORegs/setPrimInfo/setTexInfo:
+   texture × vertex colour (0x80 scale), lightmaps (format 146 + observed
+   CLUT), alpha test/blend, additive (node flag 0x800000), depth flags,
+   record clamps, bilinear; world node MB flags (hidden/group/particle
+   nodes) and CameraFace billboards. Remaining: world particle systems
+   (WorldPsysActivate/MBDrawPsys), texture shift/scroll, chrome, distance
+   alpha, MBTreeSetAlpha fades, character VU1 lighting (MBDirLight/
+   MBAmbLight/pos lights), fog, effect trees, OANIM, DoTexMods.
 5. Front end and HUD: FNT fonts, original HUD panels, scroll parchment,
    original player select, shop screen, inventory, options, credits, movies.
 6. Audio completeness; secret characters; Sumner as a character;
@@ -199,7 +205,8 @@ must remain untouched. The user's `pcsx2/` checkout is a separate research sourc
 - Disc/ELF: 56 files, 8,836 symbols and 3,584 named original functions inventoried.
   All 2,915 archive outcomes independently agree; unknown bytes/identities retained.
 - Assets: 651 texture tables / 33,227 records read; six base color families decoded.
-  Formats 130/146 and original GS/TEXA/material-alpha binding remain open. GS dump
+  Format 146 = lightmap indices (research/rendering.md); 130 and TEXA
+  variation beyond the G1 frame remain open. GS dump
   reader retains 1,806 events. CT16 alpha selection is still diagnostic.
 - G1 scene: 1,729 integer packets independently agree, 944 vertex counts match;
   1,360 world nodes / 3,461 collisions retained. Native diagnostic viewer places

@@ -86,7 +86,7 @@ fn ps2_viewport(windows: Query<&Window>, mut cams: Query<&mut Camera, With<Follo
     }
 }
 
-type Parts = Vec<(Handle<Mesh>, Handle<StandardMaterial>)>;
+type Parts = Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>;
 /// Spark sphere mesh, spark material, blast material.
 type SparkAssets = (Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>);
 /// Model parts with node offsets.
@@ -473,6 +473,72 @@ fn present_world_nodes(sim: Res<Sim>, mut nodes: Query<(&WorldNode, &mut Transfo
     }
 }
 
+/// A world node drawn under CameraFace 0x1c07e0 (MB flags & 0xf000000 of
+/// the node or its nearest ancestor): `anchor` is that node's position,
+/// `offset` this node's rest position relative to it.
+#[derive(Component)]
+struct CameraFace {
+    mode: u32,
+    anchor: Vec3,
+    offset: Vec3,
+}
+
+/// CameraFace's matrix modes on a translation-only node, in original
+/// coordinates (columns = the PS2 matrix rows). FaceCamMat (0x1c7d48):
+/// YawMat3 by the eye's yaw, PitchMat3 by its pitch clamped to ±limit
+/// (unclamped for 0x3000000); QuickYawMat: yaw to the camera forward + π;
+/// 0x4000000: diag(−1, 1, −1) × the camera→world rows; TopFaceMat: keeps z,
+/// x = normalize((eye − p) × z), y = z × x.
+fn camera_face_rotation(mode: u32, p: Vec3, eye: Vec3, rows: [Vec3; 3]) -> Mat3 {
+    let to = eye - p;
+    let yaw_pitch = |limit: Option<f32>| {
+        let yaw = to.x.atan2(to.z);
+        let mut m = Mat3::from_rotation_y(yaw);
+        if let Some(limit) = limit {
+            let mut pitch = to.y.atan2((to.x * to.x + to.z * to.z).sqrt());
+            if 0.0 < limit {
+                pitch = pitch.clamp(-limit, limit);
+            }
+            m *= Mat3::from_rotation_x(-pitch);
+        }
+        m
+    };
+    match mode {
+        0x1000000 => yaw_pitch(None),
+        0x2000000 => {
+            let yaw = rows[2].x.atan2(rows[2].z) + std::f32::consts::PI;
+            Mat3::from_rotation_y(yaw)
+        }
+        0x3000000 => yaw_pitch(Some(-1.0)),
+        0x5000000 => yaw_pitch(Some(f32::from_bits(0x3e860a92))),
+        0x6000000 => yaw_pitch(Some(f32::from_bits(0x3f060a92))),
+        0x7000000 => yaw_pitch(Some(f32::from_bits(0x3f490fdb))),
+        0x4000000 => Mat3::from_cols(-rows[0], rows[1], -rows[2]),
+        0x8000000 => {
+            let z = Vec3::Z;
+            let x = to.cross(z);
+            if x.length() < 0.01 {
+                Mat3::IDENTITY
+            } else {
+                let x = x.normalize();
+                Mat3::from_cols(x, z.cross(x), z)
+            }
+        }
+        _ => Mat3::IDENTITY,
+    }
+}
+
+fn present_camera_face(sim: Res<Sim>, mut nodes: Query<(&CameraFace, &mut Transform)>) {
+    let Some(cam) = &sim.game.std_camera else { return };
+    let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+    let rows = cam.pb.cam_rows.map(Vec3::from_array);
+    for (face, mut tf) in &mut nodes {
+        let m = camera_face_rotation(face.mode, face.anchor, eye, rows);
+        tf.translation = face.anchor + m * face.offset;
+        tf.rotation = Quat::from_mat3(&m);
+    }
+}
+
 /// World objects removed by WorldObjectExplode (object +0x10 bit
 /// 0x10000000) are hidden with their meshes.
 fn hide_exploded_nodes(sim: Res<Sim>, mut nodes: Query<(&WorldNode, &mut Visibility)>) {
@@ -650,10 +716,10 @@ fn build_library(
     pkg: &Package,
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<gdl_client::GsMaterial>,
 ) -> Library {
-    let (cache, unknown, _) = gdl_client::materials_for(&pkg.objects, &pkg.table, &pkg.textures, images, materials, true);
-    let (parts, _) = gdl_client::object_meshes(&pkg.objects, &cache, &unknown, meshes);
+    let set = gdl_client::materials_for(&pkg.objects, &pkg.table, &pkg.textures, images, materials);
+    let (parts, _) = gdl_client::object_meshes(&pkg.objects, &set, materials, meshes);
     let mut by_label = HashMap::new();
     for d in &pkg.objects.definitions {
         if let Some(list) = parts.get(&(d.object_index as u32)) {
@@ -772,10 +838,10 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
 
 /// The character body of every player slot (co-op players use player 1's
 /// model: their character select is not ported).
-fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>) {
+fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<gdl_client::GsMaterial>) {
     let character = &sources.character;
-    let (cache, unknown, _) = gdl_client::materials_for(&character.objects, &character.table, &character.textures, images, materials, true);
-    let (parts, _) = gdl_client::object_meshes(&character.objects, &cache, &unknown, meshes);
+    let set = gdl_client::materials_for(&character.objects, &character.table, &character.textures, images, materials);
+    let (parts, _) = gdl_client::object_meshes(&character.objects, &set, materials, meshes);
     for slot in 0..4 {
         let vis = if slot == 0 { Visibility::default() } else { Visibility::Hidden };
         let body = commands.spawn((CharacterRoot(slot), Transform::default(), vis)).id();
@@ -811,7 +877,7 @@ fn setup(
     mut frames: ResMut<EnemyFrames>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
 ) {
     let root = commands.spawn((Transform::from_scale(MIRROR), Visibility::default(), MirrorRoot)).id();
     spawn_level(&mut commands, root, &session, sim.game.items.records.len(), &mut meshes, &mut images, &mut materials);
@@ -834,28 +900,80 @@ fn spawn_level(
     item_count: usize,
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<gdl_client::GsMaterial>,
 ) {
     let level = &session.level;
-    let (cache, unknown, _) = gdl_client::materials_for(&level.objects, &level.table, &level.textures, images, materials, true);
-    let (parts, _) = gdl_client::object_meshes(&level.objects, &cache, &unknown, meshes);
+    let set = gdl_client::materials_for(&level.objects, &level.table, &level.textures, images, materials);
+    let (parts, _) = gdl_client::object_meshes(&level.objects, &set, materials, meshes);
     let names: HashMap<_, _> = level.objects.definitions.iter().map(|d| (d.label.as_str(), d.object_index as u32)).collect();
+    let nodes = &session.world.nodes;
+    // CreateWorldNode: MB flags = record +0x18, | 4 for file flags & 0x1001
+    // == 1, | 1 (not drawn) for file flag 0x8000.
+    let mb_flags = |i: usize| {
+        let n = &nodes[i];
+        let mut f = n.render_flags;
+        if n.flags & 0x1001 == 1 {
+            f |= 4;
+        }
+        if n.flags & 0x8000 != 0 {
+            f |= 1;
+        }
+        f
+    };
+    let mut variants: HashMap<(AssetId<gdl_client::GsMaterial>, u32), Handle<gdl_client::GsMaterial>> = HashMap::new();
     if let Ok(placements) = session.world.placements() {
-        for p in placements {
-            let node = &session.world.nodes[p.node_index as usize];
-            if let Some(list) = names.get(node.label.as_str()).and_then(|i| parts.get(i)) {
-                for (mesh, material) in list {
-                    let child = commands
-                        .spawn((
-                            Mesh3d(mesh.clone()),
-                            MeshMaterial3d(material.clone()),
-                            Transform::from_translation(Vec3::from_array(p.summed_position)),
-                            WorldNode { node: p.node_index as usize, rest: Vec3::from_array(p.summed_position) },
-                            LevelEntity,
-                        ))
-                        .id();
-                    commands.entity(root).add_child(child);
+        let parent: HashMap<usize, usize> =
+            placements.iter().filter_map(|p| p.parent.map(|q| (p.node_index as usize, q as usize))).collect();
+        let position: HashMap<usize, Vec3> = placements.iter().map(|p| (p.node_index as usize, Vec3::from_array(p.summed_position))).collect();
+        for p in &placements {
+            let i = p.node_index as usize;
+            let node = &nodes[i];
+            // NewWorldObject sets a model only on non-particle nodes with
+            // +0x28 == 1 (or file flag 0x80000000); pbTraverseDrawObjects skips
+            // MB flag 2 with its subtree and flag 1 for the node itself.
+            let has_object = node.flags & 0x800 == 0
+                && (i32::from_le_bytes(node.raw[40..44].try_into().unwrap()) == 1 || node.flags & 0x80000000 != 0);
+            let flags = mb_flags(i);
+            let mut hidden = flags & 3 != 0;
+            let mut face = None;
+            let mut k = Some(i);
+            while let Some(a) = k {
+                let f = mb_flags(a);
+                if a != i && f & 2 != 0 {
+                    hidden = true;
                 }
+                if face.is_none() && f & 0xf000000 != 0 {
+                    face = Some((a, f & 0xf000000));
+                }
+                k = parent.get(&a).copied();
+            }
+            if !has_object || hidden {
+                continue;
+            }
+            let Some(list) = names.get(node.label.as_str()).and_then(|i| parts.get(i)) else { continue };
+            let rest = Vec3::from_array(p.summed_position);
+            for (mesh, material) in list {
+                let key = (material.id(), flags & (0x800000 | 0x4000 | 0x80 | 0x40));
+                let material = variants
+                    .entry(key)
+                    .or_insert_with(|| {
+                        let m = materials.get(material).expect("part material").with_draw(flags);
+                        materials.add(m)
+                    })
+                    .clone();
+                let mut entity = commands.spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material),
+                    Transform::from_translation(rest),
+                    WorldNode { node: i, rest },
+                    LevelEntity,
+                ));
+                if let Some((anchor, mode)) = face {
+                    let at = position.get(&anchor).copied().unwrap_or(rest);
+                    entity.insert(CameraFace { mode, anchor: at, offset: rest - at });
+                }
+                let child = entity.id();
+                commands.entity(root).add_child(child);
             }
         }
     }
@@ -1638,7 +1756,13 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
         let ch = character_assets(front, class, colour, tier)?;
         let (character, rig, clips, clip_bytes) = character_rig(front, &ch)?;
         let b = &front.base;
-        let idx = b.levels.iter().position(|l| l.world == 0xd).unwrap_or(0);
+        // DEBUG (automated render comparisons): GDL_DEBUG_LEVEL=<name> starts
+        // in that level instead of the Tower. Not a game feature.
+        let debug_level = std::env::var("GDL_DEBUG_LEVEL").ok();
+        let idx = debug_level
+            .and_then(|n| b.levels.iter().position(|l| l.name == n))
+            .or_else(|| b.levels.iter().position(|l| l.world == 0xd))
+            .unwrap_or(0);
         let first = &b.levels[idx];
         let mut packages = HashMap::new();
         let first_labels = load_level_packages(&mut packages, &b.package_cfg, first)?;
@@ -2198,6 +2322,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }),
             ..default()
         }))
+        .add_plugins(gdl_client::GsMaterialPlugin)
         .init_resource::<Ui>()
         .add_systems(Startup, setup_static)
         .add_systems(FixedUpdate, simulate.run_if(playing))
@@ -2206,7 +2331,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_camera_face, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
                 front_text,
             )
                 .chain(),
@@ -2249,7 +2374,7 @@ fn advance_level(
     mut session: ResMut<Session>,
     mut sim: ResMut<Sim>,
     (old, root, bodies): (Query<Entity, With<LevelEntity>>, Query<Entity, With<MirrorRoot>>, Query<Entity, With<CharacterRoot>>),
-    (mut meshes, mut images, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
+    (mut meshes, mut images, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<gdl_client::GsMaterial>>),
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
     mut sources: ResMut<Sources>,
     mut libraries: ResMut<Libraries>,

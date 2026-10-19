@@ -10,7 +10,9 @@ replaced by a plausible gameplay rule or generated asset.
 | Runtime code overlays | DVP payloads and IRX modules inventoried | Trace runtime file/module requests and address reuse |
 | First slice lookup trace | Frozen/live WorldDir=levels/levelG1 binds entries 2194–2198 | Confirm each original loader request and external dependencies |
 | Material/color pipeline | Title RGB/orientation plausible; raw alpha preserved | Compare upload flags, blend equations, known transparent/background pixels |
-| Remaining alpha-only pixel formats | Six base color families decoded; formats 130/146 remain unresolved | Recover upload/consumer semantics and compare distinctive samples |
+| Remaining alpha-only pixel formats | Six base color families and format 146 (lightmap indices, research/rendering.md) decoded; format 130 unresolved | Recover upload/consumer semantics and compare distinctive samples |
+| Lightmap CLUT source | Observed in the G1 dump (white, alpha 8·i); generating code not found; assumed for all packages (HYPOTHESIS) | Find the CLUT upload in pbLoadLightMaps/pbInitTexture or a second level's dump |
+| setPrimColor scale / VU1 lighting | Colour scales (MBLightmapMod, +0xa8/+0xb8) and the VU1 microcode use are not recovered; vertex colours applied as observed | Export the VU1 microcode or compare GS vertex colours with DoLighting active |
 | Mipmap semantics | Raw counts/metadata retained | Decode sizes/layouts and compare native/reference LOD selections |
 | Original geometry | All 1,729 G1 integer packets independently agree; native terrain viewer runs | Resolve 62 triangle-count discrepancies, original transform/winding and material consumers |
 | Animation/rig | 35-node SOR tree, 137 clips, frame-zero reader and native rest-hierarchy inspector | Local channels/matrices/blending and bounded player animation choice now compare exactly; world helper compares two natural translations and one controlled bone chain; recover render scales, attachments and full events |

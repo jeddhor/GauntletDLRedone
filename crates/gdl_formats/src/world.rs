@@ -9,6 +9,9 @@ pub struct WorldNode {
     pub index: u32,
     pub label: String,
     pub flags: u32,
+    /// +0x18: the MB node flags CreateWorldNode passes to MBTreeSetFlags
+    /// (renderer draw state; docs/research/rendering.md).
+    pub render_flags: u32,
     pub position: [f32; 3],
     pub radius: f32,
     pub next: i16,
@@ -189,6 +192,7 @@ impl World {
                 index: index as u32,
                 label: r.label(p, 16),
                 flags: r.u32(p + 16),
+                render_flags: r.u32(p + 24),
                 position: r.xyz(p + 28)?,
                 radius: r.float(p + 48)?,
                 next,

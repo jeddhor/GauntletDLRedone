@@ -221,6 +221,26 @@ pub struct Strip {
 pub struct Geometry {
     pub strips: Vec<Strip>,
 }
+impl ObjectBitmap {
+    /// Format 146 (lightmap) texels: 4-bit indices, two per byte, low nibble
+    /// first, no inline palette. The G1 GS dump uploads these bytes unchanged
+    /// as PSMT4 (all 12 G1 lightmaps byte-identical) with a shared CLUT; the
+    /// CLUT is the consumer's, not part of this record.
+    pub fn decode_lightmap_indices(&self, textures: &[u8]) -> Result<Vec<u8>, ParseError> {
+        let r = Reader {
+            bytes: textures,
+            family: "TEXTURES",
+        };
+        if self.format != 146 {
+            return Err(r.error(self.texture_offset as usize, "not a format 146 bitmap"));
+        }
+        let count = self.width as usize * self.height as usize;
+        let range = r.range(self.texture_offset as usize, count.div_ceil(2))?;
+        let bytes = &textures[range];
+        Ok((0..count).map(|i| (bytes[i / 2] >> ((i % 2) * 4)) & 15).collect())
+    }
+}
+
 impl Part {
     pub fn decode_integer_geometry(&self) -> Result<Geometry, ParseError> {
         let r = Reader {
@@ -455,6 +475,23 @@ mod tests {
             raw_descriptor: vec![],
             raw_container: b,
         }
+    }
+    #[test]
+    fn lightmap_indices_low_nibble_first() {
+        let bitmap = ObjectBitmap {
+            index: 0,
+            format: 146,
+            flags: 0,
+            width: 2,
+            height: 2,
+            texture_offset: 1,
+            tex0: 0,
+            raw: Vec::new(),
+        };
+        assert_eq!(bitmap.decode_lightmap_indices(&[0xff, 0x21, 0x43]).unwrap(), vec![1, 2, 3, 4]);
+        assert!(bitmap.decode_lightmap_indices(&[0xff, 0x21]).is_err());
+        let base = ObjectBitmap { format: 66, ..bitmap };
+        assert!(base.decode_lightmap_indices(&[0xff, 0x21, 0x43]).is_err());
     }
     #[test]
     fn strip_sentinel_skip_bit_scale_and_winding_are_explicit() {
