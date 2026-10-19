@@ -54,16 +54,30 @@ impl Game {
                 }
             }
             5 => {
+                // One effect per safe rock, parented to the rock's node.
                 if first && 0 < self.safe_rock_num {
-                    return unsupported("safe-rock damage FX");
+                    for k in 0..self.safe_rock_items.len() {
+                        let fxk = self.critter_do_damage_fx(i, d, false, Some([0.0; 3]))?;
+                        if 0 <= fxk {
+                            self.parent_fx_to_item(fxk as usize, self.safe_rock_items[k])?;
+                        }
+                    }
                 }
             }
             6 => {
                 if first && self.safe_rock_num != 0 {
-                    if 0 < self.safe_rock_num {
-                        return unsupported("SafeRockNearestTarget");
+                    let target = self.crit(i).rec.i16_(c::TARGET);
+                    self.safe_rock_idx = self.safe_rock_nearest_target(target)?;
+                    if let Ok(idx) = usize::try_from(self.safe_rock_idx) {
+                        let fxk = self.critter_do_damage_fx(i, d, false, Some([0.0; 3]))?;
+                        if 0 <= fxk {
+                            self.parent_fx_to_item(fxk as usize, self.safe_rock_items[idx])?;
+                            // CriterSfxNumFrames: the effect tree's frame count.
+                            let kind = self.fx(fxk as usize).u32_(fx::KIND) as usize;
+                            let frames = self.effects.tables.headers.get(kind).copied().flatten().map_or(-1, |h| h.frames);
+                            self.safe_rock_counter[idx] = mul((frames - 1) as f32, f32::from_bits(0x3d08_8880))?;
+                        }
                     }
-                    self.safe_rock_idx = -1;
                 }
             }
             7 => {
@@ -459,6 +473,64 @@ impl Game {
         let id = self.crit(i).rec.u16_(c::ID) | 0x1000;
         self.fx_mut(k).set_i16(fx::OWNER, id as i16);
         Ok(k as i32)
+    }
+
+    /// MBNodeSetParent(SfxGetNode(effect), ItemGetNode(item)): the effect's
+    /// position becomes relative to the item's node (rows +0x10..+0x30,
+    /// translation +0x40); static rocks, so it is placed once.
+    fn parent_fx_to_item(&mut self, k: usize, item: usize) -> R<()> {
+        let r = &self.items.records[item];
+        let rows = [r.v3(0x10), r.v3(0x20), r.v3(0x30)];
+        let t = r.v3(0x40);
+        if let Some(n) = self.effects.nodes[k] {
+            let w = mul_vec_mat3(n.position, &rows)?;
+            let pos = [add(w[0], t[0])?, add(w[1], t[1])?, add(w[2], t[2])?];
+            if let Some(n) = self.effects.nodes[k].as_mut() {
+                n.position = pos;
+            }
+        }
+        Ok(())
+    }
+
+    /// SafeRockActive 0x1532f0: health +0xe4 > 0 and stage +0xf2 > 0.
+    pub(crate) fn safe_rock_active(&self, item: usize) -> bool {
+        let r = &self.items.records[item];
+        0 < r.i16_(0xe4) && 0 < r.i16_(0xf2)
+    }
+
+    /// SafeRockNearestTarget 0x19c730(player): the nearest inactive rock to
+    /// the player (xz), or for no target the first inactive rock in the
+    /// rotation after SafeRockIdx.
+    fn safe_rock_nearest_target(&self, target: i16) -> R<i32> {
+        let n = self.safe_rock_num;
+        if n <= 0 {
+            return Ok(-1);
+        }
+        if target < 0 {
+            let mut j = 1;
+            for k in 0..n {
+                j = (j + self.safe_rock_idx) % n;
+                if !self.safe_rock_active(self.safe_rock_items[k as usize]) {
+                    return Ok(j);
+                }
+                j = k + 2;
+            }
+            return Ok(-1);
+        }
+        let pp = self.players[target as usize].v3(0x50);
+        let mut best = (f32::from_bits(0x6258_d727), -1);
+        for k in 0..n as usize {
+            let it = self.safe_rock_items[k];
+            if self.safe_rock_active(it) {
+                continue;
+            }
+            let t = self.items.records[it].v3(0x40);
+            let d = crate::vu0::fqdist(sub(t[0], pp[0])?, sub(t[2], pp[2])?)?.0;
+            if d < best.0 {
+                best = (d, k as i32);
+            }
+        }
+        Ok(best.1)
     }
 
     /// CritterDoDamageFX 0x1946c8 (`local`: offsets in the critter frame).

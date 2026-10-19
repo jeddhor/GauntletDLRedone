@@ -407,12 +407,28 @@ impl Game {
                     let v = sub(v, self.globals.spf)?;
                     self.safe_rock_counter[k] = v;
                     if v <= 0.0 {
-                        return unsupported("SafeRockActivate");
+                        self.safe_rock_activate(self.safe_rock_items[k])?;
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// SafeRockActivate 0x1533c0: the rock grows (health = definition +0x44
+    /// × 3, stage 0, +0xe3 = definition +0x42) and SetSafeRock restages it;
+    /// MBTreeClearFlags(tree, 1) is presentation.
+    fn safe_rock_activate(&mut self, item: usize) -> R<()> {
+        let d = self.items.records[item].definition();
+        let (h, e3) = {
+            let def = &self.items.definitions[d];
+            (def.i16_(0x44).wrapping_mul(3), def.0[0x42])
+        };
+        let r = &mut self.items.records[item];
+        r.set_i16(0xe4, h);
+        r.set_i16(0xf2, 0);
+        r.set_u8(0xe3, e3);
+        self.set_safe_rock_pub(item)
     }
 
     /// CritterActivate 0x197658 / BossActivate 0x19dfb8.

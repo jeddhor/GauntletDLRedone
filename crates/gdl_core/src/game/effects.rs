@@ -1782,6 +1782,10 @@ impl Game {
     /// definition's +0x44; the model "<name><stage>" (then +"L1", +"ROOT")
     /// must exist (MBOX_FindObject_Sub, strncmp 15) or the rock stops
     /// staging (+0xf2 = -1).
+    pub(crate) fn set_safe_rock_pub(&mut self, slot: usize) -> R<()> {
+        self.set_safe_rock(slot)
+    }
+
     fn set_safe_rock(&mut self, slot: usize) -> R<()> {
         let r = &self.items.records[slot];
         let def = &self.items.definitions[r.definition()];

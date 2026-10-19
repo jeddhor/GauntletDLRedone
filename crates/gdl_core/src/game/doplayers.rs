@@ -23,6 +23,33 @@ use crate::player_collision::collision_position;
 
 type V3 = [f32; 3];
 
+/// MulMat4(left, right) on row matrices (world_transform::multiply): the
+/// result is right × left in the row-vector convention.
+fn mat_mul(left: &[[f32; 4]; 4], right: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
+    let mut a: [f32; 16] = std::array::from_fn(|k| left[k / 4][k % 4]);
+    let mut b: [f32; 16] = std::array::from_fn(|k| right[k / 4][k % 4]);
+    let w = crate::world_transform::multiply(&mut a, &mut b)?;
+    Ok(std::array::from_fn(|i| std::array::from_fn(|j| w[i * 4 + j])))
+}
+
+/// InvertMat4 0x1d5b20: the transposed rotation and the translation
+/// −(t · rowᵢ) summed with VU operations (x + y, then + z); w = 1.
+fn invert_mat4(m: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
+    let mut out = [[0.0f32; 4]; 4];
+    for (i, row) in out.iter_mut().take(3).enumerate() {
+        for (j, v) in row.iter_mut().take(3).enumerate() {
+            *v = m[j][i];
+        }
+    }
+    let t = [-m[3][0], -m[3][1], -m[3][2]];
+    for i in 0..3 {
+        let r = m[i];
+        out[3][i] = add_rz(add_rz(mul(t[0], r[0])?, mul(t[1], r[1])?)?, mul(t[2], r[2])?)?;
+    }
+    out[3][3] = 1.0;
+    Ok(out)
+}
+
 impl Game {
     /// The player's AnimInfo clock on its idle sequence (the tree creation
     /// InitAnim; only when the record holds no valid sequence).
@@ -86,20 +113,12 @@ impl Game {
         Ok(())
     }
 
-    /// The parent object's translation when it has no run-time rotation.
-    fn parent_translation(&self, o: usize) -> R<V3> {
-        if self.collision.node_rot[o].is_some() {
-            return unsupported("player parented to a rotating floor object");
-        }
+    /// The parent object's world matrix (rows) and whether it is a pure
+    /// translation (treated as the parent node's flag 4; HYPOTHESIS).
+    fn parent_world(&self, o: usize) -> R<([[f32; 4]; 4], bool)> {
         let m = self.collision.object_matrix(o).map_err(|e| Unsupported(e.0.to_string()))?;
-        for (i, row) in m.iter().take(3).enumerate() {
-            for (j, v) in row.iter().take(3).enumerate() {
-                if *v != if i == j { 1.0 } else { 0.0 } {
-                    return unsupported("player parented to a rotated/scaled floor object");
-                }
-            }
-        }
-        Ok([m[3][0], m[3][1], m[3][2]])
+        let pure = (0..3).all(|i| (0..3).all(|j| m[i][j] == if i == j { 1.0 } else { 0.0 }));
+        Ok((m, pure))
     }
 
     /// The record matrix +0x20..+0x5c (4 × 4).
@@ -124,9 +143,15 @@ impl Game {
         };
         let mut world = local;
         if let Some(o) = self.player_floor_parent[p] {
-            let t = self.parent_translation(o)?;
-            for j in 0..3 {
-                world[3][j] = add_rz(local[3][j], t[j])?;
+            // GetWorldMat: a translation-only parent adds its offset (add.s),
+            // otherwise MulMat4(parent, node).
+            let (pm, pure) = self.parent_world(o)?;
+            if pure {
+                for j in 0..3 {
+                    world[3][j] = add(pm[3][j], local[3][j])?;
+                }
+            } else {
+                world = mat_mul(&pm, &local)?;
             }
         }
         let r = &mut self.players[p];
@@ -166,9 +191,14 @@ impl Game {
             }
         }
         if let Some(o) = self.player_floor_parent[p] {
-            let t = self.parent_translation(o)?;
-            for j in 0..3 {
-                m[3][j] = sub(m[3][j], t[j])?;
+            let (pm, pure) = self.parent_world(o)?;
+            if pure {
+                for j in 0..3 {
+                    m[3][j] = sub(m[3][j], pm[3][j])?;
+                }
+            } else {
+                // InvertMat4 (rigid inverse), then MulMat4(inverse, node, node).
+                m = mat_mul(&invert_mat4(&pm)?, &m)?;
             }
         }
         self.player_node[p] = Some(m);
