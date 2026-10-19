@@ -10,12 +10,21 @@ original (PCSX2 reference on Xvfb :191, private captures):
    WelcomeMessage, crystal delivery (UnlockLevel), NeedCrystals at closed
    doors, Sumner (GWIZ tree, SumnerAnimate, speeches, captions, ghost),
    scroll items reading SCROLLS<level>.
-2. Camera: StandardCamera/move_camera/rotate_camera/limit_camera, stage
-   start/end, trigger cameras (crystal, Sumner, window, rune, item), boss
-   cameras; replaces the rest-pose hypothesis.
-3. Player: PlayerMotion and DoPlayerAction in full (movement on moving
-   floors, melee combos, block, turbo, magic with animation, hit reactions,
-   dying action), PlayerProcessScale/Familiar, join/continue flow.
+2. Camera — DONE 2026-10-19 (research/camera.md): the gameplay camera is
+   the StdCam module (not StandardCamera; new_camera_switch is 1), ported
+   and bit-exact over 250 traced updates incl. transmitter switches; stage
+   start sequence, boss camera (11 arenas run; not trace-checked), trigger
+   cameras with Tower links (bit-exact vs capture), shakes, player-dpos
+   frustum limit (wired with step 3). Open: do_camera/StandardCamera (old
+   Cam array, used by front-end modes), stage-start and boss traces.
+3. Player (IN PROGRESS): A DoPlayerAction in full; B PlayerMotion in full
+   (0x1480a8, 4.7k instructions; reuse the verified request/facing/
+   displacement pieces; contacts, knockback, targeting branches, combos and
+   player parenting, legend items, familiar, camera limit); C do_players'
+   per-player loop; D PlayerControls (pad → control records); E replace the
+   interim PlayerDriver/PlayerSim with record-based simulation; F trace
+   comparisons (movement traces exist; add attack/magic/hit traces).
+   PlayerProcessScale/Familiar, join/continue flow.
 4. Rendering: lighting (vertex colour, MB point lights such as torches,
    fog), GS blending/TEXA alpha, world particle systems (WorldPsysActivate),
    effect trees, item/enemy animation (OANIM), texture animation (DoTexMods).
