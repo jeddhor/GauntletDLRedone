@@ -11,7 +11,9 @@
 //! Saves: gdl_core::save (versioned envelopes, backups, recovery).
 //!
 //! Simulation: game_main order with the ported item/enemy/effect systems and
-//! the interim player driver (see gdl_core::game::players for its labels).
+//! the record-based players (PlayerControls → do_players → PlayerMotion →
+//! DoPlayerAction; research/player.md). Host keys and gamepads fill the
+//! joyGetStatus entries of ports 0–3 (HYPOTHESIS mapping, below).
 //! Presentation only (labelled on screen): unlit diagnostic materials, alpha
 //! cutout, rest-state follow camera, item models at their tree rest pose,
 //! enemy per-frame objects chosen by a frame-count match of object stems to
@@ -21,10 +23,8 @@
 use bevy::{core_pipeline::tonemapping::Tonemapping, ecs::system::RunSystemOnce, ecs::world::World as EcsWorld, prelude::*, sprite::Anchor};
 use gdl_client::menu::{Action, Entry, Key, Menu};
 use gdl_core::{
-    controls::{direction_levels, tables_from_elf},
-    game::{effects::Visual, pickups::ClassData, players::PlayerDriver, profile, record::Record, setup, Event, Game},
+    game::{effects::Visual, pad::PadStatus, pickups::ClassData, profile, record::Record, setup, Event, Game},
     player_class::ClassTables,
-    player_sim::PlayerSim,
     save::SaveStore,
 };
 use gdl_formats::{animation::Animations, objects::Objects, texdef::TextureTable, world::World};
@@ -160,7 +160,6 @@ struct Session {
     current: usize,
     world: World,
     level: Package,
-    sim_start: PlayerSim,
     action_map: Vec<[i64; 2]>,
     clip_timings: Vec<gdl_core::animation_clock::ClipTiming>,
     /// (enemy type, package prefix, ANIM.PS2 path).
@@ -214,7 +213,6 @@ struct Base {
     package_cfg: HashMap<String, Value>,
     start: Value,
     levels: Vec<LevelSource>,
-    sim_template: PlayerSim,
     monster_paths: Vec<(i32, String, String)>,
     monsters: HashMap<i32, String>,
     anim_paths: HashMap<String, String>,
@@ -492,19 +490,14 @@ struct EnemyFrames(HashMap<String, HashMap<String, Vec<Vec<String>>>>);
 #[derive(Resource)]
 struct Sim {
     game: Game,
-    driver: PlayerDriver,
     error: Option<String>,
     updates: u64,
     exp: i64,
     kills: u32,
     sparks: Vec<(Vec3, f32)>,
     last_event: String,
-    magic_held: bool,
-    /// Co-op players 1–3 (interim drivers) and their potion-button state.
-    coop: [Option<PlayerDriver>; 3],
-    coop_magic: [bool; 3],
-    /// Seconds player 1 has been dying (state 8).
-    dying: f32,
+    /// Co-op players 1–3 in play (PLACEHOLDER join, see `simulate`).
+    coop: [bool; 3],
     /// NewHelp text on screen (seconds left) and when each id last showed.
     hint: Option<(f32, String)>,
     hint_shown: HashMap<i32, f64>,
@@ -514,46 +507,73 @@ struct Sim {
     hint_menu: bool,
 }
 
-/// One player slot's controls this update: the level word, attack edge
-/// and potion button. Slot 0: WASD/arrows, Space/K, E/L, or gamepad 0;
-/// slot 1: TFGH, R, Y, or gamepad 1; slots 2–3: gamepads 2–3 (D-pad or
-/// left stick, South attack, East potion).
-fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> (u32, bool, bool) {
-    let mut levels = 0;
-    let (mut attack_edge, mut magic) = (false, false);
-    let mut dirs = [false; 4];
+/// One port's joyGetStatus entries this update. HYPOTHESIS mapping (the
+/// physical pad → entry assignment is not measured; research/unknowns.md):
+/// entries 0–3 d-pad (left, right, up, down; observed level bits), 0xd
+/// attack, 0xb magic/potion, 0xc turbo, 0xa the second attack button
+/// (GetPlayerDMotion 0x400), 0x12 strafe, 0x13 code 2, 8 dash, 9 team move,
+/// 0x14/0x15 start/select. Port 0: WASD/arrows, Space/K, E/L, Shift/J,
+/// Q/I, Ctrl, Enter/Tab, or gamepad 0 (stick as analog entries 4–7); port
+/// 1: TFGH, R, Y; ports 2–3: gamepads.
+fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> PadStatus {
+    let mut s = PadStatus { connected: true, ..Default::default() };
+    let press = |s: &mut PadStatus, i: usize, on: bool| {
+        if on {
+            s.press(i);
+        }
+    };
+    let k = |a: KeyCode| keys.pressed(a);
     match slot {
         0 => {
-            levels = keyboard_levels(keys);
-            attack_edge = keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::KeyK);
-            magic = keys.pressed(KeyCode::KeyE) || keys.pressed(KeyCode::KeyL);
+            press(&mut s, 0, k(KeyCode::ArrowLeft) || k(KeyCode::KeyA));
+            press(&mut s, 1, k(KeyCode::ArrowRight) || k(KeyCode::KeyD));
+            press(&mut s, 2, k(KeyCode::ArrowUp) || k(KeyCode::KeyW));
+            press(&mut s, 3, k(KeyCode::ArrowDown) || k(KeyCode::KeyS));
+            press(&mut s, 0xd, k(KeyCode::Space) || k(KeyCode::KeyK));
+            press(&mut s, 0xb, k(KeyCode::KeyE) || k(KeyCode::KeyL));
+            press(&mut s, 0xc, k(KeyCode::ShiftLeft) || k(KeyCode::KeyJ));
+            press(&mut s, 0xa, k(KeyCode::KeyQ) || k(KeyCode::KeyI));
+            press(&mut s, 0x12, k(KeyCode::ControlLeft));
+            press(&mut s, 0x14, k(KeyCode::Enter));
+            press(&mut s, 0x15, k(KeyCode::Tab));
         }
         1 => {
-            dirs = [keys.pressed(KeyCode::KeyT), keys.pressed(KeyCode::KeyG), keys.pressed(KeyCode::KeyF), keys.pressed(KeyCode::KeyH)];
-            if keys.pressed(KeyCode::KeyR) {
-                levels |= 0x0200_0200;
-            }
-            attack_edge = keys.just_pressed(KeyCode::KeyR);
-            magic = keys.pressed(KeyCode::KeyY);
+            press(&mut s, 0, k(KeyCode::KeyF));
+            press(&mut s, 1, k(KeyCode::KeyH));
+            press(&mut s, 2, k(KeyCode::KeyT));
+            press(&mut s, 3, k(KeyCode::KeyG));
+            press(&mut s, 0xd, k(KeyCode::KeyR));
+            press(&mut s, 0xb, k(KeyCode::KeyY));
         }
         _ => {}
     }
     if let Some(g) = pads.get(slot) {
-        let s = g.left_stick();
-        dirs[0] |= g.pressed(GamepadButton::DPadUp) || 0.5 < s.y;
-        dirs[1] |= g.pressed(GamepadButton::DPadDown) || s.y < -0.5;
-        dirs[2] |= g.pressed(GamepadButton::DPadLeft) || s.x < -0.5;
-        dirs[3] |= g.pressed(GamepadButton::DPadRight) || 0.5 < s.x;
-        if g.pressed(GamepadButton::South) {
-            levels |= 0x0200_0200;
-        }
-        attack_edge |= g.just_pressed(GamepadButton::South);
-        magic |= g.pressed(GamepadButton::East);
+        let b = |x: GamepadButton| g.pressed(x);
+        press(&mut s, 0, b(GamepadButton::DPadLeft));
+        press(&mut s, 1, b(GamepadButton::DPadRight));
+        press(&mut s, 2, b(GamepadButton::DPadUp));
+        press(&mut s, 3, b(GamepadButton::DPadDown));
+        press(&mut s, 0xd, b(GamepadButton::South));
+        press(&mut s, 0xb, b(GamepadButton::East));
+        press(&mut s, 0xc, b(GamepadButton::West));
+        press(&mut s, 0xa, b(GamepadButton::North));
+        press(&mut s, 0x12, b(GamepadButton::LeftTrigger));
+        press(&mut s, 0x13, b(GamepadButton::RightTrigger));
+        press(&mut s, 8, b(GamepadButton::LeftTrigger2));
+        press(&mut s, 9, b(GamepadButton::RightTrigger2));
+        press(&mut s, 0x14, b(GamepadButton::Start));
+        press(&mut s, 0x15, b(GamepadButton::Select));
+        // The left stick as pressure-style entries 4–7 (left, right, up, down).
+        let st = g.left_stick();
+        let v = |x: f32| (x.clamp(0.0, 1.0) * 255.0) as u8;
+        s.analog = true;
+        s.has_stick = true;
+        s.entries[4] = [3, v(-st.x)];
+        s.entries[5] = [3, v(st.x)];
+        s.entries[6] = [3, v(st.y)];
+        s.entries[7] = [3, v(-st.y)];
     }
-    if dirs.iter().any(|&d| d) {
-        levels |= direction_levels(dirs[0], dirs[1], dirs[2], dirs[3]);
-    }
-    (levels, attack_edge, magic)
+    s
 }
 
 #[derive(Resource)]
@@ -852,24 +872,12 @@ fn spawn_level(
 /// The interim player simulation of a character: the captured template
 /// with the record's class values (speed +0x124, collision offset +0x81c,
 /// radius +0x828, height +0x82c, scales +0x964/+0x968/+0x96c).
-fn class_sim(template: &PlayerSim, r: &Record) -> PlayerSim {
-    let mut sim = template.clone();
-    sim.stats.speed_124 = r.f32_(0x124);
-    sim.stats.radius_828 = r.f32_(0x828);
-    sim.stats.height_82c = r.f32_(0x82c);
-    sim.stats.scale_964 = r.f32_(0x964);
-    sim.stats.turn_968 = r.f32_(0x968);
-    sim.stats.scale_96c = r.f32_(0x96c);
-    sim.collision_offset_81c = r.v3(0x81c);
-    sim
-}
-
 /// Build the native game for level `idx` with player 0's record `carry`,
 /// entered at the level's start locator (get_player_pos). init_next_level's
 /// record steps run first: load_player_geo/load_player (profile::level_start)
 /// and PlayerSaveState (the Tower: without the backup copy; the
 /// Underworld 0xc: not called).
-fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<(Game, PlayerDriver), Box<dyn Error>> {
+fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box<dyn Error>> {
     let elf = gdl_formats::elf::Elf::parse(&session.elf_bytes)?;
     let lv = &session.levels[idx];
     let wdata = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&lv.wdata)?)?;
@@ -942,8 +950,6 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<(Game, Pl
             })
             .collect::<Result<Vec<_>, _>>()?,
     })?;
-    let tables = tables_from_elf(&elf)?;
-    let mut sim = class_sim(&session.sim_start, &record);
     {
         // EnterTower: SetPlayerStartPos(GetWorldOrder(LastWorldPlayed)) puts
         // a returning player at that realm's wing (WorldOrder 0x23f4c8);
@@ -962,29 +968,36 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<(Game, Pl
             .find(|l| l.kind == 7 && l.id == id)
             .or_else(|| session.world.locators.iter().find(|l| l.kind == 7 && l.id == 0))
             .ok_or("level has no player start locator")?;
-        game.place_player_start(0, &mut sim, loc.position, loc.rotation[1]).map_err(|e| e.to_string())?;
-        sim.current_action = 0;
-        sim.requested_action = 0;
+        game.place_player(0, loc.position, loc.rotation[1]).map_err(|e| e.0)?;
+        game.players[0].set_u32(0x1e0, 0);
+        game.players[0].set_u32(0x1e4, 0);
+        game.player_clips[0] = session.clip_timings.clone();
+        game.init_player_anim(0).map_err(|e| e.0)?;
+        game.controls.assign(0, 0);
         // init_next_level: init_game_cam + StdCamInit(0) after the players.
         game.start_camera().map_err(|e| e.0)?;
     }
-    let driver = PlayerDriver::new(sim, tables, session.action_map.clone(), session.clip_timings.clone());
-    Ok((game, driver))
+    Ok(game)
 }
 
-fn keyboard_levels(keys: &ButtonInput<KeyCode>) -> u32 {
-    let any = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
-    let mut levels = direction_levels(
-        any(KeyCode::ArrowUp, KeyCode::KeyW),
-        any(KeyCode::ArrowDown, KeyCode::KeyS),
-        any(KeyCode::ArrowLeft, KeyCode::KeyA),
-        any(KeyCode::ArrowRight, KeyCode::KeyD),
-    );
-    if any(KeyCode::Space, KeyCode::KeyK) {
-        // Observed reference level word for the attack button (Cross / K).
-        levels |= 0x0200_0200;
-    }
-    levels
+/// PLACEHOLDER co-op join (the original's character select, LoadPlyrData
+/// and can_join timers are not ported): port `k`'s player enters as a copy
+/// of `from`'s record beside player 0, sharing its class animation.
+fn join_copy(game: &mut Game, k: usize, from: usize) -> Result<(), String> {
+    let mut r = game.players[from].clone();
+    r.set_u32(0, k as u32);
+    game.players[k] = r;
+    let mut at = game.players[0].v3(0x50);
+    at[0] += 3.0 * k as f32;
+    let yaw = game.players[0].f32_(0x86c);
+    game.place_player(k, at, yaw).map_err(|e| e.0)?;
+    game.players[k].set_u32(0x1e0, 0);
+    game.players[k].set_u32(0x1e4, 0);
+    game.player_clips[k] = game.player_clips[0].clone();
+    game.init_player_anim(k).map_err(|e| e.0)?;
+    game.controls.assign(k, k);
+    game.set_player_vars();
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1004,62 +1017,34 @@ fn simulate(
     let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().collect();
     pads.sort_by_key(|(e, _)| *e);
     let pads: Vec<&Gamepad> = pads.into_iter().map(|(_, g)| g).collect();
-    let (levels, _, magic) = player_input(0, &keys, &pads);
-    if magic {
-        if !sim.magic_held {
-            sim.driver.magic_pressed = true;
-        }
-        sim.magic_held = true;
-    } else {
-        sim.magic_held = false;
+    let mut ports = [PadStatus::default(); 8];
+    for (k, port) in ports.iter_mut().take(4).enumerate() {
+        *port = player_input(k, &keys, &pads);
+        // Only ports with a device are connected (keyboard: ports 0 and 1).
+        port.connected = k < 2 || pads.get(k).is_some();
     }
-    let mut coop_levels = [0u32; 3];
-    for (k, cl) in coop_levels.iter_mut().enumerate() {
-        let (l, attack, magic) = player_input(k + 1, &keys, &pads);
-        *cl = l;
-        if sim.coop[k].is_none() {
-            if attack && 0.0 < sim.game.players[0].f32_(0x1a10) {
-                // PLACEHOLDER join: a copy of player 0 beside it.
-                let mut d = sim.driver.clone();
-                let mut at = sim.driver.sim.position;
-                at[0] += 3.0 * (k as f32 + 1.0);
-                let yaw = sim.driver.sim.facing;
-                match sim.game.join_player_copy(k + 1, 0, &mut d.sim, at, yaw) {
-                    Ok(()) => {
-                        sim.coop[k] = Some(d);
-                        sim.last_event = format!("player {} joined (interim copy of player 1)", k + 2);
-                    }
-                    Err(e) => sim.last_event = format!("join failed: {}", e.0),
+    for (k, port) in ports.iter().enumerate().take(4).skip(1) {
+        let attack = port.entries[0xd][0] & 1 != 0;
+        if !sim.coop[k - 1] && attack && port.connected && 0.0 < sim.game.players[0].f32_(0x1a10) {
+            match join_copy(&mut sim.game, k, 0) {
+                Ok(()) => {
+                    sim.coop[k - 1] = true;
+                    sim.last_event = format!("player {} joined (PLACEHOLDER copy of player 1)", k + 1);
                 }
+                Err(e) => sim.last_event = format!("join failed: {e}"),
             }
-            continue;
-        }
-        if magic {
-            if !sim.coop_magic[k]
-                && let Some(d) = sim.coop[k].as_mut()
-            {
-                d.magic_pressed = true;
-            }
-            sim.coop_magic[k] = true;
-        } else {
-            sim.coop_magic[k] = false;
         }
     }
-    let Sim { game, driver, coop, .. } = &mut *sim;
+    let Sim { game, .. } = &mut *sim;
     let before = game.events.len();
     game.step_with(None, &mut |g| {
-        g.drive_player(0, driver, levels)?;
-        for (k, d) in coop.iter_mut().enumerate() {
-            if let Some(d) = d {
-                g.drive_player(k + 1, d, coop_levels[k])?;
-            }
-        }
-        Ok(())
+        g.update_controls(&ports)?;
+        g.do_players().map(|_| ())
     });
     sim.updates += 1;
     let new: Vec<Event> = sim.game.events.drain(before..).collect();
     sim.game.events.clear();
-    let me = Vec3::from_array(sim.driver.sim.position);
+    let me = Vec3::from_array(sim.game.players[0].v3(0x50));
     let right = sim.game.std_camera.as_ref().map_or(presentation.basis[0], |c| Vec3::from_array(c.pb.cam_rows[0]));
     for e in &new {
         if let Some(a) = audio.as_mut() {
@@ -1425,18 +1410,25 @@ fn present_player(
     for mut v in &mut bars {
         *v = if barred { Visibility::Inherited } else { Visibility::Hidden };
     }
-    let drivers: [Option<&PlayerDriver>; 4] = [Some(&sim.driver), sim.coop[0].as_ref(), sim.coop[1].as_ref(), sim.coop[2].as_ref()];
-    let poses: Vec<_> = drivers.iter().map(|d| d.and_then(|d| gdl_client::rig_pose(&sources.clips, &sources.clip_bytes, d.anim.clip, d.anim.frame).ok())).collect();
+    // Players in play: slot 0 and joined slots; AnimInfo +0xa2 sequence and
+    // +0xac frame select the pose (presentation sampling of the class clips).
+    let active: [bool; 4] = [true, sim.coop[0], sim.coop[1], sim.coop[2]];
+    let poses: Vec<_> = (0..4)
+        .map(|k| {
+            let r = &sim.game.players[k];
+            active[k].then(|| gdl_client::rig_pose(&sources.clips, &sources.clip_bytes, r.u16_(0xa2) as usize, r.f32_(0xac)).ok()).flatten()
+        })
+        .collect();
     for (root, mut t, mut vis) in &mut body {
-        let Some(d) = drivers.get(root.0).copied().flatten() else {
+        if !active.get(root.0).copied().unwrap_or(false) || matches!(sim.game.players[root.0].i32_(0xfc), 0 | 5 | 0xb) {
             *vis = Visibility::Hidden;
             continue;
-        };
+        }
         *vis = Visibility::Inherited;
-        let s = &d.sim;
-        let m = s.matrix;
+        let r = &sim.game.players[root.0];
+        let (m0, m1, m2, p) = (r.v3(0x20), r.v3(0x30), r.v3(0x40), r.v3(0x50));
         *t = Transform::from_matrix(Mat4::from_cols_array(&[
-            m[0][0], m[0][1], m[0][2], 0.0, m[1][0], m[1][1], m[1][2], 0.0, m[2][0], m[2][1], m[2][2], 0.0, s.position[0], s.position[1], s.position[2], 1.0,
+            m0[0], m0[1], m0[2], 0.0, m1[0], m1[1], m1[2], 0.0, m2[0], m2[1], m2[2], 0.0, p[0], p[1], p[2], 1.0,
         ]));
     }
     for (node, mut t) in &mut nodes {
@@ -1509,12 +1501,12 @@ fn present_player(
         }
         if ui.details {
             t.push_str(&format!(
-                "\n\nINTERIM PLAYTEST (not the M12 slice). missiles thrown {}\n\
+                "\n\nINTERIM PLAYTEST (not the M12 slice). player updates {}\n\
                  Native: item/enemy/generator/missile/damage/pickup/magic/exp/exit/sound-cue systems, movement + collision\n\
                  Interim/presentation: session globals from the capture, player clip clock, camera, unlit materials, menus,\n\
                  enemy frame objects, item rest poses, approximate audio mixing, magic without animation, melee holds the player still, boss pose without blending\n\
                  Enter after death: interim continue   F9: debug skip to next level{}",
-                sim.driver.missiles_started,
+                sim.updates,
                 g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),
             ));
         }
@@ -1628,7 +1620,7 @@ fn refresh_saves(front: &mut Front) {
 
 /// Load save `slot` and enter the Tower with that character.
 fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
-    let (session, sources, game, driver, recovered) = {
+    let (session, sources, game, recovered) = {
         let front = world.resource::<Front>();
         let loaded = front.store.load(slot)?;
         let region = loaded.save.region()?;
@@ -1662,7 +1654,6 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             title: first.title.clone(),
             last_world: 0,
             current: idx,
-            sim_start: b.sim_template.clone(),
             action_map: front.tables.action_map(&clips),
             clip_timings: setup::clips_of(&clips, 0),
             monster_paths: b.monster_paths.clone(),
@@ -1684,16 +1675,16 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             colour,
             carried: [0, -1, -1, -1, -1],
         };
-        let (game, driver) = build_game(&session, idx, &record)?;
+        let game = build_game(&session, idx, &record)?;
         let sources = Sources { character, clips, clip_bytes, rig, packages, monsters: b.monsters.clone() };
-        (session, sources, game, driver, loaded.recovered)
+        (session, sources, game, loaded.recovered)
     };
     let attention = Vec3::from_array(game.players[0].v3(0x810));
     let stage = game.sounds.stage.as_ref().map(|s| s.stream_name(0, 0));
     world.resource_mut::<Presentation>().attention = attention;
     world.insert_resource(sources);
     world.insert_resource(session);
-    world.insert_resource(Sim { game, driver, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), magic_held: false, coop: [None, None, None], coop_magic: [false; 3], dying: 0.0, hint: None, hint_shown: HashMap::new(), message_box: None, hint_menu: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], hint: None, hint_shown: HashMap::new(), message_box: None, hint_menu: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -2045,7 +2036,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cfg: Value = serde_json::from_slice(&gdl_client::bounded_read(Path::new(&args[0]))?)?;
     let p = |k: &str| -> Result<std::path::PathBuf, Box<dyn Error>> { Ok(cfg[k].as_str().ok_or_else(|| format!("config {k}"))?.into()) };
     let sim_start: Value = serde_json::from_slice(&gdl_client::bounded_read(&p("sim_start")?)?)?;
-    let player: PlayerSim = serde_json::from_value(sim_start["sim"].clone())?;
     let pr = &sim_start["presentation"];
     let vec3 = |r: &Value| -> Result<Vec3, Box<dyn Error>> { Ok(Vec3::from_array(serde_json::from_value::<[f32; 3]>(r.clone())?)) };
     let presentation = Presentation {
@@ -2162,7 +2152,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         english,
         scrolls,
         helptab,
-        base: Base { package_cfg, start, levels, sim_template: player, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
+        base: Base { package_cfg, start, levels, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
     refresh_saves(&mut front);
     // hint_menu categories → HINTS_E.ROM lists (every line of every entry,
@@ -2250,27 +2240,17 @@ fn advance_level(
     mut frames: ResMut<EnemyFrames>,
     (front, ui): (Res<Front>, Res<Ui>),
 ) {
-    if !ui.paused && sim.game.players[0].i32_(0xfc) == 8 && session.banner.is_none() {
-        // INTERIM: the dying action (0x7e) and its counter are not animated;
-        // kill_player runs after two seconds.
-        sim.dying += time.delta_secs();
-        if 2.0 <= sim.dying {
-            sim.dying = 0.0;
-            if let Err(e) = sim.game.kill_player(0) {
-                sim.error = Some(format!("kill_player: {}", e.0));
-            } else if sim.game.players[0].i32_(0xfc) == 1 {
-                // The Tower: PlayerRestoreState.
-                let p = sim.game.players[0].clone();
-                sim.driver.sim.stats.speed_124 = p.f32_(0x124);
-                sim.last_event = "restored to the last Tower entry".into();
-            } else if !(0..4).any(|k| matches!(sim.game.players[k].i32_(0xfc), 1 | 4 | 8)) {
-                // Nobody playing: game_main goes to TowerWave.
-                if let Some(k) = session.levels.iter().position(|l| l.world == 0xd) {
-                    session.next = Some(k);
-                    session.banner = Some((3.0, "YOU DIED - back to the Tower (the level's gains are lost)".into()));
-                }
-            }
-        }
+    // do_players state 8 plays the dying action (0x7e, +0x8f8) and calls
+    // kill_player; in the Tower PlayerRestoreState puts the player back.
+    // With nobody left playing (states 1/4/8), game_main goes to TowerWave.
+    if !ui.paused
+        && session.banner.is_none()
+        && sim.game.players[0].i32_(0xfc) == 0xb
+        && !(0..4).any(|k| matches!(sim.game.players[k].i32_(0xfc), 1 | 4 | 8))
+        && let Some(k) = session.levels.iter().position(|l| l.world == 0xd)
+    {
+        session.next = Some(k);
+        session.banner = Some((3.0, "YOU DIED - back to the Tower (the level's gains are lost)".into()));
     }
     if !ui.paused && keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
         // DEBUG: act as if the exit portal (destination: next level) was used.
@@ -2343,7 +2323,8 @@ fn advance_level(
     let g = &sim.game.globals;
     session.carried = [g.tower_counter, g.last_finished_world, g.last_finished_level, g.cur3d_transmitter, g.cur_transmitter];
     let carry = sim.game.players[0].clone();
-    let coop_carry: Vec<Option<gdl_core::game::record::Record>> = (1..4).map(|k| sim.coop[k - 1].as_ref().map(|_| sim.game.players[k].clone())).collect();
+    let coop_carry: Vec<Option<gdl_core::game::record::Record>> = (1..4).map(|k| sim.coop[k - 1].then(|| sim.game.players[k].clone())).collect();
+    let controls = sim.game.controls.clone();
     // load_player: the model follows the level tier (level / 10).
     let tier = (carry.i32_(0x2ac0) / 10).clamp(0, 9);
     let mut new_body = false;
@@ -2368,20 +2349,14 @@ fn advance_level(
         Ok(())
     });
     match loaded.and_then(|_| build_game(&session, idx, &carry)) {
-        Ok((mut game, mut driver)) => {
-            // Co-op players keep their records and enter beside player 1.
+        Ok(mut game) => {
+            // The controls state carries across levels; co-op players keep
+            // their records and enter beside player 1.
+            game.controls = controls;
             for (k, rec) in coop_carry.iter().enumerate() {
                 let Some(rec) = rec else { continue };
                 game.players[k + 1] = rec.clone();
-                let mut d = driver.clone();
-                let mut at = driver.sim.position;
-                at[0] += 3.0 * (k as f32 + 1.0);
-                let yaw = driver.sim.facing;
-                if game.join_player_copy(k + 1, k + 1, &mut d.sim, at, yaw).is_ok() {
-                    sim.coop[k] = Some(d);
-                } else {
-                    sim.coop[k] = None;
-                }
+                sim.coop[k] = join_copy(&mut game, k + 1, k + 1).is_ok();
             }
             if let Some(a) = audio.as_mut() {
                 a.stop_all();
@@ -2389,9 +2364,7 @@ fn advance_level(
                     a.music(&stage.stream_name(0, 0));
                 }
             }
-            driver.missiles_started = sim.driver.missiles_started;
             sim.game = game;
-            sim.driver = driver;
             session.current = idx;
             for e in &old {
                 commands.entity(e).despawn();

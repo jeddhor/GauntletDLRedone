@@ -192,7 +192,7 @@ impl Game {
     /// SetPlayerVars 0x125ef8, ActivePlayerMask part only: players whose
     /// +0xfc state is 1 or 5. Its other writes (0x220158, 0x22015c/0x2201a4,
     /// player +0x93e) are not ported (unknowns.md).
-    pub(crate) fn set_player_vars(&mut self) {
+    pub fn set_player_vars(&mut self) {
         // SetPlayerVars 0x125ef8: StopTime (a time-stop powerup, +0x138 bit
         // 8), EnemyShrink (0.667 per shrink powerup, bit 0x200, outside boss
         // levels), ActivePlayerMask, +0x93e cleared, then SetNumPlayers.

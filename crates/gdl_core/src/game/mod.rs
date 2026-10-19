@@ -48,8 +48,11 @@ impl std::fmt::Display for Unsupported {
 }
 impl std::error::Error for Unsupported {}
 impl From<UnsupportedNumericDomain> for Unsupported {
+    /// `?` sites report where the refused domain was met.
+    #[track_caller]
     fn from(e: UnsupportedNumericDomain) -> Self {
-        Self(format!("numeric domain: {e:?}"))
+        let at = std::panic::Location::caller();
+        Self(format!("numeric domain: {e:?} at {}:{}", at.file(), at.line()))
     }
 }
 impl From<UnsupportedCollision> for Unsupported {

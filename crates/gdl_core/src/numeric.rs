@@ -1,5 +1,11 @@
 //! Bounded scalar arithmetic qualified against the configured PS2 reference.
 //! This is a finite addition subset, not a complete Emotion Engine FPU.
+//!
+//! Denormals: the reference's `FPU/FPUDiv/VU0/VU1.DenormalsAreZero = true`
+//! sets both DAZ and FTZ in PCSX2 (upstream claim: pcsx2 checkout 0f71e668,
+//! Pcsx2Config.cpp read_fpcr and DEFAULT_FPU_FP_CONTROL_REGISTER), so
+//! subnormal operands read as signed zero and results below the smallest
+//! normal flush to signed zero. Infinities and NaNs remain unsupported.
 use std::{error::Error, fmt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,10 +22,7 @@ impl Error for UnsupportedNumericDomain {}
 /// fixture, using PCSX2 2.6.3 with FPU.Roundmode=3. Exceptional domains are
 /// explicitly rejected until their original consumers and behavior are tested.
 pub fn add_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
-    let valid = |v: f32| v == 0.0 || v.is_normal();
-    if !valid(a) || !valid(b) {
-        return Err(UnsupportedNumericDomain);
-    }
+    let (a, b) = (daz(a)?, daz(b)?);
     let mut words = [a.to_bits(), b.to_bits()];
     let exponents = words.map(|w| ((w >> 23) & 255) as i32);
     let distance = exponents[0] - exponents[1];
@@ -40,12 +43,22 @@ pub fn add_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     round_rz(exact)
 }
 
-fn round_rz(exact: f64) -> Result<f32, UnsupportedNumericDomain> {
-    if !exact.is_finite()
-        || exact.abs() > f64::from(f32::MAX)
-        || (exact != 0.0 && exact.abs() < f64::from(f32::MIN_POSITIVE))
-    {
+/// DAZ: a subnormal operand reads as zero of its sign; infinities and NaNs
+/// are refused.
+fn daz(v: f32) -> Result<f32, UnsupportedNumericDomain> {
+    if !v.is_finite() {
         return Err(UnsupportedNumericDomain);
+    }
+    Ok(if v != 0.0 && !v.is_normal() { 0.0f32.copysign(v) } else { v })
+}
+
+fn round_rz(exact: f64) -> Result<f32, UnsupportedNumericDomain> {
+    if !exact.is_finite() || exact.abs() > f64::from(f32::MAX) {
+        return Err(UnsupportedNumericDomain);
+    }
+    if exact.abs() < f64::from(f32::MIN_POSITIVE) {
+        // FTZ (round toward zero first, then flush): signed zero.
+        return Ok(if exact.is_sign_negative() { -0.0 } else { 0.0 });
     }
     let rounded = exact as f32;
     let result = if f64::from(rounded).abs() > exact.abs() {
@@ -67,9 +80,7 @@ pub fn sub_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 /// mask. Qualified against configured PCSX2 VU SSE arithmetic and a controlled
 /// live-bone GetWorldMat probe. General/exceptional domains remain unsupported.
 pub fn add_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
-    if (a != 0.0 && !a.is_normal()) || (b != 0.0 && !b.is_normal()) {
-        return Err(UnsupportedNumericDomain);
-    }
+    let (a, b) = (daz(a)?, daz(b)?);
     if a != 0.0 && b != 0.0 {
         let exponent = |v: f32| ((v.to_bits() >> 23) & 255) as i32;
         if (exponent(a) - exponent(b)).unsigned_abs() >= 25 {
@@ -89,9 +100,7 @@ pub fn add_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 /// The configured reference's finite scalar multiply path, rounded toward zero.
 /// This is not certification of the real hardware's multiplier corner cases.
 pub fn mul_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
-    if (a != 0.0 && !a.is_normal()) || (b != 0.0 && !b.is_normal()) {
-        return Err(UnsupportedNumericDomain);
-    }
+    let (a, b) = (daz(a)?, daz(b)?);
     // Two 24-bit significands have an exact product in f64.
     round_rz(f64::from(a) * f64::from(b))
 }
@@ -99,16 +108,18 @@ pub fn mul_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 /// Finite scalar division with nearest rounding, qualified for the reference's
 /// separately configured FPU division mode=0. Exceptional domains are rejected.
 pub fn div_rn(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
-    if (a != 0.0 && !a.is_normal()) || !b.is_normal() {
+    let (a, b) = (daz(a)?, daz(b)?);
+    if b == 0.0 {
         return Err(UnsupportedNumericDomain);
     }
     let exact = f64::from(a) / f64::from(b);
     let result = exact as f32;
-    if !result.is_finite()
-        || (result != 0.0 && !result.is_normal())
-        || (result == 0.0 && exact != 0.0)
-    {
+    if !result.is_finite() {
         return Err(UnsupportedNumericDomain);
+    }
+    // FTZ for quotients below the smallest normal (FPUDiv.DenormalsAreZero).
+    if result != 0.0 && !result.is_normal() || result == 0.0 && exact != 0.0 {
+        return Ok(if exact.is_sign_negative() { -0.0 } else { 0.0 });
     }
     Ok(result)
 }
@@ -128,7 +139,8 @@ pub fn div_rn_ee(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 }
 
 pub fn sqrt_rz(a: f32) -> Result<f32, UnsupportedNumericDomain> {
-    if a != 0.0 && (a.is_sign_negative() || !a.is_normal()) {
+    let a = daz(a)?;
+    if a != 0.0 && a.is_sign_negative() {
         return Err(UnsupportedNumericDomain);
     }
     let exact = f64::from(a);
@@ -149,7 +161,8 @@ pub fn sub_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 /// VU0 macro-mode DIV: PCSX2 v2.6.3 COP2 macro ops run under the EE MXCSR
 /// (configured Roundmode 3), so the quotient truncates toward zero.
 pub fn div_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
-    if (a != 0.0 && !a.is_normal()) || !b.is_normal() {
+    let (a, b) = (daz(a)?, daz(b)?);
+    if b == 0.0 {
         return Err(UnsupportedNumericDomain);
     }
     let exact = f64::from(a) / f64::from(b);
@@ -165,7 +178,8 @@ pub fn div_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 /// EE SQRT.S: pinned PCSX2 forces nearest rounding for this instruction.
 /// Negative operands (sqrt of |x| plus flags on the EE) are not modelled.
 pub fn sqrt_rn(a: f32) -> Result<f32, UnsupportedNumericDomain> {
-    if a != 0.0 && (a.is_sign_negative() || !a.is_normal()) {
+    let a = daz(a)?;
+    if a != 0.0 && a.is_sign_negative() {
         return Err(UnsupportedNumericDomain);
     }
     // f64 sqrt of an f32 is correctly rounded; rounding again to f32 is
@@ -186,6 +200,15 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn denormals_read_and_flush_as_signed_zero() {
+        // Synthetic: DAZ/FTZ as configured for the reference (upstream claim).
+        let tiny = f32::MIN_POSITIVE;
+        assert_eq!(mul_rz(tiny, 0.5).unwrap().to_bits(), 0);
+        assert_eq!(mul_rz(-tiny, 0.5).unwrap().to_bits(), 0x8000_0000);
+        assert_eq!(add_guarded_rz(f32::from_bits(1), 1.0).unwrap(), 1.0);
+        assert!(mul_rz(f32::INFINITY, 1.0).is_err());
+    }
     #[test]
     fn alignment_guard_changes_cancellation_and_is_symmetric() {
         let small = -f32::from_bits(0x3e00_0003);
@@ -232,11 +255,13 @@ mod tests {
     }
     #[test]
     fn unsupported_domains_fail_instead_of_saturating() {
-        for value in [f32::NAN, f32::INFINITY, f32::from_bits(1)] {
+        for value in [f32::NAN, f32::INFINITY] {
             assert!(add_guarded_rz(value, 1.0).is_err());
         }
         assert!(add_guarded_rz(f32::MAX, f32::MAX).is_err());
-        assert!(add_guarded_rz(f32::MIN_POSITIVE, -f32::from_bits(0x0080_0001)).is_err());
+        // DAZ/FTZ: a subnormal operand is zero; a subnormal sum flushes.
+        assert_eq!(add_guarded_rz(f32::from_bits(1), 1.0).unwrap(), 1.0);
+        assert_eq!(add_guarded_rz(f32::MIN_POSITIVE, -f32::from_bits(0x0080_0001)).unwrap().to_bits(), 0x8000_0000);
     }
     #[test]
     fn multiplication_rounds_each_operation_toward_zero() {
@@ -246,7 +271,7 @@ mod tests {
         assert_eq!((a * b).to_bits(), 0x3fc0_0003);
         assert_eq!(mul_rz(-a, b).unwrap().to_bits(), 0xbfc0_0002);
         assert_eq!(mul_rz(-0.0, 1.0).unwrap().to_bits(), 0x8000_0000);
-        assert!(mul_rz(f32::MIN_POSITIVE, 0.5).is_err());
+        assert_eq!(mul_rz(f32::MIN_POSITIVE, 0.5).unwrap().to_bits(), 0);
     }
     #[test]
     fn square_root_truncates_and_never_exceeds_the_true_root() {
@@ -260,7 +285,7 @@ mod tests {
             assert!(f64::from(r).powi(2) <= f64::from(a) && f64::from(next).powi(2) > f64::from(a));
         }
         assert!(sqrt_rz(-1.0).is_err());
-        assert!(sqrt_rz(f32::from_bits(1)).is_err());
+        assert_eq!(sqrt_rz(f32::from_bits(1)).unwrap(), 0.0);
     }
     #[test]
     fn vu_division_truncates_and_ee_sqrt_rounds_to_nearest() {
@@ -281,6 +306,6 @@ mod tests {
         assert_eq!(div_rn(-1.0, 3.0).unwrap().to_bits(), 0xbeaa_aaab);
         assert!(div_rn(1.0, 0.0).is_err());
         assert!(div_rn(f32::INFINITY, 1.0).is_err());
-        assert!(div_rn(f32::MIN_POSITIVE, 2.0).is_err());
+        assert_eq!(div_rn(f32::MIN_POSITIVE, 2.0).unwrap().to_bits(), 0);
     }
 }
