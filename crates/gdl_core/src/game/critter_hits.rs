@@ -389,7 +389,8 @@ impl Game {
             self.sfx(sound, Some(pos), 0xe0, 0x50);
         }
         if flags & 2 != 0 {
-            self.audio("ShakeCamera", None, 0);
+            // ShakeCamera(0.1, 0, 0, 0x5a, 0x64).
+            self.shake_camera(f32::from_bits(0x3dcc_cccd), 0, 0, 0x5a, 0x64);
         }
         if flags & 0x4_0000 != 0 && self.crit(i).rec.i16_(c::MOVE_FX) < 0 {
             self.crit_mut(i).rec.set_i16(c::MOVE_FX, out as i16);

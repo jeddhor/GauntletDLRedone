@@ -359,7 +359,9 @@ impl Game {
                     s.anim_now = true;
                 }
                 self.tower.crystal_active_time = self.globals.time;
-                self.events.push(Event::CameraRequest { kind: "crystal", arg: 0 });
+                if let Err(e) = self.crystal_cam_activate() {
+                    self.log.note("welcome", &e);
+                }
             }
             if self.globals.last_finished_world == 6 && self.globals.last_finished_level == 1 {
                 self.events.push(Event::ScrollNamed { player_mask: u32::MAX, name: "GarmMessage", line: None, audio: -1 });

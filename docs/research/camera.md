@@ -134,3 +134,78 @@ branch (no PlayerMotion while cam_wait and start_of_stage are set) are
 ported. The client draws with the pb projection (separate horizontal and
 vertical tangents) in the top 384/448 of the window, matching the reference
 layout where the player panels occupy the bottom 64 rows.
+
+## Boss camera (BossCameraUpdate 0x1a1bc0)
+
+Used while BossCritInst ≠ 0 (and in the boss-select modes 0x4013/0x400d/
+0x4017); newcam_mode is then 0. BossCameraInit (reset_game_data, every level)
+resets the BossCamera record with CamReset and BossCameraMode 0. The level's
+BCAM record (WDATA BCAM, 0x54 bytes, LEVL +0x8c) holds flags (+0), an angle
+(+4) whose cosine BossCameraStart stores at +8, distances (+0xc minimum for
+the boss calculator, +0x10 minimum for the player calculator, +0x14 boss
+distance, +0x18 player distance), pitch range (+0x1c/+0x20), near/far
+attention offsets (+0x24/+0x30, lerped by +0xfc), key and good-wizard
+offsets (+0x3c/+0x48). Every update: first BossCamStartCalc (camera from
+the start transmitter's direction; sets start_of_stage), then
+BossCamPlayerCalc while BossActive is 0 (GetTransmitter's 2-D choice with
+the 0.667 switch, view-distance zoom from PointInView margins) or
+BossCamBossCalc (attention between boss/key/wizard, the two farthest
+entities' direction via GetActualAvgVec, BCAM-flag-controlled facing
+limits), BossCamLimitAttn / BossCamLimit (LimitCamVal2 velocity limits with
+CAMMAX*/CAM*ACCEL from the ELF), then yaw/pitch wrap, look vector, DoShake,
+eye, LookInDirection and MBCameraUpdate (no MBWindowSetHang). While
+start_of_stage is clear BossCameraUpdate clears cam_wait. Instruction-level
+review notes: the decompiler misorders the zoom-in step (the code adds
+2·(2.5 − view distance) to the distance); `GetPlayerAvgPos` returns
+1/count, which BossCamBossCalc passes to GetBossAvgPos as its weight;
+`|d|/|v|` in LimitCamVal2 divides by zero when the velocity is 0 (EE result
+±FLT_MAX, `div_rn_ee`).
+
+Transmitters[−1]: GetTransmitter3D / GetTransmitter return index −1 when
+the only candidate is the current one (B6 has a single camera transmitter,
+so the original alternates every update). The table's preceding words are
+PlayerInitStartPos entries 9–13: +0x24 is entry 12's y (−100000, set by
+AddLocatorInstList each level), +0x20 entry 12's x (0: no level, the Tower
+included, has a start locator with id 12), +1 byte 1 of entry 9's y.
+`transmitter_before_table` reproduces those reads.
+
+Cur3DTransmitter 0x21f120 and CurTransmitter 0x21f11c are never reset
+(only GetTransmitter3D/GetTransmitter write them), so the previous level's
+index carries over (`Globals::cur3d_transmitter`, `cur_transmitter`).
+
+Inputs not yet available natively (HYPOTHESIS): good_wiz_objgrp's
+position/flag (calc_good_wiz_attn, the good wizard's presentation group) is
+taken as absent; the boss key effect is taken as living until the level
+ends (BossKeySfx's effect lifetime is not tracked).
+
+Not trace-checked: no capture or trace of a boss arena exists yet.
+
+## Trigger cameras
+
+TriggerCameraActivate 0x1a2550(wobj, position, angles, delay, wait, hold):
+delay < 0 → 1000000, 0 → 0x28, else × 6 vblanks; trig_cam_active = 2;
+DisablePlayerControls (PlayerControls 0x105710 zeroes every player's
+controls while disable_player_controls is set); trig_cam_mat = LookInDirection
+of PitchVec3(pitch, YawVec3(π − yaw, (0,0,1))) with the position as eye.
+TriggerCamUpdate 0x1a26a8 (before main's camera dispatch): wait counts down
+first (normal camera meanwhile), then each update StdCamFreeze and
+MBCameraUpdate(trig_cam_mat) with letterbox bars (presentation); after the
+delay, the hold and the bound object's animation (+0x10 bit 0x8000000) the
+camera ends, EnablePlayerControls, trig_cam_active 0 and do_camera() (old
+Cam array, not ported); the next StdCamUpdate re-applies the gameplay camera
+(StdCamReturn).
+
+LinkTriggerToCam 0x150328 (kind-9 locators): in the Tower ids 0xc6 crystal,
+0xc9/0xcb/0xcd rune, 0xca/0xcc window, 0xf0.., 0xdc.., 0xaa.. three Sumner
+tables of 14; elsewhere trigger items (definition kind 5, signed byte +0xf6
+= id) get +0x102 = the transmitter index, and ProcessItems activates
+TriggerCameraActivate(bound object, transmitter, its radius byte as delay,
+wait 0x1e, hold 0) when the trigger fires. CrystalCamActivate uses delay
+0x32; SumnerCamActivate holds until TriggerCameraEnd; Rune/WindowCamActivate
+hold 300 (0x2a7f98 / 0x2a7fa8). Actual-disc check
+(camera-check-tower-v3): all 48 Tower links and the crystal camera's
+trig_cam_mat bit-exact against the capture.
+
+ShakeCamera call sites (radius, type, delay, count, priority): PlayerMotion
+(0.3, 0, 0, 0x1e, 0xc8), DoPlyrSfx and CritterDoSfx (0.1, 0, 0, 0x5a, 0x64),
+ProcessItems triggers (0.1, 0, 0, 0xb4, 0x64).

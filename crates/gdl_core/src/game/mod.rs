@@ -58,6 +58,9 @@ impl From<UnsupportedItem> for Unsupported {
     }
 }
 pub type R<T> = Result<T, Unsupported>;
+fn minus_one() -> i32 {
+    -1
+}
 pub fn unsupported<T>(s: impl Into<String>) -> R<T> {
     Err(Unsupported(s.into()))
 }
@@ -97,6 +100,12 @@ pub struct Globals {
     /// LastFinishedWorld/Level (GarmMessage). Carried across levels.
     #[serde(default)]
     pub tower_counter: i32,
+    /// Cur3DTransmitter 0x21f120 / CurTransmitter 0x21f11c: never reset, so
+    /// the previous level's index carries over (ELF initial value −1).
+    #[serde(default = "minus_one")]
+    pub cur3d_transmitter: i32,
+    #[serde(default = "minus_one")]
+    pub cur_transmitter: i32,
     #[serde(default)]
     pub welcome_flag: i32,
     #[serde(default)]
@@ -142,6 +151,8 @@ pub struct Globals {
 /// Presentation side effects requested by the simulation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Event {
+    /// ReplaceItemAtree(item, powerup_anim, tree): the item's model changes.
+    ItemTree { slot: usize, tree: &'static str },
     /// NewHelp(id, player): help/hint text; player usize::MAX = −1 (all).
     Help { id: i32, player: usize },
     /// Sumner's hint animation starts / the HintMenu opens (tower UI).
@@ -254,6 +265,13 @@ pub struct Game {
     pub camera_rest: Option<setup::StartCamera>,
     /// The gameplay camera (StdCam module, research/camera.md).
     pub std_camera: Option<camera::Camera>,
+    /// The boss camera (BossCameraInit per level; used while BossCritInst).
+    pub boss_camera: Option<camera::BossCamera>,
+    /// Trigger camera state, the Tower's linked cameras and
+    /// disable_player_controls 0x211464 (PlayerControls zeroes the inputs).
+    pub trig_cam: camera::TriggerCam,
+    pub tower_cams: camera::TowerCams,
+    pub disable_player_controls: i32,
     /// WorldStartTime 0x2c2c88 (GauntWorldInit: Time at level init).
     pub world_start_time: f32,
     /// ITEM_ACTIVE_DIST 0x234364, global 0x20f950 (mode), 0x20f954, start_enemyinfo, ExitState.

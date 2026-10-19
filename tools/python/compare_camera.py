@@ -59,7 +59,12 @@ def main():
         win=m[win:win + 0x1c0].hex(), cams=m[cams:cams + 0x6c].hex(),
         transmitters=m[TRANSMITTERS:TRANSMITTERS + 0x40 * count].hex(), cur3d=struct.unpack_from('<i', m, CUR3D)[0],
         players=[m[PLAYERS + PLAYER_SIZE * k:PLAYERS + PLAYER_SIZE * (k + 1)].hex() for k in range(4)],
-        spf=spf, **{k: struct.unpack_from('<i', m, a)[0] for k, a in GLOBALS.items()})
+        spf=spf, **{k: struct.unpack_from('<i', m, a)[0] for k, a in GLOBALS.items()},
+        # LinkTriggerToCam tables (CrystalCam 0x234308, RuneCam 0x23cba0,
+        # WindowCam 0x23cbb0, SumnerCam 0x23cbb8) and trig_cam_mat 0x25d7a0.
+        tower_cams=dict(crystal=u32(m, 0x234308), rune=list(struct.unpack_from('<3I', m, 0x23cba0)),
+                        window=list(struct.unpack_from('<2I', m, 0x23cbb0)), sumner=list(struct.unpack_from('<42I', m, 0x23cbb8))),
+        trig_mat=m[0x25d7a0:0x25d7e0].hex())
     worlds, wdata = resolve([args.worlds, args.wdata])
     scratch = args.out.with_suffix('.fixture.json')
     if scratch.exists():

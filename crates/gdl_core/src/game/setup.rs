@@ -359,14 +359,25 @@ impl Game {
             std_camera: {
                 let set = super::camera::build_transmitters(&inp.world.locators, g.cur_world).map_err(|e| format!("transmitters: {}", e.0))?;
                 match inp.wdata.cameras.get(level.camera_index as usize) {
-                    Some(params) => Some(
-                        super::camera::Camera::new(super::camera::CamConsts::from_elf(inp.elf)?, set, params, inp.world.min, inp.world.max)
-                            .map_err(|e| format!("camera: {}", e.0))?,
-                    ),
+                    Some(params) => {
+                        let mut cam = super::camera::Camera::new(super::camera::CamConsts::from_elf(inp.elf)?, set, params, inp.world.min, inp.world.max)
+                            .map_err(|e| format!("camera: {}", e.0))?;
+                        cam.cur3d = g.cur3d_transmitter;
+                        Some(cam)
+                    }
                     None => None,
                 }
             },
+            boss_camera: Some(super::camera::BossCamera::new(
+                super::camera::BossCamConsts::from_elf(inp.elf)?,
+                usize::try_from(level.boss_camera_index).ok().and_then(|k| inp.wdata.boss_cameras.get(k)).cloned(),
+                g.cur_transmitter,
+                &super::camera::CamConsts::from_elf(inp.elf)?,
+            )),
             world_start_time: g.time,
+            trig_cam: Default::default(),
+            tower_cams: Default::default(),
+            disable_player_controls: 0,
             item_active_dist: s.extra.item_active_dist,
             mode_950: s.extra.mode_950,
             globals_954: s.extra.globals_954,
@@ -504,6 +515,8 @@ impl Game {
         // The culling view comes from the StdCam once start_camera runs
         // (init_next_level: StdCamInit after the players are placed).
         game.camera_rest = Some(s.camera.clone());
+        // AddLocatorInstList: LinkTriggerToCam for the kind-9 locators.
+        game.link_trigger_cameras().map_err(|e| format!("LinkTriggerToCam: {}", e.0))?;
         if game.globals.cur_world == 0xd {
             // init_next_level → EnterTower after the items are placed.
             game.enter_tower().map_err(|e| format!("EnterTower: {}", e.0))?;
@@ -606,7 +619,7 @@ impl Game {
         }
         // main's camera dispatch (StdCamUpdate) and MBEndFrame.
         if let Err(e) = self.camera_step() {
-            self.log.note("StdCamUpdate", &e);
+            self.log.note("camera", &e);
         }
     }
 

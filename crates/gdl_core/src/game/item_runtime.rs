@@ -1169,7 +1169,8 @@ impl Game {
         }
         if state != 0 && prev_state == 0 {
             if flags & 0x1000 != 0 {
-                self.audio("ShakeCamera", None, 0);
+                // ShakeCamera(0.1, 0, 0, 0xb4, 0x64).
+                self.shake_camera(f32::from_bits(0x3dcc_cccd), 0, 0, 0xb4, 0x64);
             }
             if flags & 0x2000 != 0 {
                 // ActivateNearestEnemy 0x1546f8(trigger +0x40).
@@ -1182,7 +1183,13 @@ impl Game {
                 }
             }
             if 0 <= r.i16_(0x102) && touched != 0 {
-                self.audio("TriggerCameraActivate", None, i32::from(r.i16_(0x102)));
+                // TriggerCameraActivate(bound object, transmitter position,
+                // angles, its radius byte as the delay, wait 0x1e, hold 0).
+                let k = r.i16_(0x102) as usize;
+                if let Some(t) = self.std_camera.as_ref().map(|c| c.transmitters.get(k).cloned()) {
+                    let t = t.ok_or_else(|| super::Unsupported("trigger camera transmitter index".into()))?;
+                    self.trigger_camera_activate(bound, t.pos, [t.pitch, t.yaw], i32::from(t.radius), 0x1e, 0)?;
+                }
             }
         }
         self.items.records[slot].set_i16(0xb8, 0);

@@ -540,7 +540,47 @@ fn run() -> Result<(), Box<dyn Error>> {
                 s_mismatches.push(format!("+{off:#05x} after {:e} ({a:08x}) captured {:e} ({b:08x})", f32::from_bits(a), f32::from_bits(b)));
             }
         }
+        // LinkTriggerToCam tables and the last trigger matrix (trig_cam_mat).
+        let (tc, _) = gdl_core::game::camera::tower_camera_links(&cam.transmitters, int("cur_world"));
+        let mut trig_mismatches = Vec::new();
+        let ref_index = |v: i64| -> Option<usize> { (v != 0).then(|| ((v - 0x234500) / 0x40) as usize) };
+        let tcr = &fx["tower_cams"];
+        // Outside the Tower the tables keep the Tower's stale entries (not reset).
+        if !tcr.is_null() && int("cur_world") == 0xd {
+            let mut cmp = |name: String, native: Option<usize>, r: &serde_json::Value| {
+                let reference = r.as_i64().and_then(ref_index);
+                if native != reference {
+                    trig_mismatches.push(format!("{name}: native {native:?} reference {reference:?}"));
+                }
+            };
+            cmp("crystal".into(), tc.crystal, &tcr["crystal"]);
+            for k in 0..3 {
+                cmp(format!("rune[{k}]"), tc.rune[k], &tcr["rune"][k]);
+            }
+            for k in 0..2 {
+                cmp(format!("window[{k}]"), tc.window[k], &tcr["window"][k]);
+            }
+            for t in 0..3 {
+                for k in 0..14 {
+                    cmp(format!("sumner[{t}][{k}]"), tc.sumner[t][k], &tcr["sumner"][14 * t + k]);
+                }
+            }
+            if let Some(k) = tc.crystal {
+                let t = &cam.transmitters[k];
+                let rows = gdl_core::game::camera::trigger_camera_rows([t.pitch, t.yaw]).map_err(|e| e.0)?;
+                let m = bytes("trig_mat")?;
+                for (i, row) in rows.iter().enumerate() {
+                    for (j, v) in row.iter().enumerate() {
+                        let r = fbits(&m, 16 * i + 4 * j);
+                        if v.to_bits() != r {
+                            trig_mismatches.push(format!("crystal trig_cam_mat[{i}][{j}] native {v:e} reference {:e}", f32::from_bits(r)));
+                        }
+                    }
+                }
+            }
+        }
         let report = serde_json::json!({"level_code": code, "transmitters": cam.transmitters.len(), "transmitter_mismatches": t_mismatches,
+            "trigger_mismatches": trig_mismatches,
             "cams_mismatches": c_mismatches, "pb_mismatches": pb_mismatches, "quiet": !moved, "update_mismatches": s_mismatches,
             "cur3d_after": cam.cur3d});
         println!("{}", serde_json::to_string(&report)?);
@@ -860,7 +900,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "seq":c.clock.sequence,"frame":c.clock.frame,"pos":c.rec.v3(0x40),"target":c.rec.i16_(0x130),"ntargets":c.rec.i16_(0x136)}))).collect();
                 samples.push(serde_json::json!({"frame":f,"enemies":enemies,"critters":critters,"player_health":game.players[0].f32_(0x1a10),
                     "level_done":game.level_done,"good_wizard":game.globals.good_wizard,"auto_exit":[game.auto_exit_timer,game.globals.auto_exit_flag],"player_state":game.players[0].i32_(0xfc),
-                    "player_pos":game.players[0].v3(0x50),"cam_wait":game.globals.cam_wait,"start_of_stage":game.globals.start_of_stage,"camera_eye":game.std_camera.as_ref().map(|c| c.std.v3(gdl_core::game::camera::o::EYE)),"events":game.events.len(),"effects":effects,
+                    "player_pos":game.players[0].v3(0x50),"cam_wait":game.globals.cam_wait,"start_of_stage":game.globals.start_of_stage,"camera_eye":game.std_camera.as_ref().map(|c| c.std.v3(gdl_core::game::camera::o::EYE)),"boss_camera_eye":game.boss_camera.as_ref().map(|c| c.rec.v3(gdl_core::game::camera::o::EYE)),"events":game.events.len(),"effects":effects,
                     "driver":driver.as_ref().map(|d| serde_json::json!({"anim":d.anim,"missiles":d.missiles_started,"event_error":d.event_error,"event_word":d.event_word}))}));
             }
         }

@@ -192,7 +192,7 @@ struct Session {
     colour: usize,
     /// Session globals carried from level to level: TowerCounter,
     /// LastFinishedWorld, LastFinishedLevel.
-    carried: [i32; 3],
+    carried: [i32; 5],
 }
 
 #[derive(Component)]
@@ -575,6 +575,10 @@ struct RigNode(usize, usize);
 struct FollowCamera;
 #[derive(Component)]
 struct Hud;
+/// TriggerCamUpdate's letterbox blits (TextureWhite, colour 0): screen rows
+/// 0..BORDER_HT (0x30) and 0x130..0x180 of the 512×384 screen space.
+#[derive(Component)]
+struct LetterBox;
 /// Centered banner text (title, pause, death, level complete).
 #[derive(Component)]
 struct Banner;
@@ -707,6 +711,17 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
         FollowCamera,
     ));
     commands.spawn((Camera2d, Camera { order: 1, clear_color: ClearColorConfig::None, ..default() }));
+    // Screen rows → the 896-pixel frame (× 448 / 384 × 2).
+    let row = |r: f32| 448.0 - r * 896.0 / 384.0;
+    for (top, bottom) in [(0.0, 48.0), (304.0, 384.0)] {
+        let (y0, y1) = (row(top), row(bottom));
+        commands.spawn((
+            Sprite { color: Color::BLACK, custom_size: Some(Vec2::new(1280.0, y0 - y1)), ..default() },
+            Transform::from_xyz(0.0, (y0 + y1) * 0.5, -0.5),
+            Visibility::Hidden,
+            LetterBox,
+        ));
+    }
     commands.spawn((
         Text2d::new(String::new()),
         TextFont { font_size: 15.0, ..default() },
@@ -877,6 +892,8 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<(Game, Pl
     start["globals"]["tower_counter"] = Value::from(session.carried[0]);
     start["globals"]["last_finished_world"] = Value::from(session.carried[1]);
     start["globals"]["last_finished_level"] = Value::from(session.carried[2]);
+    start["globals"]["cur3d_transmitter"] = Value::from(session.carried[3]);
+    start["globals"]["cur_transmitter"] = Value::from(session.carried[4]);
     start["globals"]["cur_level"] = Value::from(lv.index as i64);
     let start: setup::StartState = serde_json::from_value(start)?;
     let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
@@ -1402,7 +1419,12 @@ fn present_player(
     mut hud: Query<&mut Text2d, (With<Hud>, Without<Banner>)>,
     mut banner: Query<&mut Text2d, (With<Banner>, Without<Hud>)>,
     ui: Res<Ui>,
+    mut bars: Query<&mut Visibility, (With<LetterBox>, Without<CharacterRoot>)>,
 ) {
+    let barred = sim.game.trigger_view_active();
+    for mut v in &mut bars {
+        *v = if barred { Visibility::Inherited } else { Visibility::Hidden };
+    }
     let drivers: [Option<&PlayerDriver>; 4] = [Some(&sim.driver), sim.coop[0].as_ref(), sim.coop[1].as_ref(), sim.coop[2].as_ref()];
     let poses: Vec<_> = drivers.iter().map(|d| d.and_then(|d| gdl_client::rig_pose(&sources.clips, &sources.clip_bytes, d.anim.clip, d.anim.frame).ok())).collect();
     for (root, mut t, mut vis) in &mut body {
@@ -1660,7 +1682,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             tier,
             class,
             colour,
-            carried: [0, -1, -1],
+            carried: [0, -1, -1, -1, -1],
         };
         let (game, driver) = build_game(&session, idx, &record)?;
         let sources = Sources { character, clips, clip_bytes, rig, packages, monsters: b.monsters.clone() };
@@ -2319,7 +2341,7 @@ fn advance_level(
         sim.game.end_tower();
     }
     let g = &sim.game.globals;
-    session.carried = [g.tower_counter, g.last_finished_world, g.last_finished_level];
+    session.carried = [g.tower_counter, g.last_finished_world, g.last_finished_level, g.cur3d_transmitter, g.cur_transmitter];
     let carry = sim.game.players[0].clone();
     let coop_carry: Vec<Option<gdl_core::game::record::Record>> = (1..4).map(|k| sim.coop[k - 1].as_ref().map(|_| sim.game.players[k].clone())).collect();
     // load_player: the model follows the level tier (level / 10).

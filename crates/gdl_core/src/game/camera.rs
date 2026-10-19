@@ -7,12 +7,15 @@
 //! here). The StdCam record (StdCamera 0x2bc740, 0x1b0 bytes) is kept in its
 //! original layout so reference traces compare byte for byte.
 //!
+//! Index loops mirror the original per-component loops.
+//!
 //! Arithmetic: FPU instructions use the guarded-add / RZ-multiply / RN-divide
 //! subset; VU0 macro instructions (sceVu0*, pbApplyMatrix) use the VU RZ subset.
+#![allow(clippy::needless_range_loop)]
 use super::critter_ai::{pitch_vec3, slow_normal_vector, yaw_vec3};
 use super::enemy_ai::fix_angle;
 use super::record::Record;
-use super::{unsupported, R};
+use super::{unsupported, Unsupported, R};
 use crate::libm::{atanf, cosf, sinf, tanf};
 use crate::numeric::{
     add_guarded_rz as add, add_rz as vadd, div_rn as div, div_rz as vdiv, mul_rz as mul, sqrt_rn, sqrt_rz as vsqrt,
@@ -130,6 +133,16 @@ pub struct Transmitter {
     pub locator: u32,
     /// Locator +2 (trigger link id for kind 9).
     pub id: i16,
+}
+
+/// Transmitters[-1] (0x2344c0): the words before the table are
+/// PlayerInitStartPos entries 9–13. +0x24 is entry 12's y, which
+/// AddLocatorInstList sets to −100000 every level; +0x20 is entry 12's x, 0
+/// because no level (Tower included) has a start locator with id 12. The
+/// radius byte (+1) is byte 1 of entry 9's y (−100000 outside the Tower).
+pub fn transmitter_before_table() -> Transmitter {
+    let y9 = (-100000.0f32).to_le_bytes();
+    Transmitter { flag: y9[0], radius: y9[1], word_02: 0, pos: [0.0; 3], pitch: 0.0, yaw: -100000.0, roll: 0.0, locator: u32::MAX, id: -1 }
 }
 
 /// AddLocatorInstList 0x150ac8's transmitter part: transmitters in list
@@ -624,19 +637,21 @@ impl Camera {
                 self.cur3d = best;
             }
         }
-        if self.cur3d < 0 {
-            // Transmitters[-1] reads the words before the table.
-            return unsupported("GetTransmitter3D: no other camera transmitter (index -1)");
-        }
-        Ok(Some(self.cur3d as usize))
+        // Index −1 reads the words before the table (transmitter_before_table).
+        Ok(Some(usize::try_from(self.cur3d).unwrap_or(usize::MAX)))
     }
 
     /// TransGetYawPitch 0x116268.
+    /// The transmitter at an index (usize::MAX: Transmitters[-1]).
+    fn transmitter(&self, k: usize) -> Transmitter {
+        self.transmitters.get(k).cloned().unwrap_or_else(transmitter_before_table)
+    }
+
     fn trans_yaw_pitch(&self, t: Option<usize>, ctx: &CamCtx) -> R<(f32, f32)> {
         let (yaw, mut pitch) = match t {
             None => (0.0, 0.0),
             Some(k) => {
-                let tr = &self.transmitters[k];
+                let tr = self.transmitter(k);
                 (wrap(sub(tr.yaw, PI)?)?, -tr.pitch)
             }
         };
@@ -694,15 +709,7 @@ impl Camera {
     /// MBCameraUpdate 0x1c3bc0 + MBWindowSetHang 0x1d0eb8 (+ the optional
     /// MBWindowProjection): window camera rows and pb eye/direction.
     fn camera_update(&mut self, c: &mut Record) -> R<()> {
-        for k in 0..3 {
-            c.set_f32(o::MAT + 0x10 * k + 0xc, 0.0);
-        }
-        c.set_f32(o::MAT + 0x3c, 1.0);
-        let eye = c.v3(o::EYE);
-        self.pb.eye = eye;
-        self.pb.dir = c.v3(o::MAT + 0x20);
-        self.pb.cam_rows = [c.v3(o::MAT), c.v3(o::MAT + 0x10), c.v3(o::MAT + 0x20)];
-        self.pb.cam_dirty = true;
+        self.mb_camera_update(c);
         self.pb.proj_dirty = true;
         let hang = c.f32_(o::HANG);
         let k = mul(div(self.window.mbox_height, self.window.frame[1] as f32)?, 0.75)?;
@@ -728,16 +735,19 @@ impl Camera {
 
     /// DoShake 0x16fc80 on the eye and target.
     fn do_shake(&mut self, ctx: &CamCtx, eye: &mut V3, target: &mut V3) -> R<()> {
-        let s = &mut self.shake;
-        if s.shaking == 0 || ctx.paused != 0 || ctx.help != 0 {
+        Self::shake_step(&mut self.shake, ctx.paused, ctx.help, ctx.vb_elapsed, eye, target)
+    }
+
+    fn shake_step(s: &mut Shake, paused: i32, help: i32, vb_elapsed: i32, eye: &mut V3, target: &mut V3) -> R<()> {
+        if s.shaking == 0 || paused != 0 || help != 0 {
             return Ok(());
         }
-        s.count -= ctx.vb_elapsed;
+        s.count -= vb_elapsed;
         if s.count < 0 {
             s.shaking = 0;
             s.priority = 0;
         }
-        s.delay -= ctx.vb_elapsed;
+        s.delay -= vb_elapsed;
         if s.delay < 0 {
             s.delay = 0;
         }
@@ -771,6 +781,19 @@ impl Camera {
         self.cam0_eye = eye;
         self.cam0_attention = target;
         self.camera_update(c)
+    }
+
+    /// MBCameraUpdate 0x1c3bc0 alone: matrix w lanes, window camera rows,
+    /// pb eye and direction (camera part dirty).
+    fn mb_camera_update(&mut self, c: &mut Record) {
+        for k in 0..3 {
+            c.set_f32(o::MAT + 0x10 * k + 0xc, 0.0);
+        }
+        c.set_f32(o::MAT + 0x3c, 1.0);
+        self.pb.eye = c.v3(o::EYE);
+        self.pb.dir = c.v3(o::MAT + 0x20);
+        self.pb.cam_rows = [c.v3(o::MAT), c.v3(o::MAT + 0x10), c.v3(o::MAT + 0x20)];
+        self.pb.cam_dirty = true;
     }
 
     /// LimitYawPitch 0x113c68.
@@ -925,7 +948,7 @@ impl Camera {
         let radius = if ctx.num_in_game_players == 1 && self.consts.perf_test == 0 {
             mul(self.dist_2c, self.consts.adjust_max_rad_1player)?
         } else {
-            match t.map(|k| self.transmitters[k].radius) {
+            match t.map(|k| self.transmitter(k).radius) {
                 Some(r) if r != 0 => r as f32,
                 _ => mul(self.radius_30, self.consts.adjust_max_rad)?,
             }
@@ -1087,8 +1110,7 @@ impl Camera {
                 }
             }
         }
-        // MBEndFrame → pbWinSetup recomputes the pb matrices every frame.
-        self.pb.update(&self.window)
+        Ok(())
     }
 
     /// MBCameraUpdate of the record followed by the frame's pbWinSetup (a
@@ -1179,6 +1201,892 @@ pub struct LimitResult {
     pub floor_reset: bool,
 }
 
+// ---- Boss camera (BossCameraUpdate 0x1a1bc0 and helpers) ----
+
+/// Boss camera tuning globals 0x25d4f0..0x25d524, read from the ELF.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BossCamConsts {
+    pub min_flip_angle: f32,
+    pub dist_factor: f32,
+    pub max_yaw_vel: f32,
+    pub yaw_accel: f32,
+    pub max_pitch_vel: f32,
+    pub pitch_accel: f32,
+    pub max_dist_vel: f32,
+    pub dist_accel: f32,
+    pub max_dir_vel: f32,
+    pub dir_accel: f32,
+}
+
+impl BossCamConsts {
+    pub fn from_elf(elf: &Elf) -> Result<Self, Box<dyn std::error::Error>> {
+        let f = |n: &str| -> Result<f32, Box<dyn std::error::Error>> {
+            let b = elf.object(n)?;
+            Ok(f32::from_le_bytes(b.get(..4).ok_or("short boss camera global")?.try_into()?))
+        };
+        Ok(Self {
+            min_flip_angle: f("BOSS_MIN_FLIP_ANGLE")?,
+            dist_factor: f("BOSS_DIST_FACTOR")?,
+            max_yaw_vel: f("CAMMAXYAWVEL")?,
+            yaw_accel: f("CAMYAWACCEL")?,
+            max_pitch_vel: f("CAMMAXPITCHVEL")?,
+            pitch_accel: f("CAMPITCHACCEL")?,
+            max_dist_vel: f("CAMMAXDISTVEL")?,
+            dist_accel: f("CAMDISTACCEL")?,
+            max_dir_vel: f("CAMMAXDIRVEL")?,
+            dir_accel: f("CAMDIRACCEL")?,
+        })
+    }
+}
+
+/// Boss-camera inputs from the game for one update.
+pub struct BossCtx<'a> {
+    pub players: &'a [Record; 4],
+    pub spf: f32,
+    pub game_mode: u32,
+    /// BossCritInst record (+0x50 attention, +0x420 home matrix, +0x460
+    /// home position) and its type's +0x78 radius.
+    pub boss: Option<(&'a Record, f32)>,
+    pub boss_active: i32,
+    pub boss_is_dying: i32,
+    pub good_wizard: i32,
+    /// good_wiz_objgrp +0x40 while its +0x60 word is set.
+    pub good_wiz_pos: Option<V3>,
+    /// Effects[BossKeySfx] tree +0x30 while the key effect lives.
+    pub boss_key_pos: Option<V3>,
+}
+
+/// BossCameraInit 0x19f270 (per level via reset_game_data) state and the
+/// level's BCAM record (LEVL +0x6c; 0x54 bytes, rewritten by
+/// BossCameraStart / the calculators as the original does).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BossCamera {
+    pub rec: Record,
+    /// BossCameraMode 0x25d4f8.
+    pub mode: i32,
+    pub data: Option<Vec<u8>>,
+    pub consts: BossCamConsts,
+    /// CurTransmitter 0x21f11c (GetTransmitter's 2-D choice).
+    pub cur_transmitter: i32,
+}
+
+/// Window constants MBWindowSetAng / MBWindowInit leave in MboxWinPtr:
+/// +0x24/+0x28 tan of the half angles, +0x34/+0x38 their cosines, +0x5c 1.0.
+#[derive(Debug, Clone, Copy)]
+struct WinConsts {
+    tan_h: f32,
+    tan_v: f32,
+    cos_h: f32,
+    cos_v: f32,
+    near: f32,
+}
+
+impl Pb {
+    fn win_consts(&self) -> R<WinConsts> {
+        let (h, v) = (mul(self.ang[0], 0.5)?, mul(self.ang[1], 0.5)?);
+        let (ch, sh, cv, sv) = (cosf(h)?, sinf(h)?, cosf(v)?, sinf(v)?);
+        Ok(WinConsts { tan_h: div(sh, ch)?, tan_v: div(sv, cv)?, cos_h: ch, cos_v: cv, near: 1.0 })
+    }
+}
+
+fn bf(d: &[u8], k: usize) -> f32 {
+    f32::from_le_bytes(d[4 * k..4 * k + 4].try_into().unwrap())
+}
+fn set_bf(d: &mut [u8], k: usize, v: f32) {
+    d[4 * k..4 * k + 4].copy_from_slice(&v.to_le_bytes());
+}
+fn bu(d: &[u8]) -> u32 {
+    u32::from_le_bytes(d[..4].try_into().unwrap())
+}
+fn sqrt3(v: V3) -> R<f32> {
+    Ok(sqrt_rn(add(add(mul(v[0], v[0])?, mul(v[1], v[1])?)?, mul(v[2], v[2])?)?)?)
+}
+fn vsub3(a: V3, b: V3) -> R<V3> {
+    Ok([sub(a[0], b[0])?, sub(a[1], b[1])?, sub(a[2], b[2])?])
+}
+fn vadd3(a: V3, b: V3) -> R<V3> {
+    Ok([add(a[0], b[0])?, add(a[1], b[1])?, add(a[2], b[2])?])
+}
+/// NormalVector2D 0x1d5eb0 (fqdist length).
+fn normal_vector_2d(v: &mut V3) -> R<f32> {
+    let (d, _) = crate::vu0::fqdist(v[0], v[2])?;
+    let k = if d <= 0.0 { 1.0 } else { div(1.0, d)? };
+    v[0] = mul(k, v[0])?;
+    v[1] = 0.0;
+    v[2] = mul(k, v[2])?;
+    Ok(d)
+}
+/// SlowNormalVector2D 0x1d5f38 (sqrt.S length).
+fn slow_normal_vector_2d(v: &mut V3) -> R<f32> {
+    let d = sqrt_rn(add(mul(v[0], v[0])?, mul(v[2], v[2])?)?)?;
+    let k = if d <= 0.0 { 1.0 } else { div(1.0, d)? };
+    v[0] = mul(k, v[0])?;
+    v[1] = 0.0;
+    v[2] = mul(k, v[2])?;
+    Ok(d)
+}
+/// GetYawPitch 0x1d6258.
+fn get_yaw_pitch(v: V3) -> R<(f32, f32)> {
+    let yaw = crate::libm::atan2f(v[0], v[2])?;
+    let (xz, _) = crate::vu0::fqdist(v[0], v[2])?;
+    Ok((yaw, crate::libm::atan2f(v[1], xz)?))
+}
+/// One-step wrap and the flip by π used by GetActualAvgVec.
+fn flip(a: f32) -> R<f32> {
+    let f1 = add(a, PI)?;
+    if PI < f1 {
+        return Ok(sub(f1, TWO_PI)?);
+    }
+    let f12 = add(a, PI)?;
+    if f12 <= -PI {
+        Ok(add(f12, TWO_PI)?)
+    } else {
+        Ok(f12)
+    }
+}
+
+/// LimitCamVal2 0x19f098(cur, target, min, max, accel, lead, velocity,
+/// wrap): a velocity-limited approach; returns cur + v × SPF.
+#[allow(clippy::too_many_arguments)]
+fn limit_cam_val2(spf: f32, cur: f32, target: f32, min: f32, max: f32, accel: f32, lead: f32, vel: &mut f32, wrap_angle: bool) -> R<f32> {
+    let step = mul(accel, spf)?;
+    let mut d = sub(target, cur)?;
+    if wrap_angle {
+        d = wrap(d)?;
+    }
+    let ad = d.abs();
+    let mut v = *vel;
+    let near = mul(mul(lead, max)?, spf)?;
+    let av = v.abs();
+    if 0.0 < lead && av < near && ad < near {
+        v = 0.0;
+    } else if ad < mul(add(av, step)?, spf)? {
+        // FPS 0x20f90c = 1 / SPF (ClockOncePerFrame).
+        v = mul(d, div(1.0, spf)?)?;
+    } else {
+        // |d| / |v| with v = 0: the EE's divide-by-zero result (±FLT_MAX).
+        if crate::numeric::div_rn_ee(ad, av)? <= crate::numeric::div_rn_ee(av, accel)? {
+            if 0.0 < v {
+                v = sub(v, step)?;
+                if v < 0.0 {
+                    v = 0.0;
+                }
+            } else {
+                v = add(v, step)?;
+                if 0.0 < v {
+                    v = 0.0;
+                }
+            }
+        } else if 0.0 < d {
+            v = add(v, step)?;
+        } else {
+            v = sub(v, step)?;
+        }
+        if v < min {
+            v = min;
+        } else if max < v {
+            v = max;
+        }
+    }
+    *vel = v;
+    Ok(add(cur, mul(v, spf)?)?)
+}
+
+impl BossCamera {
+    pub fn new(consts: BossCamConsts, data: Option<Vec<u8>>, cur_transmitter: i32, hist: &CamConsts) -> Self {
+        let mut rec = Record::zeroed(o::SIZE);
+        Camera::reset(&mut rec, hist);
+        Self { rec, mode: 0, data, consts, cur_transmitter }
+    }
+
+    /// GetPlayerAvgPos 0x114a28(mode): players in state 1 (+0xf0 while
+    /// grabbed, else +0x60); mode 0 averages, otherwise the min/max midpoint
+    /// (mode 2 also clamps to the CAMS box). Returns (point, min, max, 1/count).
+    fn player_avg_pos(players: &[Record; 4], mode: u32, cam: &Camera) -> R<(V3, V3, V3, f32)> {
+        let mut out = [0.0f32; 3];
+        let mut lo = [f32::from_bits(0x60ad_78ec); 3];
+        let mut hi = [f32::from_bits(0xe0ad_78ec); 3];
+        let mut n = 0.0f32;
+        for p in players.iter() {
+            if p.i32_(0xfc) != 1 {
+                continue;
+            }
+            let at = if p.u16_(0x93c) & 0x20 != 0 { p.v3(0xf0) } else { p.v3(0x60) };
+            if mode == 0 {
+                out = vadd3(at, out)?;
+            } else {
+                for k in 0..3 {
+                    if at[k] <= lo[k] {
+                        lo[k] = at[k];
+                    }
+                    if hi[k] <= at[k] {
+                        hi[k] = at[k];
+                    }
+                }
+            }
+            n = add(n, 1.0)?;
+        }
+        if n == 0.0 {
+            return unsupported("GetPlayerAvgPos with no player in state 1 (PlayerStartPos)");
+        }
+        let inv = div(1.0, n)?;
+        if mode == 0 {
+            out = [mul(inv, out[0])?, mul(inv, out[1])?, mul(inv, out[2])?];
+        } else {
+            for k in 0..3 {
+                out[k] = mul(add(lo[k], hi[k])?, 0.5)?;
+            }
+        }
+        if mode == 2 {
+            for k in 0..3 {
+                out[k] = if out[k] < cam.min[k] {
+                    cam.min[k]
+                } else if cam.max[k] < out[k] {
+                    cam.max[k]
+                } else {
+                    out[k]
+                };
+            }
+        }
+        Ok((out, lo, hi, inv))
+    }
+
+    /// GetBossAvgPos 0x19fb38(weight, point, min, max, mode).
+    fn boss_avg_pos(weight: f32, point: V3, lo: V3, hi: V3, mode: u32, boss: V3) -> R<V3> {
+        if weight <= 0.0 {
+            return Ok(boss);
+        }
+        if mode == 0 {
+            let w = add(weight, 1.0)?;
+            let k = div(1.0, w)?;
+            let m = mul(sub(w, 1.0)?, k)?;
+            let mut out = [0.0; 3];
+            for i in 0..3 {
+                out[i] = add(mul(k, boss[i])?, mul(m, point[i])?)?;
+            }
+            return Ok(out);
+        }
+        let mut out = [0.0; 3];
+        for i in 0..3 {
+            let l = if boss[i] <= lo[i] { boss[i] } else { lo[i] };
+            let h = if h_le(hi[i], boss[i]) { boss[i] } else { hi[i] };
+            out[i] = mul(add(l, h)?, 0.5)?;
+        }
+        Ok(out)
+    }
+
+    /// PointInView 0x1a2148 → MulBodyVecMat4 + PointViewDist 0x1a1fc8.
+    fn point_in_view(rec: &Record, w: WinConsts, r: f32, p: V3) -> R<(f32, u32)> {
+        let d = vsub3(p, rec.v3(o::EYE))?;
+        let row = |k: usize| -> R<f32> { Camera::dot(d, rec.v3(o::MAT + 0x10 * k)) };
+        let (x, y, z) = (row(0)?, row(1)?, row(2)?);
+        let mut mask = 0u32;
+        let mut best = f32::from_bits(0x60ad_78ec);
+        let f = sub(sub(z, w.near)?, r)?;
+        if f < best {
+            best = f;
+            if f < 0.0 {
+                mask = 1;
+            }
+        }
+        let (zh, zv) = (mul(z, w.tan_h)?, mul(z, w.tan_v)?);
+        for (val, bit) in [
+            (sub(mul(add(zh, x)?, w.cos_h)?, r)?, 0x10),
+            (sub(mul(sub(zh, x)?, w.cos_h)?, r)?, 0x20),
+            (sub(mul(add(zv, y)?, w.cos_v)?, r)?, 0x200),
+            (sub(mul(sub(zv, y)?, w.cos_v)?, r)?, 0x100),
+        ] {
+            if val < best {
+                best = val;
+                if val < 0.0 {
+                    mask |= bit;
+                }
+            }
+        }
+        Ok((best, mask))
+    }
+
+    /// GetPlayerViewDist 0x19fd18: nearest frustum margin of the players in
+    /// state 1 (position +0x60 + displacement +0x860, radius +0x82c).
+    fn player_view_dist(&self, players: &[Record; 4], w: WinConsts) -> R<f32> {
+        let mut best = f32::from_bits(0x60ad_78ec);
+        for p in players.iter().filter(|p| p.i32_(0xfc) == 1) {
+            let at = vadd3(p.v3(0x60), p.v3(0x860))?;
+            let (d, _) = Self::point_in_view(&self.rec, w, p.f32_(0x82c), at)?;
+            if d < best {
+                best = d;
+            }
+        }
+        Ok(best)
+    }
+
+    /// GetActualAvgVec 0x19f490: the direction from the two farthest
+    /// entities (players, optionally the boss) toward the attention point.
+    fn actual_avg_vec(&self, ctx: &BossCtx, attn: V3, with_boss: bool) -> R<(V3, f32)> {
+        let mut count = 0.0f32;
+        let mut notable = 0;
+        let (mut first, mut second) = ([0.0f32; 3], [0.0f32; 3]);
+        let (mut max, mut max2) = (0.0f32, 0.0f32);
+        let mut targets: Vec<V3> = Vec::new();
+        if with_boss {
+            targets.push(ctx.boss.map(|(b, _)| b.v3(0x50)).ok_or_else(|| super::Unsupported("GetActualAvgVec without BossCritInst".into()))?);
+        }
+        for p in ctx.players.iter().filter(|p| p.i32_(0xfc) == 1) {
+            targets.push(if p.u16_(0x93c) & 0x20 != 0 { p.v3(0xf0) } else { p.v3(0x50) });
+        }
+        for t in targets {
+            let mut d = vsub3(attn, t)?;
+            let len = normal_vector_2d(&mut d)?;
+            if max < len {
+                if 0.0 < max {
+                    second = first;
+                    max2 = max;
+                }
+                first = d;
+                max = len;
+                notable += 1;
+            } else if max2 < len {
+                second = d;
+                max2 = len;
+                notable += 1;
+            }
+            count = add(count, 1.0)?;
+        }
+        if notable == 0 {
+            return Ok(([0.0; 3], 0.0));
+        }
+        let mut a = crate::libm::atan2f(first[0], first[2])?;
+        if notable != 1 {
+            let a1 = a;
+            let a2 = crate::libm::atan2f(second[0], second[2])?;
+            let mut mid = wrap(mul(add(a1, a2)?, 0.5)?)?;
+            if f32::from_bits(0x3fc9_0fdb) < wrap(sub(mid, a1)?)?.abs() {
+                mid = flip(mid)?;
+            }
+            let lim = mul(mul(self.consts.min_flip_angle, PI)?, f32::from_bits(0x3bb6_0b61))?;
+            if lim < wrap(sub(a1, a2)?)?.abs() && f32::from_bits(0x3fc9_0fdb) < wrap(sub(self.rec.f32_(o::YAW), mid)?)?.abs() {
+                mid = flip(mid)?;
+            }
+            a = mid;
+        }
+        Ok(([-sinf(a)?, 0.0, -cosf(a)?], count))
+    }
+
+    /// GetTransmitter 0x114570 (x/z fqdist; switches below 0.667 × the
+    /// current distance).
+    fn transmitter_2d(&mut self, cam: &Camera, p: V3) -> R<Option<usize>> {
+        if cam.transmitters.is_empty() {
+            return Ok(None);
+        }
+        let d = |t: &Transmitter| -> R<f32> { Ok(crate::vu0::fqdist(sub(p[0], t.pos[0])?, sub(p[2], t.pos[2])?)?.0) };
+        let (mut best, mut bd) = (-1i32, 0.0f32);
+        for (k, t) in cam.transmitters.iter().enumerate() {
+            if t.flag != 0 || k as i32 == self.cur_transmitter {
+                continue;
+            }
+            let dk = d(t)?;
+            if best < 0 || dk < bd {
+                best = k as i32;
+                bd = dk;
+            }
+        }
+        if self.cur_transmitter < 0 {
+            self.cur_transmitter = best;
+        } else {
+            let dc = d(&cam.transmitters[self.cur_transmitter as usize])?;
+            if bd <= mul(dc, f32::from_bits(0x3f2a_c083))? {
+                self.cur_transmitter = best;
+            }
+        }
+        // Index −1 reads the words before the table (transmitter_before_table).
+        Ok(Some(usize::try_from(self.cur_transmitter).unwrap_or(usize::MAX)))
+    }
+
+    /// BossCamGetCurrent 0x1a03a8: distance, yaw and pitch from the window eye.
+    fn get_current(&mut self, window_eye: V3) -> R<()> {
+        let d = vsub3(self.rec.v3(o::TARGET), window_eye)?;
+        self.rec.set_f32(o::DIST, sqrt3(d)?);
+        let (y, p) = get_yaw_pitch(d)?;
+        self.rec.set_f32(o::YAW, y);
+        self.rec.set_f32(o::PITCH, p);
+        Ok(())
+    }
+
+    /// BossCamLimitAttn 0x1a0460: moves the attention point (+0xa4) from its
+    /// base (+0xb0) along a velocity-limited direction (+0xbc).
+    fn limit_attn(&mut self, spf: f32, target: V3) -> R<()> {
+        let c = &self.consts;
+        let r = &mut self.rec;
+        let mut v = vsub3(target, r.v3(0xb0))?;
+        let len = crate::collision::normal_vector_pub(&mut v)?;
+        if len <= f32::from_bits(0x3a83_126f) {
+            for off in [0xd4, 0xd8] {
+                r.set_f32(off, 0.0);
+            }
+            r.set_v3(0xbc, [0.0; 3]);
+            r.set_v3(0xc8, [0.0; 3]);
+            r.set_v3(o::TARGET, target);
+            r.set_v3(0xb0, target);
+            return Ok(());
+        }
+        if r.f32_(0xd4) <= 0.0 {
+            let mut vel = r.f32_(0xd8);
+            let along = limit_cam_val2(spf, r.f32_(0xd4), len, -c.max_dist_vel, c.max_dist_vel, c.dist_accel, 0.0, &mut vel, false)?;
+            r.set_f32(0xd8, vel);
+            r.set_f32(0xd4, along);
+            r.set_v3(0xbc, v);
+            r.set_v3(0xc8, [0.0; 3]);
+            let b = r.v3(0xb0);
+            r.set_v3(o::TARGET, [add(mul(v[0], along)?, b[0])?, add(mul(v[1], along)?, b[1])?, add(mul(v[2], along)?, b[2])?]);
+            return Ok(());
+        }
+        if Camera::dot(v, r.v3(0xbc))? < f32::from_bits(0x3f77_0a3d) {
+            r.set_f32(0xd4, 0.0);
+            r.set_v3(0xb0, r.v3(o::TARGET));
+        } else {
+            let mut vel = r.f32_(0xd8);
+            let along = limit_cam_val2(spf, r.f32_(0xd4), len, -c.max_dist_vel, c.max_dist_vel, c.dist_accel, 0.0, &mut vel, false)?;
+            r.set_f32(0xd8, vel);
+            r.set_f32(0xd4, along);
+        }
+        for k in 0..3 {
+            let mut vel = r.f32_(0xc8 + 4 * k);
+            let x = limit_cam_val2(spf, r.f32_(0xbc + 4 * k), v[k], -c.max_dir_vel, c.max_dir_vel, c.dir_accel, 0.0, &mut vel, false)?;
+            r.set_f32(0xc8 + 4 * k, vel);
+            r.set_f32(0xbc + 4 * k, x);
+        }
+        let (dir, along, b) = (r.v3(0xbc), r.f32_(0xd4), r.v3(0xb0));
+        r.set_v3(o::TARGET, [add(mul(dir[0], along)?, b[0])?, add(mul(dir[1], along)?, b[1])?, add(mul(dir[2], along)?, b[2])?]);
+        Ok(())
+    }
+
+    /// BossCamLimit 0x1a0818: yaw, distance and pitch toward their targets.
+    fn limit(&mut self, spf: f32, yaw: f32, dist: f32, pitch: f32) -> R<()> {
+        let c = self.consts.clone();
+        let r = &mut self.rec;
+        let lead = f32::from_bits(0x3dcc_cccd);
+        let mut v = r.f32_(o::DYAW);
+        let y = limit_cam_val2(spf, r.f32_(o::YAW), yaw, -c.max_yaw_vel, c.max_yaw_vel, c.yaw_accel, lead, &mut v, true)?;
+        r.set_f32(o::DYAW, v);
+        r.set_f32(o::YAW, y);
+        let mut v = r.f32_(o::DDIST);
+        let d = limit_cam_val2(spf, r.f32_(o::DIST), dist, mul(-c.max_dist_vel, 0.25)?, c.max_dist_vel, c.dist_accel, lead, &mut v, false)?;
+        r.set_f32(o::DDIST, v);
+        r.set_f32(o::DIST, d);
+        let mut v = r.f32_(o::DPITCH);
+        let p = limit_cam_val2(spf, r.f32_(o::PITCH), pitch, -c.max_pitch_vel, c.max_pitch_vel, c.pitch_accel, lead, &mut v, true)?;
+        r.set_f32(o::DPITCH, v);
+        r.set_f32(o::PITCH, p);
+        Ok(())
+    }
+
+    /// BossCameraStart 0x19fe68.
+    fn start(&mut self) -> R<()> {
+        let factor = self.consts.dist_factor;
+        if let Some(d) = self.data.as_mut() {
+            let c = cosf(bf(d, 1))?;
+            set_bf(d, 2, c);
+            if bf(d, 6) == 0.0 {
+                let v = bf(d, 5);
+                set_bf(d, 6, v);
+            }
+            if f32::from_bits(0x4974_23e0) <= bf(d, 0xd) {
+                for k in 0..3 {
+                    let v = bf(d, 9 + k);
+                    set_bf(d, 0xc + k, v);
+                }
+            }
+            // new_camera_switch is 1: × BOSS_DIST_FACTOR.
+            self.rec.set_f32(o::MAX_RADIUS, mul(mul(bf(d, 6), 1.5)?, factor)?);
+        }
+        for off in [o::DYAW, o::DDIST, o::DPITCH, 0xd4, 0xd8, 0x100] {
+            self.rec.set_f32(off, 0.0);
+        }
+        self.rec.set_v3(0xbc, [0.0; 3]);
+        self.rec.set_v3(0xc8, [0.0; 3]);
+        Ok(())
+    }
+
+    /// BossCamStartCalc 0x1a0998.
+    fn start_calc(&mut self, cam: &Camera, ctx: &BossCtx, start_of_stage: &mut i32) -> R<()> {
+        *start_of_stage = 1;
+        let t = cam.start_transmitter.ok_or_else(|| super::Unsupported("BossCamStartCalc without StartTransmitter".into()))?;
+        let (p, ..) = Self::player_avg_pos(ctx.players, 1, cam)?;
+        let d = vsub3(p, cam.transmitters[t].pos)?;
+        let dist = sqrt3(d)?;
+        let (y, pi) = get_yaw_pitch(d)?;
+        self.rec.set_v3(o::TARGET, p);
+        self.rec.set_v3(0xb0, p);
+        self.rec.set_f32(o::YAW, y);
+        self.rec.set_f32(o::PITCH, pi);
+        self.rec.set_f32(o::DIST, dist);
+        Ok(())
+    }
+
+    /// The view-distance adjustment shared by the player and boss
+    /// calculators (thresholds differ; see research/camera.md).
+    fn player_calc(&mut self, cam: &Camera, ctx: &BossCtx, w: WinConsts, start_of_stage: &mut i32, window_eye: V3) -> R<()> {
+        let d = self.data.clone().ok_or_else(|| super::Unsupported("boss camera without BCAM".into()))?;
+        let full = mul(bf(&d, 6), 1.5)?;
+        self.rec.set_f32(o::MAX_RADIUS, mul(full, self.consts.dist_factor)?);
+        let (p, ..) = Self::player_avg_pos(ctx.players, 2, cam)?;
+        let t = if *start_of_stage != 0 { cam.start_transmitter } else { self.transmitter_2d(cam, p)? };
+        let (yaw, pitch) = match t {
+            Some(k) => {
+                let tr = cam.transmitter(k);
+                (wrap(sub(tr.yaw, PI)?)?, -tr.pitch)
+            }
+            None => (0.0, 0.0),
+        };
+        let mut flags = bu(&d) & 0xffff_fcff;
+        let vd = self.player_view_dist(ctx.players, w)?;
+        self.rec.set_f32(0x100, vd);
+        let mut dist = self.rec.f32_(o::DIST);
+        if vd < 0.0 {
+            flags |= 0x200;
+            dist = add(dist, 10.0)?;
+        } else if (vd < 2.0 && dist < full) || (vd < 2.25 && dist < full && bu(&d) & 0x200 != 0) {
+            flags |= 0x200;
+            let t = sub(2.5, vd)?;
+            dist = add(dist, add(t, t)?)?;
+        } else if 2.5 < vd || (2.25 < vd && bu(&d) & 0x100 != 0) {
+            flags |= 0x100;
+            let t = sub(vd, if 2.5 < vd { 2.5 } else { 2.25 })?;
+            dist = sub(dist, add(t, t)?)?;
+        }
+        let data = self.data.as_mut().unwrap();
+        data[..4].copy_from_slice(&flags.to_le_bytes());
+        let lo = bf(data, 4);
+        if dist < lo {
+            dist = lo;
+        } else if add(full, full)? < dist {
+            dist = add(full, full)?;
+        }
+        if *start_of_stage != 0 && sub(dist, self.rec.f32_(o::DIST))?.abs() < 5.0 {
+            *start_of_stage = 0;
+        }
+        self.rec.set_v3(o::TARGET, p);
+        self.rec.set_v3(0xb0, p);
+        if self.mode == 0 {
+            self.get_current(window_eye)
+        } else {
+            self.limit(ctx.spf, yaw, dist, pitch)
+        }
+    }
+
+    /// BossCamBossCalc 0x1a0e90.
+    fn boss_calc(&mut self, cam: &Camera, ctx: &BossCtx, w: WinConsts, start_of_stage: &mut i32, window_eye: V3) -> R<()> {
+        *start_of_stage = 0;
+        let d = self.data.clone().ok_or_else(|| super::Unsupported("boss camera without BCAM".into()))?;
+        let (boss, radius) = ctx.boss.ok_or_else(|| super::Unsupported("BossCamBossCalc without BossCritInst".into()))?;
+        let home_fwd = [boss.f32_(0x440), 0.0, boss.f32_(0x448)];
+        self.rec.set_f32(o::MAX_RADIUS, mul(bf(&d, 5), self.consts.dist_factor)?);
+        let t = self.rec.f32_(0xfc);
+        let mut off = [0.0f32; 3];
+        for k in 0..3 {
+            off[k] = add(mul(sub(bf(&d, 0xc + k), bf(&d, 9 + k))?, t)?, bf(&d, 9 + k))?;
+        }
+        let flags0 = bu(&d);
+        let mut snap = 0u32;
+        let (target, view_point, view_r);
+        if self.mode == 0 {
+            target = vadd3(boss.v3(0x460), off)?;
+            view_point = target;
+            view_r = radius;
+        } else {
+            let mut kind = 1u32;
+            let (tg, vp, vr);
+            if let (true, Some(g)) = (ctx.good_wizard != 0, ctx.good_wiz_pos) {
+                tg = vadd3(g, [bf(&d, 0x12), bf(&d, 0x13), bf(&d, 0x14)])?;
+                vp = g;
+                vr = 4.0;
+                kind = 2;
+            } else if let Some(k) = ctx.boss_key_pos {
+                tg = vadd3(k, [bf(&d, 0xf), bf(&d, 0x10), bf(&d, 0x11)])?;
+                vp = k;
+                vr = 5.0;
+                kind = 2;
+            } else if ctx.good_wizard != 0 || ctx.boss_is_dying != 0 {
+                tg = self.rec.v3(o::TARGET);
+                vp = tg;
+                vr = 5.0;
+            } else {
+                let base = if flags0 & 0x10 != 0 {
+                    let (p, lo, hi, inv) = Self::player_avg_pos(ctx.players, 1, cam)?;
+                    Self::boss_avg_pos(inv, p, lo, hi, 1, boss.v3(0x50))?
+                } else if flags0 & 1 != 0 {
+                    boss.v3(0x50)
+                } else {
+                    boss.v3(0x460)
+                };
+                tg = vadd3(base, off)?;
+                vp = boss.v3(0x50);
+                vr = radius;
+            }
+            target = tg;
+            view_point = vp;
+            view_r = vr;
+            let far = sqrt3(vsub3(self.rec.v3(o::TARGET), target)?)?;
+            if 0.0 < ctx.spf && mul(self.consts.max_dist_vel, ctx.spf)? < far {
+                snap = kind;
+            }
+        }
+        // The direction the camera looks along.
+        let (mut v, weight) = if flags0 & 0x20 != 0 {
+            let (p, lo, hi, inv) = Self::player_avg_pos(ctx.players, 1, cam)?;
+            let p = if flags0 & 8 != 0 { Self::boss_avg_pos(inv, p, lo, hi, 1, boss.v3(0x50))? } else { p };
+            let mut v = vsub3(self.rec.v3(o::TARGET), p)?;
+            let len = normal_vector_2d(&mut v)?;
+            (v, if len < 1.0 { 0.0 } else { inv })
+        } else {
+            self.actual_avg_vec(ctx, self.rec.v3(o::TARGET), flags0 & 8 != 0)?
+        };
+        let yaw = if weight == 0.0 {
+            self.rec.f32_(o::YAW)
+        } else {
+            let cos_lim = bf(&d, 2);
+            let mut f3;
+            if self.mode != 0 {
+                let mut e = vsub3(self.rec.v3(o::EYE), self.rec.v3(o::TARGET))?;
+                e[1] = 0.0;
+                slow_normal_vector_2d(&mut e)?;
+                let mut f5 = -1.0;
+                if flags0 & 4 == 0 {
+                    f3 = add(mul(v[0], home_fwd[0])?, mul(v[2], home_fwd[2])?)?;
+                    if cos_lim <= f3 {
+                        f5 = add(mul(e[0], v[0])?, mul(e[2], v[2])?)?;
+                    }
+                } else {
+                    f3 = -1.0;
+                }
+                if flags0 & 2 == 0 {
+                    let w2 = [-v[0], -v[1], -v[2]];
+                    let f4 = add(mul(w2[0], home_fwd[0])?, mul(w2[2], home_fwd[2])?)?;
+                    let f1 = if cos_lim <= f4 { add(mul(e[0], w2[0])?, mul(e[2], w2[2])?)? } else { -1.0 };
+                    if f5 < f1 {
+                        v = w2;
+                        f3 = f4;
+                    }
+                }
+            } else {
+                f3 = add(mul(v[0], home_fwd[0])?, mul(v[2], home_fwd[2])?)?;
+            }
+            let y0 = if f3 < cos_lim {
+                let a = crate::libm::atan2f(home_fwd[0], home_fwd[2])?;
+                let cross = sub(mul(v[2], home_fwd[0])?, mul(v[0], home_fwd[2])?)?;
+                if 0.0 <= cross {
+                    sub(a, bf(&d, 1))?
+                } else {
+                    add(a, bf(&d, 1))?
+                }
+            } else {
+                crate::libm::atan2f(v[0], v[2])?
+            };
+            wrap(add(y0, PI)?)?
+        };
+        let dist;
+        if self.mode == 0 {
+            dist = sqrt3(vsub3(self.rec.v3(o::TARGET), window_eye)?)?;
+            self.rec.set_f32(0x100, 0.0);
+        } else {
+            let mut full = bf(&d, 5);
+            let mut flags = flags0 & 0xffff_fcff;
+            // GetBossCamViewDist 0x19fdf8: min(players, the viewed point).
+            let pd = self.player_view_dist(ctx.players, w)?;
+            let (pv, _) = Self::point_in_view(&self.rec, w, view_r, view_point)?;
+            let vd = if pv < pd { pv } else { pd };
+            self.rec.set_f32(0x100, vd);
+            if ctx.good_wizard != 0 {
+                full = add(full, full)?;
+            }
+            let mut f20 = self.rec.f32_(o::DIST);
+            if vd < 0.0 {
+                flags |= 0x200;
+                f20 = add(f20, 10.0)?;
+            } else if (vd < 2.0 && f20 < full) || (vd < 2.25 && f20 < full && flags0 & 0x200 != 0) {
+                flags |= 0x200;
+                let t = sub(2.5, vd)?;
+                f20 = add(f20, add(t, t)?)?;
+            } else if 4.0 < vd || (2.5 < vd && flags0 & 0x100 != 0) {
+                flags |= 0x100;
+                f20 = sub(f20, sub(vd, 2.5)?)?;
+            }
+            let data = self.data.as_mut().unwrap();
+            data[..4].copy_from_slice(&flags.to_le_bytes());
+            let lo = bf(data, 3);
+            dist = if f20 < lo {
+                lo
+            } else if add(full, full)? < f20 {
+                add(full, full)?
+            } else {
+                f20
+            };
+        }
+        let cur = self.rec.f32_(o::DIST);
+        let span = sub(bf(&d, 5), bf(&d, 3))?;
+        let t = if f32::from_bits(0x3c23_d70a) < span { div(sub(cur, bf(&d, 3))?, span)? } else { 1.0 };
+        let t = t.clamp(0.0, 1.0);
+        self.rec.set_f32(0xfc, t);
+        let pitch = if sub(cur, dist)?.abs() < 10.0 {
+            -add(mul(sub(bf(&d, 8), bf(&d, 7))?, t)?, bf(&d, 7))?
+        } else {
+            self.rec.f32_(o::PITCH)
+        };
+        if self.mode == 0 {
+            self.rec.set_v3(o::TARGET, target);
+            self.rec.set_v3(0xb0, target);
+            return self.get_current(window_eye);
+        }
+        self.limit_attn(ctx.spf, target)?;
+        if snap == 0 {
+            return self.limit(ctx.spf, yaw, dist, pitch);
+        }
+        let dv = vsub3(self.rec.v3(o::TARGET), self.rec.v3(o::EYE))?;
+        let len = sqrt3(dv)?;
+        let (y, p) = get_yaw_pitch(dv)?;
+        self.rec.set_f32(o::YAW, y);
+        self.rec.set_f32(o::PITCH, p);
+        if self.rec.f32_(o::DIST) < len || 2 <= snap {
+            self.rec.set_f32(o::DIST, len);
+        }
+        Ok(())
+    }
+}
+
+impl BossCamera {
+    /// BossCameraUpdate 0x1a1bc0; false when the level has no BCAM record
+    /// (main then runs do_camera, not ported).
+    pub fn update(&mut self, cam: &mut Camera, ctx: &BossCtx, sh: (i32, i32, i32), cam_wait: &mut i32, start_of_stage: &mut i32) -> R<bool> {
+        if *start_of_stage == 0 {
+            *cam_wait = 0;
+        }
+        // WindowScaleH = 0 (presentation).
+        if self.mode == 0 {
+            self.start()?;
+        }
+        let w = cam.pb.win_consts()?;
+        let window_eye = cam.pb.eye;
+        if matches!(ctx.game_mode, 0x4013 | 0x400d | 0x4017) {
+            if self.mode == 0 {
+                self.mode = 1;
+            }
+        } else {
+            if self.data.is_none() {
+                return Ok(false);
+            }
+            let ctxerr = |stage: &'static str| move |e: Unsupported| Unsupported(format!("{stage}: {}", e.0));
+            if self.mode == 0 {
+                self.start_calc(cam, ctx, start_of_stage).map_err(ctxerr("BossCamStartCalc"))?;
+            } else if ctx.boss_active == 0 {
+                self.player_calc(cam, ctx, w, start_of_stage, window_eye).map_err(ctxerr("BossCamPlayerCalc"))?;
+            } else {
+                self.boss_calc(cam, ctx, w, start_of_stage, window_eye).map_err(ctxerr("BossCamBossCalc"))?;
+            }
+        }
+        let r = &mut self.rec;
+        r.set_f32(o::YAW, wrap(r.f32_(o::YAW))?);
+        r.set_f32(o::PITCH, wrap(r.f32_(o::PITCH))?);
+        let look = Camera::calc_lookdir(r.f32_(o::YAW), r.f32_(o::PITCH))?;
+        r.set_v3(o::LOOK, look);
+        let (mut eye, mut target) = (r.v3(o::EYE), r.v3(o::TARGET));
+        Camera::shake_step(&mut cam.shake, sh.0, sh.1, sh.2, &mut eye, &mut target)?;
+        r.set_v3(o::TARGET, target);
+        let nd = -r.f32_(o::DIST);
+        r.set_v3(o::EYE, [add(mul(nd, look[0])?, target[0])?, add(mul(nd, look[1])?, target[1])?, add(mul(nd, look[2])?, target[2])?]);
+        // LookInDirection 0x173cc0 is CamLookInDir's code.
+        Camera::look_in_dir(r, look)?;
+        // Old Cam[0] copies and ExtractYPR feed the unported Cam array.
+        cam.mb_camera_update(&mut self.rec);
+        cam.cam0_eye = self.rec.v3(o::EYE);
+        cam.cam0_attention = self.rec.v3(o::TARGET);
+        self.mode = 1;
+        Ok(true)
+    }
+}
+
+/// `hi <= v` for the max side of GetBossAvgPos (c.lt hi, v → v).
+fn h_le(hi: f32, v: f32) -> bool {
+    hi <= v
+}
+
+// ---- Trigger cameras (TriggerCameraActivate 0x1a2550, TriggerCamUpdate 0x1a26a8) ----
+
+/// trig_cam_mat 0x25d7a0 (rows + eye 0x25d7d0), trig_cam_wait 0x25d540,
+/// trig_cam_hold 0x25d548, trig_cam_wobj 0x25d794 (active/delay are globals).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TriggerCam {
+    pub rows: [V3; 3],
+    pub eye: V3,
+    pub wait: i32,
+    pub hold: i32,
+    /// The bound world object whose animation (+0x10 bit 0x8000000) holds it.
+    pub wobj: Option<usize>,
+}
+
+/// LinkTriggerToCam 0x150328's Tower cameras (transmitter indices):
+/// CrystalCam 0x234308 (id 0xc6), RuneCam 0x23cba0 (0xc9, 0xcb, 0xcd),
+/// WindowCam 0x23cbb0 (0xca, 0xcc), SumnerCam 0x23cbb8 tables 0 (0xf0..),
+/// 1 (0xdc..) and 2 (0xaa..), 14 entries each.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TowerCams {
+    pub crystal: Option<usize>,
+    pub rune: [Option<usize>; 3],
+    pub window: [Option<usize>; 2],
+    pub sumner: [[Option<usize>; 14]; 3],
+}
+
+/// LinkTriggerToCam 0x150328 over the kind-9 transmitters: the Tower's
+/// camera table, and the (transmitter, id) pairs left for trigger items.
+pub fn tower_camera_links(transmitters: &[Transmitter], cur_world: i32) -> (TowerCams, Vec<(usize, i32)>) {
+    let mut tc = TowerCams::default();
+    let mut items = Vec::new();
+    for (k, t) in transmitters.iter().enumerate().filter(|(_, t)| t.flag == 2) {
+        let id = i32::from(t.id);
+        if cur_world == 0xd {
+            if 200 < id {
+                match id {
+                    0xc9 => tc.rune[0] = Some(k),
+                    0xca => tc.window[0] = Some(k),
+                    0xcb => tc.rune[1] = Some(k),
+                    0xcc => tc.window[1] = Some(k),
+                    0xcd => tc.rune[2] = Some(k),
+                    _ => {}
+                }
+                if (0xf0..0xfe).contains(&id) {
+                    tc.sumner[0][(id - 0xf0) as usize] = Some(k);
+                }
+                if (0xdc..0xea).contains(&id) {
+                    tc.sumner[1][(id - 0xdc) as usize] = Some(k);
+                }
+                continue;
+            }
+            if id == 0xc6 {
+                tc.crystal = Some(k);
+                continue;
+            }
+            if (0xaa..0xb8).contains(&id) {
+                tc.sumner[2][(id - 0xaa) as usize] = Some(k);
+                continue;
+            }
+        }
+        items.push((k, id));
+    }
+    (tc, items)
+}
+
+/// TriggerCameraActivate's matrix: PitchVec3(pitch, YawVec3(π − yaw,
+/// (0,0,1))) through LookInDirection 0x173cc0 (trig_cam_mat rows).
+pub fn trigger_camera_rows(pitch_yaw: [f32; 2]) -> R<[V3; 3]> {
+    let dir = pitch_vec3(pitch_yaw[0], yaw_vec3(sub(PI, pitch_yaw[1])?, FVECTOR)?)?;
+    let mut m = Record::zeroed(0x40);
+    Camera::look_in_dir(&mut m, dir)?;
+    Ok([m.v3(0), m.v3(0x10), m.v3(0x20)])
+}
+
+/// RuneCamActivate / WindowCamActivate hold times (0x2a7f98, 0x2a7fa8).
+const RUNE_HOLD: [i32; 3] = [300, 300, 300];
+const WINDOW_HOLD: [i32; 2] = [300, 300];
+
 impl super::Game {
     fn cam_ctx(&self) -> CamCtx<'_> {
         let g = &self.globals;
@@ -1229,13 +2137,69 @@ impl super::Game {
         Ok(())
     }
 
-    /// main's StdCamUpdate and MBEndFrame for one update.
+    /// main's camera dispatch (0x100600..0x10075c) and MBEndFrame for one
+    /// update: front-end modes keep a fixed camera, boss modes and levels with
+    /// a BossCritInst run BossCameraUpdate, otherwise StdCamUpdate
+    /// (new_camera_switch is 1). TriggerCamUpdate is not ported yet.
     pub(crate) fn camera_step(&mut self) -> R<()> {
+        if self.trigger_cam_update()? {
+            let w = self.std_camera.as_ref().map(|c| c.window.clone());
+            if let (Some(cam), Some(w)) = (self.std_camera.as_mut(), w) {
+                cam.pb.update(&w)?;
+            }
+            self.sync_view();
+            return Ok(());
+        }
         let Some(mut cam) = self.std_camera.take() else { return Ok(()) };
         let (mut wait, mut start) = (self.globals.cam_wait, self.globals.start_of_stage);
-        let r = cam.std_update(&self.cam_ctx(), &mut wait, &mut start);
+        let mode = self.globals.game_mode;
+        let boss_path = matches!(mode, 0x4013 | 0x400d | 0x4017) || (mode & 0x8000 == 0 && self.boss_crit_inst != 0);
+        let r = (|| -> R<()> {
+            if matches!(mode, 0x8009 | 0x400b | 0x4012) {
+                return unsupported("front-end fixed camera (MBCameraUpdate of 0x2a1e40)");
+            }
+            if !boss_path && mode & 0x8000 != 0 {
+                return unsupported("do_camera (game_mode & 0x8000)");
+            }
+            if boss_path {
+                let mut bc = self.boss_camera.take().ok_or_else(|| Unsupported("no boss camera state".into()))?;
+                let g = &self.globals;
+                if g.spf <= 0.0 {
+                    // LimitCamVal2's FPS = 1/SPF (ClockOncePerFrame keeps SPF > 0).
+                    self.boss_camera = Some(bc);
+                    return unsupported("BossCameraUpdate with SPF 0");
+                }
+                let boss = usize::try_from(self.boss_crit_inst - 1)
+                    .ok()
+                    .filter(|&i| self.critters.get(i).is_some_and(|c| c.is_some()))
+                    .map(|i| (&self.crit(i).rec, self.critter_type_f32(i, 0x78)));
+                let ctx = BossCtx {
+                    players: &self.players,
+                    spf: g.spf,
+                    game_mode: mode,
+                    boss,
+                    boss_active: g.boss_active,
+                    boss_is_dying: self.boss_is_dying,
+                    good_wizard: g.good_wizard,
+                    // HYPOTHESIS: good_wiz_objgrp (calc_good_wiz_attn) is not
+                    // ported; the key effect is taken as living until level end.
+                    good_wiz_pos: None,
+                    boss_key_pos: self.boss_key_position,
+                };
+                let done = bc.update(&mut cam, &ctx, (g.paused, g.help, g.vb_elapsed), &mut wait, &mut start);
+                self.globals.cur_transmitter = bc.cur_transmitter;
+                self.boss_camera = Some(bc);
+                if !done? {
+                    return unsupported("do_camera (boss level without BCAM)");
+                }
+                return Ok(());
+            }
+            cam.std_update(&self.cam_ctx(), &mut wait, &mut start)
+        })();
+        let r = r.and_then(|_| cam.pb.update(&cam.window.clone()));
         self.globals.cam_wait = wait;
         self.globals.start_of_stage = start;
+        self.globals.cur3d_transmitter = cam.cur3d;
         self.std_camera = Some(cam);
         r?;
         self.sync_view();
@@ -1259,6 +2223,150 @@ impl super::Game {
                 newcam_mode: 2,
             });
         }
+    }
+
+    /// LinkTriggerToCam 0x150328 for every kind-9 locator (AddLocatorInstList
+    /// order): Tower camera ids, otherwise trigger items (definition kind 5)
+    /// whose +0xf6 byte equals the id get +0x102 = the transmitter index.
+    pub fn link_trigger_cameras(&mut self) -> R<()> {
+        let Some(cam) = &self.std_camera else { return Ok(()) };
+        let (tc, items) = tower_camera_links(&cam.transmitters, self.globals.cur_world);
+        self.tower_cams = tc;
+        for (k, id) in items {
+            for slot in 0..self.items.records.len() {
+                let r = &self.items.records[slot];
+                // (char)+0xf6 == id: signed byte compare; a second link
+                // overwrites the first (Errorf only reports it).
+                if r.i16_(0xd8) != -1 && self.items.definitions[r.definition()].kind() == 5 && i32::from(r.i8_(0xf6)) == id {
+                    self.items.records[slot].set_i16(0x102, k as i16);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// TriggerCameraActivate 0x1a2550(wobj, position, angles, delay, wait,
+    /// hold): a fixed camera, player controls disabled.
+    pub fn trigger_camera_activate(&mut self, wobj: Option<usize>, pos: V3, pitch_yaw: [f32; 2], delay: i32, wait: i32, hold: i32) -> R<()> {
+        self.globals.trig_cam_delay = match delay {
+            d if d < 0 => 1_000_000,
+            0 => 0x28,
+            d => d * 6,
+        };
+        self.globals.trig_cam_active = 2;
+        // DisablePlayerControls 0x105e20 (ResetPlayerControls clears inputs).
+        self.disable_player_controls = 1;
+        let rows = trigger_camera_rows(pitch_yaw)?;
+        self.trig_cam = TriggerCam { rows, eye: pos, wait, hold, wobj };
+        // vibrators_off: presentation.
+        Ok(())
+    }
+
+    /// TriggerCamUpdate owns the view (its letterbox bars are drawn).
+    pub fn trigger_view_active(&self) -> bool {
+        self.globals.trig_cam_active != 0 && self.trig_cam.wait <= 0
+    }
+
+    /// ShakeCamera 0x16fc20 on the shared shake state.
+    pub fn shake_camera(&mut self, radius: f32, kind: i32, delay: i32, count: i32, priority: i32) {
+        if let Some(c) = self.std_camera.as_mut() {
+            c.shake(radius, kind, delay, count, priority);
+        }
+    }
+
+    /// TriggerCameraEnd 0x1a2680.
+    pub fn trigger_camera_end(&mut self) {
+        self.trig_cam.wait = 0;
+        self.globals.trig_cam_delay = 0;
+        self.trig_cam.hold = 0;
+        self.trig_cam.wobj = None;
+    }
+
+    fn activate_transmitter_cam(&mut self, k: usize, delay: i32, wait: i32, hold: i32, wobj: Option<usize>) -> R<()> {
+        let Some(t) = self.std_camera.as_ref().map(|c| c.transmitter(k)) else { return Ok(()) };
+        self.trigger_camera_activate(wobj, t.pos, [t.pitch, t.yaw], delay, wait, hold)
+    }
+
+    /// CrystalCamActivate 0x150740.
+    pub fn crystal_cam_activate(&mut self) -> R<()> {
+        match self.tower_cams.crystal {
+            Some(k) => self.activate_transmitter_cam(k, 0x32, 0, 0, None),
+            None => unsupported("CrystalCamActivate without CrystalCam"),
+        }
+    }
+
+    /// SumnerCamActivate 0x1506b0(table, index): the table's camera, else
+    /// the nearest lower table's; held until TriggerCameraEnd.
+    pub fn sumner_cam_activate(&mut self, table: usize, index: usize) -> R<()> {
+        let pick = (0..=table.min(2)).rev().find_map(|t| self.tower_cams.sumner[t].get(index).copied().flatten());
+        match pick {
+            Some(k) => self.activate_transmitter_cam(k, -1, 0, 0, None),
+            None => Ok(()),
+        }
+    }
+
+    /// RuneCamActivate 0x150590(k): the k-th rune camera or a lower one.
+    pub fn rune_cam_activate(&mut self, k: usize) -> R<()> {
+        let pick = (0..=k.min(2)).rev().find_map(|i| self.tower_cams.rune[i].map(|t| (i, t)));
+        match pick {
+            Some((i, t)) => self.activate_transmitter_cam(t, 0, 0, RUNE_HOLD[i], None),
+            None => Ok(()),
+        }
+    }
+
+    /// WindowCamActivate 0x150638(k).
+    pub fn window_cam_activate(&mut self, k: usize) -> R<()> {
+        match self.tower_cams.window.get(k).copied().flatten().or(self.tower_cams.window[0]) {
+            Some(t) => self.activate_transmitter_cam(t, 0, 0, WINDOW_HOLD[k.min(1)], None),
+            None => Ok(()),
+        }
+    }
+
+    /// TriggerCamUpdate 0x1a26a8: true while the trigger camera owns the view
+    /// (main then skips its camera dispatch).
+    fn trigger_cam_update(&mut self) -> R<bool> {
+        if self.globals.trig_cam_active == 0 {
+            return Ok(false);
+        }
+        let vb = self.globals.vb_elapsed;
+        if 0 < self.trig_cam.wait {
+            self.trig_cam.wait -= vb;
+            return Ok(false);
+        }
+        let Some(cam) = self.std_camera.as_mut() else { return Ok(true) };
+        // StdCamFreeze; MBCameraUpdate(trig_cam eye, matrix).
+        cam.reset_std = 1;
+        let mut m = Record::zeroed(0x40);
+        for (k, r) in self.trig_cam.rows.iter().enumerate() {
+            m.set_v3(0x10 * k, *r);
+        }
+        m.set_v3(o::EYE, self.trig_cam.eye);
+        cam.mb_camera_update(&mut m);
+        cam.cam0_eye = self.trig_cam.eye;
+        cam.cam0_attention = self.trig_cam.eye;
+        // Letterbox blits and the sandglass hide are presentation.
+        self.globals.trig_cam_delay -= vb;
+        if 0 < self.globals.trig_cam_delay {
+            return Ok(true);
+        }
+        if 0 < self.trig_cam.hold {
+            self.trig_cam.hold -= vb;
+            return Ok(true);
+        }
+        if let Some(o) = self.trig_cam.wobj
+            && self.items.objects.get(o).is_some_and(|w| w.flags_10 & 0x800_0000 != 0)
+        {
+            return Ok(true);
+        }
+        if self.globals.trig_cam_active == 2 {
+            // EnablePlayerControls 0x105e50.
+            self.disable_player_controls = 0;
+        }
+        self.globals.trig_cam_active = 0;
+        // AuxLevels & 2 is a debug option: do_camera() (old Cam array) and
+        // CameraNewPos(10) are not ported; StdCamUpdate's StdCamReturn below
+        // re-applies the gameplay camera.
+        Ok(false)
     }
 
     /// world_update 0x163480's start-of-stage block (game modes 0x4010 and

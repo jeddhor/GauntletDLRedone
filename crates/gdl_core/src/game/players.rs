@@ -160,6 +160,8 @@ impl PlayerDriver {
 impl Game {
     /// One interim do_players update for player `p` with the pad level word.
     pub fn drive_player(&mut self, p: usize, d: &mut PlayerDriver, levels: u32) -> R<()> {
+        // PlayerControls 0x105710: disabled controls read as zero.
+        let levels = if self.disable_player_controls != 0 { 0 } else { levels };
         let state = self.players[p].i32_(0xfc);
         let g = &self.globals;
         if g.cam_wait != 0 && g.start_of_stage != 0 {

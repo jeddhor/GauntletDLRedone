@@ -1156,18 +1156,48 @@ impl Game {
         let pos = self.items.records[slot].v3(0x60);
         let at = [pos[0], add(pos[1], 2.0)?, pos[2]];
         match kind {
-            1 => match st {
-                3 if result == -2 => return unsupported("DamageItem explosive potion swap"),
-                4 if result == 0 => {
-                    // start_magic(0.8, -1, item +0x50, definition +0x3c, 0).
-                    let r = &self.items.records[slot];
-                    let (at, fl) = (r.v3(0x50), self.items.definitions[r.definition()].i32_(0x3c) as u32);
-                    self.start_magic(f32::from_bits(0x3f4c_cccd), -1, at, fl, 0)?;
-                    self.delete_item(slot, true);
+            1 => {
+                // Magic (flags 0x400) of at least 5 damage.
+                let magic = flags & 0x400 != 0 && 5.0 <= dmg;
+                let item_pos = self.items.records[slot].v3(0x40);
+                match st {
+                    1 => {
+                        if magic {
+                            // StartFXMat 0x20 / 0x21; treasure becomes junk.
+                            self.start_fx_no_loop(0x20, item_pos)?;
+                            self.start_fx_no_loop(0x21, item_pos)?;
+                            self.events.push(Event::ItemTree { slot, tree: "TREAS_JUNK" });
+                            self.items.records[slot].set_i32(0xf4, 10);
+                        }
+                    }
+                    2 | 10..=0x10 => {}
+                    4 => {
+                        if result == 0 {
+                            // start_magic(0.8, -1, item +0x50, definition +0x3c, 0).
+                            let r = &self.items.records[slot];
+                            let (at, fl) = (r.v3(0x50), self.items.definitions[r.definition()].i32_(0x3c) as u32);
+                            self.start_magic(f32::from_bits(0x3f4c_cccd), -1, at, fl, 0)?;
+                            self.delete_item(slot, true);
+                        }
+                    }
+                    _ => {
+                        if st == 3 && result == -2 {
+                            // Shot food spoils: BADMEAT (meat, +0xe4 == 2) or GAPPLE.
+                            let (tree, value) = if self.items.records[slot].i16_(0xe4) == 2 { ("BADMEAT", -100) } else { ("GAPPLE", -0x32) };
+                            self.events.push(Event::ItemTree { slot, tree });
+                            self.items.records[slot].set_i32(0xf4, value);
+                            self.help(0x88, usize::MAX);
+                        }
+                        if magic {
+                            self.start_fx_no_loop(0x20, item_pos)?;
+                            self.start_fx_no_loop(0x21, item_pos)?;
+                            // MBOX_NewObject("ITEMEXP0"): presentation.
+                            self.delete_item(slot, true);
+                            self.help(0x87, usize::MAX);
+                        }
+                    }
                 }
-                _ if flags & 0x400 != 0 && 5.0 <= dmg => return unsupported("DamageItem magic on powerup"),
-                _ => {}
-            },
+            }
             2 => {
                 let content = self.items.records[slot].i16_(0xf0);
                 let death = 0 <= content
@@ -1538,6 +1568,15 @@ impl Game {
         let Some(h) = self.effects.tables.headers.get(0x43).copied().flatten() else { return Ok(()) };
         let i = self.start_fx_tree(0.0, Visual::Header(0x43), h.frames, h.timing, Some(position), 0)?;
         self.fx_mut(i).set_u32(fx::KIND, 0x43);
+        Ok(())
+    }
+
+    /// StartFXNoLoop 0x17e348: StartFXSub(0, header, position, 0,
+    /// 0x800); StartFXMat's SfxSetMat only orients the tree (presentation).
+    pub(crate) fn start_fx_no_loop(&mut self, header: usize, position: V3) -> R<()> {
+        let Some(h) = self.effects.tables.headers.get(header).copied().flatten() else { return Ok(()) };
+        let i = self.start_fx_tree(0.0, Visual::Header(header), h.frames, h.timing, Some(position), 0)?;
+        self.fx_mut(i).set_u32(fx::KIND, header as u32);
         Ok(())
     }
 

@@ -27,6 +27,8 @@ pub struct LevelRecord {
     pub enemy_indices: [i16; 6],
     /// +0x58: CAMS index (ResolveWorldData clamps a negative one to 0).
     pub camera_index: i16,
+    /// +0x8c: BCAM index (negative: no boss camera; ResolveWorldData +0x6c).
+    pub boss_camera_index: i16,
     /// +0xcc..+0xdc: generator/item multipliers read by SetItem 0x151878.
     pub multipliers_cc: [f32; 5],
     pub raw: Vec<u8>,
@@ -95,6 +97,9 @@ pub struct WorldData {
     pub sounds: Vec<WorldSound>,
     pub stages: Vec<StageAudio>,
     pub cameras: Vec<CameraParams>,
+    /// BCAM boss-camera records (0x54 bytes; BossCameraStart 0x19fe68 and the
+    /// BossCam calculators read and rewrite them), kept raw.
+    pub boss_cameras: Vec<Vec<u8>>,
     /// world_data +4 (WRLD chunk +4, 16 bytes): the realm's model directory
     /// name, e.g. "levelG" (GetCritterDesc, LevelEnemyDesc).
     pub world_dir: Option<String>,
@@ -136,6 +141,7 @@ impl WorldData {
                     boss_type: r.i32(p + 0x44),
                     enemy_indices: std::array::from_fn(|i| r.i16(p + 0x4c + 2 * i)),
                     camera_index: r.i16(p + 0x58).max(0),
+                    boss_camera_index: r.i16(p + 0x8c),
                     multipliers_cc: [
                         r.float(p + 0xcc)?,
                         r.float(p + 0xd0)?,
@@ -212,7 +218,17 @@ impl WorldData {
                 });
             }
         }
+        let mut boss_cameras = Vec::new();
+        if let Some(c) = find("BCAM") {
+            let range = r.table(c.offset, c.count, 0x54, 8)?;
+            for p in range.step_by(0x54) {
+                boss_cameras.push(bytes[p..p + 0x54].to_vec());
+            }
+        }
         for level in &levels {
+            if 0 <= level.boss_camera_index && boss_cameras.len() <= level.boss_camera_index as usize {
+                return Err(r.error(0, "level boss camera index outside BCAM"));
+            }
             let k = i16::from_le_bytes([level.raw[0x58], level.raw[0x59]]);
             if (k.max(0) as usize) >= cameras.len().max(1) && !cameras.is_empty() {
                 return Err(r.error(0, "level camera index outside CAMS"));
@@ -225,7 +241,7 @@ impl WorldData {
             }
             None => None,
         };
-        Ok(Self { chunks, levels, enemies, sounds, stages, cameras, world_dir })
+        Ok(Self { chunks, levels, enemies, sounds, stages, cameras, boss_cameras, world_dir })
     }
 }
 
