@@ -17,14 +17,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    cameras with Tower links (bit-exact vs capture), shakes, player-dpos
    frustum limit (wired with step 3). Open: do_camera/StandardCamera (old
    Cam array, used by front-end modes), stage-start and boss traces.
-3. Player (IN PROGRESS): A DoPlayerAction in full; B PlayerMotion in full
-   (0x1480a8, 4.7k instructions; reuse the verified request/facing/
-   displacement pieces; contacts, knockback, targeting branches, combos and
-   player parenting, legend items, familiar, camera limit); C do_players'
-   per-player loop; D PlayerControls (pad → control records); E replace the
-   interim PlayerDriver/PlayerSim with record-based simulation; F trace
-   comparisons (movement traces exist; add attack/magic/hit traces).
-   PlayerProcessScale/Familiar, join/continue flow.
+3. Player (IN PROGRESS; research/player.md): DONE 2026-10-19 — record-based
+   controls (game/pad.rs), DoPlayerAction, GetPlayerDMotion, PlayerMotion and
+   its contact helpers, do_players, the node round trip; 150/150 traced
+   updates equal (replay-player-g1-v4). Remaining: switch gdl_play and the
+   sweeps from the interim PlayerDriver/PlayerSim to do_players (E), the
+   Unsupported paths listed in player.md (PlyrSfxDoDamage class effects,
+   team moves, legend items, thunder hammer/breath/familiar, respawn,
+   milestones, join/continue), physical pad mapping measurement, and traces
+   with melee/magic/powerups/knockback/transporters/moving floors (F).
 4. Rendering: lighting (vertex colour, MB point lights such as torches,
    fog), GS blending/TEXA alpha, world particle systems (WorldPsysActivate),
    effect trees, item/enemy animation (OANIM), texture animation (DoTexMods).

@@ -444,7 +444,7 @@ impl Game {
     }
 
     /// DoExit(player) with the stick magnitude (PlayerControl +0x20).
-    fn do_exit_check(&mut self, p: usize, magnitude: f32) {
+    pub(crate) fn do_exit_check(&mut self, p: usize, magnitude: f32) {
         if self.globals.skip_wave != 0 && (self.globals.someone_wants_to_exit != 0 || self.globals.auto_exit_flag != 0) {
             self.players[p].set_i32(0xfc, 4);
             self.players[p].set_i16(0x1ca, 0);
@@ -477,7 +477,7 @@ impl Game {
         }
     }
 
-    fn all_players_go_to_same_level(&self) -> i32 {
+    pub(crate) fn all_players_go_to_same_level(&self) -> i32 {
         if self.exit_state < 0xe && self.globals.skip_wave == 0 {
             return 0;
         }
@@ -499,12 +499,12 @@ impl Game {
         dest
     }
 
-    fn anybody_playing(&self) -> bool {
+    pub(crate) fn anybody_playing(&self) -> bool {
         self.globals.end_of_stage == 0 && self.players.iter().any(|pl| matches!(pl.i32_(0xfc), 1 | 8))
     }
 
     /// do_exit(player, destination wave); sets `level_done` on state 5.
-    fn do_exit(&mut self, p: usize, dest: i32) -> R<()> {
+    pub(crate) fn do_exit(&mut self, p: usize, dest: i32) -> R<()> {
         let vb = self.globals.vb_elapsed;
         if self.players[p].i16_(0x1ca) == 0 && dest != 0 {
             self.players[p].set_i16(0x1ca, if self.globals.skip_wave == 0 { 0x32 } else { 0 });

@@ -9,12 +9,17 @@ pub mod critter_ai;
 pub mod critter_hits;
 pub mod critter_move;
 pub mod critters;
+pub mod doplayers;
 pub mod damage;
 pub mod effects;
 pub mod enemies;
 pub mod enemy_ai;
 pub mod item_runtime;
 pub mod lookouts;
+pub mod pad;
+pub mod pcontact;
+pub mod pmotion;
+pub mod paction;
 pub mod pickups;
 pub mod players;
 pub mod powerups;
@@ -90,6 +95,9 @@ pub struct Globals {
     pub options: i32,
     /// 0x20f94c, the Options word read by the potion-less magic help check.
     pub options_4: u32,
+    /// 0x20f960 (Options +0x18): GetPlayerDMotion's debug-move switch.
+    #[serde(default)]
+    pub options_18: u32,
     pub num_active_players: i32,
     pub num_in_game_players: i32,
     /// trig_cam_delay 0x25d544 (DoWorldAnimation gate); serde default 0.
@@ -198,6 +206,14 @@ pub enum Event {
     ItemModel { slot: usize, level: u8 },
     /// StartGenHitFx (destroyed = GenDieEffects).
     GeneratorHit { slot: usize, destroyed: bool },
+    /// MBTreeSetFlags (set) / MBTreeClearFlags of the player's +0x6b8 tree
+    /// (DoPlayerAction swing/throw actions; the tree's role is not
+    /// identified yet, research/player.md).
+    PlayerTreeFlags { player: usize, flags: u32, set: bool },
+    /// do_players' MBPosLightNew for the player (levels with LEVL flag 8):
+    /// player_lightrad/attn at the attention point + player_lightdy, colour
+    /// player_light_color[+4].
+    PlayerLight { player: usize },
 }
 
 pub struct Game {
@@ -258,6 +274,20 @@ pub struct Game {
     pub enemy_wall_point: [f32; 3],
     pub enemy_wall_contact: Option<crate::collision::Hit>,
     pub enemy_anims: Vec<Option<enemy_ai::EnemyAnim>>,
+    /// Each player's sequence timings (the class ANIM tree DoPlayerAction's
+    /// AnimInfo at +0x94 plays).
+    pub player_clips: [Vec<crate::animation_clock::ClipTiming>; 4],
+    /// The world object whose node the player's node is parented to
+    /// (PlayerCheckMovingFloor's MBNodeSetParent); None = PlayerRootNode.
+    pub player_floor_parent: [Option<usize>; 4],
+    /// The player node's local matrix (UpdatePlayerWorldMat writes it,
+    /// GetObjWorldMat reads it back); None until the first update.
+    pub player_node: [Option<[[f32; 4]; 4]>; 4],
+    /// floor_col +0x34 after DoTransporter's FloorCollide (PlayerMotion
+    /// reads it when the transporter arrives).
+    pub transporter_floor_y: Option<f32>,
+    /// player_water_wobj / player_water_y 0x2341f0/0x2341f4.
+    pub player_water: Option<(usize, f32)>,
     pub item_anims: Vec<Option<item_runtime::ItemAnim>>,
     /// Culling view (MBWorldSphereClip inputs) derived from the StdCam.
     pub camera: Option<item_runtime::Camera>,
@@ -272,6 +302,10 @@ pub struct Game {
     pub trig_cam: camera::TriggerCam,
     pub tower_cams: camera::TowerCams,
     pub disable_player_controls: i32,
+    /// Controller state (PlayerControl records, plr_* words) and the ELF
+    /// control tables (remap, rep_speed, SpecialData, JoyAng/JoyMag).
+    pub controls: pad::Controls,
+    pub control_tables: Option<pad::ControlTables>,
     /// WorldStartTime 0x2c2c88 (GauntWorldInit: Time at level init).
     pub world_start_time: f32,
     /// ITEM_ACTIVE_DIST 0x234364, global 0x20f950 (mode), 0x20f954, start_enemyinfo, ExitState.

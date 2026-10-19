@@ -127,6 +127,8 @@ impl PlayerSim {
             y_54: self.position[1],
             wall_object_8a0: None,
             floor_contact: None,
+            floor_hit: None,
+            water: None,
         };
         let moved = player_displacement(
             world,

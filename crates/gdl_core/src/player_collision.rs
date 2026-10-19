@@ -28,9 +28,14 @@ pub struct PlayerFloorState {
     pub word_100: i32,
     pub y_54: f32,
     pub wall_object_8a0: Option<usize>,
-    /// Diagnostic output: object of PlayerCollideFloor's first contact. The
-    /// original writer of +0x89c is not recovered.
+    /// Object of PlayerCollideFloor's first contact (player_floor_col +0x44;
+    /// PlayerNewFloor → PlayerCheckMovingFloor writes it to +0x89c).
     pub floor_contact: Option<usize>,
+    /// player_floor_col: the first FloorCollide's hit (point +0x30, normal
+    /// row +0x10).
+    pub floor_hit: Option<(Hit, V3)>,
+    /// player_water_wobj / player_water_y from the first FloorCollide.
+    pub water: Option<(usize, f32)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -61,11 +66,13 @@ pub struct DisplacementOutput {
     pub floor_result: i32,
 }
 
-struct WallContact {
-    object: usize,
-    triangle: usize,
-    hit: V3,
-    normal: V3,
+/// wall_colobj / wall_col (point) / wall_normal of the last wall hit.
+#[derive(Debug, Clone, Copy)]
+pub struct WallContact {
+    pub object: usize,
+    pub triangle: usize,
+    pub hit: V3,
+    pub normal: V3,
 }
 
 /// Collision output-struct row 1 (CreateMat3Norm normal row) for a static hit.
@@ -141,7 +148,7 @@ pub(crate) fn slide_along_wall(r: f32, p: V3, d: &mut V3, h: V3, n: V3) -> R<i32
 }
 
 /// PlayerCollideWalls; returns (result, wall contact used by the floor stage).
-fn collide_walls(
+pub fn collide_walls(
     world: &mut CollisionWorld,
     r: f32,
     action: u32,
@@ -183,7 +190,7 @@ fn collide_walls(
 
 /// PlayerCollideFloor 0x145218.
 #[allow(clippy::too_many_arguments)]
-fn collide_floor(
+pub fn collide_floor(
     world: &mut CollisionWorld,
     r: f32,
     h: f32,
@@ -201,7 +208,13 @@ fn collide_floor(
         Ok(world.floor_collide(r, 0.0, bottom, at, by_parameter, 1)?.0.solid)
     };
     let mut at = target(d)?;
-    let first = floor(world, at, true)?;
+    let (c0, _) = world.floor_collide(r, 0.0, bottom, at, true, 1)?;
+    s.water = c0.water.map(|h| (h.object, h.position[1]));
+    let first = c0.solid;
+    s.floor_hit = match first {
+        Some(h) => Some((h, hit_normal(world, &h)?)),
+        None => None,
+    };
     let speed = fqdist(d[0], d[2])?.0;
     let all = object_flags_with_parents(world, s.floor_object_89c);
     let gate = all & 0x0c00_0000 != 0 && all & 0x2000_0000 != 0;

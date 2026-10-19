@@ -874,8 +874,173 @@ fn run() -> Result<(), Box<dyn Error>> {
                 script.extend(std::iter::repeat_n(lv, n.parse::<usize>()?));
             }
         }
+        // Record-based players: pads=MASK_HEX:UPDATES,... where bit i presses
+        // joyGetStatus entry i of port 0 (clips=CLASS_ANIM.PS2 required).
+        let mut pad_script: Vec<u32> = Vec::new();
+        if let Some(sc) = opts.get("pads") {
+            for part in sc.split(',') {
+                let (m, n) = part.split_once(':').ok_or("pads MASK_HEX:UPDATES")?;
+                let m = u32::from_str_radix(m, 16)?;
+                pad_script.extend(std::iter::repeat_n(m, n.parse::<usize>()?));
+            }
+            let clips = anim_of("clips")?;
+            game.player_clips[0] = gdl_core::game::setup::clips_of(&clips, 0);
+            game.controls.assign(0, 0);
+            if 0 < level || opts.contains_key("world") {
+                let loc = world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("no start locator")?;
+                game.place_player(0, loc.position, loc.rotation[1]).map_err(|e| e.0)?;
+                game.players[0].set_u32(0x1e0, 0);
+                game.players[0].set_u32(0x1e4, 0);
+            }
+            game.init_player_anim(0).map_err(|e| e.0)?;
+        }
+        if let Some(tp) = opts.get("replay") {
+            // Per-update replay of a reference_trace --player trace: each game
+            // update starts from the reference's player-0 record, controls,
+            // window/StdCam blocks and globals; the native do_players result is
+            // compared with the reference's next record (u32 words).
+            let trace: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(tp), 64 * 1024 * 1024)?)?;
+            let samples = trace["samples"].as_array().ok_or("trace samples")?;
+            let clips = anim_of("clips")?;
+            game.player_clips[0] = gdl_core::game::setup::clips_of(&clips, 0);
+            let hexb = |v: &serde_json::Value| -> Result<Vec<u8>, Box<dyn Error>> {
+                let s = v.as_str().ok_or("hex field")?;
+                (0..s.len()).step_by(2).map(|i| Ok(u8::from_str_radix(&s[i..i + 2], 16)?)).collect()
+            };
+            let word = |b: &[u8]| u32::from_le_bytes(b[..4].try_into().unwrap());
+            let fl = |b: &[u8]| f32::from_le_bytes(b[..4].try_into().unwrap());
+            // Guest pointers (trees, nodes, item/object/player links) differ by design.
+            let pointer_words: std::collections::HashSet<usize> = [0x80, 0x90, 0x94, 0x98, 0x9c, 0x6a0, 0x6a4, 0x6a8, 0x6ac, 0x6b0, 0x6b4, 0x6b8, 0x6bc, 0x704, 0x708, 0x880, 0x884, 0x888, 0x89c, 0x8a0, 0x690, 0x694]
+                .into_iter().collect();
+            // HUD words written by presentation code: get_screen_pos (+0x878,
+            // +0x87c) and draw_power_meter (+0x2ae0); compared separately.
+            let hud_words: std::collections::HashSet<usize> = [0x878, 0x87c, 0x2ae0].into_iter().collect();
+            let mut updates = Vec::new();
+            let mut equal_updates = 0;
+            for w in samples.windows(2) {
+                let (b, a) = (&w[0], &w[1]);
+                if b["observation"]["scalars"]["AFrame"]["raw_u32"] == a["observation"]["scalars"]["AFrame"]["raw_u32"] {
+                    continue;
+                }
+                let (bp, ap) = (&b["player"], &a["player"]);
+                let before = hexb(&bp["player0"])?;
+                let after = hexb(&ap["player0"])?;
+                game.players[0] = gdl_core::game::record::Record(before.clone());
+                // Guest pointers → native links: the floor object by
+                // PlayerCheckFloor's query when the reference has one; item,
+                // wall and partner links cleared (none are near in G1's start).
+                {
+                    let r = &game.players[0];
+                    let (rad, h, pos) = (r.f32_(0x828), r.f32_(0x82c), r.v3(0x50));
+                    let floor = if r.u32_(0x89c) != 0 {
+                        game.collision.floor_collide(rad, 0.0, -(h + 3.0), pos, false, 1).map_err(|e| e.0)?.0.solid.map_or(0, |hit| hit.object as u32 + 1)
+                    } else {
+                        0
+                    };
+                    let r = &mut game.players[0];
+                    r.set_u32(0x89c, floor);
+                    for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
+                        r.set_u32(o, 0);
+                    }
+                }
+                let ctl = hexb(&ap["control"])?;
+                for k in 0..4 {
+                    game.controls.control[k] = gdl_core::game::record::Record(ctl[k * 0x3c..(k + 1) * 0x3c].to_vec());
+                }
+                let g = |n: &str| -> Result<Vec<u8>, Box<dyn Error>> { hexb(&ap[n]) };
+                let gl = &mut game.globals;
+                gl.time = fl(&g("Time")?);
+                gl.spf = fl(&g("SPF")?);
+                gl.atime = fl(&g("ATime")?);
+                gl.anim_time_scale = fl(&g("AnimTimeScale")?);
+                gl.vb_elapsed = word(&g("vb_elapsed")?) as i32;
+                gl.aux_levels = word(&g("AuxLevels")?);
+                gl.game_mode = word(&g("game_mode")?);
+                gl.cam_wait = word(&g("cam_wait")?) as i32;
+                gl.start_of_stage = word(&g("start_of_stage")?) as i32;
+                gl.num_visible_enemies = word(&g("NumVisibleEnemies")?) as i32;
+                gl.enemy_shrink = fl(&g("EnemyShrink")?);
+                gl.quest_item_state = word(&g("QuestItemState")?);
+                gl.boss_type = word(&g("BossType")?) as i32;
+                gl.boss_active = word(&g("BossActive")?) as i32;
+                gl.world_bottom = fl(&g("WldBtm")?);
+                gl.paused = word(&g("paused")?) as i32;
+                gl.help = word(&g("help")?) as i32;
+                gl.trig_cam_active = word(&g("trig_cam_active")?) as i32;
+                gl.num_active_players = word(&g("NumActivePlayers")?) as i32;
+                gl.skip_wave = word(&g("skip_wave")?) as i32;
+                gl.quit_level = word(&g("quit_level")?) as i32;
+                gl.auto_exit_flag = word(&g("auto_exit_flag")?) as i32;
+                let opt = g("options")?;
+                gl.options = word(&opt[0..]) as i32;
+                gl.options_4 = word(&opt[4..]);
+                gl.options_18 = word(&opt[0x18..]);
+                game.stop_time = word(&g("StopTime")?) as i32;
+                let win = hexb(&bp["win"])?;
+                game.globals.camera_90 = fl(&win[0x90..]);
+                game.globals.camera_98 = fl(&win[0x98..]);
+                if let Some(c) = game.std_camera.as_mut() {
+                    c.std = gdl_core::game::record::Record(hexb(&bp["stdcam"])?);
+                }
+                game.player_floor_parent[0] = None;
+                // The node matrix at the update start (trace field "node":
+                // node +0x00..+0x40); without it, the record's own matrix.
+                game.player_node[0] = match bp.get("node") {
+                    Some(v) => {
+                        let n = hexb(v)?;
+                        Some(std::array::from_fn(|i| std::array::from_fn(|j| fl(&n[0x10 * i + 4 * j..]))))
+                    }
+                    None => None,
+                };
+                let res = game.do_players();
+                let mut diffs = Vec::new();
+                for o in (0..0x2b00).step_by(4) {
+                    if pointer_words.contains(&o) || hud_words.contains(&o) {
+                        continue;
+                    }
+                    let (n, r) = (game.players[0].u32_(o), word(&after[o..]));
+                    if n != r {
+                        diffs.push(serde_json::json!({"offset":format!("{o:#x}"),"native":format!("{n:08x}"),"reference":format!("{r:08x}"),"before":format!("{:08x}", word(&before[o..]))}));
+                    }
+                }
+                if diffs.is_empty() && res.is_ok() {
+                    equal_updates += 1;
+                }
+                updates.push(serde_json::json!({"step":a["step"],"error":res.err().map(|e| e.0),"words_differing":diffs.len(),
+                    "action":[word(&before[0x1e0..]), game.players[0].u32_(0x1e0), word(&after[0x1e0..])],
+                    "diffs":diffs.iter().take(40).collect::<Vec<_>>()}));
+            }
+            let report = serde_json::json!({"scope":"per-update replay of a reference player trace through the native do_players; pointer words excluded",
+                "trace":tp.to_string(),"updates":updates.len(),"equal_updates":equal_updates,"results":updates,
+                "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>()});
+            let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
+            serde_json::to_writer_pretty(&mut file, &report)?;
+            file.write_all(b"\n")?;
+            return Ok(());
+        }
         let mut samples = Vec::new();
         for f in 0..frames {
+            if opts.contains_key("pads") {
+                let mut pads = [gdl_core::game::pad::PadStatus::default(); 8];
+                pads[0].connected = true;
+                let m = pad_script.get(f).copied().unwrap_or(0);
+                for i in 0..0x16 {
+                    if m >> i & 1 != 0 {
+                        pads[0].press(i);
+                    }
+                }
+                game.step_with(None, &mut |g| {
+                    g.update_controls(&pads)?;
+                    g.do_players().map(|_| ())
+                });
+                if f % 15 == 0 || f + 1 == frames {
+                    let r = &game.players[0];
+                    samples.push(serde_json::json!({"frame":f,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
+                        "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),
+                        "turbo":r.f32_(0x800),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c)}));
+                }
+                continue;
+            }
             let mut levels = script.get(f).copied().unwrap_or(0);
             if levels & 0x8000_0000 != 0 {
                 // Tool-only token: magic button edge (interim use_potion).
@@ -1010,6 +1175,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     y_54: step.y_54,
                     wall_object_8a0: step.wall_object_8a0,
                     floor_contact: None,
+                    floor_hit: None,
+                    water: None,
                 };
                 let out = gdl_core::player_collision::player_displacement(
                     &mut world,

@@ -53,3 +53,7 @@ which is data only and must not be executed.
 
 Resumed 2026-10-14 by a new agent session. The current resume queue and log paths
 are in [state.md](../state.md); movement evidence is in [movement.md](movement.md).
+| Physical pad → joyGetStatus entry | Entries 0–3 are the d-pad (left/right/up/down, observed level bits); remap shows attack = entry 0xd, magic 0xa, turbo 0xc, potion 0xb (by GetPlayerDMotion use) | Press each PS2 button in the reference and read plr_levels 0x2bacc0 |
+| Player node under PlayerRootNode | 150 traced updates consistent with GetWorldMat = local matrix; −0.0 → +0.0 | Trace a moving floor (node parent ≠ root) and a grabbed player |
+| Milestones table | update_player_milestone reads Milestones (0x70 each) / NumMilestones; kind-5 locators are the likely source | Export the Milestones builder and compare with a capture; port get_player_pos respawn |
+

@@ -42,6 +42,8 @@ def main():
     ap.add_argument('--level', type=int, default=1, help='level number (1-based)')
     ap.add_argument('--world', default='G', help='world letter (A-K, S); G is The Poison Fields')
     ap.add_argument('--script')
+    ap.add_argument('--replay', help='per-update replay of a reference_trace --player trace')
+    ap.add_argument('--pads', help='record-based players: MASK_HEX:UPDATES,... (bit i = joyGetStatus entry i of port 0)')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
     ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
     ap.add_argument('--boss-health', help='DEBUG: set the boss critter health')
@@ -98,6 +100,10 @@ def main():
     print('monsters', monsters, 'missing', sorted(set(prefixes.values()) - {p for _, p in monsters}))
     if a.script:
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
+    if a.pads:
+        cmd += [f'clips={clips}', f'pads={a.pads}']
+    if a.replay:
+        cmd += [f'clips={clips}', f'replay={a.replay}']
     if a.potions:
         cmd += [f'potions={a.potions}']
     if a.crystals:
@@ -108,9 +114,20 @@ def main():
         cmd += [f'boss_health={a.boss_health}']
     subprocess.run(cmd, check=True)
     r = json.loads(pathlib.Path(a.report).read_text())
+    if a.replay:
+        print('updates', r['updates'], 'equal', r['equal_updates'])
+        for u in r['results']:
+            print(u['step'], u['error'], u['words_differing'], u['action'], [(d['offset'], d['native'], d['reference']) for d in u['diffs'][:8]])
+        for x in r['unsupported']:
+            print('UNSUPPORTED', x)
+        return
     print('sounds', len(r.get('sounds', [])), r.get('sounds', [])[:6])
     for u in r['unsupported']:
         print('UNSUPPORTED', u)
+    if a.pads:
+        for smp in r['samples']:
+            print(smp)
+        return
     for smp in r['samples']:
         if smp['effects']:
             print(smp['frame'], [(e['slot'], e['node']['visual'], round(e['node']['radius'], 1)) for e in smp['effects']])
