@@ -802,6 +802,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             d.sim.current_action = 0;
             d.sim.requested_action = 0;
         }
+        // init_next_level's StdCamInit: a fresh level start runs the stage-start
+        // sequence; fixture starts settle the camera (HYPOTHESIS, camera.md).
+        if 0 < level || opts.contains_key("world") || opts.contains_key("teleport") {
+            game.start_camera().map_err(|e| e.0)?;
+        } else {
+            game.start_camera_settled().map_err(|e| e.0)?;
+        }
         if let Some(h) = opts.get("boss_health") {
             // DEBUG: start the boss with this health (not a fidelity input).
             let h: f32 = h.parse()?;
@@ -853,7 +860,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "seq":c.clock.sequence,"frame":c.clock.frame,"pos":c.rec.v3(0x40),"target":c.rec.i16_(0x130),"ntargets":c.rec.i16_(0x136)}))).collect();
                 samples.push(serde_json::json!({"frame":f,"enemies":enemies,"critters":critters,"player_health":game.players[0].f32_(0x1a10),
                     "level_done":game.level_done,"good_wizard":game.globals.good_wizard,"auto_exit":[game.auto_exit_timer,game.globals.auto_exit_flag],"player_state":game.players[0].i32_(0xfc),
-                    "player_pos":game.players[0].v3(0x50),"events":game.events.len(),"effects":effects,
+                    "player_pos":game.players[0].v3(0x50),"cam_wait":game.globals.cam_wait,"start_of_stage":game.globals.start_of_stage,"camera_eye":game.std_camera.as_ref().map(|c| c.std.v3(gdl_core::game::camera::o::EYE)),"events":game.events.len(),"effects":effects,
                     "driver":driver.as_ref().map(|d| serde_json::json!({"anim":d.anim,"missiles":d.missiles_started,"event_error":d.event_error,"event_word":d.event_word}))}));
             }
         }

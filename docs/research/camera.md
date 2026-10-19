@@ -111,5 +111,26 @@ HYPOTHESIS.
   slot-1 fixture with scripted movement (reference_trace.py --stdcam).
   `gdl_tools stdcam-replay` starting each update from the previous traced
   record: 60/60 pb blocks (view, inverse, projection, viewport, combined)
-  and 60/60 StdCam records bit-exact. The transmitter did not change in
-  this trace, so the rotation path is not yet trace-verified.
+  and 60/60 StdCam records bit-exact (no transmitter change).
+- private/reports/trace-stdcam-g1-v2.json: 500 vblanks (walk across three
+  transmitter zones, 7 → 114 → 24 → …): 250/250 pb blocks and 250/250
+  StdCam records bit-exact, including the 50-step rotation blends.
+- Not trace-checked: StdCamInit(0) / the stage-start zoom (the fixture is
+  mid-level), more than one player, DoShake.
+
+## Native integration
+
+`Game::std_camera` is built at level load (transmitters from the WORLDS
+locators, CAMS from WDATA, constants from the ELF). `Game::start_camera`
+runs init_game_cam's stage-start part and StdCamInit(0) once the players are
+placed; `Game::start_camera_settled` (HYPOTHESIS) uses StdCamInit(1) for runs
+that start from a mid-level fixture. Each update ends with StdCamUpdate and
+the pb recompute; MboxWinPtr +0x90/+0x98 (PlayerMotion's camera yaw) and the
+MBWorldSphereClip view (eye, rows, target; planes from the start state's
+window constants) are taken from it. world_update's start-of-stage block
+(StartEnterFX header 0x43, AudioPlayerEnter = AudioFX(2, 0xe0, 9), cam_wait 1
+after 3 s), do_enemies' stage-start idle actions and do_players' stage-start
+branch (no PlayerMotion while cam_wait and start_of_stage are set) are
+ported. The client draws with the pb projection (separate horizontal and
+vertical tangents) in the top 384/448 of the window, matching the reference
+layout where the player panels occupy the bottom 64 rows.

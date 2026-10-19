@@ -2339,7 +2339,23 @@ impl Game {
         }
         if self.globals.cam_wait != 0 {
             if self.globals.start_of_stage != 0 {
-                return unsupported("do_enemies start-of-stage idle");
+                // Stage start: live non-boss enemies play their idle action
+                // (type 0x1d → 1, type 0 → 3, else 0) without AI.
+                for k in 0..self.enemies.len() {
+                    let t = self.enemies[k].i32_(e::TYPE);
+                    if self.enemies[k].i32_(e::STATE) != 1 || t == self.globals.boss_type {
+                        continue;
+                    }
+                    self.enemies[k].set_u32(0xe4, match t {
+                        0x1d => 1,
+                        0 => 3,
+                        _ => 0,
+                    });
+                    if self.enemies[k].u32_(0x80) != 0 {
+                        let a = self.do_enemy_action(k)?;
+                        self.enemies[k].set_u32(0xe0, a);
+                    }
+                }
             }
             return Ok(());
         }

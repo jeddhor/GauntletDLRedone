@@ -8,7 +8,7 @@
 //! PlayerSim until the full PlayerMotion port lands; its pickups use the
 //! ported PlayerCollideItems/PlayerItemCollision/GrabPowerup chain.
 use super::enemy_ai::{init_actions, EnemyAnim, EnemyAnimData};
-use super::item_runtime::{Camera, ItemAnim};
+use super::item_runtime::ItemAnim;
 use super::pickups::ClassData;
 use super::record::{Record, PLAYER};
 use super::{enemies, Game, Globals, R};
@@ -356,6 +356,17 @@ impl Game {
             item_anims: vec![None; item_count],
             camera: None,
             camera_rest: None,
+            std_camera: {
+                let set = super::camera::build_transmitters(&inp.world.locators, g.cur_world).map_err(|e| format!("transmitters: {}", e.0))?;
+                match inp.wdata.cameras.get(level.camera_index as usize) {
+                    Some(params) => Some(
+                        super::camera::Camera::new(super::camera::CamConsts::from_elf(inp.elf)?, set, params, inp.world.min, inp.world.max)
+                            .map_err(|e| format!("camera: {}", e.0))?,
+                    ),
+                    None => None,
+                }
+            },
+            world_start_time: g.time,
             item_active_dist: s.extra.item_active_dist,
             mode_950: s.extra.mode_950,
             globals_954: s.extra.globals_954,
@@ -490,34 +501,14 @@ impl Game {
         if let Some(n) = load_note {
             game.log.unsupported.insert(n, 0);
         }
-        game.update_camera(&s.camera);
+        // The culling view comes from the StdCam once start_camera runs
+        // (init_next_level: StdCamInit after the players are placed).
         game.camera_rest = Some(s.camera.clone());
         if game.globals.cur_world == 0xd {
             // init_next_level → EnterTower after the items are placed.
             game.enter_tower().map_err(|e| format!("EnterTower: {}", e.0))?;
         }
         Ok(game)
-    }
-
-    /// StdCamera rest pose (hypothesis until do_camera is ported):
-    /// target = player 0 position + attention offset, eye = target − forward × distance.
-    pub fn update_camera(&mut self, c: &StartCamera) {
-        // HYPOTHESIS (co-op): the average of the players in state 1 (player
-        // 0 alone otherwise); the original's multi-player camera is not ported.
-        let active: Vec<usize> = (0..4).filter(|&k| self.players[k].i32_(0xfc) == 1).collect();
-        let pick: Vec<usize> = if active.len() < 2 { vec![0] } else { active };
-        let n = pick.len() as f32;
-        let mut target = [0.0f32; 3];
-        for &k in &pick {
-            let p = self.players[k].v3(0x50);
-            let a = self.players[k].v3(0x810);
-            for i in 0..3 {
-                target[i] += (p[i] + a[i]) / n;
-            }
-        }
-        let f = c.basis[2];
-        let eye = [target[0] - f[0] * c.distance, target[1] - f[1] * c.distance, target[2] - f[2] * c.distance];
-        self.camera = Some(Camera { basis: c.basis, eye, target, planes: c.planes, newcam_mode: c.newcam_mode });
     }
 
     /// SetEnemyObj's animation part: tree EnemyDesc(type, level) and InitActions.
@@ -579,6 +570,9 @@ impl Game {
         if let Err(e) = self.boss_world_update() {
             self.log.note("world_update", &e);
         }
+        if let Err(e) = self.world_update_stage_start() {
+            self.log.note("world_update", &e);
+        }
         if let Err(e) = self.setup_dyn_grid() {
             self.log.note("world_update", &e);
         }
@@ -610,11 +604,9 @@ impl Game {
         if let Err(e) = self.process_effects() {
             self.log.note("ProcessEffects", &e);
         }
-        // HYPOTHESIS (do_camera not ported): the camera follows player 0's
-        // rest pose after each update; the next update's visibility tests
-        // (placed enemies, item activation) use it.
-        if let Some(c) = self.camera_rest.clone() {
-            self.update_camera(&c);
+        // main's camera dispatch (StdCamUpdate) and MBEndFrame.
+        if let Err(e) = self.camera_step() {
+            self.log.note("StdCamUpdate", &e);
         }
     }
 

@@ -20,7 +20,7 @@ from virtual_display import environment
 KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L']
 
 
-def schedule_segments(path, steps, keys):
+def schedule_segments(path, steps, keys, limit=120):
     if path:
         with path.open('rb') as file:
             raw = file.read(16*1024+1)
@@ -39,8 +39,8 @@ def schedule_segments(path, steps, keys):
         if type(n) is not int or not 1 <= n <= 120 or not isinstance(held, list) or any(k not in KEYS for k in held):
             raise ValueError('invalid step count/key list')
         result.append(dict(steps=n, keys=list(dict.fromkeys(held))))
-    if sum(s['steps'] for s in result) > 120:
-        raise ValueError('schedule exceeds 120-vblank policy')
+    if sum(s['steps'] for s in result) > limit:
+        raise ValueError(f'schedule exceeds {limit}-vblank policy')
     return result
 
 
@@ -58,7 +58,8 @@ def main():
                              'the debugger window leave PCSX2 input stale (observed 2026-10-15)')
     parser.add_argument('--out', type=pathlib.Path, required=True)
     args = parser.parse_args()
-    segments = schedule_segments(args.schedule, args.steps, args.keys)
+    # StdCam traces need longer walks to cross transmitter zones (600 bound).
+    segments = schedule_segments(args.schedule, args.steps, args.keys, 600 if args.stdcam else 120)
     step_keys = [s['keys'] for s in segments for _ in range(s['steps'])]
     if not 1 <= args.steps <= 120 or not args.out.resolve().is_relative_to(pathlib.Path('private').resolve()):
         raise ValueError('trace must be private and bounded to 1..120 vblanks')

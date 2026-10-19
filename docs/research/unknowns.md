@@ -41,7 +41,7 @@ replaced by a plausible gameplay rule or generated asset.
 | Good-wizard speech timing | Phases wait 6 s each (CaptionText/AudioStillPlaying not simulated) | Measure the sequence in a reference boss kill |
 | CritterDamagedPlayer anger value | f12 after damage_player is undefined; effect damage used | Read the value in a reference capture |
 | Rotated node composition | Rotators compose rotated nodes as rows × parent rows (unverified) | Transcribe GetWorldMat and compare a rotator level |
-| Camera follow | Simulation camera = player 0 rest pose after each update (HYPOTHESIS) | Port do_camera and compare camera matrices in a capture |
+| Gameplay camera | StdCam module ported (research/camera.md): 250/250 traced updates and pb matrices bit-exact in G1, including transmitter switches. Stage-start zoom (StdCamStartUpdate) and its stack-record contents (HYPOTHESIS: zero) are not trace-checked; fixture-started runs settle with StdCamInit(1) (HYPOTHESIS); trigger/boss cameras (old Cam array, do_camera) not ported; source of the 64-row viewport inset and 384 window height not identified | Trace a level start (camera from the start transmitter through the zoom); port do_camera/StandardCamera for trigger and boss cameras; find the window setup writer |
 | Interim throw hold | G1 teleport test: player stayed in action 0x61 for ~900 updates with one missile static (interim player) | Reproduce with the reference player controller |
 | Co-op join and camera | Joining players copy player 1's record; camera = average of living players | Port the join flow (LoadPlyrData, can_join) and the multi-player camera |
 | Enemy tree alpha at spawn | enemy_alpha starts at 255 (HYPOTHESIS); presentation only | Read MBTreeGetAlpha for a fresh tree in a capture |

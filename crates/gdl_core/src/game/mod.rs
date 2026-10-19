@@ -248,9 +248,14 @@ pub struct Game {
     pub enemy_wall_contact: Option<crate::collision::Hit>,
     pub enemy_anims: Vec<Option<enemy_ai::EnemyAnim>>,
     pub item_anims: Vec<Option<item_runtime::ItemAnim>>,
+    /// Culling view (MBWorldSphereClip inputs) derived from the StdCam.
     pub camera: Option<item_runtime::Camera>,
-    /// The start camera parameters the per-update rest pose uses.
+    /// The start camera parameters (the culling planes come from here).
     pub camera_rest: Option<setup::StartCamera>,
+    /// The gameplay camera (StdCam module, research/camera.md).
+    pub std_camera: Option<camera::Camera>,
+    /// WorldStartTime 0x2c2c88 (GauntWorldInit: Time at level init).
+    pub world_start_time: f32,
     /// ITEM_ACTIVE_DIST 0x234364, global 0x20f950 (mode), 0x20f954, start_enemyinfo, ExitState.
     pub item_active_dist: f32,
     pub mode_950: i32,

@@ -34,7 +34,7 @@ Co-op (INTERIM, M16 in progress): player 2 joins by pressing R (keyboard
 T/F/G/H move, R throw, Y potion) or South on gamepad 2; gamepads 1–4 drive
 players 1–4 (D-pad or left stick, South throw, East potion). A joining player
 is a copy of player 1's record (PLACEHOLDER: per-player select is not
-ported); the camera follows the living players' average (HYPOTHESIS).
+ported); the camera is the original StdCam (research/camera.md).
 
 Controls: arrows/WASD move, Space/K throw, E/L use a potion (magic), F1
 toggles the diagnostics block, stand still in the exit portal to leave the
@@ -60,19 +60,20 @@ STOPPED. Players currently walk through critters.
 
 Start: player records are built natively from the save region
 (game::profile: PlayerLoadSaveFile / new_player + change_player, then the
-level-start record steps); the session globals, camera rest pose and the
+level-start record steps); the session globals, culling plane constants and the
 player-simulation template still come from the state exported from the
 preserved save (`export_game_state.py` v6 + `export_start_state.py` v2,
 INTERIM). Every level enters at its start locator.
 
 Native and reference-compared components: controls, motion code/run timer,
 request, facing, static/dynamic collision and position (movement.md,
-collision.md); item load records (items.md); attribute formula (gameplay.md).
+collision.md); item load records (items.md); attribute formula (gameplay.md);
+the gameplay camera (camera.md).
 Everything else in gameplay.md is a transcription without a reference
 comparison yet.
 
 Presentation only (labelled on screen): unlit materials with alpha cutout,
-rest-state follow camera, item models at tree rest pose (camera-facing "CF"
+item models at tree rest pose (camera-facing "CF"
 nodes omitted), enemy per-frame objects chosen by matching object stems to
 sequences by frame count (the OANIM channel is not decoded), missiles drawn
 with the character's `<desc>_THROW<n>` tree at rest pose (textures that live

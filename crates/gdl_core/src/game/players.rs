@@ -161,6 +161,27 @@ impl Game {
     /// One interim do_players update for player `p` with the pad level word.
     pub fn drive_player(&mut self, p: usize, d: &mut PlayerDriver, levels: u32) -> R<()> {
         let state = self.players[p].i32_(0xfc);
+        let g = &self.globals;
+        if g.cam_wait != 0 && g.start_of_stage != 0 {
+            // do_players during the stage start: +0x8f4 counts down, players in
+            // state 1 only run DoPlayerAction (no PlayerMotion), +0x1e4 = 0.
+            let t = self.players[p].u32_(0x8f4);
+            if t != 0 {
+                self.players[p].set_u32(0x8f4, t - 1);
+            }
+            if state == 1 {
+                d.sim.requested_action = 0;
+                d.advance();
+            }
+            self.players[p].set_u32(0x1e4, 0);
+            d.previous_levels = levels;
+            return Ok(());
+        }
+        if g.start_of_stage != 0 && g.skip_wave == 0 && g.quit_level == 0 {
+            // The player loop runs only once start_of_stage is clear.
+            d.previous_levels = levels;
+            return Ok(());
+        }
         if self.players[p].f32_(0x1a10) <= 0.0 || state == 5 {
             return Ok(());
         }

@@ -541,7 +541,7 @@ impl Camera {
 
     /// CamGetPlayerAvgPos 0x114820: flag 1 screen space, 2 position +0x50,
     /// 4 position +0x60; the result is clamped to the CAMS box.
-    fn player_avg(&mut self, ctx: &CamCtx, flags: u32) -> R<(V3, bool)> {
+    pub(crate) fn player_avg(&mut self, ctx: &CamCtx, flags: u32) -> R<(V3, bool)> {
         let mut lo = [f32::from_bits(0x60ad_78ec); 3];
         let mut hi = [f32::from_bits(0xe0ad_78ec); 3];
         let mut count = 0;
@@ -1177,6 +1177,134 @@ impl Camera {
 pub struct LimitResult {
     pub code: i32,
     pub floor_reset: bool,
+}
+
+impl super::Game {
+    fn cam_ctx(&self) -> CamCtx<'_> {
+        let g = &self.globals;
+        CamCtx {
+            players: &self.players,
+            num_in_game_players: g.num_in_game_players,
+            spf: g.spf,
+            vb_elapsed: g.vb_elapsed,
+            paused: g.paused,
+            help: g.help,
+            game_mode: g.game_mode,
+        }
+    }
+
+    /// init_next_level's camera part once the players are placed:
+    /// init_game_cam 0x16fec8 (cam_wait / start_of_stage for a start
+    /// transmitter) then StdCamInit(0) and the frame's pbWinSetup.
+    pub fn start_camera(&mut self) -> R<()> {
+        let Some(mut cam) = self.std_camera.take() else { return Ok(()) };
+        let mode = self.globals.game_mode;
+        if mode != 0x8006 && mode != 0x8003 && cam.start_transmitter.is_some() {
+            // init_stage_info: stage-name text (presentation).
+            self.globals.cam_wait = 0x5b;
+            self.globals.start_of_stage = 1;
+        }
+        let r = (|| -> R<()> {
+            cam.std_init(&self.cam_ctx(), false)?;
+            cam.pb.update(&cam.window.clone())
+        })();
+        self.std_camera = Some(cam);
+        r?;
+        self.sync_view();
+        Ok(())
+    }
+
+    /// HYPOTHESIS (runs that start from a mid-level fixture, which holds no
+    /// StdCam record): StdCamInit(1), the restored-stage path that settles on
+    /// the players, without the stage-start sequence.
+    pub fn start_camera_settled(&mut self) -> R<()> {
+        let Some(mut cam) = self.std_camera.take() else { return Ok(()) };
+        let r = (|| -> R<()> {
+            cam.std_init(&self.cam_ctx(), true)?;
+            cam.pb.update(&cam.window.clone())
+        })();
+        self.std_camera = Some(cam);
+        r?;
+        self.sync_view();
+        Ok(())
+    }
+
+    /// main's StdCamUpdate and MBEndFrame for one update.
+    pub(crate) fn camera_step(&mut self) -> R<()> {
+        let Some(mut cam) = self.std_camera.take() else { return Ok(()) };
+        let (mut wait, mut start) = (self.globals.cam_wait, self.globals.start_of_stage);
+        let r = cam.std_update(&self.cam_ctx(), &mut wait, &mut start);
+        self.globals.cam_wait = wait;
+        self.globals.start_of_stage = start;
+        self.std_camera = Some(cam);
+        r?;
+        self.sync_view();
+        Ok(())
+    }
+
+    /// The window camera other systems read: MboxWinPtr +0x90/+0x98 for
+    /// PlayerMotion and the MBWorldSphereClip view (planes from the start
+    /// state's window constants).
+    fn sync_view(&mut self) {
+        let Some(cam) = &self.std_camera else { return };
+        let (fx, fz) = cam.forward_xz();
+        self.globals.camera_90 = fx;
+        self.globals.camera_98 = fz;
+        if let Some(rest) = &self.camera_rest {
+            self.camera = Some(super::item_runtime::Camera {
+                basis: cam.pb.cam_rows,
+                eye: cam.std.v3(o::EYE),
+                target: cam.std.v3(o::TARGET),
+                planes: rest.planes,
+                newcam_mode: 2,
+            });
+        }
+    }
+
+    /// world_update 0x163480's start-of-stage block (game modes 0x4010 and
+    /// 0x400c): the entry effect and sound once, then cam_wait 1 three
+    /// seconds after WorldStartTime. Fog (InitFog / FogFadeIn) is presentation.
+    pub(crate) fn world_update_stage_start(&mut self) -> R<()> {
+        let g = &self.globals;
+        if g.paused != 0 || g.help != 0 || !(g.game_mode == 0x4010 || g.game_mode == 0x400c) || g.start_of_stage == 0 {
+            return Ok(());
+        }
+        let t = sub(g.time, self.world_start_time)?;
+        if t < f32::from_bits(0x3dcc_cccd) {
+            return Ok(());
+        }
+        if self.globals.start_of_stage == 1 {
+            self.globals.start_of_stage = 2;
+            let at = match &mut self.std_camera {
+                Some(cam) => {
+                    let ctx = CamCtx {
+                        players: &self.players,
+                        num_in_game_players: self.globals.num_in_game_players,
+                        spf: self.globals.spf,
+                        vb_elapsed: self.globals.vb_elapsed,
+                        paused: self.globals.paused,
+                        help: self.globals.help,
+                        game_mode: self.globals.game_mode,
+                    };
+                    let (p, any) = cam.player_avg(&ctx, 2)?;
+                    any.then_some(p)
+                }
+                None => None,
+            };
+            // CamGetPlayerAvgPos(2) == 0 → PlayerStartPos 0x22c158.
+            let at = match at {
+                Some(p) => p,
+                None => return unsupported("start of stage with no valid player (PlayerStartPos)"),
+            };
+            self.start_enter_fx(at)?;
+            // AudioPlayerEnter 0x1607a0: AudioFX(2, 0xe0, 9).
+            self.sfx2(2, 0, 0xe0, 9);
+        }
+        if 3.0 <= t && 1 < self.globals.cam_wait {
+            self.globals.cam_wait = 1;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

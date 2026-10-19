@@ -34,6 +34,58 @@ use std::{collections::HashMap, error::Error, path::Path};
 /// Presentation-only handedness mirror (original right × up = forward).
 const MIRROR: Vec3 = Vec3::new(-1.0, 1.0, 1.0);
 
+/// The pb projection (pbProjCalc +0x90): separate horizontal and vertical
+/// half-angle tangents (60° over 640 columns, 2·atan(1/2.88675) over 384
+/// rows), near 1 / far 65536, as Bevy's reverse-Z infinite perspective. The
+/// 3D viewport is the top 384 of 448 frame rows (viewport inset 64).
+#[derive(Debug, Clone)]
+struct Ps2Projection {
+    tan_h: f32,
+    tan_v: f32,
+    near: f32,
+    far: f32,
+}
+
+impl bevy::camera::CameraProjection for Ps2Projection {
+    fn get_clip_from_view(&self) -> Mat4 {
+        Mat4::from_cols(
+            Vec4::new(1.0 / self.tan_h, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 1.0 / self.tan_v, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 0.0, -1.0),
+            Vec4::new(0.0, 0.0, self.near, 0.0),
+        )
+    }
+    fn get_clip_from_view_for_sub(&self, _sub_view: &bevy::camera::SubCameraView) -> Mat4 {
+        self.get_clip_from_view()
+    }
+    fn update(&mut self, _width: f32, _height: f32) {}
+    fn far(&self) -> f32 {
+        self.far
+    }
+    fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [bevy::math::Vec3A; 8] {
+        let c = |z: f32| {
+            let (x, y) = (z.abs() * self.tan_h, z.abs() * self.tan_v);
+            [(x, -y), (x, y), (-x, y), (-x, -y)].map(|(a, b)| bevy::math::Vec3A::new(a, b, z))
+        };
+        let (n, f) = (c(z_near), c(z_far));
+        [n[0], n[1], n[2], n[3], f[0], f[1], f[2], f[3]]
+    }
+}
+
+/// The 3D viewport: the top 384/448 of the window (the PS2 frame's rows
+/// above the 64-row viewport inset).
+fn ps2_viewport(windows: Query<&Window>, mut cams: Query<&mut Camera, With<FollowCamera>>) {
+    let Ok(w) = windows.single() else { return };
+    let (width, height) = (w.physical_width(), w.physical_height());
+    let rows = ((height as u64 * 384) / 448) as u32;
+    if let Ok(mut cam) = cams.single_mut() {
+        let want = bevy::camera::Viewport { physical_position: UVec2::ZERO, physical_size: UVec2::new(width.max(1), rows.max(1)), ..default() };
+        if cam.viewport.as_ref().is_none_or(|v| v.physical_size != want.physical_size) {
+            cam.viewport = Some(want);
+        }
+    }
+}
+
 type Parts = Vec<(Handle<Mesh>, Handle<StandardMaterial>)>;
 /// Spark sphere mesh, spark material, blast material.
 type SparkAssets = (Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>);
@@ -508,7 +560,6 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> 
 struct Presentation {
     fov: f32,
     basis: [Vec3; 3],
-    distance: f32,
     attention: Vec3,
 }
 
@@ -645,10 +696,13 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
         Err(e) => eprintln!("title picture unavailable: {e}"),
     }
     commands.spawn((Sprite { color: Color::srgba(0.0, 0.0, 0.0, 0.6), custom_size: Some(Vec2::new(900.0, 290.0)), ..default() }, Transform::from_xyz(0.0, -300.0, -1.0), FrontBackdrop));
+    // Until a level's camera exists the session start camera's vertical
+    // angle stands in (presentation).
+    let tan_v = (presentation.fov * 0.5).tan();
     commands.spawn((
         Camera3d::default(),
         Tonemapping::None,
-        Projection::Perspective(PerspectiveProjection { fov: presentation.fov, ..default() }),
+        Projection::custom(Ps2Projection { tan_h: tan_v * 640.0 / 384.0, tan_v, near: 1.0, far: 65536.0 }),
         Transform::default(),
         FollowCamera,
     ));
@@ -894,6 +948,8 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<(Game, Pl
         game.place_player_start(0, &mut sim, loc.position, loc.rotation[1]).map_err(|e| e.to_string())?;
         sim.current_action = 0;
         sim.requested_action = 0;
+        // init_next_level: init_game_cam + StdCamInit(0) after the players.
+        game.start_camera().map_err(|e| e.0)?;
     }
     let driver = PlayerDriver::new(sim, tables, session.action_map.clone(), session.clip_timings.clone());
     Ok((game, driver))
@@ -987,7 +1043,7 @@ fn simulate(
     let new: Vec<Event> = sim.game.events.drain(before..).collect();
     sim.game.events.clear();
     let me = Vec3::from_array(sim.driver.sim.position);
-    let right = presentation.basis[0];
+    let right = sim.game.std_camera.as_ref().map_or(presentation.basis[0], |c| Vec3::from_array(c.pb.cam_rows[0]));
     for e in &new {
         if let Some(a) = audio.as_mut() {
             match e {
@@ -1339,7 +1395,7 @@ fn present_player(
     sim: Res<Sim>,
     session: Res<Session>,
     sources: Res<Sources>,
-    presentation: Res<Presentation>,
+    _presentation: Res<Presentation>,
     mut body: BodyQuery,
     mut nodes: NodeQuery,
     mut camera: CameraQuery,
@@ -1366,18 +1422,10 @@ fn present_player(
             *t = Transform::from_matrix(*p);
         }
     }
-    // HYPOTHESIS (co-op): the camera follows the average of the living
-    // players (the original multi-player camera is not ported).
-    let living: Vec<Vec3> = drivers
-        .iter()
-        .enumerate()
-        .filter_map(|(k, d)| d.filter(|_| 0.0 < sim.game.players[k].f32_(0x1a10)).map(|d| Vec3::from_array(d.sim.position)))
-        .collect();
-    let centre = if living.is_empty() { Vec3::from_array(sim.driver.sim.position) } else { living.iter().sum::<Vec3>() / living.len() as f32 };
-    let target = centre + presentation.attention;
-    let [_, up, forward] = presentation.basis;
-    let eye = target - forward * presentation.distance;
-    if let Ok(mut t) = camera.single_mut() {
+    // The StdCam window camera (research/camera.md): eye and matrix rows.
+    if let (Some(cam), Ok(mut t)) = (&sim.game.std_camera, camera.single_mut()) {
+        let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+        let [_, up, forward] = cam.pb.cam_rows.map(Vec3::from_array);
         *t = Transform::from_translation(eye * MIRROR).looking_to(forward * MIRROR, up * MIRROR);
     }
     let g = &sim.game;
@@ -1980,7 +2028,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     let vec3 = |r: &Value| -> Result<Vec3, Box<dyn Error>> { Ok(Vec3::from_array(serde_json::from_value::<[f32; 3]>(r.clone())?)) };
     let presentation = Presentation {
         basis: [vec3(&pr["camera_basis"][0])?, vec3(&pr["camera_basis"][1])?, vec3(&pr["camera_basis"][2])?],
-        distance: serde_json::from_value(pr["camera_distance"].clone())?,
         fov: serde_json::from_value(pr["camera_fov"].clone())?,
         attention: vec3(&pr["attention_offset_810"])?,
     };
@@ -2130,6 +2177,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             Update,
             (
                 front_system,
+                ps2_viewport,
                 (advance_level, present_world, present_world_nodes, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
                 front_text,
             )

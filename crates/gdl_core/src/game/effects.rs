@@ -1532,6 +1532,15 @@ impl Game {
         Ok(())
     }
 
+    /// StartEnterFX 0x17f2c8: StartFXSub(0, 0x43, position, 0, 0x80880) —
+    /// the level-entry effect (the last argument is MB node flags).
+    pub(crate) fn start_enter_fx(&mut self, position: V3) -> R<()> {
+        let Some(h) = self.effects.tables.headers.get(0x43).copied().flatten() else { return Ok(()) };
+        let i = self.start_fx_tree(0.0, Visual::Header(0x43), h.frames, h.timing, Some(position), 0)?;
+        self.fx_mut(i).set_u32(fx::KIND, 0x43);
+        Ok(())
+    }
+
     /// StartFXMissile 0x17e278(time, header, position, velocity, flags, hit
     /// fx, hit sound, wall sound): StartFXSub then SfxSetPhysics(0, 0, …);
     /// None (-1) when the header was never initialised.
