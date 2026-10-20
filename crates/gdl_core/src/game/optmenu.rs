@@ -163,6 +163,8 @@ pub struct MenuState {
     pub frames: i32,
     pub finishing: i32,
     pub player: Option<usize>,
+    /// do_audiomenu's volume sliders: (entry, value 0..=255).
+    pub sliders: Vec<(usize, u8)>,
 }
 
 fn rgb(c: [i32; 3]) -> u32 {
@@ -171,6 +173,30 @@ fn rgb(c: [i32; 3]) -> u32 {
 }
 
 impl Hud {
+    /// position_audioslider 0x10ca38 (OPTAUDIO_VOL_WIDTH 264, slider_dxl −52,
+    /// slider_dxr −24): markers, the empty and filled bars and the knob;
+    /// the unselected slider is translucent.
+    fn slider_blits(&self, x: i32, y: i32, v: u8, dim: bool) -> Vec<Blit> {
+        let (w, dxl, dxr) = (264, -52, -24);
+        let fill = (w * i32::from(v) / 0xff).max(1);
+        let d = i32::from(dim);
+        let alpha = |a: i32| (0x80 - (a as u32 >> 1)) as u8;
+        let mut out = Vec::new();
+        for (name, bx, by, bw, bh, a) in [
+            ("empty_bar", x, y + 0xb, w, 0x20, d * 0x96),
+            ("pink_bar", x, y + 0xf, fill, 0x20, d * 0xa0),
+            ("marker_left", x + dxl, y, -1, -1, d * 100),
+            ("marker_right", x + w + dxr, y, -1, -1, d * 100),
+            ("slider", x + fill - 0x14, y + 2, -1, -1, d * 100),
+        ] {
+            let mut b = self.make_pub(self.lookup(name), bx, by, bw, bh);
+            b.rgba[3] = alpha(a);
+            b.z = 1.0;
+            out.push(b);
+        }
+        out
+    }
+
     /// show_optmenu for `menu` in `state` (entries may be relabelled by the
     /// caller, e.g. for value columns).
     pub fn optmenu_blits(&self, style: &OptStyle, menu: &OptMenu, state: &MenuState) -> Vec<Blit> {
@@ -288,6 +314,9 @@ impl Hud {
                 let vx = lx + self.string_width(font, menu.scale, e.label.as_bytes()) + self.string_width(font, menu.scale, b" ~ ");
                 let c = if selected { rgb(menu.rgb[1]) } else { rgb(menu.rgb[0]) };
                 push(self, &mut out, menu.scale, vx, y, c, fade, 0, gar.or(parch_items), v);
+            }
+            if let Some(&(_, v)) = state.sliders.iter().find(|(i, _)| *i == k) {
+                out.extend(self.slider_blits(menu.x, y + fh, v, k != state.selected));
             }
             y += fh + e.gap;
         }

@@ -113,6 +113,7 @@ pub fn page_record(page: &Page) -> Option<(&'static str, usize)> {
         Page::Paused { tower, at } => (if *tower { "tower_menu" } else { "game_menu" }, *at),
         Page::ConfirmQuit { at } => ("quitgame_question", *at),
         Page::Hints { at } => ("hint_menu", *at),
+        Page::Audio { at, .. } => ("audio_options", *at),
         _ => return None,
     })
 }

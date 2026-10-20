@@ -148,7 +148,10 @@ unselected PARCH items are white. Background z OPTMENU_SCROLLZ − 1
 (63899). gdl_core::game::optmenu draws them; the client maps its pages to
 the records (menu::page_record) and keeps its own input logic. Not drawn:
 the ICON_ARROW selector (an animated powerup tree placed with
-MBScreenToWorld at depth 1.1), value columns of audio_options.
+MBScreenToWorld at depth 1.1). audio_options' sliders follow
+position_audioslider (empty_bar 264×32, pink_bar 264·v/255, marker_left
+−52, marker_right +264−24, the knob at fill − 0x14; unselected alpha
+100/150/160); Mono/Stereo is drawn but not selectable natively.
 
 ## Native presentation
 

@@ -2504,7 +2504,8 @@ fn present_hud(
     front.menu_clock.0 = view;
     front.menu_clock.1 += time.delta_secs() * 59.94;
     if let (Some((key, at)), Some(style)) = (view, front.opt_style.as_ref()) {
-        let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0) };
+        let sliders = if key == "audio_options" { vec![(0, front.menu.music), (1, front.menu.sfx)] } else { Vec::new() };
+        let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0), sliders };
         list.extend(front.ui_hud.optmenu_blits(style, &front.menus[key], &state));
     }
     list.retain(|b| b.tex.is_some() && 0.0 < b.w && 0.0 < b.h && 1 < b.rgba[3]);
