@@ -11,11 +11,16 @@ struct BlitParams {
     rgba: vec4<f32>,
     // u0, u1, v0, v1 (texture fractions).
     crop: vec4<f32>,
+    // A coincident z-only mask blit's screen rectangle (x, y, w, h; w = 0:
+    // none): hidden where the mask texture's alpha is 0 (ATST EQUAL AREF 0).
+    mask_rect: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: BlitParams;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var base_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var base_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(3) var mask_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(4) var mask_sampler: sampler;
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let lo = c / 12.92;
@@ -34,6 +39,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let hi = max(params.crop.xz, params.crop.yw) - half;
     let t = textureSample(base_texture, base_sampler, clamp(uv, min(lo, hi), max(lo, hi)));
     let rgb = min(t.rgb * params.rgba.rgb, vec3(1.0));
+    if params.mask_rect.z > 0.0 {
+        // HUD world → blit screen (512×384, y down).
+        let s = vec2(in.world_position.x + 256.0, 192.0 - in.world_position.y);
+        let m = textureSample(mask_texture, mask_sampler, (s - params.mask_rect.xy) / params.mask_rect.zw);
+        if m.a * 255.0 < 0.5 {
+            discard;
+        }
+    }
     // Texel alpha is raw GS alpha (0x80 = 1.0).
     let alpha = t.a * (255.0 / 128.0) * params.rgba.a;
     if floor(alpha * 128.0) <= 1.0 {

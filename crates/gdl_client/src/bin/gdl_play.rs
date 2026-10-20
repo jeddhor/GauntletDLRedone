@@ -701,7 +701,9 @@ struct Sim {
     hint: Option<(f32, String)>,
     hint_shown: HashMap<i32, f64>,
     /// ScrollMessageBox: the game waits until the box is dismissed.
-    message_box: Option<(Vec<String>, usize)>,
+    /// ScrollMessageBox (modal; the simulation waits).
+    message_box: Option<gdl_core::game::hud::ScrollBox>,
+    scroll_clock: f32,
     /// Sumner's hint pad asked for hint_menu.
     hint_menu: bool,
 }
@@ -1853,8 +1855,11 @@ fn simulate(
                 // A scroll item: line `text` of SCROLLS<level code>
                 // (SetScrollLevelMsgList(level_data + 8)).
                 let code = format!("SCROLLS{}", session.levels[session.current].name);
-                if let Some(line) = front.scrolls.entry(&code).and_then(|e| usize::try_from(text).ok().and_then(|k| e.lines.get(k))) {
-                    sim.message_box = Some((vec![line.replace('\r', "")], 0));
+                if let Some(e) = front.scrolls.entry(&code)
+                    && let Some(line) = usize::try_from(text).ok().and_then(|k| e.lines.get(k))
+                {
+                    let sb = scroll_box(&sim.game, &front.scrolls, e, vec![line.replace('\r', "")]);
+                    sim.message_box = Some(sb);
                 }
             }
             Event::ScrollNamed { name, line, .. } => {
@@ -1866,7 +1871,8 @@ fn simulate(
                     };
                     let pages: Vec<String> = pages.into_iter().map(|p| p.replace('\r', "")).collect();
                     if !pages.is_empty() {
-                        sim.message_box = Some((pages, 0));
+                        let sb = scroll_box(&sim.game, &front.scrolls, e, pages);
+                        sim.message_box = Some(sb);
                     }
                 }
             }
@@ -2290,7 +2296,9 @@ fn present_player(
     ui: Res<Ui>,
     mut bars: Query<&mut Visibility, (With<LetterBox>, Without<CharacterRoot>)>,
 ) {
-    let barred = sim.game.trigger_view_active();
+    // ScrollMessageBox runs (modal) before the trigger camera it precedes
+    // starts (do_players: welcome box, then CrystalCamActivate).
+    let barred = sim.game.trigger_view_active() && sim.message_box.is_none();
     for mut v in &mut bars {
         *v = if barred { Visibility::Inherited } else { Visibility::Hidden };
     }
@@ -2356,8 +2364,6 @@ fn present_player(
             format!("SIMULATION STOPPED\n{e}")
         } else if health <= 0.0 {
             "YOU DIED".to_string()
-        } else if let Some((pages, k)) = &sim.message_box {
-            format!("{}\n\n(Enter{})", pages.get(*k).map_or("", String::as_str), if k + 1 < pages.len() { ": next" } else { "" })
         } else if let Some((_, h)) = &sim.hint {
             h.clone()
         } else {
@@ -2429,7 +2435,7 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl
         .iter()
         .map(|k| {
             let pkg = if k.is_empty() { &sources.character } else { &sources.packages[k] };
-            gdl_client::hud_texture_set(k, &pkg.objects, &pkg.table)
+            gdl_client::hud_texture_set(k, &pkg.objects)
         })
         .collect();
     let names = game.hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default();
@@ -2451,6 +2457,14 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl
     sets.images.clear();
 }
 
+/// ScrollMessageBox pages of a SCROLL_E entry: its FONT name resolved
+/// against font_desc (StringInitSub), scale and space scale.
+fn scroll_box(game: &Game, rom: &gdl_formats::textrom::TextRom, e: &gdl_formats::textrom::TextEntry, pages: Vec<String>) -> gdl_core::game::hud::ScrollBox {
+    let name = rom.fonts.get(e.font as usize).cloned().unwrap_or_default();
+    let font = game.hud.tables.as_ref().and_then(|t| t.font_desc.iter().position(|n| *n == name)).unwrap_or(0);
+    gdl_core::game::hud::ScrollBox::new(pages, font, e.scale, e.space)
+}
+
 type HudSpriteQuery<'w, 's> = Query<'w, 's, (&'static HudSprite, &'static mut Transform, &'static mut Visibility, &'static MeshMaterial2d<gdl_client::BlitMaterial>)>;
 
 /// The frame's panel blits (Game::hud draw list) as pooled sprites: sorted
@@ -2468,33 +2482,43 @@ fn present_hud(
     mut quad: Local<Option<Handle<Mesh>>>,
 ) {
     let mut list = sim.game.hud.draw_list();
+    if let Some(sb) = &sim.message_box {
+        list.extend(sim.game.hud.scroll_blits(sb));
+    }
     list.retain(|b| b.tex.is_some() && 0.0 < b.w && 0.0 < b.h && 1 < b.rgba[3]);
     list.sort_by(|a, b| b.z.total_cmp(&a.z));
     let quad = quad.get_or_insert_with(|| meshes.add(Rectangle::new(1.0, 1.0))).clone();
     let mut slots: Vec<_> = pool.iter_mut().collect();
     slots.sort_by_key(|s| s.0.0);
     for (i, b) in list.iter().enumerate() {
-        let t = b.tex.unwrap();
-        let key = (t.set, t.index);
-        if !sets.images.contains_key(&key) {
-            let img = sets.keys.get(t.set as usize).and_then(|k| if k.is_empty() { Some(&sources.character) } else { sources.packages.get(k) }).and_then(|pkg| gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize)).map(|im| images.add(im));
-            sets.images.insert(key, img);
-        }
-        let Some(image) = sets.images[&key].clone() else { continue };
-        let params = gdl_client::BlitParams { rgba: Vec4::from_array(b.rgba.map(|c| f32::from(c) / 128.0)), crop: Vec4::from_array(b.crop) };
+        let mut resolve = |t: gdl_core::game::hud::TexRef| -> Option<Handle<Image>> {
+            let key = (t.set, t.index);
+            if !sets.images.contains_key(&key) {
+                let img = sets.keys.get(t.set as usize).and_then(|k| if k.is_empty() { Some(&sources.character) } else { sources.packages.get(k) }).and_then(|pkg| gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize)).map(|im| images.add(im));
+                sets.images.insert(key, img);
+            }
+            sets.images[&key].clone()
+        };
+        let Some(image) = resolve(b.tex.unwrap()) else { continue };
+        let (mask, mask_rect) = match b.mask {
+            Some((t, r)) => (resolve(t), Vec4::from_array(r)),
+            None => (None, Vec4::ZERO),
+        };
+        let params = gdl_client::BlitParams { rgba: Vec4::from_array(b.rgba.map(|c| f32::from(c) / 128.0)), crop: Vec4::from_array(b.crop), mask_rect };
         let transform = Transform::from_xyz(b.x + b.w * 0.5 - 256.0, 192.0 - b.y - b.h * 0.5, i as f32 * 0.001).with_scale(Vec3::new(b.w, b.h, 1.0));
         if let Some((_, tr, vis, mat)) = slots.get_mut(i) {
             **tr = transform;
             **vis = Visibility::Visible;
             if let Some(m) = mats.get(&mat.0)
-                && (m.params != params || m.texture.as_ref() != Some(&image))
+                && (m.params != params || m.texture.as_ref() != Some(&image) || m.mask != mask)
                 && let Some(m) = mats.get_mut(&mat.0)
             {
                 m.params = params;
                 m.texture = Some(image);
+                m.mask = mask;
             }
         } else {
-            let mat = mats.add(gdl_client::BlitMaterial { params, texture: Some(image) });
+            let mat = mats.add(gdl_client::BlitMaterial { params, texture: Some(image), mask });
             commands.spawn((Mesh2d(quad.clone()), MeshMaterial2d(mat), transform, Visibility::Visible, bevy::camera::visibility::RenderLayers::layer(HUD_LAYER), HudSprite(i)));
         }
     }
@@ -2694,7 +2718,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], hint: None, hint_shown: HashMap::new(), message_box: None, hint_menu: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], hint: None, hint_shown: HashMap::new(), message_box: None, hint_menu: false, scroll_clock: 0.0 });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -2959,15 +2983,17 @@ fn front_system(world: &mut EcsWorld) {
     let (keys, toggle) = menu_keys(world, naming);
     if screen == Screen::Playing {
         if world.get_resource::<Sim>().is_some_and(|s| s.message_box.is_some()) {
-            if keys.contains(&Key::Accept) || keys.contains(&Key::Back) {
-                let mut sim = world.resource_mut::<Sim>();
-                if let Some((pages, k)) = sim.message_box.as_mut()
-                    && *k + 1 < pages.len()
-                {
-                    *k += 1;
-                } else {
-                    sim.message_box = None;
-                }
+            // ScrollMessageBox's own loop: vblanks from wall time (NTSC).
+            let dt = world.resource::<Time>().delta_secs();
+            let pressed = keys.contains(&Key::Accept) || keys.contains(&Key::Back);
+            let mut sim = world.resource_mut::<Sim>();
+            sim.scroll_clock += dt * 59.94;
+            let vb = sim.scroll_clock.floor() as i32;
+            sim.scroll_clock -= vb as f32;
+            if let Some(sb) = sim.message_box.as_mut()
+                && !sb.step(vb, pressed)
+            {
+                sim.message_box = None;
             }
             return;
         }

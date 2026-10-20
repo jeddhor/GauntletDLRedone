@@ -14,6 +14,17 @@ pub struct ObjectDefinition {
     pub frames: i16,
     pub raw: Vec<u8>,
 }
+/// A named bitmap (header +96/+80, 36 bytes): the label MBOX_FindTexture
+/// searches, its bitmap record (+30) and the definition size (+32/+34; the
+/// record MBOX_FindTexture_Err returns, read by MBNewFont at +0x20/+0x22).
+#[derive(Debug, Serialize)]
+pub struct BitmapDefinition {
+    pub index: u32,
+    pub label: String,
+    pub bitmap_index: i16,
+    pub width: u16,
+    pub height: u16,
+}
 #[derive(Debug, Serialize)]
 pub struct ObjectBitmap {
     pub index: u32,
@@ -49,6 +60,7 @@ pub struct Part {
 pub struct Objects {
     pub raw_header: Vec<u8>,
     pub definitions: Vec<ObjectDefinition>,
+    pub bitmap_definitions: Vec<BitmapDefinition>,
     pub bitmap_records: Vec<ObjectBitmap>,
     pub objects: Vec<Object>,
 }
@@ -96,6 +108,14 @@ impl Objects {
                 frames: r.i16(p + 22),
                 raw: bytes[p..p + 24].to_vec(),
             });
+        }
+        let mut bitmap_definitions = Vec::new();
+        for (index, p) in (bitmap_defs.start..bitmap_defs.end).step_by(36).enumerate() {
+            let bitmap_index = r.i16(p + 30);
+            if bitmap_index < 0 || bitmap_index as u32 >= r.u32(72) {
+                return Err(r.error(p + 30, "bitmap definition index out of range"));
+            }
+            bitmap_definitions.push(BitmapDefinition { index: index as u32, label: r.label(p, 30), bitmap_index, width: r.u16(p + 32), height: r.u16(p + 34) });
         }
         let mut bitmap_records = Vec::new();
         for (index, p) in (bitmaps.start..bitmaps.end).step_by(64).enumerate() {
@@ -195,6 +215,7 @@ impl Objects {
         Ok(Self {
             raw_header: bytes[..160].to_vec(),
             definitions,
+            bitmap_definitions,
             bitmap_records,
             objects: results,
         })

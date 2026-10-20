@@ -69,6 +69,31 @@ private/reference/captures/render/tower-newgame-v1-240.png). Port:
   glow alpha. The dump's (86,1,1)/(128,128,1) bar = state 2 at 34 %.
 - TriggerCamUpdate's letterbox temp blits (z 0.5) cover the panels.
 
+## Scroll message box
+
+- ScrollMessageBox 0x128158 (modal; paused = 1, its own frame loop): per
+  page (a SCROLL_E line; −1 = every line) the Scroll_A blit is sized to
+  max(text width + 0x60, done width + 0x20) (≤ 0x200) × (text height +
+  0x60) at (0x100 − w/2, 0xa0 − h/2); DrawScrollText draws the lines from
+  y 0xc0 − h/2 (font from the entry's FONT name in font_desc — font32 —,
+  entry scale and STRS +0x10 space scale, colour 0x160c03, line step
+  FontHeight + 4, centred on 256, font z 0.25); BUTTON_TRI (ResetModels'
+  button_tri_tex) at (0xdf, y + 8) and DrawGlowText(0.5, "Press     when
+  done.") in font32 (glow pass: FONT32_GLOW, colour 0x8200ea, flag 0x4000
+  grows glyphs ~2 units, alpha pulse hilite_fade 40 / hold 5; then white).
+  Input counts after 15 vblanks; a press advances the page.
+- After the last page the fire scroll (StartFireScroll/ServeFireScroll):
+  21 frames (one per two vblanks) of greenCircTrans (+1 + n, colour, z
+  0.125) with z-only blits (flag 0x10000: FBMSK all, TEST ATST 4 = EQUAL,
+  AREF 0) of greenCircTransM (+1 + n, z 0.1875) and Scroll_A (z 0.0625):
+  the burnt hole (mask alpha 0) hides the scroll (z 1.0) and the text (z
+  0.25), and the fire is clipped to the parchment's silhouette. OBJECTS'
+  bitmap name table (header +96/+80; "GREENCIRCTRANS" is a header record
+  before the frames) is the MBOX_FindTexture name space. The native blit
+  material reproduces the coincident z masks as screen-space alpha masks.
+- The welcome box precedes CrystalCamActivate, so no letterbox is drawn
+  under it.
+
 ## Native presentation
 
 A HUD camera with a fixed 512×384 orthographic projection on its own render
@@ -86,4 +111,5 @@ the Tower panel against tower-newgame-v1-240.png (layout, tints, fonts).
 button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, del_player_blits,
 low_res flags, the shadow/0x1000 text flags, menu_on/optmenu state from the
 front end, ability blits, SandglassBlit/ThermoBlit (boss and timers), the
-inventory/map/shop panels and the scroll parchment are not ported.
+inventory/map/shop panels and DrawBlit's corner_hilite colour sweep are not
+ported. The scroll box's timing uses wall-clock vblanks (59.94 Hz).

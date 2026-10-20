@@ -109,6 +109,8 @@ pub struct BlitParams {
     pub rgba: Vec4,
     /// u0, u1, v0, v1 texture fractions (MBBlitSetCrop).
     pub crop: Vec4,
+    /// The z-only mask blit's screen rectangle (w = 0: none).
+    pub mask_rect: Vec4,
 }
 
 /// An MB blit sprite (blit.wgsl): MODULATE, alpha test GREATER 1, standard
@@ -120,6 +122,9 @@ pub struct BlitMaterial {
     #[texture(1)]
     #[sampler(2)]
     pub texture: Option<Handle<Image>>,
+    #[texture(3)]
+    #[sampler(4)]
+    pub mask: Option<Handle<Image>>,
 }
 
 impl bevy::sprite_render::Material2d for BlitMaterial {
@@ -132,25 +137,27 @@ impl bevy::sprite_render::Material2d for BlitMaterial {
 }
 
 /// The HUD view of one package's bitmap records (OBJECTS order, the
-/// MBOX_FindTexture handle space): labels from the matching TEXDEF record,
-/// MBRomTexPtr size/flags, TEXDEF definition size.
-pub fn hud_texture_set(name: &str, objects: &Objects, table: &TextureTable) -> gdl_core::game::hud::TexSet {
+/// MBOX_FindTexture handle space): the OBJECTS bitmap name table (labels →
+/// records, definition sizes), MBRomTexPtr size/flags.
+pub fn hud_texture_set(name: &str, objects: &Objects) -> gdl_core::game::hud::TexSet {
     let records = objects
         .bitmap_records
         .iter()
-        .map(|b| {
-            let def = table.bitmaps.iter().find(|t| t.texture_offset == b.texture_offset && t.format == b.format && t.width == b.width && t.height == b.height);
+        .enumerate()
+        .map(|(i, b)| {
+            let def = objects.bitmap_definitions.iter().find(|d| d.bitmap_index as usize == i);
             gdl_core::game::hud::TexInfo {
                 label: def.map(|d| d.label.clone()).unwrap_or_default(),
                 width: b.width,
                 height: b.height,
                 flags: b.flags,
-                def_width: def.map(|d| d.definition_width).unwrap_or(b.width),
-                def_height: def.map(|d| d.definition_height).unwrap_or(b.height),
+                def_width: def.map(|d| d.width).unwrap_or(b.width),
+                def_height: def.map(|d| d.height).unwrap_or(b.height),
             }
         })
         .collect();
-    gdl_core::game::hud::TexSet { name: name.to_string(), records }
+    let names = objects.bitmap_definitions.iter().map(|d| (d.label.clone(), d.bitmap_index as u16)).collect();
+    gdl_core::game::hud::TexSet { name: name.to_string(), records, names }
 }
 
 /// A HUD texture (bilinear, clamped): raw GS RGBA. Format 146 (4-bit, no

@@ -77,11 +77,13 @@ pub struct TexInfo {
     pub def_height: u16,
 }
 
-/// One package's bitmap records (OBJECTS order).
+/// One package's bitmap records (OBJECTS order) and the OBJECTS bitmap
+/// name table MBOX_FindTexture searches (label → record).
 #[derive(Clone, Debug)]
 pub struct TexSet {
     pub name: String,
     pub records: Vec<TexInfo>,
+    pub names: Vec<(String, u16)>,
 }
 
 /// An MB blit (word 0 flags: 1 hidden, 0x10 per-corner colours, 0x40
@@ -101,12 +103,16 @@ pub struct Blit {
     pub rgba: [u8; 4],
     /// MBBlitSetZ value (GS z = base − 32·z).
     pub z: f32,
+    /// A coincident z-only blit (flag 0x10000: FBMSK all, TEST ATST EQUAL
+    /// AREF 0) in front: this blit is hidden where that texture's alpha is 0
+    /// over the screen rectangle (x, y, w, h). The fire scroll's masks.
+    pub mask: Option<(TexRef, [f32; 4])>,
 }
 
 impl Blit {
     fn init() -> Self {
         // MBInitBlit: flags 0, no texture, colours 0x80808080.
-        Self { flags: 0, tex: None, x: 0.0, y: 0.0, w: 0.0, h: 0.0, crop: [0.0, 1.0, 0.0, 1.0], rgba: [0x80; 4], z: 0.0 }
+        Self { flags: 0, tex: None, x: 0.0, y: 0.0, w: 0.0, h: 0.0, crop: [0.0, 1.0, 0.0, 1.0], rgba: [0x80; 4], z: 0.0, mask: None }
     }
     pub fn hidden(&self) -> bool {
         self.flags & 1 != 0
@@ -126,6 +132,9 @@ pub struct Message {
     pub z: f32,
     pub flags: u32,
     pub text: Vec<u8>,
+    /// Message +0x26: a texture replacing the font's (DrawGlowText's
+    /// hilite_tex); the glyph crop is kept.
+    pub tex: Option<TexRef>,
 }
 
 /// A loaded font (font_init_desc + MBNewFont).
@@ -278,8 +287,8 @@ impl Hud {
     pub fn set_resources(&mut self, textures: Vec<TexSet>, fonts: Vec<Option<Font>>) {
         self.index.clear();
         for (s, set) in textures.iter().enumerate() {
-            for (i, r) in set.records.iter().enumerate() {
-                self.index.entry(r.label.to_uppercase()).or_insert(TexRef { set: s as u16, index: i as u16 });
+            for (label, i) in &set.names {
+                self.index.entry(label.to_uppercase()).or_insert(TexRef { set: s as u16, index: *i });
             }
         }
         self.textures = textures;
@@ -314,6 +323,11 @@ impl Hud {
             self.missing.insert(name.to_string());
         }
         t
+    }
+
+    /// MBOX_FindTexture without recording a miss.
+    pub fn lookup(&self, name: &str) -> Option<TexRef> {
+        self.index.get(&name.to_uppercase()).copied()
     }
 
     fn offset(&self, t: TexRef, n: i32) -> Option<TexRef> {
@@ -482,18 +496,9 @@ impl Hud {
     /// DrawTextSub(scale, space, x, y, font, colour, text) (no shadow flag
     /// 0x100 or vertical-centre bit 0x1000 here: the panels use neither).
     pub fn draw_text(&mut self, scale: f32, x: i32, y: i32, font: u32, colour: u32, text: &str) {
-        let space = scale;
-        let font = (font & 0xff) as usize;
-        let text = text.as_bytes().to_vec();
-        let mut x = x;
-        if x < 0 {
-            x = -(self.string_width(font, space, &text) >> 1) - x;
+        if let Some(m) = self.message(scale, scale, x, y, (font & 0xff) as usize, pack_rgb(colour, 0x80), self.font_z, 0, text) {
+            self.messages.push(m);
         }
-        if 0x17f < y as u32 {
-            return;
-        }
-        let rgba = pack_rgb(colour, 0x80);
-        self.messages.push(Message { x, y, font, rgba, scale_x: scale, scale_y: scale, space_x: space, z: self.font_z, flags: 0, text });
     }
 
     /// The frame's blits in draw order: node blits, temp blits, then the font
@@ -502,46 +507,202 @@ impl Hud {
         let mut out: Vec<Blit> = self.blits.iter().flatten().filter(|b| !b.hidden()).cloned().collect();
         out.extend(self.temp.iter().filter(|b| !b.hidden()).cloned());
         for m in &self.messages {
-            let Some(Some(f)) = self.fonts.get(m.font) else { continue };
-            let Some(tex) = f.tex else { continue };
-            let Some(info) = self.tex_info(tex) else { continue };
-            let (dw, dh) = (f32::from(info.def_width.max(1)), f32::from(info.def_height.max(1)));
-            let mut x = m.x;
-            for &c in &m.text {
-                let Some((k, g)) = f.font.glyphs.iter().enumerate().find(|(_, g)| g.code == i32::from(c)) else {
-                    if c == 0x20 {
-                        x += (f.space as f32 * m.space_x) as i32;
-                    }
-                    continue;
-                };
-                if g.width == 0 {
-                    if c == 0x20 {
-                        x += (f.space as f32 * m.space_x) as i32;
-                    }
-                    continue;
-                }
-                let Some(t) = self.offset(tex, k as i32 / f.per_page) else { continue };
-                out.push(Blit {
-                    flags: m.flags,
-                    tex: Some(t),
-                    x: x as f32,
-                    y: m.y as f32,
-                    w: g.width as f32 * m.scale_x,
-                    h: f.font.height as f32 * m.scale_y,
-                    crop: [g.x as f32 / dw, (g.x + g.width) as f32 / dw, g.y as f32 / dh, (g.y + f.font.height) as f32 / dh],
-                    rgba: m.rgba,
-                    z: m.z,
-                });
-                x += (g.width as f32 * m.space_x) as i32;
-            }
+            out.extend(self.glyphs(m));
         }
         out
     }
 
+    /// MBRenderText for one message: a blit per glyph (flag 0x4000 grows the
+    /// glyph by two GS pixels' worth of screen units on every side).
+    pub fn glyphs(&self, m: &Message) -> Vec<Blit> {
+        let mut out = Vec::new();
+        let Some(Some(f)) = self.fonts.get(m.font) else { return out };
+        let Some(tex) = f.tex else { return out };
+        let Some(info) = self.tex_info(tex) else { return out };
+        let (dw, dh) = (f32::from(info.def_width.max(1)), f32::from(info.def_height.max(1)));
+        // iStack_d4/d0: (int)(pbg +0x40 scale × 2 + 0.5) GS units (40, 37).
+        let (gx, gy) = (40.0 / 20.0, 37.0 / (16.0 * 448.0 / 384.0));
+        let mut x = m.x;
+        for &c in &m.text {
+            let found = f.font.glyphs.iter().enumerate().find(|(_, g)| g.code == i32::from(c) && g.width != 0);
+            let Some((k, g)) = found else {
+                if c == 0x20 {
+                    x += (f.space as f32 * m.space_x) as i32;
+                }
+                continue;
+            };
+            let t = match m.tex {
+                Some(t) => Some(t),
+                None => self.offset(tex, k as i32 / f.per_page),
+            };
+            let Some(t) = t else { continue };
+            let mut b = Blit {
+                flags: m.flags,
+                tex: Some(t),
+                x: x as f32,
+                y: m.y as f32,
+                w: g.width as f32 * m.scale_x,
+                h: f.font.height as f32 * m.scale_y,
+                crop: [g.x as f32 / dw, (g.x + g.width) as f32 / dw, g.y as f32 / dh, (g.y + f.font.height) as f32 / dh],
+                rgba: m.rgba,
+                z: m.z,
+                mask: None,
+            };
+            if m.flags & 0x4000 != 0 {
+                b.x -= gx;
+                b.y -= gy;
+                b.w += 2.0 * gx;
+                b.h += 2.0 * gy;
+            }
+            out.push(b);
+            x += (g.width as f32 * m.space_x) as i32;
+        }
+        out
+    }
+
+    /// A message as DrawTextSub/MBDrawText build it (x < 0 centres on −x).
+    #[allow(clippy::too_many_arguments)]
+    fn message(&self, scale: f32, space: f32, x: i32, y: i32, font: usize, rgba: [u8; 4], z: f32, flags: u32, text: &str) -> Option<Message> {
+        let text = text.as_bytes().to_vec();
+        let x = if x < 0 { -(self.string_width(font, space, &text) >> 1) - x } else { x };
+        (y as u32 <= 0x17f).then_some(Message { x, y, font, rgba, scale_x: scale, scale_y: scale, space_x: space, z, flags, text, tex: None })
+    }
+
+    /// FontHeight(scale, font): (int)(height × scale).
+    pub fn font_height(&self, font: usize, scale: f32) -> i32 {
+        match self.fonts.get(font) {
+            Some(Some(f)) => (f.font.height as f32 * scale) as i32,
+            _ => 0,
+        }
+    }
+
+    /// One frame of ScrollMessageBox 0x128158 / the fire scroll
+    /// (StartFireScroll 0x128b78, ServeFireScroll 0x129008): the Scroll_A
+    /// blit sized to the page text, the page lines (DrawScrollText: font and
+    /// scale from the SCROLL_E entry, colour 0x160c03, 4-unit line gap,
+    /// centred on x 256, font z 0.25), the triangle button and DrawGlowText's
+    /// "Press     when done."; after the last page the 21 burn frames
+    /// (greenCircTrans/greenCircTransM handles + 1 + frame).
+    pub fn scroll_blits(&self, sb: &ScrollBox) -> Vec<Blit> {
+        const DONE: &str = "Press     when done."; // donemsg.9 → 0x2a67d0
+        const DONE_SCALE: f32 = 0.5; // done_scale 0x220420
+        const GLOW_FONT: usize = 6; // glow_font 0x20ec00
+        const TEXT_Z: f32 = 0.25; // MBResetFontData fontZ
+        let page = sb.page.min(sb.pages.len().saturating_sub(1));
+        let Some(text) = sb.pages.get(page) else { return Vec::new() };
+        let lines: Vec<&str> = text.split('\n').take(16).collect();
+        let width = lines.iter().map(|l| self.string_width(sb.font, sb.scale, l.as_bytes())).max().unwrap_or(0) + 0x60;
+        let fh = self.font_height(sb.font, sb.scale);
+        let height = (fh + 4) * lines.len() as i32 + 0x60;
+        let done = self.string_width(GLOW_FONT, DONE_SCALE, DONE.as_bytes());
+        let w = if done + 0x20 <= width { width.min(0x200) } else { done + 0x20 };
+        let (x0, y0, ty) = (0x100 - w / 2, 0xa0 - height / 2, 0xc0 - height / 2);
+        let scroll = self.lookup("Scroll_A");
+        let mut out = Vec::new();
+        let mut back = self.make(scroll, x0, y0, w, height);
+        // Text: DrawScrollText → DrawStringTextSub, one DrawTextSub per line.
+        let mut glyphs = Vec::new();
+        let mut y = ty;
+        for l in &lines {
+            if let Some(m) = self.message(sb.scale, sb.space * sb.scale, -0x100, y, sb.font, pack_rgb(0x160c03, 0x80), TEXT_Z, 0, l) {
+                glyphs.extend(self.glyphs(&m));
+            }
+            y += 4 + fh;
+        }
+        match sb.burn {
+            None => {
+                out.push(back);
+                out.extend(glyphs);
+                let tri = self.lookup("BUTTON_TRI");
+                out.push(self.make(tri, 0xdf, y + 8, 0x14, 0x14));
+                // DrawGlowText: the pulse over hilite_fade 40 + hold 5.
+                let (fade, hold) = (40, 5);
+                let mut i = (sb.vb_counter % (fade * 2 + hold) as u32) as i32;
+                if fade * 2 < i {
+                    i = 0;
+                } else if fade < i {
+                    i = fade * 2 - i;
+                }
+                let a = 0x7f - ((i * 0xff + fade - 1) / fade) / 2;
+                let glow_alpha = (0x80 - (a as u32 >> 1)) as u8;
+                if let Some(mut m) = self.message(DONE_SCALE, DONE_SCALE, -0x100, y + 8, GLOW_FONT, pack_rgb(0x8200ea, glow_alpha), TEXT_Z, 0x4000, DONE) {
+                    m.tex = self.lookup("FONT32_GLOW");
+                    out.extend(self.glyphs(&m));
+                }
+                if let Some(m) = self.message(DONE_SCALE, DONE_SCALE, -0x100, y + 8, GLOW_FONT, pack_rgb(0xffffff, 0x80), TEXT_Z, 0, DONE) {
+                    out.extend(self.glyphs(&m));
+                }
+            }
+            Some(vb) => {
+                let frame = (vb >> 1).clamp(0, 0x14);
+                let (fy, fh2) = if y0 < 0 { (0, height + y0 + 0x20) } else { (y0, height) };
+                let rect = [x0 as f32, fy as f32, w as f32, fh2 as f32];
+                let mask = self.lookup("greenCircTransM").and_then(|t| self.offset(t, 1 + frame));
+                let fire = self.lookup("greenCircTrans").and_then(|t| self.offset(t, 1 + frame));
+                if let Some(m) = mask {
+                    back.mask = Some((m, rect));
+                    out.push(back);
+                    for mut g in glyphs {
+                        g.mask = Some((m, rect));
+                        out.push(g);
+                    }
+                }
+                let mut f = self.make(fire, x0, fy, w, fh2);
+                f.z = 0.125;
+                f.mask = scroll.map(|s| (s, [x0 as f32, y0 as f32, w as f32, height as f32]));
+                out.push(f);
+            }
+        }
+        out
+    }
     /// MBResetBlits at the frame boundary: temp blits and messages go.
     pub fn begin_frame(&mut self) {
         self.temp.clear();
         self.messages.clear();
+    }
+}
+
+/// ScrollMessageBox's modal state: pages (the entry's lines), font/scale/
+/// space from the SCROLL_E entry, the 15-vblank input delay per page and
+/// the fire scroll's vblank count once the last page is closed.
+#[derive(Clone, Debug)]
+pub struct ScrollBox {
+    pub pages: Vec<String>,
+    pub font: usize,
+    pub scale: f32,
+    pub space: f32,
+    pub page: usize,
+    pub wait: i32,
+    pub burn: Option<i32>,
+    pub vb_counter: u32,
+}
+
+impl ScrollBox {
+    pub fn new(pages: Vec<String>, font: usize, scale: f32, space: f32) -> Self {
+        Self { pages, font, scale, space, page: 0, wait: 15, burn: None, vb_counter: 0 }
+    }
+
+    /// One loop pass with `vb` vblanks elapsed and the close button state;
+    /// false once the fire scroll has finished (ServeFireScroll: 21 frames,
+    /// one per two vblanks).
+    pub fn step(&mut self, vb: i32, pressed: bool) -> bool {
+        self.vb_counter = self.vb_counter.wrapping_add(vb as u32);
+        if let Some(b) = self.burn.as_mut() {
+            *b += vb;
+            return (*b >> 1) < 0x15;
+        }
+        if self.wait < 1 {
+            if pressed {
+                self.page += 1;
+                self.wait = 15;
+                if self.pages.len() <= self.page {
+                    self.burn = Some(0);
+                }
+            }
+        } else {
+            self.wait -= vb;
+        }
+        true
     }
 }
 
@@ -1141,7 +1302,7 @@ mod tests {
     fn right_aligned_text_and_glyph_blits() {
         let mut h = Hud { font_z: FONT_Z, ..Default::default() };
         let info = |l: &str| TexInfo { label: l.into(), width: 128, height: 16, flags: 0x8c, def_width: 128, def_height: 16 };
-        h.set_resources(vec![TexSet { name: "STATIC".into(), records: vec![info("SCORE")] }], vec![]);
+        h.set_resources(vec![TexSet { name: "STATIC".into(), records: vec![info("SCORE")], names: vec![("SCORE".into(), 0)] }], vec![]);
         h.fonts = vec![None, None, None, None, Some(HudFont { font: font(), tex: h.index.get("SCORE").copied(), space: 9, per_page: 0x80 })];
         // write_health: "500" right-aligned at box_lx + 0x74.
         let w = h.string_width(4, 1.0, b"500");
@@ -1164,7 +1325,9 @@ mod tests {
     fn texture_sized_blits_follow_texture_changes() {
         let mut h = Hud::default();
         let info = |l: &str, w, hh| TexInfo { label: l.into(), width: w, height: hh, flags: 0x8c, def_width: w, def_height: hh };
-        h.set_resources(vec![TexSet { name: "S".into(), records: vec![info("S3", 128, 16), info("S4", 128, 64), info("G1", 16, 16), info("G2", 16, 16)] }], vec![]);
+        let records = vec![info("S3", 128, 16), info("S4", 128, 64), info("G1", 16, 16), info("G2", 16, 16)];
+        let names = records.iter().enumerate().map(|(i, r)| (r.label.clone(), i as u16)).collect();
+        h.set_resources(vec![TexSet { name: "S".into(), records, names }], vec![]);
         let b = h.new_blit(None, 0, 0x140, 0x80, -1);
         assert_eq!(h.blits[b].as_ref().unwrap().h, 0.0);
         let s4 = h.find("s4");
@@ -1178,5 +1341,29 @@ mod tests {
         assert_eq!(h.blits[t].as_ref().unwrap().tex, g2);
         h.set_alpha(t, 0xff);
         assert_eq!(h.blits[t].as_ref().unwrap().rgba[3], 1);
+    }
+
+    #[test]
+    fn scroll_box_pages_then_burns() {
+        let mut sb = ScrollBox::new(vec!["a".into(), "b".into()], 6, 1.0, 1.0);
+        // The 15-vblank delay ignores the button.
+        assert!(sb.step(2, true));
+        assert_eq!(sb.page, 0);
+        for _ in 0..7 {
+            sb.step(2, false);
+        }
+        assert!(sb.step(2, true));
+        assert_eq!((sb.page, sb.burn), (1, None));
+        for _ in 0..8 {
+            sb.step(2, false);
+        }
+        sb.step(2, true);
+        assert_eq!(sb.burn, Some(0));
+        // 21 frames, one per two vblanks.
+        let mut n = 0;
+        while sb.step(2, false) {
+            n += 1;
+        }
+        assert_eq!(n, 20);
     }
 }

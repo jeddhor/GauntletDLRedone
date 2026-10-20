@@ -17,6 +17,8 @@ pub struct TextEntry {
     pub lines: Vec<String>,
     pub font: u32,
     pub scale: f32,
+    /// STRS +0x10: the space (advance) scale DrawStringTextSub passes.
+    pub space: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,7 +84,7 @@ impl TextRom {
             }
             let lines = (first..first + n_lines).map(line).collect::<Result<Vec<_>, _>>()?;
             let name = cstr(defs + r.u32(sdef + 4 * k) as usize, sdef)?;
-            entries.push(TextEntry { name, first_line: first as u32, lines, font: r.u32(e + 8), scale: f32::from_bits(r.u32(e + 12)) });
+            entries.push(TextEntry { name, first_line: first as u32, lines, font: r.u32(e + 8), scale: f32::from_bits(r.u32(e + 12)), space: f32::from_bits(r.u32(e + 16)) });
         }
         let mut lists = Vec::new();
         if let (Some((list, n)), Some((loff, _)), Some((ldef, _))) = (chunk(b"LIST"), chunk(b"LOFF"), chunk(b"LDEF")) {
