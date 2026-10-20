@@ -26,18 +26,19 @@ original (PCSX2 reference on Xvfb :191, private captures):
    team moves, legend items, thunder hammer/breath/familiar, respawn,
    milestones, join/continue), physical pad mapping measurement, and traces
    with melee/magic/powerups/knockback/transporters/moving floors (F).
-4. Rendering (IN PROGRESS; research/rendering.md): DONE 2026-10-19 — GS
-   material state from the G1 dump and pbSetDORegs/setPrimInfo/setTexInfo:
-   texture × vertex colour (0x80 scale), lightmaps (format 146 + observed
-   CLUT), alpha test/blend, additive (node flag 0x800000), depth flags,
-   record clamps, bilinear; world node MB flags (hidden/group/particle
-   nodes) and CameraFace billboards; 2026-10-20: projection corrected
-   (pb +0x90), world particle systems (gdl_core::psys), world texmods
-   (frames/scrolls), reference-camera pixel checks. Remaining: chrome,
-   distance alpha, MBTreeSetAlpha fades and scripted node hiding, item/
-   character texmods and psys (PsfxDoParticle/CritterDoParticle), character
-   VU1 lighting (MBDirLight/MBAmbLight/pos lights), fog, effect trees,
-   OANIM, linear-space blending of translucent draws.
+4. Rendering (IN PROGRESS; research/rendering.md): DONE 2026-10-19/20 —
+   GS material state (MODULATE, lightmaps with the observed CLUT, alpha
+   test/blend, additive, depth flags, clamps, bilinear), projection from pb
+   +0x90, world node MB flags and CameraFace, world/tree particle systems
+   (gdl_core::psys), world/package texmods, game-driven node state
+   (EnterTower's light ray, fade objects, distance alpha), package tree node
+   flags, VU-fitted lighting of colourless parts, held weapon and shadow,
+   effect header/familiar trees posed per frame; tools: reference_camera.py,
+   GDL_DEBUG_CAMERA, render_pixel_check.py, reference_screenshot.py --slot.
+   Remaining: chrome, texture fades/per-node shifts, OANIM and texmod tree
+   nodes, MBTreeSetAlpha fades (recorded in Game::node_alpha), point lights,
+   AmbientSpecial flashes, fog (D1/D3), splash shadow texture, critter
+   shadows, linear-space blending of translucent draws, item tree animation.
 5. Front end and HUD: FNT fonts, original HUD panels, scroll parchment,
    original player select, shop screen, inventory, options, credits, movies.
 6. Audio completeness; secret characters; Sumner as a character;
