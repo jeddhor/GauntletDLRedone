@@ -794,6 +794,20 @@ struct RigNode(usize, usize);
 struct FollowCamera;
 #[derive(Component)]
 struct Hud;
+/// The player panels' render layer: a fixed 512×384 orthographic view (the
+/// MB blit screen; MBBlitSetPos scales it to the 640×448 frame, i.e. the
+/// window).
+const HUD_LAYER: usize = 1;
+/// A pooled blit sprite (index into the frame's sorted blit list).
+#[derive(Component)]
+struct HudSprite(usize);
+/// The HUD's MBOX texture sets (search order; "" = the player's character
+/// package) and their decoded images.
+#[derive(Resource, Default)]
+struct HudSets {
+    keys: Vec<String>,
+    images: HashMap<(u16, u16), Option<Handle<Image>>>,
+}
 /// TriggerCamUpdate's letterbox blits (TextureWhite, colour 0): screen rows
 /// 0..BORDER_HT (0x30) and 0x130..0x180 of the 512×384 screen space.
 #[derive(Component)]
@@ -933,14 +947,24 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
         FollowCamera,
     ));
     commands.spawn((Camera2d, Camera { order: 1, clear_color: ClearColorConfig::None, ..default() }));
-    // Screen rows → the 896-pixel frame (× 448 / 384 × 2).
-    let row = |r: f32| 448.0 - r * 896.0 / 384.0;
-    for (top, bottom) in [(0.0, 48.0), (304.0, 384.0)] {
-        let (y0, y1) = (row(top), row(bottom));
+    commands.spawn((
+        Camera2d,
+        Camera { order: 2, clear_color: ClearColorConfig::None, ..default() },
+        Tonemapping::None,
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: bevy::camera::ScalingMode::Fixed { width: 512.0, height: 384.0 },
+            ..OrthographicProjection::default_2d()
+        }),
+        bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
+    ));
+    // TriggerCamUpdate's temp blits (TextureWhite, MBBlitSetColor 0 → GS
+    // colour 1/128, z 0.5: in front of the panels) on the blit layer.
+    for (top, bottom) in [(0.0f32, 48.0f32), (304.0, 384.0)] {
         commands.spawn((
-            Sprite { color: Color::BLACK, custom_size: Some(Vec2::new(1280.0, y0 - y1)), ..default() },
-            Transform::from_xyz(0.0, (y0 + y1) * 0.5, -0.5),
+            Sprite { color: Color::srgb_u8(2, 2, 2), custom_size: Some(Vec2::new(512.0, bottom - top)), ..default() },
+            Transform::from_xyz(0.0, 192.0 - (top + bottom) * 0.5, 100.0),
             Visibility::Hidden,
+            bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
             LetterBox,
         ));
     }
@@ -1721,6 +1745,10 @@ fn join_copy(game: &mut Game, k: usize, from: usize) -> Result<(), String> {
     game.init_player_anim(k).map_err(|e| e.0)?;
     game.controls.assign(k, k);
     game.set_player_vars();
+    // PLACEHOLDER (with the join itself): the slot counts as active for the
+    // panels and gets its box (load_player_geo → setup_player_display).
+    game.globals.active_players |= 1 << k;
+    game.setup_player_display(k);
     Ok(())
 }
 
@@ -2366,6 +2394,9 @@ fn present_player(
             generators,
             sim.last_event,
         );
+        if !ui.details {
+            t.clear();
+        }
         if let Some(boss) = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|k| g.critters.get(k)).and_then(Option::as_ref) {
             // Boss health (the original's health meter blits are presentation).
             let max = g.critter_type_rec_pub(boss.ty).map_or(0.0, |v| v);
@@ -2383,6 +2414,98 @@ fn present_player(
             ));
         }
         text.0 = t;
+    }
+}
+
+/// MBOX texture search order for the panels (STATIC, the character package,
+/// then the level's packages: a presentation choice — the panel labels are
+/// unique across them) and the FONTS/*.FNT files of font_desc, then the
+/// panels' reset/level-start setup.
+fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl_client::catalog::Catalog, sets: &mut HudSets) {
+    let mut keys = vec!["STATIC".to_string(), String::new()];
+    keys.extend(level_packages(&session.levels[session.current]).into_iter().filter(|k| k != "STATIC"));
+    keys.retain(|k| k.is_empty() || sources.packages.contains_key(k));
+    let tex: Vec<_> = keys
+        .iter()
+        .map(|k| {
+            let pkg = if k.is_empty() { &sources.character } else { &sources.packages[k] };
+            gdl_client::hud_texture_set(k, &pkg.objects, &pkg.table)
+        })
+        .collect();
+    let names = game.hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default();
+    let fonts = names
+        .iter()
+        .map(|n| match catalog.read(&format!("FONTS/{n}.FNT")).map_err(|e| e.to_string()).and_then(|b| gdl_formats::fnt::Font::parse(&b).map_err(|e| e.to_string())) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                eprintln!("font {n}: {e}");
+                None
+            }
+        })
+        .collect();
+    game.hud_init(tex, fonts);
+    if !game.hud.missing.is_empty() {
+        eprintln!("panel textures not found: {:?}", game.hud.missing);
+    }
+    sets.keys = keys;
+    sets.images.clear();
+}
+
+type HudSpriteQuery<'w, 's> = Query<'w, 's, (&'static HudSprite, &'static mut Transform, &'static mut Visibility, &'static MeshMaterial2d<gdl_client::BlitMaterial>)>;
+
+/// The frame's panel blits (Game::hud draw list) as pooled sprites: sorted
+/// far to near by blit z (ZTST GEQUAL; equal z keeps draw order).
+#[allow(clippy::too_many_arguments)]
+fn present_hud(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    mut sets: ResMut<HudSets>,
+    mut images: ResMut<Assets<Image>>,
+    mut mats: ResMut<Assets<gdl_client::BlitMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut pool: HudSpriteQuery,
+    mut quad: Local<Option<Handle<Mesh>>>,
+) {
+    let mut list = sim.game.hud.draw_list();
+    list.retain(|b| b.tex.is_some() && 0.0 < b.w && 0.0 < b.h && 1 < b.rgba[3]);
+    list.sort_by(|a, b| b.z.total_cmp(&a.z));
+    let quad = quad.get_or_insert_with(|| meshes.add(Rectangle::new(1.0, 1.0))).clone();
+    let mut slots: Vec<_> = pool.iter_mut().collect();
+    slots.sort_by_key(|s| s.0.0);
+    for (i, b) in list.iter().enumerate() {
+        let t = b.tex.unwrap();
+        let key = (t.set, t.index);
+        if !sets.images.contains_key(&key) {
+            let img = sets.keys.get(t.set as usize).and_then(|k| if k.is_empty() { Some(&sources.character) } else { sources.packages.get(k) }).and_then(|pkg| gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize)).map(|im| images.add(im));
+            sets.images.insert(key, img);
+        }
+        let Some(image) = sets.images[&key].clone() else { continue };
+        let params = gdl_client::BlitParams { rgba: Vec4::from_array(b.rgba.map(|c| f32::from(c) / 128.0)), crop: Vec4::from_array(b.crop) };
+        let transform = Transform::from_xyz(b.x + b.w * 0.5 - 256.0, 192.0 - b.y - b.h * 0.5, i as f32 * 0.001).with_scale(Vec3::new(b.w, b.h, 1.0));
+        if let Some((_, tr, vis, mat)) = slots.get_mut(i) {
+            **tr = transform;
+            **vis = Visibility::Visible;
+            if let Some(m) = mats.get(&mat.0)
+                && (m.params != params || m.texture.as_ref() != Some(&image))
+                && let Some(m) = mats.get_mut(&mat.0)
+            {
+                m.params = params;
+                m.texture = Some(image);
+            }
+        } else {
+            let mat = mats.add(gdl_client::BlitMaterial { params, texture: Some(image) });
+            commands.spawn((Mesh2d(quad.clone()), MeshMaterial2d(mat), transform, Visibility::Visible, bevy::camera::visibility::RenderLayers::layer(HUD_LAYER), HudSprite(i)));
+        }
+    }
+    for (_, _, vis, _) in slots.iter_mut().skip(list.len()) {
+        **vis = Visibility::Hidden;
+    }
+}
+
+fn hide_hud(mut pool: Query<&mut Visibility, With<HudSprite>>) {
+    for mut v in &mut pool {
+        *v = Visibility::Hidden;
     }
 }
 
@@ -2492,6 +2615,7 @@ fn refresh_saves(front: &mut Front) {
 
 /// Load save `slot` and enter the Tower with that character.
 fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
+    let mut hud_sets = HudSets::default();
     let (session, sources, game, recovered) = {
         let front = world.resource::<Front>();
         let loaded = front.store.load(slot)?;
@@ -2559,8 +2683,9 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             colour,
             carried: [0, -1, -1, -1, -1],
         };
-        let game = build_game(&session, idx, &record)?;
+        let mut game = build_game(&session, idx, &record)?;
         let sources = Sources { character, clips, clip_bytes, rig, packages, monsters: b.monsters.clone() };
+        init_hud(&mut game, &sources, &session, &front.catalog, &mut hud_sets);
         (session, sources, game, loaded.recovered)
     };
     let attention = Vec3::from_array(game.players[0].v3(0x810));
@@ -2568,6 +2693,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.resource_mut::<Presentation>().attention = attention;
     world.insert_resource(sources);
     world.insert_resource(session);
+    world.insert_resource(hud_sets);
     world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], hint: None, hint_shown: HashMap::new(), message_box: None, hint_menu: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
@@ -3077,6 +3203,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }))
         .add_plugins(gdl_client::GsMaterialPlugin)
         .init_resource::<Ui>()
+        .init_resource::<HudSets>()
         .add_systems(Startup, setup_static)
         .add_systems(FixedUpdate, simulate.run_if(playing))
         .add_systems(
@@ -3084,7 +3211,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow, present_hud).chain().run_if(playing),
+                hide_hud.run_if(not(playing)),
                 front_text,
             )
                 .chain(),
@@ -3132,7 +3260,7 @@ fn advance_level(
     mut sources: ResMut<Sources>,
     mut libraries: ResMut<Libraries>,
     mut frames: ResMut<EnemyFrames>,
-    (front, ui): (Res<Front>, Res<Ui>),
+    (front, ui, mut hud_sets): (Res<Front>, Res<Ui>, ResMut<HudSets>),
 ) {
     // do_players state 8 plays the dying action (0x7e, +0x8f8) and calls
     // kill_player; in the Tower PlayerRestoreState puts the player back.
@@ -3258,8 +3386,9 @@ fn advance_level(
                     a.music(&stage.stream_name(0, 0));
                 }
             }
-            sim.game = game;
             session.current = idx;
+            init_hud(&mut game, &sources, &session, &front.catalog, &mut hud_sets);
+            sim.game = game;
             for e in &old {
                 commands.entity(e).despawn();
             }

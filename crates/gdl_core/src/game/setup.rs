@@ -327,6 +327,13 @@ impl Game {
             sumner_hint_time: 0.0,
             world_num_levels: inp.wdata.levels.len() as i32,
             tower: super::tower::TowerState::default(),
+            hud: match super::hud::HudTables::from_elf(inp.elf) {
+                Ok(t) => super::hud::Hud::new(t),
+                Err(e) => {
+                    load_note = Some(format!("player panel tables: {e}"));
+                    super::hud::Hud::default()
+                }
+            },
             item_alpha: std::collections::HashMap::new(),
             speech_tables: ["crystal_sidx", "garg_sidx"]
                 .into_iter()
@@ -616,6 +623,13 @@ impl Game {
     /// do_enemies, do_players (`players`), ProcessEffects.
     pub fn step_with(&mut self, visible_override: Option<&Visibility>, players: &mut dyn FnMut(&mut Game) -> R<()>) {
         self.frame_main += 1;
+        // MBResetBlits after the previous frame's render: temp blits and
+        // font messages are per frame.
+        self.hud.begin_frame();
+        // game_main: SetPlayerVars every frame (StopTime, EnemyShrink,
+        // ActivePlayerMask, the +0x93e panel-written bits, player counts)
+        // after the quit/restart checks, before the mode dispatch.
+        self.set_player_vars();
         let spf = self.globals.spf;
         self.globals.time += spf;
         self.globals.atime += spf;

@@ -97,8 +97,83 @@ pub struct GsMaterialPlugin;
 impl Plugin for GsMaterialPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "gs.wgsl");
+        bevy::asset::embedded_asset!(app, "blit.wgsl");
         app.add_plugins(MaterialPlugin::<GsMaterial>::default());
+        app.add_plugins(bevy::sprite_render::Material2dPlugin::<BlitMaterial>::default());
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
+pub struct BlitParams {
+    /// GS vertex colour / 128 (0x80 = 1.0).
+    pub rgba: Vec4,
+    /// u0, u1, v0, v1 texture fractions (MBBlitSetCrop).
+    pub crop: Vec4,
+}
+
+/// An MB blit sprite (blit.wgsl): MODULATE, alpha test GREATER 1, standard
+/// alpha blending, bilinear — the Tower dump's HUD sprite state.
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct BlitMaterial {
+    #[uniform(0)]
+    pub params: BlitParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub texture: Option<Handle<Image>>,
+}
+
+impl bevy::sprite_render::Material2d for BlitMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://gdl_client/blit.wgsl".into()
+    }
+    fn alpha_mode(&self) -> bevy::sprite_render::AlphaMode2d {
+        bevy::sprite_render::AlphaMode2d::Blend
+    }
+}
+
+/// The HUD view of one package's bitmap records (OBJECTS order, the
+/// MBOX_FindTexture handle space): labels from the matching TEXDEF record,
+/// MBRomTexPtr size/flags, TEXDEF definition size.
+pub fn hud_texture_set(name: &str, objects: &Objects, table: &TextureTable) -> gdl_core::game::hud::TexSet {
+    let records = objects
+        .bitmap_records
+        .iter()
+        .map(|b| {
+            let def = table.bitmaps.iter().find(|t| t.texture_offset == b.texture_offset && t.format == b.format && t.width == b.width && t.height == b.height);
+            gdl_core::game::hud::TexInfo {
+                label: def.map(|d| d.label.clone()).unwrap_or_default(),
+                width: b.width,
+                height: b.height,
+                flags: b.flags,
+                def_width: def.map(|d| d.definition_width).unwrap_or(b.width),
+                def_height: def.map(|d| d.definition_height).unwrap_or(b.height),
+            }
+        })
+        .collect();
+    gdl_core::game::hud::TexSet { name: name.to_string(), records }
+}
+
+/// A HUD texture (bilinear, clamped): raw GS RGBA. Format 146 (4-bit, no
+/// inline palette) takes the shared CLUT CBP 8968 the Tower dump binds for
+/// the 8Hifonts/INITIALS glyph sprites (white, alpha 8 × index).
+pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index: usize) -> Option<Image> {
+    let b = objects.bitmap_records.get(index)?;
+    let rgba = if b.format == 146 {
+        b.decode_lightmap_indices(textures).ok()?.into_iter().flat_map(|i| [255, 255, 255, i * 8]).collect()
+    } else {
+        let def = table.bitmaps.iter().find(|t| t.texture_offset == b.texture_offset && t.format == b.format && t.width == b.width && t.height == b.height)?;
+        let mut rgba = def.decode_base_rgba(textures).ok()?;
+        // 16-bit texel alpha → TEXA TA1 0x80 / TA0 0 (as materials_for).
+        if matches!(b.format, 0 | 16 | 48) {
+            for p in rgba.chunks_exact_mut(4) {
+                p[3] = if p[3] != 0 { 0x80 } else { 0 };
+            }
+        }
+        rgba
+    };
+    let mut sampler = ImageSamplerDescriptor::linear();
+    sampler.set_address_mode(ImageAddressMode::ClampToEdge);
+    Some(raw_image(b.width, b.height, rgba, TextureFormat::Rgba8Unorm, ImageSampler::Descriptor(sampler)))
 }
 
 #[derive(Clone, Copy, Debug, Default, ShaderType)]

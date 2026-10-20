@@ -374,9 +374,11 @@ impl Game {
                 }
             }
             if self.globals.paused != 0 || self.globals.help != 0 {
+                self.write_player_info(-1)?;
                 return Ok(false);
             }
             if self.globals.trig_cam_active == 1 {
+                self.write_player_info(-1)?;
                 // The animation clocks wait: AnimInfo start time += SPF.
                 for k in 0..4 {
                     let v = add(self.players[k].f32_(0xb4), self.globals.spf)?;
@@ -401,6 +403,7 @@ impl Game {
                         self.update_player_world_mat(k, false)?;
                     }
                 }
+                self.write_player_info(-1)?;
                 if self.globals.skip_wave == 0 && self.globals.quit_level == 0 {
                     result = false;
                 }
@@ -630,8 +633,11 @@ impl Game {
             }
             self.players[k].set_u32(0x888, 0);
         }
-        // AudioExitAnim, LockCamReq (old camera), WritePlayerInfo, do_got_it
-        // and DoTimestopSound are presentation.
+        // AudioExitAnim, LockCamReq (old camera), do_got_it and
+        // DoTimestopSound are presentation; WritePlayerInfo drives the panels.
+        if !matches!(self.globals.game_mode, 0x400d | 0x4012 | 0x4016) && self.globals.start_of_stage == 0 {
+            self.write_player_info(-1)?;
+        }
         Ok(result)
     }
 }

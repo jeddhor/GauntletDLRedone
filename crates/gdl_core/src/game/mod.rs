@@ -12,6 +12,7 @@ pub mod critters;
 pub mod doplayers;
 pub mod damage;
 pub mod effects;
+pub mod hud;
 pub mod enemies;
 pub mod enemy_ai;
 pub mod item_runtime;
@@ -249,6 +250,8 @@ pub struct Game {
     pub world_anims: world_anim::WorldAnimSet,
     /// Tower state (TowerInit, welcome, crystal fade, deliveries, Sumner).
     pub tower: tower::TowerState,
+    /// Player panels (MB blits and font messages; hud.rs).
+    pub hud: hud::Hud,
     /// crystal_sidx / garg_sidx sound tables (Sumner's delivery speeches).
     pub speech_tables: std::collections::HashMap<&'static str, Vec<i32>>,
     /// MBTreeGetAlpha of item trees the simulation reads (Tower crystals).

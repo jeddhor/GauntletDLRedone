@@ -39,7 +39,7 @@ replaced by a plausible gameplay rule or generated asset.
 | Missile textures across packages | Thrown trees whose textures live in another package draw magenta (Sorceress WND_THROW1) | Resolve textures through a global MBOX texture namespace |
 | Windows runtime | Not built/tested | Platform builds and real Windows QA at M20 |
 | Loaded MBOX object tables | SetSafeRock/ItemFindMBObjectL1 search every loaded model table; native uses the labels of all runner packages (HYPOTHESIS) | Trace the level's package load list (LoadLevel) and model_count |
-| SetPlayerVars side writes | StopTime, EnemyShrink, ActivePlayerMask, +0x93e and SetNumPlayers ported; NumVirtualPlayers' 0x20f954 override and NumLivePlayers not captured; ProcessItems' 0x220170 → 0x220160 store not ported | Capture 0x20f954 |
+| SetPlayerVars side writes | Called every frame from game_main (and ProcessItems); StopTime, EnemyShrink, ActivePlayerMask, +0x93e and SetNumPlayers ported; NumVirtualPlayers' 0x20f954 override and NumLivePlayers not captured; ProcessItems' 0x220170 → 0x220160 store not ported | Capture 0x20f954 |
 | Good-wizard speech timing | Phases wait 6 s each (CaptionText/AudioStillPlaying not simulated) | Measure the sequence in a reference boss kill |
 | CritterDamagedPlayer anger value | f12 after damage_player is undefined; effect damage used | Read the value in a reference capture |
 | Rotated node composition | Rotators compose rotated nodes as rows × parent rows (unverified) | Transcribe GetWorldMat and compare a rotator level |
@@ -58,4 +58,4 @@ are in [state.md](../state.md); movement evidence is in [movement.md](movement.m
 | Physical pad → joyGetStatus entry | Entries 0–3 are the d-pad (left/right/up/down, observed level bits); remap shows attack = entry 0xd, magic 0xa, turbo 0xc, potion 0xb (by GetPlayerDMotion use) | Press each PS2 button in the reference and read plr_levels 0x2bacc0 |
 | Player node under PlayerRootNode | 150 traced updates consistent with GetWorldMat = local matrix; −0.0 → +0.0 | Trace a moving floor (node parent ≠ root) and a grabbed player |
 | Milestones table | update_player_milestone reads Milestones (0x70 each) / NumMilestones; kind-5 locators are the likely source | Export the Milestones builder and compare with a capture; port get_player_pos respawn |
-
+| Panel inputs | button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, menu_on/optmenu/full-screen inventory flags from the front end, MBOX texture search order across packages | Export ResetModels; front-end port |

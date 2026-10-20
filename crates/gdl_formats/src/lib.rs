@@ -5,6 +5,7 @@ pub mod animation_keys;
 pub mod critter;
 mod binary;
 pub mod elf;
+pub mod fnt;
 pub mod memcard;
 pub mod objects;
 pub mod pdata;

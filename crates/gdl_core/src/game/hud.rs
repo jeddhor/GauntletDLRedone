@@ -1,0 +1,1182 @@
+//! Player panels (the in-game HUD) as MB blits and font messages.
+//!
+//! Ported from reset_players 0x12ed50 / reset_players_sub 0x12e6e0 (blit
+//! creation), setup_player_display 0x134d90, get_display_mode 0x134cc8,
+//! SetPlayerWindows 0x12b868, WritePlayerInfo 0x1368c0,
+//! write_health_and_items 0x135d38, write_gold 0x135878, write_health
+//! 0x1359a0, draw_power_meter 0x135390 / power_bar_state 0x135278 /
+//! hide_power_meter 0x135320, show_crystals 0x136690 and ShowRuneStones
+//! 0x136418, with the MB blit layer (MBNewBlit 0x1c2b00, MBNewTempBlit,
+//! MBBlitSet{Tex,Pos,Size,Crop,Color,Alpha,Hide,Z,Flags}) and the font layer
+//! (DrawText/DrawTextScaled → DrawTextSub 0x1010b8, MBDrawText 0x1c4af8,
+//! MBFontStringWidth 0x1c5460, MBRenderText 0x1c4f18, MBNewFont 0x1c47b8).
+//!
+//! Coordinates are the 512×384 blit screen (MBBlitSetPos scales by pbg +0x40
+//! to the 640×448 frame); colours are GS vertex colours (0x80 = 1.0) packed
+//! as MBBlitSetColor does: (rgb >> 1 & 0x7f7f7f) + 0x010101. The output is
+//! data: [`Hud::draw_list`] gives the frame's blits (glyphs included) in GS
+//! draw order with their z (larger = further; ZTST GEQUAL).
+//!
+//! The tables (box_lx, box_cx, player_rgb, player_inactive_rgb, player_pal,
+//! tb_info, rune_color, key_color, player_desc_uc, potionicon_tab,
+//! font_desc/font_space, CrystalDesc, GargItemDesc, MAX_CRYSTALS,
+//! MAX_GARG_ITEMS) are read from the executable's symbols.
+use super::{Game, R};
+use gdl_formats::{elf::Elf, fnt::Font};
+use std::collections::{BTreeSet, HashMap};
+
+/// Player record offsets read by the panels (players 0x221550, 0x2b00 each).
+mod o {
+    pub const COLOUR: usize = 0x4;
+    pub const CLASS: usize = 0xc;
+    pub const CLASS_ALT: usize = 0x10;
+    pub const STATE: usize = 0xfc;
+    pub const POWER: usize = 0x800;
+    pub const POWER_SHOWN: usize = 0x804;
+    pub const QUEST: usize = 0x80c;
+    pub const SHOW_ITEM: usize = 0x900;
+    pub const SHOW_TIME: usize = 0x904;
+    pub const SHOW_COUNT: usize = 0x908;
+    pub const WRITTEN: usize = 0x93e;
+    pub const DISPLAY_MODE: usize = 0x97c;
+    pub const NAME: usize = 0x99c;
+    pub const KEYS_CLASS: usize = 0xcf0;
+    pub const GARG_ITEMS: usize = 0xd04;
+    pub const CRYSTALS: usize = 0xd0a;
+    pub const HEALTH: usize = 0x1a10;
+    pub const KEYS: usize = 0x1a14;
+    pub const POTIONS: usize = 0x1a18;
+    pub const XP: usize = 0x1a1c;
+    pub const GOLD: usize = 0x1a20;
+    pub const RUNES: usize = 0x1a26;
+    pub const POTION_SLOTS: usize = 0x2a9c;
+    pub const LEVEL: usize = 0x2ac0;
+    pub const SUBSTATE: usize = 0x2ad4;
+    pub const METER_ANIM: usize = 0x2adc;
+    pub const METER_TIME: usize = 0x2ae0;
+}
+
+/// A texture as MBOX_FindTexture returns it: a set (package, in search
+/// order) and its OBJECTS bitmap record; MBBlitSetTex(b, −1, n) adds n.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TexRef {
+    pub set: u16,
+    pub index: u16,
+}
+
+/// A bitmap record's MBRomTexPtr fields: +0x16/+0x18 size, +8 flags (bit 0
+/// doubles blit sizes), and the TEXDEF definition size (+0x20/+0x22 of the
+/// MBOX_FindTexture_Err record) fonts crop against.
+#[derive(Clone, Debug)]
+pub struct TexInfo {
+    pub label: String,
+    pub width: u16,
+    pub height: u16,
+    pub flags: u16,
+    pub def_width: u16,
+    pub def_height: u16,
+}
+
+/// One package's bitmap records (OBJECTS order).
+#[derive(Clone, Debug)]
+pub struct TexSet {
+    pub name: String,
+    pub records: Vec<TexInfo>,
+}
+
+/// An MB blit (word 0 flags: 1 hidden, 0x10 per-corner colours, 0x40
+/// absolute units, 0x400/0x800 width/height from the texture, 0x4000 corner
+/// highlight, 0x1000000 no size doubling).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Blit {
+    pub flags: u32,
+    pub tex: Option<TexRef>,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// u0, u1, v0, v1 as texture fractions (MBBlitSetCrop).
+    pub crop: [f32; 4],
+    /// GS RGBA (word 7; 0x80 = 1.0).
+    pub rgba: [u8; 4],
+    /// MBBlitSetZ value (GS z = base − 32·z).
+    pub z: f32,
+}
+
+impl Blit {
+    fn init() -> Self {
+        // MBInitBlit: flags 0, no texture, colours 0x80808080.
+        Self { flags: 0, tex: None, x: 0.0, y: 0.0, w: 0.0, h: 0.0, crop: [0.0, 1.0, 0.0, 1.0], rgba: [0x80; 4], z: 0.0 }
+    }
+    pub fn hidden(&self) -> bool {
+        self.flags & 1 != 0
+    }
+}
+
+/// A font message (MBDrawText's 0x2c-byte record).
+#[derive(Clone, Debug)]
+pub struct Message {
+    pub x: i32,
+    pub y: i32,
+    pub font: usize,
+    pub rgba: [u8; 4],
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub space_x: f32,
+    pub z: f32,
+    pub flags: u32,
+    pub text: Vec<u8>,
+}
+
+/// A loaded font (font_init_desc + MBNewFont).
+#[derive(Clone, Debug)]
+pub struct HudFont {
+    pub font: Font,
+    pub tex: Option<TexRef>,
+    pub space: i32,
+    /// Glyphs per texture page (MBNewFont's divisor: 0xd2 for fonts 10/11,
+    /// 100 for 12, else 0x80).
+    pub per_page: i32,
+}
+
+#[derive(Clone, Debug)]
+pub struct HudTables {
+    pub box_lx: [i32; 4],
+    pub box_cx: [i32; 4],
+    pub player_rgb: Vec<u32>,
+    pub player_inactive_rgb: Vec<u32>,
+    pub player_pal: Vec<u32>,
+    /// tb_info: (texture name, x, y, z) of the seven turbo blits.
+    pub tb_info: Vec<(String, i32, i32, i32)>,
+    pub rune_color: Vec<String>,
+    pub key_color: Vec<String>,
+    pub player_desc_uc: Vec<String>,
+    pub potion_icons: Vec<String>,
+    pub font_desc: Vec<String>,
+    pub font_space: Vec<i32>,
+    pub crystal_desc: Vec<String>,
+    pub garg_item_desc: Vec<String>,
+    pub max_crystals: Vec<i32>,
+    pub max_garg_items: Vec<i32>,
+}
+
+fn cstr(b: &[u8]) -> String {
+    b.iter().take_while(|c| **c != 0).map(|c| char::from(*c)).collect()
+}
+
+impl HudTables {
+    pub fn from_elf(elf: &Elf) -> Result<Self, Box<dyn std::error::Error>> {
+        let words = |n: &str| -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+            Ok(elf.object(n)?.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect())
+        };
+        let halves = |n: &str| -> Result<[i32; 4], Box<dyn std::error::Error>> {
+            let b = elf.object(n)?;
+            let v: Vec<i32> = b.chunks_exact(2).map(|c| i32::from(u16::from_le_bytes([c[0], c[1]]))).collect();
+            v.try_into().map_err(|_| format!("{n}: 4 entries expected").into())
+        };
+        let strings = |n: &str, stride: usize| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+            Ok(elf.object(n)?.chunks_exact(stride).map(cstr).collect())
+        };
+        let pointed = |n: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+            words(n)?.into_iter().map(|p| Ok(cstr(elf.read(p, 32)?))).collect()
+        };
+        let tb = elf.object("tb_info")?;
+        let mut tb_info = Vec::new();
+        for c in tb.chunks_exact(0x14) {
+            let w = |k: usize| i32::from_le_bytes(c[k..k + 4].try_into().unwrap());
+            tb_info.push((cstr(elf.read(w(4) as u32, 32)?), w(8), w(12), w(16)));
+        }
+        let ints = |n: &str| -> Result<Vec<i32>, Box<dyn std::error::Error>> { Ok(words(n)?.into_iter().map(|v| v as i32).collect()) };
+        Ok(Self {
+            box_lx: halves("box_lx")?,
+            box_cx: halves("box_cx")?,
+            player_rgb: words("player_rgb")?,
+            player_inactive_rgb: words("player_inactive_rgb")?,
+            player_pal: words("player_pal")?,
+            tb_info,
+            rune_color: strings("rune_color", 4)?,
+            key_color: strings("key_color", 4)?,
+            player_desc_uc: strings("player_desc_uc", 4)?,
+            potion_icons: pointed("potionicon_tab")?,
+            font_desc: pointed("font_desc")?,
+            font_space: ints("font_space")?,
+            crystal_desc: strings("CrystalDesc", 8)?,
+            garg_item_desc: strings("GargItemDesc", 0xc)?,
+            max_crystals: ints("MAX_CRYSTALS")?,
+            max_garg_items: ints("MAX_GARG_ITEMS")?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct PlayerBlits {
+    bkg: [usize; 6],
+    rune: [usize; 12],
+    key: [usize; 8],
+    ability: [usize; 4],
+    turbo: [usize; 7],
+    level: usize,
+    rune13: usize,
+    quest: usize,
+}
+
+/// String literals the panel code names by address.
+const S3: &str = "S3"; // 0x2a6c50
+const S4: &str = "S4"; // 0x2a7340
+const S4_FRAME: &str = "S4_FRAME"; // 0x2a7348
+const COIN: &str = "coin"; // 0x2a7358
+const HEART: &str = "heart"; // 0x2a7360
+const QUEST_ICON: &str = "QUEST_ICON"; // 0x2a7390
+const BTMBK_LEVL: &str = "BTMBK_LEVL"; // 0x2a70a8
+const RUNE13: &str = "RUNE13"; // 0x2a70b8
+const KEY_ICON: &str = "KEY_ICON"; // 0x2a70c0
+const IT: &str = "IT"; // 0x2a74b0
+const WAIT_IN_TOWER: &str = "Wait In Tower"; // 0x2a7410
+const QUIT_GAME: &str = "Quit Game"; // 0x2a7420
+const IN_TOWER: &str = "IN TOWER"; // 0x2a7430
+/// MBSetFontZ(63990.0) and the panel blits' MBBlitSetZ(64000.0).
+const FONT_Z: f32 = 63990.0;
+const PANEL_Z: f32 = 64000.0;
+
+#[derive(Clone, Debug, Default)]
+pub struct Hud {
+    pub tables: Option<HudTables>,
+    /// Texture sets in MBOX_FindTexture search order.
+    pub textures: Vec<TexSet>,
+    index: HashMap<String, TexRef>,
+    pub fonts: Vec<Option<HudFont>>,
+    blits: Vec<Option<Blit>>,
+    temp: Vec<Blit>,
+    pub messages: Vec<Message>,
+    players: Vec<PlayerBlits>,
+    it_blit: Option<usize>,
+    tb_tex: Vec<Option<TexRef>>,
+    key_tex: Option<TexRef>,
+    potion_tex: Vec<Option<TexRef>>,
+    font_z: f32,
+    /// PlayerWindowsHidden, menu_on, 0x20f968 (debug readout), optmenu_active,
+    /// full_screen_inventory_up and NumLivePlayers (front-end state).
+    pub windows_hidden: i32,
+    pub menu_on: i32,
+    pub debug_readout: i32,
+    pub optmenu_active: i32,
+    pub full_screen_inventory: i32,
+    pub num_live_players: i32,
+    /// button_x_tex / button_tri_tex (set by ResetModels; not ported: None).
+    pub button_x: Option<TexRef>,
+    pub button_tri: Option<TexRef>,
+    /// Texture names MBOX_FindTexture did not resolve.
+    pub missing: BTreeSet<String>,
+}
+
+impl Hud {
+    pub fn new(tables: HudTables) -> Self {
+        Self { tables: Some(tables), font_z: FONT_Z, ..Default::default() }
+    }
+
+    /// The client's texture sets (search order) and fonts (font_desc order).
+    pub fn set_resources(&mut self, textures: Vec<TexSet>, fonts: Vec<Option<Font>>) {
+        self.index.clear();
+        for (s, set) in textures.iter().enumerate() {
+            for (i, r) in set.records.iter().enumerate() {
+                self.index.entry(r.label.to_uppercase()).or_insert(TexRef { set: s as u16, index: i as u16 });
+            }
+        }
+        self.textures = textures;
+        let names = self.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default();
+        let space = self.tables.as_ref().map(|t| t.font_space.clone()).unwrap_or_default();
+        self.fonts = fonts
+            .into_iter()
+            .enumerate()
+            .map(|(k, f)| {
+                f.map(|font| HudFont {
+                    font,
+                    tex: names.get(k).and_then(|n| self.index.get(&n.to_uppercase()).copied()),
+                    space: space.get(k).copied().unwrap_or(0),
+                    per_page: match k {
+                        10 | 11 => 0xd2,
+                        12 => 100,
+                        _ => 0x80,
+                    },
+                })
+            })
+            .collect();
+    }
+
+    pub fn tex_info(&self, t: TexRef) -> Option<&TexInfo> {
+        self.textures.get(t.set as usize)?.records.get(t.index as usize)
+    }
+
+    /// MBOX_FindTexture by name (labels compare case-insensitively).
+    pub fn find(&mut self, name: &str) -> Option<TexRef> {
+        let t = self.index.get(&name.to_uppercase()).copied();
+        if t.is_none() {
+            self.missing.insert(name.to_string());
+        }
+        t
+    }
+
+    fn offset(&self, t: TexRef, n: i32) -> Option<TexRef> {
+        let i = i32::from(t.index) + n;
+        let set = self.textures.get(t.set as usize)?;
+        (0 <= i && (i as usize) < set.records.len()).then_some(TexRef { set: t.set, index: i as u16 })
+    }
+
+    fn tex_size(&self, b: &Blit) -> (f32, f32) {
+        match b.tex.and_then(|t| self.tex_info(t)) {
+            Some(i) => {
+                let k = if i.flags & 1 != 0 && b.flags & 0x100_0000 == 0 { 2.0 } else { 1.0 };
+                (f32::from(i.width) * k, f32::from(i.height) * k)
+            }
+            None => (0.0, 0.0),
+        }
+    }
+
+    fn get(&mut self, id: usize) -> Option<&mut Blit> {
+        self.blits.get_mut(id).and_then(|b| b.as_mut())
+    }
+
+    /// MBBlitSetSize: a negative size takes the texture's (and flags it so a
+    /// texture change resizes); 0 leaves it.
+    fn size_blit(&self, b: &mut Blit, w: i32, h: i32) {
+        let (tw, th) = self.tex_size(b);
+        let mut from = 0;
+        let (w, h) = (
+            if w < 0 {
+                from |= 0x400;
+                tw
+            } else {
+                w as f32
+            },
+            if h < 0 {
+                from |= 0x800;
+                th
+            } else {
+                h as f32
+            },
+        );
+        if w != 0.0 || from & 0x400 != 0 {
+            b.w = w;
+            b.flags &= !0x400;
+        }
+        if h != 0.0 || from & 0x800 != 0 {
+            b.h = h;
+            b.flags &= !0x800;
+        }
+        b.flags |= from;
+    }
+
+    fn make(&self, tex: Option<TexRef>, x: i32, y: i32, w: i32, h: i32) -> Blit {
+        let mut b = Blit::init();
+        b.tex = tex;
+        b.x = x as f32;
+        b.y = y as f32;
+        // MBBlitSetPos(1.0, …): z 1.0.
+        b.z = 1.0;
+        self.size_blit(&mut b, w, h);
+        b
+    }
+
+    /// MBNewBlit(0, tex, x, y, w, h) on the default node (appended).
+    pub fn new_blit(&mut self, tex: Option<TexRef>, x: i32, y: i32, w: i32, h: i32) -> usize {
+        let b = self.make(tex, x, y, w, h);
+        self.blits.push(Some(b));
+        self.blits.len() - 1
+    }
+
+    /// MBNewTempBlit: drawn after the node's blits this frame only.
+    pub fn temp_blit(&mut self, tex: Option<TexRef>, x: i32, y: i32, w: i32, h: i32) -> usize {
+        let mut b = self.make(tex, x, y, w, h);
+        b.flags = 0;
+        self.temp.push(b);
+        self.temp.len() - 1
+    }
+
+    fn remove(&mut self, id: usize) {
+        if let Some(b) = self.blits.get_mut(id) {
+            *b = None;
+        }
+    }
+
+    /// MBBlitSetTex(b, tex, n): tex None keeps the current texture; sizes
+    /// flagged as texture-derived follow the new texture (crop fractions are
+    /// kept: the original rescales its texel crop by the size ratio).
+    pub fn set_tex(&mut self, id: usize, tex: Option<TexRef>, n: i32) {
+        let Some(cur) = self.blits.get(id).and_then(|b| b.as_ref()).map(|b| b.tex) else { return };
+        let base = tex.or(cur);
+        let new = base.and_then(|t| self.offset(t, n));
+        let Some(mut b) = self.blits[id].clone() else { return };
+        if new != b.tex {
+            b.tex = new;
+            let (w, h) = (if b.flags & 0x400 != 0 { -1 } else { 0 }, if b.flags & 0x800 != 0 { -1 } else { 0 });
+            if w < 0 || h < 0 {
+                self.size_blit(&mut b, w, h);
+            }
+        }
+        self.blits[id] = Some(b);
+    }
+
+    pub fn set_hide(&mut self, id: usize, hide: bool) {
+        if let Some(b) = self.get(id) {
+            b.flags = if hide { b.flags | 1 } else { b.flags & !1 };
+        }
+    }
+
+    /// MBBlitSetPos(z, b, x, y): z only when ≥ 0.
+    pub fn set_pos(&mut self, id: usize, z: f32, x: i32, y: i32) {
+        if let Some(b) = self.get(id) {
+            b.x = x as f32;
+            b.y = y as f32;
+            if 0.0 <= z {
+                b.z = z;
+            }
+        }
+    }
+
+    pub fn set_size(&mut self, id: usize, w: i32, h: i32) {
+        if let Some(mut b) = self.blits.get(id).cloned().flatten() {
+            self.size_blit(&mut b, w, h);
+            self.blits[id] = Some(b);
+        }
+    }
+
+    pub fn set_z(&mut self, id: usize, z: f32) {
+        if let Some(b) = self.get(id) {
+            b.z = z;
+        }
+    }
+
+    pub fn set_colour(&mut self, id: usize, c: u32) {
+        if let Some(b) = self.get(id) {
+            b.flags &= !0x10;
+            b.rgba = pack_rgb(c, b.rgba[3]);
+        }
+    }
+
+    /// MBBlitSetAlpha: 0 opaque (0x80) … 0xff nearly transparent (1).
+    pub fn set_alpha(&mut self, id: usize, a: u32) {
+        if let Some(b) = self.get(id) {
+            b.flags &= !0x10;
+            b.rgba[3] = (0x80 - (a >> 1)) as u8;
+        }
+    }
+
+    pub fn set_flags(&mut self, id: usize, and: u32, or: u32) {
+        if let Some(b) = self.get(id) {
+            b.flags = (b.flags & and) | or;
+        }
+    }
+
+    /// MBFontStringWidth with the space scale `space`.
+    pub fn string_width(&self, font: usize, space: f32, text: &[u8]) -> i32 {
+        let Some(Some(f)) = self.fonts.get(font) else { return 0 };
+        text.iter()
+            .map(|&c| match glyph(f, c) {
+                Some(g) if g.width != 0 => (g.width as f32 * space) as i32,
+                _ if c == 0x20 => (f.space as f32 * space) as i32,
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// DrawTextSub(scale, space, x, y, font, colour, text) (no shadow flag
+    /// 0x100 or vertical-centre bit 0x1000 here: the panels use neither).
+    pub fn draw_text(&mut self, scale: f32, x: i32, y: i32, font: u32, colour: u32, text: &str) {
+        let space = scale;
+        let font = (font & 0xff) as usize;
+        let text = text.as_bytes().to_vec();
+        let mut x = x;
+        if x < 0 {
+            x = -(self.string_width(font, space, &text) >> 1) - x;
+        }
+        if 0x17f < y as u32 {
+            return;
+        }
+        let rgba = pack_rgb(colour, 0x80);
+        self.messages.push(Message { x, y, font, rgba, scale_x: scale, scale_y: scale, space_x: space, z: self.font_z, flags: 0, text });
+    }
+
+    /// The frame's blits in draw order: node blits, temp blits, then the font
+    /// messages' glyphs (MBDrawBlits then MBRenderText in pbRenderNode).
+    pub fn draw_list(&self) -> Vec<Blit> {
+        let mut out: Vec<Blit> = self.blits.iter().flatten().filter(|b| !b.hidden()).cloned().collect();
+        out.extend(self.temp.iter().filter(|b| !b.hidden()).cloned());
+        for m in &self.messages {
+            let Some(Some(f)) = self.fonts.get(m.font) else { continue };
+            let Some(tex) = f.tex else { continue };
+            let Some(info) = self.tex_info(tex) else { continue };
+            let (dw, dh) = (f32::from(info.def_width.max(1)), f32::from(info.def_height.max(1)));
+            let mut x = m.x;
+            for &c in &m.text {
+                let Some((k, g)) = f.font.glyphs.iter().enumerate().find(|(_, g)| g.code == i32::from(c)) else {
+                    if c == 0x20 {
+                        x += (f.space as f32 * m.space_x) as i32;
+                    }
+                    continue;
+                };
+                if g.width == 0 {
+                    if c == 0x20 {
+                        x += (f.space as f32 * m.space_x) as i32;
+                    }
+                    continue;
+                }
+                let Some(t) = self.offset(tex, k as i32 / f.per_page) else { continue };
+                out.push(Blit {
+                    flags: m.flags,
+                    tex: Some(t),
+                    x: x as f32,
+                    y: m.y as f32,
+                    w: g.width as f32 * m.scale_x,
+                    h: f.font.height as f32 * m.scale_y,
+                    crop: [g.x as f32 / dw, (g.x + g.width) as f32 / dw, g.y as f32 / dh, (g.y + f.font.height) as f32 / dh],
+                    rgba: m.rgba,
+                    z: m.z,
+                });
+                x += (g.width as f32 * m.space_x) as i32;
+            }
+        }
+        out
+    }
+
+    /// MBResetBlits at the frame boundary: temp blits and messages go.
+    pub fn begin_frame(&mut self) {
+        self.temp.clear();
+        self.messages.clear();
+    }
+}
+
+fn glyph(f: &HudFont, c: u8) -> Option<gdl_formats::fnt::Glyph> {
+    f.font.glyphs.iter().find(|g| g.code == i32::from(c)).copied()
+}
+
+/// MBBlitSetColor / MBSetFontColor packing of 0xRRGGBB.
+fn pack_rgb(c: u32, a: u8) -> [u8; 4] {
+    let ch = |s: u32| (((c >> s) & 0xff) >> 1) as u8 + 1;
+    [ch(16), ch(8), ch(0), a]
+}
+
+/// power_bar_state 0x135278: (state, fraction) of the shown power +0x804.
+fn power_bar_state(shown: f32) -> (i32, f32) {
+    let f = shown * 0.01;
+    if f < 0.4 {
+        (1, f / 0.4)
+    } else if 0.99 <= f {
+        (3, 1.0)
+    } else {
+        (2, (f - 0.4) / 0.6)
+    }
+}
+
+impl Game {
+    /// reset_players' panel part: reset_players_sub for the four boxes,
+    /// PlayerWindowsHidden = 0, key/potion icon textures (It and the player
+    /// record fields it resets belong to the session start state).
+    pub fn hud_reset_players(&mut self) {
+        let Some(t) = self.hud.tables.clone() else { return };
+        self.hud.it_blit = None;
+        self.hud.players.clear();
+        self.hud.blits.clear();
+        for p in 0..4 {
+            self.reset_players_sub(p, &t);
+        }
+        self.hud.windows_hidden = 0;
+        self.hud.key_tex = self.hud.find(KEY_ICON);
+        self.hud.potion_tex = t.potion_icons.iter().map(|n| self.hud.find(n)).collect();
+    }
+
+    fn reset_players_sub(&mut self, p: usize, t: &HudTables) {
+        let h = &mut self.hud;
+        let lx = t.box_lx[p];
+        let mut pb = PlayerBlits::default();
+        for (k, (x, y, w, hh)) in [(lx, 0x130, 0x80, -1), (lx, 0x140, 0x80, -1), (lx, 0x140, 0x80, -1), (lx, 0x158, 0x94, -1), (lx + 8, 0x148, 0x14, 0x14), (lx, 0x148, 0x14, 0x14)].into_iter().enumerate() {
+            pb.bkg[k] = h.new_blit(None, x, y, w, hh);
+        }
+        for &b in &pb.bkg {
+            h.set_hide(b, true);
+            h.set_z(b, PANEL_Z);
+        }
+        for i in 0..12 {
+            let colour = t.rune_color.get(i / 3).cloned().unwrap_or_default();
+            let tex = h.find(&format!("SM_RUNE_{colour}_{:02}", i % 3 + 1));
+            let b = h.new_blit(tex, lx + i as i32 * 8 + 0xf + i as i32 / 3, 0x132, -1, -1);
+            pb.rune[i] = b;
+            h.set_hide(b, true);
+            h.set_z(b, PANEL_Z);
+        }
+        for k in 0..8 {
+            let colour = t.key_color.get(k).cloned().unwrap_or_default();
+            let tex = h.find(&format!("SM_KEY_{colour}"));
+            let b = h.new_blit(tex, lx + k as i32 * 0xc + 0xc, 300, -1, -1);
+            pb.key[k] = b;
+            h.set_hide(b, true);
+            h.set_z(b, PANEL_Z);
+        }
+        for k in 0..4 {
+            let b = h.new_blit(None, lx + 0x1a, k as i32 * 3 + 0x142, -1, -1);
+            pb.ability[k] = b;
+            h.set_hide(b, true);
+            h.set_z(b, PANEL_Z);
+        }
+        h.tb_tex.resize(t.tb_info.len().max(h.tb_tex.len()), None);
+        for (k, (name, x, y, z)) in t.tb_info.iter().enumerate().take(7) {
+            let tex = h.find(name);
+            let b = h.new_blit(tex, p as i32 * 0x80 + x, *y, -1, -1);
+            pb.turbo[k] = b;
+            h.tb_tex[k] = tex;
+            h.set_hide(b, true);
+            h.set_z(b, *z as f32);
+        }
+        self.players[p].set_i32(o::METER_ANIM, 0);
+        let h = &mut self.hud;
+        let cx = t.box_cx[p];
+        pb.level = h.new_blit(None, cx - 0xe, -0x143, -1, -1);
+        let tex = h.find(BTMBK_LEVL);
+        h.set_tex(pb.level, tex, 0);
+        h.set_hide(pb.level, true);
+        h.set_z(pb.level, PANEL_Z);
+        // low_res (MBBlitSetFlags 0x100) is not modelled.
+        pb.rune13 = h.new_blit(None, lx + 8, 0x154, 0x10, 0x10);
+        let tex = h.find(RUNE13);
+        h.set_tex(pb.rune13, tex, 0);
+        h.set_hide(pb.rune13, true);
+        h.set_z(pb.rune13, PANEL_Z);
+        pb.quest = h.new_blit(None, lx + 0x68, 0x152, 0x10, 0x10);
+        h.set_hide(pb.quest, true);
+        h.set_z(pb.quest, PANEL_Z);
+        h.players.push(pb);
+    }
+
+    /// get_display_mode 0x134cc8.
+    pub fn hud_display_mode(&self, p: usize) -> i32 {
+        let r = &self.players[p];
+        match r.i32_(o::STATE) {
+            1 | 4 | 5 => {
+                if self.globals.game_mode == 0x4012 {
+                    5
+                } else {
+                    1
+                }
+            }
+            2 => match r.i32_(o::SUBSTATE) {
+                1 | 2 | 10..=14 => 1,
+                3 => 3,
+                4 => 6,
+                _ => 0,
+            },
+            3 => 2,
+            0xb => 10,
+            _ => 0,
+        }
+    }
+
+    /// setup_player_display 0x134d90.
+    pub fn setup_player_display(&mut self, p: usize) {
+        let Some(t) = self.hud.tables.clone() else { return };
+        if self.hud.players.len() <= p {
+            return;
+        }
+        let pb = self.hud.players[p].clone();
+        let lx = t.box_lx[p];
+        let mode = self.hud_display_mode(p);
+        let colour = self.players[p].u32_(o::COLOUR) as usize;
+        // del_player_blits is not exported; the panel blits are re-set below.
+        let mut class = self.players[p].u32_(o::CLASS) as usize;
+        self.players[p].set_i32(o::DISPLAY_MODE, mode);
+        let state = self.players[p].i32_(o::STATE);
+        let h = &mut self.hud;
+        let tex = h.find(S3);
+        h.set_tex(pb.bkg[0], tex, 0);
+        h.set_hide(pb.bkg[0], false);
+        let tex = h.find(S4);
+        h.set_tex(pb.bkg[1], tex, 0);
+        h.set_hide(pb.bkg[1], false);
+        let tint = if state == 0 { &t.player_inactive_rgb } else { &t.player_rgb };
+        h.set_colour(pb.bkg[1], tint.get(colour).copied().unwrap_or(0));
+        let tex = h.find(S4_FRAME);
+        h.set_tex(pb.bkg[2], tex, 0);
+        h.set_hide(pb.bkg[2], false);
+        let tex = h.find(COIN);
+        h.set_tex(pb.bkg[4], tex, 0);
+        h.set_hide(pb.bkg[4], false);
+        h.set_pos(pb.bkg[4], 63990.0, lx + 6, 0x165);
+        let tex = h.find(HEART);
+        h.set_tex(pb.bkg[5], tex, 0);
+        h.set_hide(pb.bkg[5], false);
+        h.set_pos(pb.bkg[5], 63990.0, lx + 0x3d, 0x165);
+        match mode {
+            0 | 3 => {
+                h.set_hide(pb.bkg[4], true);
+                h.set_hide(pb.bkg[5], true);
+            }
+            1 | 2 | 5 | 6 => {
+                if mode == 6 {
+                    class = self.players[p].u32_(o::CLASS_ALT) as usize;
+                }
+                h.set_hide(pb.bkg[4], false);
+                h.set_hide(pb.bkg[5], false);
+                let tex = h.find("BK_RUNE_STONE_02");
+                h.set_tex(pb.bkg[0], tex, 0);
+                let tex = h.find(&format!("S4_{}", t.player_desc_uc.get(class).cloned().unwrap_or_default()));
+                h.set_tex(pb.bkg[1], tex, 0);
+                if self.globals.game_mode & 0x8000 == 0 {
+                    let runes = self.players[p].u16_(o::RUNES);
+                    for (i, &b) in pb.rune.iter().enumerate() {
+                        h.set_hide(b, (runes >> i) & 1 == 0);
+                    }
+                }
+                if (1 << p) & self.globals.active_players != 0 {
+                    h.set_hide(pb.level, false);
+                }
+                let tex = h.find(QUEST_ICON);
+                h.set_tex(pb.quest, tex, 0);
+            }
+            _ => {}
+        }
+        if matches!(self.globals.game_mode, 0x400b | 0x4012) {
+            h.set_flags(pb.bkg[0], u32::MAX, 0x4010);
+            h.set_flags(pb.bkg[2], u32::MAX, 0x4010);
+        } else {
+            h.set_flags(pb.bkg[0], !0x4010, 0);
+            h.set_flags(pb.bkg[2], !0x4010, 0);
+        }
+    }
+
+    /// SetPlayerWindows 0x12b868: alpha 0xff (hidden) or 0 on every panel blit.
+    pub fn set_player_windows(&mut self, hide: bool) {
+        let a = if hide { 0xff } else { 0 };
+        for pb in self.hud.players.clone() {
+            for b in pb.bkg.iter().chain(&pb.rune).chain(&pb.key).chain(&pb.ability).chain([&pb.level, &pb.rune13, &pb.quest]).chain(&pb.turbo) {
+                self.hud.set_alpha(*b, a);
+            }
+        }
+        self.hud.windows_hidden = i32::from(hide);
+    }
+
+    /// WritePlayerInfo 0x1368c0 (`player` < 0: every player, then the rune
+    /// stones and the "It" marker).
+    pub fn write_player_info(&mut self, player: i32) -> R<()> {
+        if self.hud.tables.is_none() || self.hud.players.len() < 4 {
+            return Ok(());
+        }
+        let (from, to) = if player < 0 {
+            (0, 4)
+        } else {
+            if (1 << player) & self.globals.active_players == 0 {
+                return Ok(());
+            }
+            (player as usize, player as usize + 1)
+        };
+        for p in from..to {
+            if (1 << p) & self.globals.active_players == 0 || self.players[p].u16_(o::WRITTEN) & 1 != 0 {
+                continue;
+            }
+            self.players[p].or_u16(o::WRITTEN, 1);
+            match self.players[p].i32_(o::DISPLAY_MODE) {
+                0 | 3 => {}
+                6 | 10 => self.write_health_and_items(p)?,
+                _ => {
+                    self.write_health_and_items(p)?;
+                    self.show_crystals(p);
+                }
+            }
+        }
+        if player < 0 {
+            self.show_rune_stones();
+            if let Some(b) = self.hud.it_blit.take() {
+                self.hud.remove(b);
+            }
+            let it = self.globals.it;
+            if 0 <= it && (1 << it) & self.globals.active_players != 0 {
+                let t = self.hud.tables.as_ref().map(|t| t.box_lx[it as usize & 3]).unwrap_or(0);
+                let tex = self.hud.find(IT);
+                let b = self.hud.new_blit(tex, t + 0x22, -0x15d, -1, -1);
+                self.hud.set_size(b, 0x20, 0x20);
+                self.hud.set_z(b, PANEL_Z);
+                self.hud.it_blit = Some(b);
+            }
+        }
+        Ok(())
+    }
+
+    /// write_health_and_items 0x135d38.
+    fn write_health_and_items(&mut self, p: usize) -> R<()> {
+        let t = self.hud.tables.clone().expect("tables");
+        let pb = self.hud.players[p].clone();
+        let pal = t.player_pal.get(self.players[p].u32_(o::COLOUR) as usize).copied().unwrap_or(0xffffff);
+        let saved_z = std::mem::replace(&mut self.hud.font_z, FONT_Z);
+        let gm = self.globals.game_mode;
+        let mut drawn = self.hud.menu_on != 0 || self.hud.debug_readout != 0;
+        let mut money = true;
+        let lx = t.box_lx[p];
+        let cx = t.box_cx[p];
+        let state = self.players[p].i32_(o::STATE);
+        if gm == 0x4010 && 0 < self.hud.num_live_players && state == 0xb && self.players[p].i32_(o::SUBSTATE) == 1 {
+            drawn = true;
+            if let Some(x) = self.hud.button_x {
+                self.hud.temp_blit(Some(x), lx + 6, 0x14c, 0xe, 0xe);
+            }
+            if let Some(tri) = self.hud.button_tri {
+                self.hud.temp_blit(Some(tri), lx + 6, 0x160, 0xe, 0xe);
+            }
+            let s = f32::from_bits(0x3f99_999a);
+            self.hud.draw_text(s, lx + 0x14, 0x150, 1, 0xffffff, WAIT_IN_TOWER);
+            self.hud.draw_text(s, lx + 0x14, 0x164, 1, 0xffffff, QUIT_GAME);
+            money = false;
+        }
+        let state = self.players[p].i32_(o::STATE);
+        if (state == 5 || state == 0xb) && !matches!(gm, 0x400d | 0x4013 | 0x4017) && !drawn {
+            drawn = true;
+            self.setup_player_display(p);
+            if self.players[p].i32_(o::STATE) == 0xb {
+                self.hud.draw_text(f32::from_bits(0x3f99_999a), -cx, 0x154, 1, pal, IN_TOWER);
+            } else {
+                drawn = false;
+            }
+        }
+        let show = money && self.hud.windows_hidden == 0;
+        self.write_gold(p, show);
+        self.write_health(p, show);
+        let mode = self.players[p].i32_(o::DISPLAY_MODE);
+        let name = |g: &Game| -> String {
+            let b = &g.players[p].0[o::NAME..o::NAME + 0x20];
+            cstr(b)
+        };
+        let small = f32::from_bits(0x3f2a_c083);
+        match mode {
+            1 | 2 | 5 => {
+                if matches!(mode, 1 | 2) && self.hud.debug_readout != 0 && self.players[p].i32_(o::STATE) == 1 {
+                    drawn = true;
+                    // debug_player_pos / "XP: %d" debug readouts (0x20f968).
+                    if self.hud.debug_readout != 1 {
+                        let xp = self.players[p].i32_(o::XP);
+                        self.hud.draw_text(1.0, lx + 8, 0x154, 1, 0xffffff, &format!("XP: {xp}"));
+                    }
+                }
+                if !drawn {
+                    let n = name(self);
+                    self.hud.draw_text(small, -cx, 0x153, 7, pal, &n);
+                }
+                if self.hud.menu_on != 0 || !drawn {
+                    let lv = self.players[p].i32_(o::LEVEL);
+                    self.hud.draw_text(1.0, -cx, 0x146, 1, 0xffffff, &format!("LV {lv}"));
+                }
+            }
+            6 if !drawn => {
+                let n = name(self);
+                self.hud.draw_text(small, -cx, 0x153, 7, pal, &n);
+            }
+            _ => {}
+        }
+        // del_item_blits is empty in this build.
+        let health = self.players[p].f32_(o::HEALTH);
+        if self.players[p].i32_(o::STATE) != 2 && self.players[p].i32_(o::DISPLAY_MODE) != 0 && self.hud.windows_hidden == 0 {
+            let keys = self.players[p].i32_(o::KEYS);
+            if 0 < keys {
+                let b = self.hud.temp_blit(self.hud.key_tex, lx + 8, 0x143, -1, -1);
+                self.hud.temp[b].z = PANEL_Z;
+                self.hud.draw_text(f32::from_bits(0x3f4c_cccd), lx + 0x1a, 0x147, 4, pal, &keys.to_string());
+            }
+            let potions = self.players[p].i32_(o::POTIONS);
+            if 0 < potions {
+                let kind = self.players[p].i32_(o::POTION_SLOTS + 4 * (potions as usize - 1).min(0x1f));
+                let tex = usize::try_from(kind).ok().and_then(|k| self.hud.potion_tex.get(k).copied().flatten());
+                let b = self.hud.temp_blit(tex, lx + 0x66, 0x143, -1, -1);
+                self.hud.temp[b].z = PANEL_Z;
+                self.hud.draw_text(f32::from_bits(0x3f4c_cccd), lx + 0x5c, 0x147, 4, pal, &potions.to_string());
+            }
+        }
+        if health <= 0.0 || self.hud.full_screen_inventory != 0 {
+            for b in pb.turbo {
+                self.hud.set_hide(b, true);
+            }
+        } else {
+            let quest = gm == 0x4010 && self.players[p].i32_(o::QUEST) != 0 && self.globals.cur_world != 0xd;
+            self.hud.set_hide(pb.quest, !quest);
+            let rune13 = gm.wrapping_sub(0x400f) < 2 && self.players[p].u16_(o::RUNES) & 0x1000 != 0;
+            self.hud.set_hide(pb.rune13, !rune13);
+            if gm == 0x4010 {
+                self.draw_power_meter(p);
+            }
+        }
+        self.hud.font_z = saved_z;
+        Ok(())
+    }
+
+    /// write_gold 0x135878 (gold capped at 99999).
+    fn write_gold(&mut self, p: usize, show: bool) {
+        let t = self.hud.tables.clone().expect("tables");
+        let b = self.hud.players[p].bkg[4];
+        if self.players[p].i32_(o::GOLD) > 99999 {
+            self.players[p].set_i32(o::GOLD, 99999);
+        }
+        if !show {
+            self.hud.set_hide(b, true);
+            return;
+        }
+        let s = self.players[p].i32_(o::GOLD).to_string();
+        let w = self.hud.string_width(4, 1.0, s.as_bytes());
+        let pal = t.player_pal.get(self.players[p].u32_(o::COLOUR) as usize).copied().unwrap_or(0xffffff);
+        self.hud.draw_text(1.0, t.box_lx[p] - (w - 0x3c), 0x167, 4, pal, &s);
+        self.hud.set_hide(b, false);
+    }
+
+    /// write_health 0x1359a0 (health capped at 9999.0, drawn truncated).
+    fn write_health(&mut self, p: usize, show: bool) {
+        let t = self.hud.tables.clone().expect("tables");
+        let b = self.hud.players[p].bkg[5];
+        if 9999.0 < self.players[p].f32_(o::HEALTH) {
+            self.players[p].set_f32(o::HEALTH, 9999.0);
+        }
+        if !show {
+            self.hud.set_hide(b, true);
+            return;
+        }
+        let s = (self.players[p].f32_(o::HEALTH) as i32).to_string();
+        let w = self.hud.string_width(4, 1.0, s.as_bytes());
+        let pal = t.player_pal.get(self.players[p].u32_(o::COLOUR) as usize).copied().unwrap_or(0xffffff);
+        self.hud.draw_text(1.0, t.box_lx[p] - (w - 0x74), 0x167, 4, pal, &s);
+        self.hud.set_hide(b, false);
+    }
+
+    /// draw_power_meter 0x135390: the shown power (+0x804) follows +0x800
+    /// (up vb_elapsed, down 2·vb_elapsed per frame); state changes start the
+    /// gleam (1) or, full, the glow loop (2); otherwise the bar is coloured.
+    fn draw_power_meter(&mut self, p: usize) {
+        let t = self.hud.tables.clone().expect("tables");
+        let tb = self.hud.players[p].turbo;
+        for &b in &tb {
+            self.hud.set_hide(b, true);
+        }
+        let r = &mut self.players[p];
+        let (s0, _) = power_bar_state(r.f32_(o::POWER_SHOWN));
+        if 100.0 < r.f32_(o::POWER) {
+            r.set_f32(o::POWER, 100.0);
+        }
+        let vb = self.globals.vb_elapsed;
+        let (target, shown) = (r.f32_(o::POWER), r.f32_(o::POWER_SHOWN));
+        let next = if shown < target { (shown + vb as f32).min(target) } else { (shown - (vb * 2) as f32).max(target) };
+        r.set_f32(o::POWER_SHOWN, next);
+        let (s1, frac) = power_bar_state(next);
+        let restart = if s0 == s1 { s1 == 3 && r.i32_(o::METER_ANIM) == 0 } else { true };
+        if restart {
+            r.set_i32(o::METER_ANIM, if s1 == 3 { 2 } else { 1 });
+            r.set_i32(o::METER_TIME, 0);
+        }
+        for k in [1, 0, 2] {
+            self.hud.set_hide(tb[k], false);
+        }
+        let time = self.players[p].i32_(o::METER_TIME);
+        match self.players[p].i32_(o::METER_ANIM) {
+            1 => {
+                let mut i = time >> 2;
+                if (i as u32).wrapping_sub(5) < 5 {
+                    i = 9 - i;
+                }
+                if i < 5 {
+                    self.hud.set_hide(tb[6], false);
+                    let base = self.hud.tb_tex.get(6).copied().flatten();
+                    self.hud.set_tex(tb[6], base, i);
+                } else {
+                    self.players[p].set_i32(o::METER_ANIM, 0);
+                }
+            }
+            0 => {
+                let v = (frac * 127.0 + 128.0) as u32 & 0xff;
+                let (c0, c1) = match s1 {
+                    1 => ((v << 16) | (v << 8), 0),
+                    2 | 3 => (v << 16, 0xffff00),
+                    _ => (0, 0),
+                };
+                let width = self.hud.blits[tb[0]].as_ref().and_then(|b| b.tex).and_then(|x| self.hud.tex_info(x)).map(|i| i32::from(i.width)).unwrap_or(0);
+                let half = (((width as f32) * frac) as i32 >> 1).max(1);
+                let (_, x0, y0, z0) = t.tb_info[0].clone();
+                let (_, x1, y1, z1) = t.tb_info[1].clone();
+                self.hud.set_pos(tb[0], z0 as f32, p as i32 * 0x80 + x0 + (width >> 1) - half, y0);
+                self.hud.set_size(tb[0], half << 1, 0);
+                self.hud.set_pos(tb[1], z1 as f32, p as i32 * 0x80 + x1, y1);
+                self.hud.set_colour(tb[0], c0);
+                self.hud.set_colour(tb[1], c1);
+            }
+            2 => {
+                let mut i = (time << 9) / 0x78;
+                if (i as u32).wrapping_sub(0x100) < 0x100 {
+                    i = 0x1ff - i;
+                }
+                if i < 0x100 {
+                    self.hud.set_hide(tb[3], false);
+                    self.hud.set_alpha(tb[3], (0xff - i) as u32);
+                } else {
+                    self.players[p].set_i32(o::METER_TIME, 0);
+                }
+                self.hud.set_colour(tb[0], 0xff0000);
+                self.hud.set_colour(tb[1], 0xff0000);
+            }
+            _ => {}
+        }
+        let time = self.players[p].i32_(o::METER_TIME);
+        self.players[p].set_i32(o::METER_TIME, time + vb);
+    }
+
+    /// show_crystals 0x136690: the item just collected (+0x900) for +0x904 s.
+    fn show_crystals(&mut self, p: usize) {
+        if 0 < self.globals.rune_disp_timer || self.hud.optmenu_active != 0 || self.globals.game_mode != 0x4010 {
+            return;
+        }
+        let t = self.hud.tables.clone().expect("tables");
+        let r = &mut self.players[p];
+        if r.f32_(o::SHOW_TIME) <= 0.0 {
+            return;
+        }
+        let spf = self.globals.spf;
+        r.set_f32(o::SHOW_TIME, r.f32_(o::SHOW_TIME) - spf);
+        let item = r.i32_(o::SHOW_ITEM);
+        let cls = 0xb4 * r.u32_(o::CLASS) as usize;
+        let (name, have, max) = if item < 0x100 {
+            let n = item.max(0) as usize;
+            let max = t.max_crystals.get(n).copied().unwrap_or(0);
+            let c = i32::from(r.i16_(o::CRYSTALS + cls + 2 * n));
+            let have = if c < 0 { max } else { c };
+            (format!("SM_CRYSTAL_{}", t.crystal_desc.get(n).cloned().unwrap_or_default()), have, max)
+        } else if item < 0x200 {
+            let n = (item - 0x100) as usize;
+            let have = i32::from(r.i16_(o::GARG_ITEMS + cls + 2 * n));
+            (format!("SM_{}", t.garg_item_desc.get(n).cloned().unwrap_or_default()), have, t.max_garg_items.get(n).copied().unwrap_or(0))
+        } else {
+            let have = r.i32_(o::SHOW_COUNT);
+            let n = (item - 0x200) as usize;
+            let name = if 0xf < n { "16_SUM".to_string() } else { format!("16_{}COIN", t.player_desc_uc.get(n).cloned().unwrap_or_default()) };
+            (name, have, self.globals.max_level_coins)
+        };
+        // tbuf[14] = 0 before MBOX_FindTexture: names are cut to 14 bytes.
+        let name: String = name.chars().take(14).collect();
+        let tex = self.hud.find(&name);
+        let lx = t.box_lx[p];
+        self.hud.temp_blit(tex, lx + 0x1c, 0x120, 0x10, 0x10);
+        let shown = if -1 < have { have } else { max };
+        self.hud.draw_text(1.5, lx + 0x30, 0x124, 1, 0xffffff, &format!("{shown}/{max}"));
+    }
+
+    /// ShowRuneStones 0x136418: while RuneDispTimer runs, the key icons (the
+    /// class record's +0xcf0 bits) and rune stones (+0x1a26 bits).
+    fn show_rune_stones(&mut self) {
+        let players = self.hud.players.clone();
+        if self.globals.rune_disp_timer < 1 || self.hud.optmenu_active != 0 {
+            for pb in &players {
+                for &b in &pb.key {
+                    self.hud.set_hide(b, true);
+                }
+            }
+            return;
+        }
+        self.globals.rune_disp_timer = (self.globals.rune_disp_timer - self.globals.vb_elapsed).max(0);
+        for (k, pb) in players.iter().enumerate() {
+            let state = self.players[k].i32_(o::STATE);
+            if self.players[k].u16_(o::WRITTEN) & 2 != 0 {
+                continue;
+            }
+            self.players[k].or_u16(o::WRITTEN, 2);
+            if matches!(state, 1 | 2 | 4 | 5) {
+                let cls = 0xb4 * self.players[k].u32_(o::CLASS) as usize;
+                let bits = self.players[k].u16_(o::KEYS_CLASS + cls);
+                for (i, &b) in pb.key.iter().enumerate() {
+                    self.hud.set_hide(b, (bits >> i) & 1 == 0);
+                }
+            } else {
+                for &b in &pb.key {
+                    self.hud.set_hide(b, true);
+                }
+            }
+            if self.globals.game_mode & 0x8000 == 0 && (state == 1 || state == 5) {
+                let runes = self.players[k].u16_(o::RUNES);
+                for (i, &b) in pb.rune.iter().enumerate() {
+                    self.hud.set_hide(b, (runes >> i) & 1 == 0);
+                }
+            }
+        }
+    }
+
+    /// The client's textures and fonts, then reset_players' panel part and
+    /// init_next_level's (setup_player_display for every box,
+    /// SetPlayerWindows(0)).
+    pub fn hud_init(&mut self, textures: Vec<TexSet>, fonts: Vec<Option<Font>>) {
+        self.hud.missing.clear();
+        self.hud.set_resources(textures, fonts);
+        self.hud_reset_players();
+        for p in 0..4 {
+            self.setup_player_display(p);
+        }
+        self.set_player_windows(false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colour_packing_and_power_states() {
+        assert_eq!(pack_rgb(0x787800, 0x80), [61, 61, 1, 0x80]);
+        assert_eq!(pack_rgb(0x1e1e69, 0x80), [16, 16, 53, 0x80]);
+        assert_eq!(pack_rgb(0xffff80, 0x80), [128, 128, 65, 0x80]);
+        let (s, f) = power_bar_state(20.0);
+        assert_eq!(s, 1);
+        assert!((f - 0.5).abs() < 1e-6);
+        assert_eq!(power_bar_state(100.0), (3, 1.0));
+        let (s, f) = power_bar_state(70.0);
+        assert_eq!(s, 2);
+        assert!((f - 0.5).abs() < 1e-6);
+    }
+
+    fn font() -> Font {
+        Font {
+            height: 16,
+            glyphs: vec![
+                gdl_formats::fnt::Glyph { code: 48, width: 8, x: 0, y: 0 },
+                gdl_formats::fnt::Glyph { code: 53, width: 8, x: 40, y: 0 },
+            ],
+        }
+    }
+
+    #[test]
+    fn right_aligned_text_and_glyph_blits() {
+        let mut h = Hud { font_z: FONT_Z, ..Default::default() };
+        let info = |l: &str| TexInfo { label: l.into(), width: 128, height: 16, flags: 0x8c, def_width: 128, def_height: 16 };
+        h.set_resources(vec![TexSet { name: "STATIC".into(), records: vec![info("SCORE")] }], vec![]);
+        h.fonts = vec![None, None, None, None, Some(HudFont { font: font(), tex: h.index.get("SCORE").copied(), space: 9, per_page: 0x80 })];
+        // write_health: "500" right-aligned at box_lx + 0x74.
+        let w = h.string_width(4, 1.0, b"500");
+        assert_eq!(w, 24);
+        h.draw_text(1.0, 0x74 - w, 0x167, 4, 0xffff80, "500");
+        let list = h.draw_list();
+        assert_eq!(list.len(), 3);
+        assert_eq!((list[0].x, list[0].y, list[0].w, list[0].h), (92.0, 359.0, 8.0, 16.0));
+        assert_eq!(list[0].crop, [40.0 / 128.0, 48.0 / 128.0, 0.0, 1.0]);
+        assert_eq!(list[1].x, 100.0);
+        assert_eq!(list[0].rgba, [128, 128, 65, 0x80]);
+        assert_eq!(list[0].z, FONT_Z);
+        // Centred text: x < 0 centres on −x.
+        h.begin_frame();
+        h.draw_text(1.0, -0x40, 0x146, 4, 0xffffff, "00");
+        assert_eq!(h.messages[0].x, 0x40 - 8);
+    }
+
+    #[test]
+    fn texture_sized_blits_follow_texture_changes() {
+        let mut h = Hud::default();
+        let info = |l: &str, w, hh| TexInfo { label: l.into(), width: w, height: hh, flags: 0x8c, def_width: w, def_height: hh };
+        h.set_resources(vec![TexSet { name: "S".into(), records: vec![info("S3", 128, 16), info("S4", 128, 64), info("G1", 16, 16), info("G2", 16, 16)] }], vec![]);
+        let b = h.new_blit(None, 0, 0x140, 0x80, -1);
+        assert_eq!(h.blits[b].as_ref().unwrap().h, 0.0);
+        let s4 = h.find("s4");
+        h.set_tex(b, s4, 0);
+        let bl = h.blits[b].as_ref().unwrap();
+        assert_eq!((bl.w, bl.h), (128.0, 64.0));
+        let g = h.find("G1");
+        let t = h.new_blit(g, 0, 0, -1, -1);
+        h.set_tex(t, g, 1);
+        let g2 = h.find("G2");
+        assert_eq!(h.blits[t].as_ref().unwrap().tex, g2);
+        h.set_alpha(t, 0xff);
+        assert_eq!(h.blits[t].as_ref().unwrap().rgba[3], 1);
+    }
+}
