@@ -950,10 +950,39 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
 
 /// The character body of every player slot (co-op players use player 1's
 /// model: their character select is not ported).
-fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<gdl_client::GsMaterial>) {
+/// player_rhand[class] (ELF table of label pointers): the hand node the
+/// held weapon hangs from (load_player).
+fn player_rhand(elf_bytes: &[u8], class: u32) -> Option<String> {
+    let elf = gdl_formats::elf::Elf::parse(elf_bytes).ok()?;
+    let table = elf.object("player_rhand").ok()?;
+    let p = u32::from_le_bytes(table.get(class as usize * 4..class as usize * 4 + 4)?.try_into().ok()?);
+    let s = elf.read(p, 16).ok()?;
+    Some(s.iter().take_while(|b| **b != 0).map(|b| char::from(*b)).collect())
+}
+
+/// The ground shadow object of a player slot (load_player: SHADOWL1, MB
+/// flags 0x880, z modifier −36; UpdatePlayerShadow places it).
+#[derive(Component)]
+struct PlayerShadow(usize);
+
+fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, session: &Session, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<gdl_client::GsMaterial>) {
     let character = &sources.character;
     let set = gdl_client::materials_for(&character.objects, &character.table, &character.textures, images, materials);
     let (parts, _) = gdl_client::object_meshes(&character.objects, &set, materials, meshes);
+    let object_parts = |label: &str| -> Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)> {
+        character.objects.definitions.iter().filter(|d| d.label == label).flat_map(|d| parts.get(&(d.object_index as u32)).cloned().unwrap_or_default()).collect()
+    };
+    let rhand = player_rhand(&session.elf_bytes, session.class);
+    // load_player: base classes (player_multiple_models) hold "WEAP_HOLD"
+    // of the model package, an MBNewObject under the right hand (0x810).
+    let weapon = object_parts("WEAP_HOLD");
+    let shadow: Vec<_> = object_parts("SHADOWL1")
+        .into_iter()
+        .map(|(mesh, m)| {
+            let v = materials.get(&m).cloned().map(|x| materials.add(x.with_draw(0x880)));
+            (mesh, v.unwrap_or(m))
+        })
+        .collect();
     for slot in 0..4 {
         let vis = if slot == 0 { Visibility::default() } else { Visibility::Hidden };
         let body = commands.spawn((CharacterRoot(slot), Transform::default(), vis)).id();
@@ -974,7 +1003,40 @@ fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, meshes
                     commands.entity(body).add_child(child);
                 }
             }
+            if rhand.as_deref() == Some(node.label.as_str()) {
+                for (mesh, material) in &weapon {
+                    let child = commands
+                        .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot)))
+                        .id();
+                    commands.entity(body).add_child(child);
+                }
+            }
         }
+        let shadow_root = commands.spawn((PlayerShadow(slot), Transform::default(), Visibility::Hidden)).id();
+        commands.entity(root).add_child(shadow_root);
+        for (mesh, material) in &shadow {
+            let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+            commands.entity(shadow_root).add_child(child);
+        }
+    }
+}
+
+/// UpdatePlayerShadow 0x147fa0: the shadow at the player's x/z and the
+/// higher of floor (+0x88c) and water (+0x8a4) heights + 0.1 (the water
+/// case's splash alternate texture is not ported).
+fn present_player_shadow(sim: Res<Sim>, mut q: Query<(&PlayerShadow, &mut Transform, &mut Visibility)>) {
+    let active: [bool; 4] = [true, sim.coop[0], sim.coop[1], sim.coop[2]];
+    for (s, mut tf, mut vis) in &mut q {
+        let r = &sim.game.players[s.0];
+        if !active[s.0] || matches!(r.i32_(0xfc), 0 | 5 | 0xb) {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        let p = r.v3(0x50);
+        let (floor, water) = (r.f32_(0x88c), r.f32_(0x8a4));
+        let y = if water <= floor { floor } else { water } + 0.1;
+        tf.translation = Vec3::new(p[0], y, p[2]);
+        *vis = Visibility::Inherited;
     }
 }
 
@@ -993,7 +1055,7 @@ fn setup(
 ) {
     let root = commands.spawn((Transform::from_scale(MIRROR), Visibility::default(), MirrorRoot)).id();
     spawn_level(&mut commands, root, &session, sim.game.items.records.len(), &mut meshes, &mut images, &mut materials);
-    spawn_bodies(&mut commands, root, &sources, &mut meshes, &mut images, &mut materials);
+    spawn_bodies(&mut commands, root, &sources, &session, &mut meshes, &mut images, &mut materials);
     for (name, pkg) in &sources.packages {
         if !libraries.0.contains_key(name) {
             libraries.0.insert(name.clone(), build_library(pkg, &mut meshes, &mut images, &mut materials));
@@ -2861,7 +2923,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_camera_face_local, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_camera_face_local, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
             )
                 .chain(),
@@ -3048,7 +3110,7 @@ fn advance_level(
                     for b in &bodies {
                         commands.entity(b).despawn();
                     }
-                    spawn_bodies(&mut commands, root, &sources, &mut meshes, &mut images, &mut materials);
+                    spawn_bodies(&mut commands, root, &sources, &session, &mut meshes, &mut images, &mut materials);
                 }
             }
         }
