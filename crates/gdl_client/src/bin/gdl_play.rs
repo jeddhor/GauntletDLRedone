@@ -91,7 +91,29 @@ type Parts = Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>;
 type SparkAssets = (Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>);
 /// Model parts with node offsets and the tree node's MB flags (+0x30,
 /// AtreeNodeInit's MBTreeSetFlags; 1 for DUMMY nodes).
-type Model = Vec<(Vec3, Parts, u32, Option<usize>)>;
+type Model = Vec<(Vec3, Parts, u32, Option<usize>, Option<TreePsys>)>;
+
+/// A type-4 tree node's particle system (AtreeNodeInit → InitPsysData): the
+/// 0x138-byte record at the tree's header[0] base + node +0x34, the
+/// direction at node +0x14.
+#[derive(Clone)]
+struct TreePsys {
+    record: Vec<u8>,
+    dir: [f32; 3],
+}
+
+/// The psys of a tree node of type 4, if its record is in range.
+fn tree_node_psys(anim_bytes: &[u8], tree: &gdl_formats::animation::Tree, node: &gdl_formats::animation::Node) -> Option<TreePsys> {
+    if node.node_type != 4 || node.raw.len() < 0x38 {
+        return None;
+    }
+    let base = tree.file_offset as usize;
+    let header0 = u32::from_le_bytes(anim_bytes.get(base..base + 4)?.try_into().ok()?) as usize;
+    let at = base.checked_add(header0)?.checked_add(node.sequence_info_offset as usize)?;
+    let record = anim_bytes.get(at..at + gdl_core::psys::RECORD)?.to_vec();
+    let f = |o: usize| f32::from_le_bytes(node.raw[o..o + 4].try_into().unwrap());
+    Some(TreePsys { record, dir: [f(0x14), f(0x18), f(0x1c)] })
+}
 
 /// The MB flags of a package tree node (AtreeNodeInit / AtreeInitSub).
 fn tree_node_flags(node: &gdl_formats::animation::Node) -> u32 {
@@ -1337,6 +1359,9 @@ fn present_texmods(time: Res<Time>, mut q: Query<&mut TexMods>, mut images: ResM
 #[derive(Component)]
 struct Emitter {
     psys: gdl_core::psys::Psys,
+    /// A tree node anchor (item/effect psys) the emitter follows; the world
+    /// psys have none.
+    anchor: Option<Entity>,
     matrix: [f32; 16],
     sprites: Vec<gdl_core::psys::Sprite>,
     /// Level texture by name, resolved against the STATIC package later.
@@ -1389,7 +1414,7 @@ fn spawn_world_psys(commands: &mut Commands, root: Entity, session: &Session, se
         let mesh = meshes.add(Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default()));
         let e = commands
             .spawn((
-                Emitter { psys, matrix, sprites: Vec::new(), texture, material: None },
+                Emitter { psys, anchor: None, matrix, sprites: Vec::new(), texture, material: None },
                 Mesh3d(mesh),
                 Transform::default(),
                 Visibility::Hidden,
@@ -1401,6 +1426,49 @@ fn spawn_world_psys(commands: &mut Commands, root: Entity, session: &Session, se
 }
 
 type EmitterQuery<'w, 's> = Query<'w, 's, (&'static mut Emitter, &'static Mesh3d, &'static mut Visibility, Option<&'static MeshMaterial3d<gdl_client::GsMaterial>>, Entity)>;
+
+/// Tree psys created by spawn_parts, waiting for their render entity.
+#[derive(Resource, Default)]
+struct PendingTreePsys(Vec<(Entity, gdl_core::psys::Psys)>);
+
+fn spawn_tree_psys(mut commands: Commands, mut pending: ResMut<PendingTreePsys>, root: Query<Entity, With<MirrorRoot>>, mut meshes: ResMut<Assets<Mesh>>) {
+    let Ok(root) = root.single() else { return };
+    for (anchor, psys) in pending.0.drain(..) {
+        let mesh = meshes.add(Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default()));
+        let e = commands
+            .spawn((
+                Emitter { psys, anchor: Some(anchor), matrix: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0], sprites: Vec::new(), texture: None, material: None },
+                Mesh3d(mesh),
+                Transform::default(),
+                Visibility::Hidden,
+                LevelEntity,
+            ))
+            .id();
+        commands.entity(root).add_child(e);
+    }
+}
+
+/// Follow tree anchors: original-space matrix = MIRROR × the anchor's render
+/// transform; emitters of despawned anchors go away.
+fn follow_tree_psys(mut commands: Commands, anchors: Query<(&GlobalTransform, &InheritedVisibility)>, mut q: Query<(Entity, &mut Emitter)>) {
+    for (e, mut em) in &mut q {
+        let Some(a) = em.anchor else { continue };
+        let Ok((g, vis)) = anchors.get(a) else {
+            commands.entity(e).despawn();
+            continue;
+        };
+        let m = Mat4::from_scale(MIRROR) * g.to_matrix();
+        em.matrix = [
+            m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0, m.y_axis.x, m.y_axis.y, m.y_axis.z, 0.0, m.z_axis.x, m.z_axis.y, m.z_axis.z, 0.0, m.w_axis.x,
+            m.w_axis.y, m.w_axis.z, 1.0,
+        ];
+        if !vis.get() {
+            em.psys.node_flags |= 0x200000;
+        } else {
+            em.psys.node_flags &= !0x200000;
+        }
+    }
+}
 
 /// MBDrawPsys per psys frame (30 Hz) for every emitter whose sphere
 /// (radius +0xa4) is in the camera frustum or that drew sprites last time
@@ -1813,7 +1881,9 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
                 sums.push(at);
                 let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
                 if let Some(parts) = lib.by_label.get(&label) {
-                    out.push((at, parts.clone(), tree_node_flags(node), Some(node.index as usize)));
+                    out.push((at, parts.clone(), tree_node_flags(node), Some(node.index as usize), None));
+                } else if let Some(ps) = tree_node_psys(&p.anim_bytes, tree, node) {
+                    out.push((at, Vec::new(), 0, Some(node.index as usize), Some(ps)));
                 }
             }
             if !out.is_empty() {
@@ -1822,7 +1892,7 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
         }
         for label in [format!("{name}L1"), name.to_string()] {
             if let Some(parts) = lib.by_label.get(&label) {
-                return vec![(Vec3::ZERO, parts.clone(), 0, None)];
+                return vec![(Vec3::ZERO, parts.clone(), 0, None, None)];
             }
         }
     }
@@ -1831,9 +1901,23 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
 
 /// Spawn a model's parts under `parent`: MB flags 1/2 hide a node, the draw
 /// flags select a GsMaterial variant (cached), face flags add CameraFaceLocal.
-fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: &mut Assets<gdl_client::GsMaterial>, cache: &mut PartVariants) {
+fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: &mut Assets<gdl_client::GsMaterial>, cache: &mut PartVariants, pending: &mut PendingTreePsys) {
     commands.entity(parent).despawn_related::<Children>();
-    for (offset, parts, flags, node) in list {
+    for (offset, parts, flags, node, psys) in list {
+        if let Some(ps) = psys {
+            // An anchor in the slot's hierarchy; the sprites draw in render
+            // space from a root-level emitter that follows it.
+            let mut anchor = commands.spawn((Transform::from_translation(offset), Visibility::Inherited));
+            if let Some(i) = node {
+                anchor.insert(TreeNodeIdx(i));
+            }
+            let anchor = anchor.id();
+            commands.entity(parent).add_child(anchor);
+            if let Ok(p) = gdl_core::psys::Psys::new_world(0, &ps.record, &[], Some(ps.dir), true) {
+                pending.0.push((anchor, p));
+            }
+            continue;
+        }
         if flags & 3 != 0 {
             continue;
         }
@@ -1897,7 +1981,7 @@ fn present_world(
     libs: Res<Libraries>,
     frames: Res<EnemyFrames>,
     mut slots: SlotQuery,
-    (mut materials, mut variants): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<PartVariants>),
+    (mut materials, mut variants, mut pending): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<PartVariants>, ResMut<PendingTreePsys>),
 ) {
     let g = &sim.game;
     let items = &session.levels[session.current].items;
@@ -1929,7 +2013,7 @@ fn present_world(
                 let label = label.or_else(|| frames.0.get(pkg).and_then(|m| m.get(&tree)).and_then(|s| s.first()).and_then(|l| l.first().cloned()));
                 match label {
                     Some(l) => {
-                        let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&l)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None)]);
+                        let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&l)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None, None)]);
                         (Some(l), parts, tf)
                     }
                     None => (None, None, tf),
@@ -1957,7 +2041,7 @@ fn present_world(
                         continue;
                     };
                     let key = format!("GEN_{pkg}{level}");
-                    let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&key)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None)]);
+                    let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&key)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None, None)]);
                     (Some(key), parts, tf)
                 } else {
                     let name = String::from_utf8_lossy(d.name()).into_owned();
@@ -2030,7 +2114,7 @@ fn present_world(
         *vis = Visibility::Inherited;
         if slot.key != key {
             if let Some(list) = parts {
-                spawn_parts(&mut commands, entity, list, &mut materials, &mut variants);
+                spawn_parts(&mut commands, entity, list, &mut materials, &mut variants, &mut pending);
             } else {
                 commands.entity(entity).despawn_related::<Children>();
             }
@@ -2090,7 +2174,9 @@ fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Mo
     for node in &tree.nodes {
         let l: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
         if let Some(parts) = lib.by_label.get(&l) {
-            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node), Some(node.index as usize)));
+            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node), Some(node.index as usize), None));
+        } else if let Some(ps) = tree_node_psys(&p.anim_bytes, tree, node) {
+            out.push((Vec3::from_array(node.initial_position), Vec::new(), 0, Some(node.index as usize), Some(ps)));
         }
     }
     out
@@ -2106,7 +2192,9 @@ fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) 
     for node in &tree.nodes {
         let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
         if let Some(parts) = lib.by_label.get(&label) {
-            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node), Some(node.index as usize)));
+            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node), Some(node.index as usize), None));
+        } else if let Some(ps) = tree_node_psys(&p.anim_bytes, tree, node) {
+            out.push((Vec3::from_array(node.initial_position), Vec::new(), 0, Some(node.index as usize), Some(ps)));
         }
     }
     out
@@ -2973,6 +3061,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(presentation)
         .init_resource::<Libraries>()
         .init_resource::<PartVariants>()
+        .init_resource::<PendingTreePsys>()
         .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
         .init_resource::<EnemyFrames>()
         .insert_resource(Time::<Fixed>::from_hz(30.0))
@@ -2994,7 +3083,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_camera_face_local, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
             )
                 .chain(),

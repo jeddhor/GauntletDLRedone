@@ -185,6 +185,12 @@ they keep their vertex colours. The VU1 microcode was not read.
   frame by tree_pose at (ATime − start) × 900 / timing (sequence 0).
   HYPOTHESES: sequence 0 and the frame rate from StartFXTree's end time;
   texture-mod (type 3) and OANIM (type 2) tree nodes are not ported.
+- Type-4 tree nodes are particle systems (AtreeNodeInit → InitPsysData →
+  MBNewWorldPsys with a3 = 1, no name): the record at the tree's header[0]
+  base + node +0x34 (e.g. SFXRED's POOLFIRE weapon flames, SFXYEL's
+  YEL_DUST throw trails), direction at node +0x14. gdl_play spawns them with
+  item/effect/missile trees; the emitter follows an anchor in the slot's
+  hierarchy and stops emitting while hidden.
 
 ## Not yet implemented
 
