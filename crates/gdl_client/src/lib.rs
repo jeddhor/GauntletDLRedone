@@ -45,7 +45,13 @@ fn gs_vertex_color(packed: u16) -> [f32; 4] {
 }
 
 pub fn mesh_for(part: &gdl_formats::objects::Part) -> Result<Mesh, Box<dyn Error>> {
+    Ok(mesh_and_colours(part)?.0)
+}
+
+/// The part's mesh and whether it carries a colour stream.
+pub fn mesh_and_colours(part: &gdl_formats::objects::Part) -> Result<(Mesh, bool), Box<dyn Error>> {
     let geometry = part.decode_integer_geometry()?;
+    let coloured = geometry.strips.iter().any(|s| !s.packed_colors.is_empty());
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -82,7 +88,7 @@ pub fn mesh_for(part: &gdl_formats::objects::Part) -> Result<Mesh, Box<dyn Error
     if with_lightmap {
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, lightmap_uvs);
     }
-    Ok(mesh)
+    Ok((mesh, coloured))
 }
 
 /// Registers the GS-equivalent material and its embedded shader.
@@ -102,6 +108,11 @@ pub struct GsParams {
     /// x: base texture bound, y: lightmap bound, z/w: the texture shift's
     /// U/V add (MB_tex_shift_tex via setTexShift; texture modifiers).
     pub options: Vec4,
+    /// VU1 vertex lighting of unlit-by-lightmap, colourless parts: xyz the
+    /// direction towards the light (render space), w = 1 when enabled.
+    pub light_dir: Vec4,
+    /// rgb the directional light colour × intensity, a the ambient.
+    pub light: Vec4,
 }
 
 /// The observed G1 world material state folded into one pass (gs.wgsl):
@@ -114,6 +125,8 @@ pub struct GsParams {
 pub struct GsMaterial {
     #[uniform(0)]
     pub params: GsParams,
+    /// Lit by the scene light (characters, items: no colours, no lightmap).
+    pub lit: bool,
     #[texture(1)]
     #[sampler(2)]
     pub base: Option<Handle<Image>>,
@@ -166,7 +179,8 @@ impl GsMaterial {
     pub fn solid(color: Color, alpha_mode: AlphaMode) -> Self {
         let c = color.to_srgba();
         GsMaterial {
-            params: GsParams { tint: Vec4::new(c.red, c.green, c.blue, c.alpha), options: Vec4::ZERO },
+            params: GsParams { tint: Vec4::new(c.red, c.green, c.blue, c.alpha), options: Vec4::ZERO, ..default() },
+            lit: false,
             base: None,
             lightmap: None,
             alpha_mode,
@@ -341,7 +355,8 @@ pub fn materials_for(
             base.insert(
                 bitmap.index as u16,
                 materials.add(GsMaterial {
-                    params: GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0) },
+                    params: GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0), ..default() },
+                    lit: false,
                     base: Some(image),
                     lightmap: None,
                     alpha_mode: AlphaMode::Blend,
@@ -372,7 +387,8 @@ pub fn materials_for(
         base.insert(
             bitmap.index as u16,
             materials.add(GsMaterial {
-                params: GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0) },
+                params: GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0), ..default() },
+                lit: false,
                 base: Some(image),
                 lightmap: None,
                 alpha_mode,
@@ -396,14 +412,29 @@ pub fn object_meshes(
 ) -> (HashMap<u32, Vec<(Handle<Mesh>, Handle<GsMaterial>)>>, Vec<String>) {
     let mut cache = HashMap::new();
     let mut pairs: HashMap<(u16, u16), Handle<GsMaterial>> = HashMap::new();
+    let mut lit_pairs: HashMap<u16, Handle<GsMaterial>> = HashMap::new();
     let mut unsupported = Vec::new();
     for object in &objects.objects {
         let mut parts = Vec::new();
         for part in &object.parts {
-            match mesh_for(part) {
-                Ok(mesh) => {
+            match mesh_and_colours(part) {
+                Ok((mesh, coloured)) => {
                     let base = set.base.get(&part.texture_index).cloned().unwrap_or_else(|| set.unknown.clone());
                     let lightmap = set.lightmaps.get(&part.lightmap_index).filter(|_| mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_some());
+                    // Colourless parts without a lightmap are lit by the VU
+                    // (ambient + directional; Tower dump fit, research/rendering.md).
+                    let base = if lightmap.is_none() && !coloured {
+                        lit_pairs
+                            .entry(part.texture_index)
+                            .or_insert_with(|| {
+                                let mut m = materials.get(&base).cloned().expect("base material");
+                                m.lit = true;
+                                materials.add(m)
+                            })
+                            .clone()
+                    } else {
+                        base
+                    };
                     let material = match lightmap {
                         Some(image) => pairs
                             .entry((part.texture_index, part.lightmap_index))

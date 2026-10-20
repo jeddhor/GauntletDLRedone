@@ -587,6 +587,33 @@ fn present_distance_fade(sim: Res<Sim>, q: Query<(&DistanceFade, &MeshMaterial3d
     }
 }
 
+/// InitLighting / DoLighting: Ambient = LEVL +0xec × GlobalInten (1.0),
+/// one directional light (MBAddLight: intensity +0x108 × colour +0xfc,
+/// direction +0xf0, normalised). Lit materials get the light towards which
+/// normals shade (−direction, mirrored into render space).
+fn present_scene_light(sim: Res<Sim>, mut last: Local<Option<([f32; 7], usize)>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+    let g = &sim.game;
+    if g.level.len() < 0x10c {
+        return;
+    }
+    let ambient = g.level_f32(0xec).clamp(0.0, 1.0);
+    let dir = Vec3::new(g.level_f32(0xf0), g.level_f32(0xf4), g.level_f32(0xf8));
+    let colour = Vec3::new(g.level_f32(0xfc), g.level_f32(0x100), g.level_f32(0x104)) * g.level_f32(0x108);
+    let towards = if dir.length() > 0.0 { -dir.normalize() * MIRROR } else { Vec3::Y };
+    let ids: Vec<_> = materials.iter().filter(|(_, m)| m.lit).map(|(id, _)| id).collect();
+    let key = ([ambient, towards.x, towards.y, towards.z, colour.x, colour.y, colour.z], ids.len());
+    if *last == Some(key) {
+        return;
+    }
+    *last = Some(key);
+    for id in ids {
+        if let Some(m) = materials.get_mut(id) {
+            m.params.light_dir = towards.extend(1.0);
+            m.params.light = colour.extend(ambient);
+        }
+    }
+}
+
 /// pbTraverseDrawObjects: MB flag 2 skips a node and its subtree, flag 1
 /// only the node; `set`/`clear` are the game's per-node overrides.
 fn node_hidden(chain: &[(usize, u32)], set: &[u32], clear: &[u32]) -> bool {
@@ -1381,7 +1408,8 @@ fn present_particles(
             let blend = em.psys.blend();
             let (no_depth_write, depth_always) = em.psys.depth_flags();
             let m = gdl_client::GsMaterial {
-                params: gdl_client::GsParams { tint: Vec4::ONE, options: Vec4::new(if named.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0) },
+                params: gdl_client::GsParams { tint: Vec4::ONE, options: Vec4::new(if named.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0), ..default() },
+                lit: false,
                 base: named,
                 lightmap: None,
                 alpha_mode: if blend == gdl_core::psys::Blend::Additive { AlphaMode::Add } else { AlphaMode::Blend },
@@ -2833,7 +2861,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_distance_fade, present_camera_face, present_camera_face_local, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_camera_face_local, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
                 front_text,
             )
                 .chain(),

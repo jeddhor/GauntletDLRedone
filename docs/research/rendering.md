@@ -161,6 +161,18 @@ structure and a PSMCT16S render target (FRAME PSM 0x0a, two buffers).
 - Package texmods (items, WEAPONS/POWERUPS, monsters, STATIC) run like the
   world's (SetupItemTexMods / SetupWeaponPowerupTexMods / SetupEnemyTexMods).
 
+## Vertex lighting of colourless parts (Tower dump fit)
+
+The character model (PLAYERS/SOR/YEL00) carries no colour stream; its GS
+vertex colours (728 samples matched by UV) are greys 102..128 following
+128 × min(1, ambient + max(0, n·(−L))) with the level's light (LEVL +0xec
+ambient 0.8, +0xf0 direction (−1,−6,2), +0xfc colour × +0x108): mean
+absolute error 3.4 with one fitted yaw (body parts are articulated, so the
+residual is expected). GsMaterial.lit applies it per fragment to parts with
+neither colours nor a lightmap. HYPOTHESIS: the same model for coloured
+non-lightmapped parts is not established (no unique UV matches in the dump);
+they keep their vertex colours. The VU1 microcode was not read.
+
 ## Not yet implemented
 
 Texture fades and per-node shifts, character texmods (SetupPlayerTexMods),
@@ -168,5 +180,5 @@ alpha fades driven by MBTreeSetAlpha callers (node_alpha is recorded, not
 yet drawn), tree psys nodes (type 4, InitPsysData), chrome (0x8000/0xa0000, setChrome),
 distance alpha fade, MBTreeSetAlpha consumers (item/enemy fades), the colour
 scale of setPrimColor and DoLighting, VU1 vertex lighting of characters
-(MBDirLight/MBAmbLight/pos lights), fog (InitFog/FogFadeIn; FGE was 0 in the
+(point lights MBPosLight*, setPrimColor scales, AmbientSpecial flashes), fog (InitFog/FogFadeIn; FGE was 0 in the
 G1 frame), Z modifiers, sorted transparency order.

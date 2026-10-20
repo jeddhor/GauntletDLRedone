@@ -12,6 +12,9 @@ struct GsParams {
     tint: vec4<f32>,
     // x: base texture bound, y: lightmap bound, z/w: UV shift add.
     options: vec4<f32>,
+    // VU1 lighting: xyz towards the light (w = enabled); rgb dir colour, a ambient.
+    light_dir: vec4<f32>,
+    light: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: GsParams;
@@ -34,6 +37,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     rgb = rgb * in.color.rgb;
     alpha = alpha * in.color.a;
 #endif
+    if params.light_dir.w > 0.5 {
+        let n = normalize(in.world_normal);
+        let d = max(dot(n, params.light_dir.xyz), 0.0);
+        rgb = rgb * min(vec3(1.0), vec3(params.light.a) + d * params.light.rgb);
+    }
 #ifdef VERTEX_UVS_A
     let t = textureSample(base_texture, base_sampler, in.uv + params.options.zw);
     if params.options.x > 0.5 {
