@@ -45,7 +45,8 @@ original (PCSX2 reference on Xvfb :191, private captures):
    letterbox over the panels) driven by WritePlayerInfo from do_players;
    game_main's per-frame SetPlayerVars; ScrollMessageBox (parchment,
    font32 text, glow prompt, fire-scroll burn); NewHelp/DoHelp help boxes
-   (with the help pause and displayed flags). Remaining: original player select, shop screen, inventory/map
+   (with the help pause and displayed flags); pickup notices (do_got_it).
+   Remaining: original player select, shop screen, inventory/map
    panels, options, credits, movies, boss/timer meters.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.

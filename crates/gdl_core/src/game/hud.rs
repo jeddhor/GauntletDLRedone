@@ -293,6 +293,20 @@ pub struct Hud {
     /// GameText (TEXT/ENGLISH.ROM) for help messages.
     pub text: Option<gdl_formats::textrom::TextRom>,
     pub help: HelpState,
+    /// got_it 0x22c500: 0x18 pickup notices (state, player, kind, amount,
+    /// timer, bar blit, picture blit).
+    got_it: Vec<GotIt>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct GotIt {
+    state: i32,
+    player: usize,
+    kind: i32,
+    amount: i32,
+    timer: i32,
+    bar: Option<usize>,
+    picture: Option<usize>,
 }
 
 /// NewHelp/DoHelp state (InitHelp 0x18e0b0 zeroes it per level).
@@ -805,6 +819,19 @@ impl Hud {
         }
         out
     }
+    /// add_got_it 0x12b060: the first free of 0x18 notices, for the kinds
+    /// do_got_it has a picture for.
+    pub fn add_got_it(&mut self, player: usize, kind: i32, amount: i32) {
+        if self.got_it.len() < 0x18 {
+            self.got_it.resize(0x18, GotIt::default());
+        }
+        if let Some(g) = self.got_it.iter_mut().find(|g| g.state == 0)
+            && matches!(kind, 1..=10 | 0xd | 0xf | 0x10)
+        {
+            *g = GotIt { state: 1, player, kind, amount, timer: 0, bar: g.bar, picture: g.picture };
+        }
+    }
+
     /// MBResetBlits at the frame boundary: temp blits and messages go.
     pub fn begin_frame(&mut self) {
         self.temp.clear();
@@ -1672,6 +1699,91 @@ impl Game {
         self.write_help_text();
         if let Some(b) = border {
             self.hud.set_hide(b, false);
+        }
+    }
+
+    /// do_got_it 0x12b228: a notice's S3 bar and picture (by kind and
+    /// amount) slide up from y 0x180 to 0x130 over the player's box, stay 90
+    /// vblanks and slide back below 399.
+    pub fn do_got_it(&mut self) {
+        let Some(t) = self.hud.tables.clone() else { return };
+        let vb = self.globals.vb_elapsed;
+        for i in 0..self.hud.got_it.len() {
+            let g = self.hud.got_it[i].clone();
+            match g.state {
+                1 => {
+                    let x = t.box_lx[g.player & 3];
+                    let name = match g.kind {
+                        1 if self.globals.cur_world == 0xc => "COINHUD",
+                        1 if g.amount < 0xb => "JUNK",
+                        1 => "GOLD",
+                        2 if 1 < g.amount => "KEY_RING",
+                        2 => "KEY",
+                        3 if 100 <= g.amount => "MEAT",
+                        3 if g.amount < -99 => "BADMEAT",
+                        3 if g.amount < 0 => "BADFRUIT",
+                        3 => "FRUIT",
+                        4 => "MAGIC",
+                        5..=9 => "SPECIALS",
+                        10 => "RUNESTONE",
+                        0xd => "LEGEND",
+                        0xf => "CRYSTAL",
+                        0x10 => "GOLDNICON",
+                        _ => {
+                            // The original returns from do_got_it here.
+                            self.hud.got_it[i].state = 0;
+                            return;
+                        }
+                    };
+                    let s3 = self.hud.find(S3);
+                    let bar = self.hud.new_blit(s3, x, 0, -1, -1);
+                    let tex = self.hud.find(name);
+                    let pic = self.hud.new_blit(tex, x, 0, -1, -1);
+                    self.hud.set_size(bar, 0x80, 0);
+                    self.hud.set_pos(bar, 63980.0, x, 0x180);
+                    self.hud.set_size(pic, 0x80, 0);
+                    self.hud.set_pos(pic, 63979.0, x, 400);
+                    let n = &mut self.hud.got_it[i];
+                    n.bar = Some(bar);
+                    n.picture = Some(pic);
+                    n.state = 2;
+                }
+                2 | 4 => {
+                    let Some(bar) = g.bar else { continue };
+                    let y0 = self.hud.blits.get(bar).and_then(|b| b.as_ref()).map_or(0x180, |b| b.y as i32);
+                    let mut y = if g.state == 2 { y0 - vb } else { y0 + vb };
+                    if g.state == 2 && y < 0x131 {
+                        y = 0x130;
+                        self.hud.got_it[i].state = 3;
+                        self.hud.got_it[i].timer = 0x5a;
+                    } else if g.state == 4 && 399 < y {
+                        self.hud.got_it[i].state = -1;
+                    }
+                    for (b, dy) in [(Some(bar), 0), (g.picture, 0x10)] {
+                        if let Some(b) = b
+                            && let Some(bl) = self.hud.get(b)
+                        {
+                            bl.y = (y + dy) as f32;
+                        }
+                    }
+                }
+                3 => {
+                    self.hud.got_it[i].timer -= vb;
+                    if self.hud.got_it[i].timer < 1 {
+                        self.hud.got_it[i].state = 4;
+                    }
+                }
+                -1 => {
+                    for b in [g.bar, g.picture].into_iter().flatten() {
+                        self.hud.remove(b);
+                    }
+                    let n = &mut self.hud.got_it[i];
+                    n.state = 0;
+                    n.bar = None;
+                    n.picture = None;
+                }
+                _ => {}
+            }
         }
     }
 

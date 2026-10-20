@@ -1798,6 +1798,12 @@ fn simulate(
     {
         sim.game.help(id, 0);
     }
+    // DEBUG: GDL_DEBUG_GOTIT=<kind>:<amount> raises add_got_it(0, …) once.
+    if sim.updates == 60
+        && let Some((k, a)) = std::env::var("GDL_DEBUG_GOTIT").ok().and_then(|v| v.split_once(':').and_then(|(k, a)| Some((k.parse().ok()?, a.parse().ok()?))))
+    {
+        sim.game.got_it(0, k, a);
+    }
     let new: Vec<Event> = sim.game.events.drain(before..).collect();
     sim.game.events.clear();
     let me = Vec3::from_array(sim.game.players[0].v3(0x50));

@@ -638,6 +638,7 @@ impl Game {
         // DoTimestopSound are presentation; WritePlayerInfo drives the panels.
         if !matches!(self.globals.game_mode, 0x400d | 0x4012 | 0x4016) && self.globals.start_of_stage == 0 {
             self.write_player_info(-1)?;
+            self.do_got_it();
         }
         Ok(result)
     }

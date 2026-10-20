@@ -116,6 +116,18 @@ private/reference/captures/render/tower-newgame-v1-240.png). Port:
 - Verified natively (GDL_DEBUG_HELP=11 in G1): "COLLECT GOLD TO BUY
   POWERUPS" on the translucent parchment above the player.
 
+## Pickup notices (add_got_it / do_got_it)
+
+add_got_it 0x12b060 fills one of 0x18 slots for kinds 1–10, 0xd, 0xf,
+0x10. do_got_it 0x12b228 (after WritePlayerInfo in do_players) creates an S3
+bar (z 63980) and a picture (z 63979, 0x80 wide): gold COINHUD (Tower) /
+JUNK (< 11) / GOLD, keys KEY / KEY_RING (> 1), food MEAT (≥ 100) / FRUIT /
+BADFRUIT (< 0) / BADMEAT (< −99), MAGIC, SPECIALS (5–9), RUNESTONE,
+LEGEND, CRYSTAL, GOLDNICON; it slides up from y 0x180 by vb_elapsed to
+0x130 (picture 0x10 lower), stays 90 vblanks and slides down past 399. An
+unknown kind returns from the whole function (kept). Checked natively with
+GDL_DEBUG_GOTIT=1:50 (the "Treasure" panel over player 1's box).
+
 ## Native presentation
 
 A HUD camera with a fixed 512×384 orthographic projection on its own render

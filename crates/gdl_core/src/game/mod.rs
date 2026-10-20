@@ -437,5 +437,6 @@ impl Game {
     }
     pub fn got_it(&mut self, player: usize, kind: i32, amount: i32) {
         self.events.push(Event::GotIt { player, kind, amount });
+        self.hud.add_got_it(player, kind, amount);
     }
 }
