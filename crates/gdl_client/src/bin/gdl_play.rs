@@ -606,7 +606,7 @@ fn present_node_flags(sim: Res<Sim>, mut seen: Local<Option<u32>>, mut q: Query<
     for (chain, mut vis) in &mut q {
         let hidden = node_hidden(&chain.0, &g.node_mb_set, &g.node_mb_clear);
         let want = if hidden { Visibility::Hidden } else { Visibility::Inherited };
-        if *vis != want && !(*vis == Visibility::Visible && !hidden) {
+        if (hidden || *vis != Visibility::Visible) && *vis != want {
             *vis = want;
         }
     }
