@@ -91,7 +91,7 @@ type Parts = Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>;
 type SparkAssets = (Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>);
 /// Model parts with node offsets and the tree node's MB flags (+0x30,
 /// AtreeNodeInit's MBTreeSetFlags; 1 for DUMMY nodes).
-type Model = Vec<(Vec3, Parts, u32)>;
+type Model = Vec<(Vec3, Parts, u32, Option<usize>)>;
 
 /// The MB flags of a package tree node (AtreeNodeInit / AtreeInitSub).
 fn tree_node_flags(node: &gdl_formats::animation::Node) -> u32 {
@@ -1813,7 +1813,7 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
                 sums.push(at);
                 let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
                 if let Some(parts) = lib.by_label.get(&label) {
-                    out.push((at, parts.clone(), tree_node_flags(node)));
+                    out.push((at, parts.clone(), tree_node_flags(node), Some(node.index as usize)));
                 }
             }
             if !out.is_empty() {
@@ -1822,7 +1822,7 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
         }
         for label in [format!("{name}L1"), name.to_string()] {
             if let Some(parts) = lib.by_label.get(&label) {
-                return vec![(Vec3::ZERO, parts.clone(), 0)];
+                return vec![(Vec3::ZERO, parts.clone(), 0, None)];
             }
         }
     }
@@ -1833,7 +1833,7 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
 /// flags select a GsMaterial variant (cached), face flags add CameraFaceLocal.
 fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: &mut Assets<gdl_client::GsMaterial>, cache: &mut PartVariants) {
     commands.entity(parent).despawn_related::<Children>();
-    for (offset, parts, flags) in list {
+    for (offset, parts, flags, node) in list {
         if flags & 3 != 0 {
             continue;
         }
@@ -1852,6 +1852,9 @@ fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: 
                     .clone()
             };
             let mut child = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_translation(offset)));
+            if let Some(i) = node {
+                child.insert(TreeNodeIdx(i));
+            }
             if flags & 0xf000000 != 0 {
                 child.insert(CameraFaceLocal { mode: flags & 0xf000000 });
             }
@@ -1926,7 +1929,7 @@ fn present_world(
                 let label = label.or_else(|| frames.0.get(pkg).and_then(|m| m.get(&tree)).and_then(|s| s.first()).and_then(|l| l.first().cloned()));
                 match label {
                     Some(l) => {
-                        let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&l)).cloned().map(|p| vec![(Vec3::ZERO, p, 0)]);
+                        let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&l)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None)]);
                         (Some(l), parts, tf)
                     }
                     None => (None, None, tf),
@@ -1954,7 +1957,7 @@ fn present_world(
                         continue;
                     };
                     let key = format!("GEN_{pkg}{level}");
-                    let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&key)).cloned().map(|p| vec![(Vec3::ZERO, p, 0)]);
+                    let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&key)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None)]);
                     (Some(key), parts, tf)
                 } else {
                     let name = String::from_utf8_lossy(d.name()).into_owned();
@@ -1980,11 +1983,36 @@ fn present_world(
                         let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| missile_parts(&sources, &libs, &session.throw));
                         (Some(key), parts, tf)
                     }
-                    // Header and familiar effect trees are not drawn yet
-                    // (rendering work item, docs/state.md step 4).
-                    Visual::Header(_) | Visual::Familiar { .. } => {
-                        *vis = Visibility::Hidden;
-                        continue;
+                    // EffectHeaders[h]: a tree of WEAPONS (0), POWERUPS (1) or
+                    // critter file n's model (2 + n); posed per frame below.
+                    Visual::Header(h) => {
+                        let Some(Some(head)) = g.effects.tables.headers.get(h) else {
+                            *vis = Visibility::Hidden;
+                            continue;
+                        };
+                        let pkg = match head.source {
+                            0 => Some("WEAPONS".to_string()),
+                            1 => Some("POWERUPS".to_string()),
+                            n => session.levels[session.current].critters.get(n as usize - 2).and_then(|c| c.2.clone()),
+                        };
+                        let Some(pkg) = pkg else {
+                            *vis = Visibility::Hidden;
+                            continue;
+                        };
+                        let key = format!("H{h}:{}", node.start.to_bits());
+                        if slot.key.as_deref() != Some(key.as_str()) {
+                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing });
+                        }
+                        let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_index_parts(&sources, &libs, &pkg, head.tree));
+                        (Some(key), parts, tf)
+                    }
+                    // FamiliarSpit: the class SFX package's FAMILIAR_SPIT tree
+                    // (or WEAPONS' PHOENIX_FBALL for the phoenix).
+                    Visual::Familiar { phoenix, .. } => {
+                        let (pkg, label) = if phoenix { ("WEAPONS".to_string(), "PHOENIX_FBALL") } else { (session.sfx.clone(), "FAMILIAR_SPIT") };
+                        let key = format!("F{pkg}:{label}");
+                        let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_parts(&sources, &libs, &pkg, label));
+                        (Some(key), parts, tf)
                     }
                     Visual::EnemyMissile { t, kind } => {
                         let Some(pkg) = sources.monsters.get(&t) else {
@@ -2011,6 +2039,49 @@ fn present_world(
     }
 }
 
+/// A package tree by index (EffectHeaders' tree numbers) at rest.
+fn tree_index_parts(sources: &Sources, libs: &Libraries, pkg: &str, tree: usize) -> Model {
+    let label = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.get(tree)).map(|t| t.label.clone());
+    label.map_or_else(Vec::new, |l| tree_parts(sources, libs, pkg, &l))
+}
+
+/// The node index of a model part within its package tree.
+#[derive(Component)]
+struct TreeNodeIdx(usize);
+
+/// An effect slot's animated tree: frames advance every timing/900 s from
+/// the node's start ATime (StartFXTree).
+#[derive(Component)]
+struct EffectTree {
+    pkg: String,
+    tree: usize,
+    start: f32,
+    timing: i16,
+}
+
+/// Pose effect trees' nodes (sequence 0) at the effect's current frame;
+/// camera-facing nodes keep their translation and take CameraFaceLocal's
+/// rotation afterwards.
+fn present_effect_trees(sim: Res<Sim>, sources: Res<Sources>, slots: Query<(&EffectTree, &Children, &Visibility)>, mut parts: Query<(&TreeNodeIdx, &mut Transform)>) {
+    let atime = sim.game.globals.atime;
+    for (fx, children, vis) in &slots {
+        if *vis == Visibility::Hidden {
+            continue;
+        }
+        let Some(pkg) = sources.packages.get(&fx.pkg) else { continue };
+        let Some(anim) = pkg.anim.as_ref() else { continue };
+        let frame = ((atime - fx.start) * 900.0 / f32::from(fx.timing.max(1))).max(0.0);
+        let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, 0, frame, true) else { continue };
+        for child in children.iter() {
+            if let Ok((idx, mut tf)) = parts.get_mut(child)
+                && let Some(m) = pose.get(idx.0)
+            {
+                *tf = Transform::from_matrix(*m);
+            }
+        }
+    }
+}
+
 /// A package tree's nodes at their initial positions (presentation).
 fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Model {
     let (Some(p), Some(lib)) = (sources.packages.get(pkg), libs.0.get(pkg)) else { return Vec::new() };
@@ -2019,7 +2090,7 @@ fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Mo
     for node in &tree.nodes {
         let l: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
         if let Some(parts) = lib.by_label.get(&l) {
-            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node)));
+            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node), Some(node.index as usize)));
         }
     }
     out
@@ -2035,7 +2106,7 @@ fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) 
     for node in &tree.nodes {
         let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
         if let Some(parts) = lib.by_label.get(&label) {
-            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node)));
+            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node), Some(node.index as usize)));
         }
     }
     out
@@ -2923,7 +2994,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_camera_face_local, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_camera_face_local, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
             )
                 .chain(),

@@ -173,6 +173,19 @@ neither colours nor a lightmap. HYPOTHESIS: the same model for coloured
 non-lightmapped parts is not established (no unique UV matches in the dump);
 they keep their vertex colours. The VU1 microcode was not read.
 
+## Bodies and effect trees
+
+- load_player: the held weapon is the model package's WEAP_HOLD (base
+  classes; WEAP_<COL>_HD<n> for single-model classes) under the right hand
+  node player_rhand[class] (ELF table); SHADOWL1 (MB flags 0x880, z mod −36)
+  follows UpdatePlayerShadow (player x/z, max(floor, water) + 0.1; the splash
+  alternate texture is not ported).
+- Effect slots draw EffectHeaders' trees (WEAPONS, POWERUPS or the critter
+  file's model) and FamiliarSpit trees with their node flags, posed each
+  frame by tree_pose at (ATime − start) × 900 / timing (sequence 0).
+  HYPOTHESES: sequence 0 and the frame rate from StartFXTree's end time;
+  texture-mod (type 3) and OANIM (type 2) tree nodes are not ported.
+
 ## Not yet implemented
 
 Texture fades and per-node shifts, character texmods (SetupPlayerTexMods),
