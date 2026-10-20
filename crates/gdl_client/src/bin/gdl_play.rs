@@ -281,12 +281,22 @@ struct Front {
     /// TEXT/ENGLISH.ROM (GameText) and TEXT/SCROLL_E.ROM.
     english: gdl_formats::textrom::TextRom,
     scrolls: gdl_formats::textrom::TextRom,
+    /// Front-end blit layer (STATIC textures, fonts), the OPTMENU style,
+    /// the menu records by symbol and the shown page's vblank count (+0x7c).
+    ui_hud: gdl_core::game::hud::Hud,
+    opt_style: Option<gdl_core::game::optmenu::OptStyle>,
+    menus: HashMap<&'static str, gdl_core::game::optmenu::OptMenu>,
+    static_pkg: Package,
+    menu_clock: (Option<(&'static str, usize)>, f32),
     base: Base,
 }
 
 /// Front-end text (menus) drawn over everything.
 #[derive(Component)]
 struct FrontText;
+/// The native text menus' dark panel (hidden under original menus).
+#[derive(Component)]
+struct FrontPanel;
 
 /// The title picture (TITLE00–03) and the panel behind the menu text,
 /// shown on the front end only.
@@ -318,7 +328,8 @@ fn title_picture(cat: &gdl_client::catalog::Catalog) -> Result<Image, Box<dyn Er
         bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
         bevy::render::render_resource::TextureDimension::D2,
         rgba,
-        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        // Raw display values (the frame is decoded once by DisplayToLinear).
+        bevy::render::render_resource::TextureFormat::Rgba8Unorm,
         bevy::asset::RenderAssetUsages::default(),
     );
     image.sampler = bevy::image::ImageSampler::nearest();
@@ -931,7 +942,7 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
         }
         Err(e) => eprintln!("title picture unavailable: {e}"),
     }
-    commands.spawn((Sprite { color: Color::srgba(0.0, 0.0, 0.0, 0.6), custom_size: Some(Vec2::new(900.0, 290.0)), ..default() }, Transform::from_xyz(0.0, -300.0, -1.0), FrontBackdrop));
+    commands.spawn((Sprite { color: Color::linear_rgba(0.0, 0.0, 0.0, 0.6), custom_size: Some(Vec2::new(900.0, 290.0)), ..default() }, Transform::from_xyz(0.0, -300.0, -1.0), FrontBackdrop, FrontPanel));
     // Until a level's camera exists the session start camera's window
     // angle (MboxWinPtr +0x1c, horizontal) stands in; the 640×384 viewport
     // has square pixels.
@@ -939,15 +950,21 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
     commands.spawn((
         Camera3d::default(),
         Tonemapping::None,
+        bevy::render::view::Hdr,
+        bevy::core_pipeline::tonemapping::DebandDither::Disabled,
         Projection::custom(Ps2Projection { tan_h: tan_v * 640.0 / 384.0, tan_v, near: 1.0, far: 65536.0 }),
         Transform::default(),
         FollowCamera,
     ));
-    commands.spawn((Camera2d, Camera { order: 1, clear_color: ClearColorConfig::None, ..default() }));
+    commands.spawn((Camera2d, Camera { order: 1, clear_color: ClearColorConfig::None, ..default() }, Tonemapping::None, bevy::render::view::Hdr, bevy::core_pipeline::tonemapping::DebandDither::Disabled));
     commands.spawn((
         Camera2d,
         Camera { order: 2, clear_color: ClearColorConfig::None, ..default() },
         Tonemapping::None,
+        bevy::render::view::Hdr,
+        bevy::core_pipeline::tonemapping::DebandDither::Disabled,
+        // The last camera: decode the frame's display values once.
+        gdl_client::DisplayToLinear { enabled: 1.0 },
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: bevy::camera::ScalingMode::Fixed { width: 512.0, height: 384.0 },
             ..OrthographicProjection::default_2d()
@@ -958,7 +975,7 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
     // colour 1/128, z 0.5: in front of the panels) on the blit layer.
     for (top, bottom) in [(0.0f32, 48.0f32), (304.0, 384.0)] {
         commands.spawn((
-            Sprite { color: Color::srgb_u8(2, 2, 2), custom_size: Some(Vec2::new(512.0, bottom - top)), ..default() },
+            Sprite { color: Color::linear_rgb(1.0 / 128.0, 1.0 / 128.0, 1.0 / 128.0), custom_size: Some(Vec2::new(512.0, bottom - top)), ..default() },
             Transform::from_xyz(0.0, 192.0 - (top + bottom) * 0.5, 100.0),
             Visibility::Hidden,
             bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
@@ -976,7 +993,7 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
     commands.spawn((
         Text2d::new(String::new()),
         TextFont { font_size: 30.0, ..default() },
-        TextColor(Color::srgb(1.0, 0.9, 0.4)),
+        TextColor(Color::linear_rgb(1.0, 0.9, 0.4)),
         Anchor::CENTER,
         Transform::from_xyz(0.0, 40.0, 0.0),
         Banner,
@@ -984,7 +1001,7 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
     commands.spawn((
         Text2d::new(String::new()),
         TextFont { font_size: 26.0, ..default() },
-        TextColor(Color::srgb(1.0, 0.95, 0.7)),
+        TextColor(Color::linear_rgb(1.0, 0.95, 0.7)),
         Anchor::CENTER,
         Transform::from_xyz(0.0, 0.0, 1.0),
         FrontText,
@@ -2230,9 +2247,9 @@ fn present_sparks(
         .get_or_insert_with(|| {
             (
                 meshes.add(Sphere::new(0.5)),
-                materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.9, 0.3), unlit: true, ..default() }),
+                materials.add(StandardMaterial { base_color: Color::linear_rgb(1.0, 0.9, 0.3), unlit: true, ..default() }),
                 materials.add(StandardMaterial {
-                    base_color: Color::srgba(0.8, 0.5, 1.0, 0.25),
+                    base_color: Color::linear_rgba(0.8, 0.5, 1.0, 0.25),
                     unlit: true,
                     alpha_mode: AlphaMode::Blend,
                     cull_mode: None,
@@ -2415,17 +2432,7 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl
             gdl_client::hud_texture_set(k, &pkg.objects)
         })
         .collect();
-    let names = game.hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default();
-    let fonts = names
-        .iter()
-        .map(|n| match catalog.read(&format!("FONTS/{n}.FNT")).map_err(|e| e.to_string()).and_then(|b| gdl_formats::fnt::Font::parse(&b).map_err(|e| e.to_string())) {
-            Ok(f) => Some(f),
-            Err(e) => {
-                eprintln!("font {n}: {e}");
-                None
-            }
-        })
-        .collect();
+    let fonts = load_fonts(catalog, game.hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default());
     game.hud_init(tex, fonts, Some(english.clone()));
     if !game.hud.missing.is_empty() {
         eprintln!("panel textures not found: {:?}", game.hud.missing);
@@ -2442,6 +2449,30 @@ fn scroll_box(game: &Game, rom: &gdl_formats::textrom::TextRom, e: &gdl_formats:
     gdl_core::game::hud::ScrollBox::new(pages, font, e.scale, e.space)
 }
 
+/// FONTS/<font_desc>.FNT (font_init_desc).
+fn load_fonts(catalog: &gdl_client::catalog::Catalog, names: Vec<String>) -> Vec<Option<gdl_formats::fnt::Font>> {
+    names
+        .iter()
+        .map(|n| match catalog.read(&format!("FONTS/{n}.FNT")).map_err(|e| e.to_string()).and_then(|b| gdl_formats::fnt::Font::parse(&b).map_err(|e| e.to_string())) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                eprintln!("font {n}: {e}");
+                None
+            }
+        })
+        .collect()
+}
+
+/// The page drawn with an original menu record (front end or pause).
+fn menu_view(front: &Front, screen: Screen, ui: &Ui) -> Option<(&'static str, usize)> {
+    if !(screen == Screen::Front || ui.paused) {
+        return None;
+    }
+    gdl_client::menu::page_record(&front.menu.page).filter(|(k, _)| front.menus.contains_key(k))
+}
+
+type HudInputs<'w> = (Option<Res<'w, Sim>>, Option<Res<'w, Sources>>, ResMut<'w, Front>, Res<'w, Screen>, Res<'w, Ui>, Res<'w, Time>);
+
 type HudSpriteQuery<'w, 's> = Query<'w, 's, (&'static HudSprite, &'static mut Transform, &'static mut Visibility, &'static MeshMaterial2d<gdl_client::BlitMaterial>)>;
 
 /// The frame's panel blits (Game::hud draw list) as pooled sprites: sorted
@@ -2449,8 +2480,7 @@ type HudSpriteQuery<'w, 's> = Query<'w, 's, (&'static HudSprite, &'static mut Tr
 #[allow(clippy::too_many_arguments)]
 fn present_hud(
     mut commands: Commands,
-    sim: Res<Sim>,
-    sources: Res<Sources>,
+    (sim, sources, mut front, screen, ui, time): HudInputs,
     mut sets: ResMut<HudSets>,
     mut images: ResMut<Assets<Image>>,
     mut mats: ResMut<Assets<gdl_client::BlitMaterial>>,
@@ -2458,9 +2488,24 @@ fn present_hud(
     mut pool: HudSpriteQuery,
     mut quad: Local<Option<Handle<Mesh>>>,
 ) {
-    let mut list = sim.game.hud.draw_list();
-    if let Some(sb) = &sim.message_box {
-        list.extend(sim.game.hud.scroll_blits(sb));
+    let playing = *screen == Screen::Playing;
+    let mut list = Vec::new();
+    if let Some(sim) = sim.as_ref().filter(|_| playing) {
+        list = sim.game.hud.draw_list();
+        if let Some(sb) = &sim.message_box {
+            list.extend(sim.game.hud.scroll_blits(sb));
+        }
+    }
+    // The menu page: show_optmenu with the page's vblank count.
+    let view = menu_view(&front, *screen, &ui);
+    if front.menu_clock.0.map(|v| v.0) != view.map(|v| v.0) {
+        front.menu_clock.1 = 0.0;
+    }
+    front.menu_clock.0 = view;
+    front.menu_clock.1 += time.delta_secs() * 59.94;
+    if let (Some((key, at)), Some(style)) = (view, front.opt_style.as_ref()) {
+        let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0) };
+        list.extend(front.ui_hud.optmenu_blits(style, &front.menus[key], &state));
     }
     list.retain(|b| b.tex.is_some() && 0.0 < b.w && 0.0 < b.h && 1 < b.rgba[3]);
     list.sort_by(|a, b| b.z.total_cmp(&a.z));
@@ -2471,7 +2516,15 @@ fn present_hud(
         let mut resolve = |t: gdl_core::game::hud::TexRef| -> Option<Handle<Image>> {
             let key = (t.set, t.index);
             if !sets.images.contains_key(&key) {
-                let img = sets.keys.get(t.set as usize).and_then(|k| if k.is_empty() { Some(&sources.character) } else { sources.packages.get(k) }).and_then(|pkg| gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize)).map(|im| images.add(im));
+                let key_name = sets.keys.get(t.set as usize).cloned().unwrap_or_else(|| "STATIC".into());
+            let pkg = if key_name == "STATIC" {
+                Some(&front.static_pkg)
+            } else if key_name.is_empty() {
+                sources.as_ref().map(|s| &s.character)
+            } else {
+                sources.as_ref().and_then(|s| s.packages.get(&key_name))
+            };
+            let img = pkg.and_then(|pkg| gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize)).map(|im| images.add(im));
                 sets.images.insert(key, img);
             }
             sets.images[&key].clone()
@@ -2501,12 +2554,6 @@ fn present_hud(
     }
     for (_, _, vis, _) in slots.iter_mut().skip(list.len()) {
         **vis = Visibility::Hidden;
-    }
-}
-
-fn hide_hud(mut pool: Query<&mut Visibility, With<HudSprite>>) {
-    for mut v in &mut pool {
-        *v = Visibility::Hidden;
     }
 }
 
@@ -3022,10 +3069,11 @@ fn front_text(
     ui: Res<Ui>,
     front: Res<Front>,
     mut text: Query<(&mut Text2d, &mut Transform), With<FrontText>>,
-    mut backdrop: Query<&mut Visibility, With<FrontBackdrop>>,
+    mut backdrop: Query<(&mut Visibility, Has<FrontPanel>), With<FrontBackdrop>>,
 ) {
-    for mut v in &mut backdrop {
-        let want = if *screen == Screen::Front { Visibility::Inherited } else { Visibility::Hidden };
+    let original = menu_view(&front, *screen, &ui).is_some();
+    for (mut v, panel) in &mut backdrop {
+        let want = if *screen == Screen::Front && !(panel && original) { Visibility::Inherited } else { Visibility::Hidden };
         if *v != want {
             *v = want;
         }
@@ -3033,7 +3081,7 @@ fn front_text(
     let Ok((mut t, mut tf)) = text.single_mut() else { return };
     // On the title the menu sits in the lower part, below the logo.
     tf.translation.y = if *screen == Screen::Front { -300.0 } else { 0.0 };
-    let show = *screen == Screen::Front || ui.paused;
+    let show = (*screen == Screen::Front || ui.paused) && menu_view(&front, *screen, &ui).is_none();
     let want = if show { front.menu.text() } else { String::new() };
     if t.0 != want {
         t.0 = want;
@@ -3150,6 +3198,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         a.set_volumes(music_v, sfx_v);
     }
     let shared_labels = std::collections::HashSet::new();
+    let static_pkg = load_package(&package_entry(&catalog, "STATIC", true)?)?;
+    let mut ui_hud = gdl_core::game::hud::HudTables::from_elf(&elf).map(gdl_core::game::hud::Hud::new).unwrap_or_default();
+    let fonts = load_fonts(&catalog, ui_hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default());
+    ui_hud.set_resources(vec![gdl_client::hud_texture_set("STATIC", &static_pkg.objects)], fonts);
+    let opt_style = gdl_core::game::optmenu::OptStyle::from_elf(&elf).ok();
+    let mut menus = HashMap::new();
+    for n in ["title_menu", "title_options", "tower_menu", "game_menu", "tower_options", "game_options", "audio_options", "quitgame_question", "quitlevel_question", "hint_menu", "hint_general_menu"] {
+        if let Some(m) = elf.symbol(n).and_then(|sym| gdl_core::game::optmenu::OptMenu::from_elf(&elf, sym.address).ok()) {
+            menus.insert(n, m);
+        }
+    }
     let mut front = Front {
         menu: Menu::new(music_v, sfx_v),
         store,
@@ -3165,6 +3224,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         shop,
         english,
         scrolls,
+        ui_hud,
+        opt_style,
+        menus,
+        static_pkg,
+        menu_clock: (None, 0.0),
         base: Base { package_cfg, start, levels, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
     refresh_saves(&mut front);
@@ -3189,7 +3253,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
         .init_resource::<EnemyFrames>()
         .insert_resource(Time::<Fixed>::from_hz(30.0))
-        .insert_resource(ClearColor(Color::srgb(0.035, 0.04, 0.05)))
+        .insert_resource(ClearColor(Color::linear_rgb(0.035, 0.04, 0.05)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Gauntlet: Dark Legacy - INTERIM native build".into(),
@@ -3208,9 +3272,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow, present_hud).chain().run_if(playing),
-                hide_hud.run_if(not(playing)),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
+                present_hud,
             )
                 .chain(),
         )

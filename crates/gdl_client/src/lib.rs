@@ -98,8 +98,29 @@ impl Plugin for GsMaterialPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "gs.wgsl");
         bevy::asset::embedded_asset!(app, "blit.wgsl");
+        bevy::asset::embedded_asset!(app, "display_to_linear.wgsl");
+        app.add_plugins(bevy::core_pipeline::fullscreen_material::FullscreenMaterialPlugin::<DisplayToLinear>::default());
         app.add_plugins(MaterialPlugin::<GsMaterial>::default());
         app.add_plugins(bevy::sprite_render::Material2dPlugin::<BlitMaterial>::default());
+    }
+}
+
+/// The final pass of the last camera: the frame holds GS display values
+/// (GsMaterial, BlitMaterial and every blend work on them, as the GS does);
+/// this decodes them once for the sRGB swapchain.
+#[derive(Component, bevy::render::extract_component::ExtractComponent, Clone, Copy, Default, ShaderType)]
+pub struct DisplayToLinear {
+    pub enabled: f32,
+}
+
+impl bevy::core_pipeline::fullscreen_material::FullscreenMaterial for DisplayToLinear {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://gdl_client/display_to_linear.wgsl".into()
+    }
+    fn node_edges() -> Vec<bevy::render::render_graph::InternedRenderLabel> {
+        use bevy::core_pipeline::core_2d::graph::Node2d;
+        use bevy::render::render_graph::RenderLabel;
+        vec![Node2d::Tonemapping.intern(), Self::node_label().intern(), Node2d::EndMainPassPostProcessing.intern()]
     }
 }
 

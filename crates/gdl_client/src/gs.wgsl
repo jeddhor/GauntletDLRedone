@@ -23,12 +23,6 @@ struct GsParams {
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var lightmap_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var lightmap_sampler: sampler;
 
-fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3(2.4));
-    return select(hi, lo, c <= vec3(0.04045));
-}
-
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var rgb = params.tint.rgb;
@@ -60,5 +54,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if floor(alpha * 128.0) <= 1.0 {
         discard;
     }
-    return vec4(srgb_to_linear(min(rgb, vec3(1.0))), min(alpha, 1.0));
+    // Display values: the frame is converted once by DisplayToLinear.
+    return vec4(min(rgb, vec3(1.0)), min(alpha, 1.0));
 }

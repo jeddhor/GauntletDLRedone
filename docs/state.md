@@ -38,15 +38,17 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Remaining: chrome, texture fades/per-node shifts, OANIM and texmod tree
    nodes, MBTreeSetAlpha fades (recorded in Game::node_alpha), point lights,
    AmbientSpecial flashes, fog (D1/D3), splash shadow texture, critter
-   shadows, linear-space blending of translucent draws, item tree animation.
+   shadows, item tree animation.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,
    letterbox over the panels) driven by WritePlayerInfo from do_players;
    game_main's per-frame SetPlayerVars; ScrollMessageBox (parchment,
    font32 text, glow prompt, fire-scroll burn); NewHelp/DoHelp help boxes
-   (with the help pause and displayed flags); pickup notices (do_got_it).
-   Remaining: original player select, shop screen, inventory/map
+   (with the help pause and displayed flags); pickup notices (do_got_it);
+   option menus drawn from the ELF records (title, options, Tower/realm
+   pause, quit questions, hint menu); display-space blending for every
+   draw (Hdr frame + DisplayToLinear). Remaining: original player select, shop screen, inventory/map
    panels, options, credits, movies, boss/timer meters.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.

@@ -85,6 +85,37 @@ pub const COLOUR_NAMES: [&str; 4] = ["YELLOW", "BLUE", "RED", "GREEN"];
 const TITLE_MENU: [&str; 2] = ["Start", "Options"];
 const TITLE_OPTIONS: [&str; 5] = ["Audio", "Game Options", "Compass", "Controls", "Screen"];
 const TOWER_OPTIONS: [&str; 4] = ["Audio", "Compass", "Controls", "Screen"];
+/// game_options 0x21d620 (a realm's Settings).
+const GAME_OPTIONS: [&str; 3] = ["Audio", "Controls", "Screen"];
+
+/// The options list an Options page shows (by the page it returns to).
+fn option_names(back: &Page) -> &'static [&'static str] {
+    match back {
+        Page::Title { .. } => &TITLE_OPTIONS,
+        Page::Paused { tower: false, .. } => &GAME_OPTIONS,
+        _ => &TOWER_OPTIONS,
+    }
+}
+
+/// The original menu record a page is drawn with (title_menu, …), its
+/// selected entry; None for pages without one (native presentation).
+pub fn page_record(page: &Page) -> Option<(&'static str, usize)> {
+    Some(match page {
+        Page::Title { at } => ("title_menu", *at),
+        Page::Options { at, back } => (
+            match **back {
+                Page::Title { .. } => "title_options",
+                Page::Paused { tower: false, .. } => "game_options",
+                _ => "tower_options",
+            },
+            *at,
+        ),
+        Page::Paused { tower, at } => (if *tower { "tower_menu" } else { "game_menu" }, *at),
+        Page::ConfirmQuit { at } => ("quitgame_question", *at),
+        Page::Hints { at } => ("hint_menu", *at),
+        _ => return None,
+    })
+}
 const TOWER_MENU: [&str; 5] = ["Settings", "Manage Character", "Shop", "Inventory", "Quit Game"];
 const GAME_MENU: [&str; 2] = ["Settings", "Quit Level"];
 const HINT_MENU: [&str; 4] = ["General Hints", "Guardians", "Items of Legend", "Runestones"];
@@ -178,8 +209,8 @@ impl Menu {
                 _ => None,
             },
             Page::Options { at, back } => {
-                let n = if matches!(*back, Page::Title { .. }) { TITLE_OPTIONS.len() } else { TOWER_OPTIONS.len() };
-                let names: &[&str] = if n == 5 { &TITLE_OPTIONS } else { &TOWER_OPTIONS };
+                let names = option_names(&back);
+                let n = names.len();
                 match key {
                     Key::Up | Key::Down => self.page = Page::Options { at: wrap(at, n, key == Key::Up), back },
                     Key::Accept if names[at] == "Audio" => self.page = Page::Audio { at: 0, back: Box::new(Page::Options { at, back }) },
@@ -358,8 +389,7 @@ impl Menu {
             Page::PressStart => "Press Start\n\n(Enter / Space / gamepad South)".to_string(),
             Page::Title { at } => list("", &s(&TITLE_MENU), *at),
             Page::Options { at, back } => {
-                let names: &[&str] = if matches!(**back, Page::Title { .. }) { &TITLE_OPTIONS } else { &TOWER_OPTIONS };
-                list("OPTIONS", &s(names), *at)
+                list("OPTIONS", &s(option_names(back)), *at)
             }
             Page::Audio { at, .. } => list("AUDIO\n(left/right to change)", &[format!("Music  {:>3}", self.music), format!("Sound  {:>3}", self.sfx)], *at),
             Page::NotPorted { what, .. } => format!("{what}\n\nnot ported yet\n\n(Enter / Esc to go back)"),

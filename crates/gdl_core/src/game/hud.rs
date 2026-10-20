@@ -374,6 +374,20 @@ impl Hud {
         t
     }
 
+    pub(crate) fn make_pub(&self, tex: Option<TexRef>, x: i32, y: i32, w: i32, h: i32) -> Blit {
+        self.make(tex, x, y, w, h)
+    }
+    pub(crate) fn offset_pub(&self, t: TexRef, n: i32) -> Option<TexRef> {
+        self.offset(t, n)
+    }
+    pub(crate) fn font_z_pub(&self) -> f32 {
+        self.font_z
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn message_pub(&self, scale: f32, space: f32, x: i32, y: i32, font: usize, colour: u32, alpha: u8, z: f32, flags: u32, text: &str) -> Option<Message> {
+        self.message(scale, space, x, y, font, pack_rgb(colour, alpha), z, flags, text)
+    }
+
     /// MBOX_FindTexture without recording a miss.
     pub fn lookup(&self, name: &str) -> Option<TexRef> {
         self.index.get(&name.to_uppercase()).copied()

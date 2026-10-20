@@ -61,15 +61,19 @@ private/reports/ghidra-render1..7 (2026-10-19).
 
 GsMaterial (lib.rs, gs.wgsl) folds base and lightmap passes into one
 fragment: rgb = min(tex·vcol, 1) × lightmap alpha/128, alpha = tex·vcol
-alpha, discard when ⌊alpha·128⌋ ≤ 1, then converted from GS (display) space
-to the sRGB target. Base textures and lightmaps are raw Rgba8Unorm/R8Unorm,
+alpha, discard when ⌊alpha·128⌋ ≤ 1, output as GS display values. Every
+camera renders into the shared Hdr (Rgba16Float) frame, so all blending
+works on display values as the GS does; the last camera's DisplayToLinear
+pass (FullscreenMaterial) decodes the frame once for the sRGB swapchain.
+Bevy-native sprites/text are given display-valued colours (the title picture
+is a raw Rgba8Unorm image). Base textures and lightmaps are raw Rgba8Unorm/R8Unorm,
 bilinear, with the record's clamp. GsDraw applies flags 0x800000/0x80/0x40.
 gdl_play applies the node rules above (model presence, flags 1/2, particle
 nodes skipped, CameraFace on translation-only nodes with the StdCam eye/rows).
 
 Presentation choices (not fidelity claims): one folded pass (translucent
 lightmapped texels multiply the background by the lightmap in the GS but not
-here); blending happens in linear space on the sRGB target; level-0 textures
+here); blending is in floating point (the GS truncates to 8 bits); level-0 textures
 only (the mip chain and per-draw K are not used); the GS's integer
 truncation is not modelled; nested CameraFace nodes use the nearest one.
 

@@ -13,6 +13,7 @@ pub mod doplayers;
 pub mod damage;
 pub mod effects;
 pub mod hud;
+pub mod optmenu;
 pub mod enemies;
 pub mod enemy_ai;
 pub mod item_runtime;

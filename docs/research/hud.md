@@ -128,12 +128,34 @@ LEGEND, CRYSTAL, GOLDNICON; it slides up from y 0x180 by vb_elapsed to
 unknown kind returns from the whole function (kept). Checked natively with
 GDL_DEBUG_GOTIT=1:50 (the "Treasure" panel over player 1's box).
 
+## Option menus (show_optmenu)
+
+Menu records (0xe8 bytes; title_menu 0x21ce30, title_options, tower_menu,
+game_menu, tower_options, game_options, audio_options, quitgame_question,
+quitlevel_question, hint_menu, hint_general_menu, …): +0 optmenu_active,
++4 title scale, +8 title, +0xc/+0x10 item x/y (−1 centred), +0x14/+0x18
+measured size, +0x1c entries (0x24 each: label, action, gap, value string,
+colour, +0x20 < 0 disabled), +0x20 flags (button row 1/2/4/8, 0x10
+"Player n", 0x20 fade over OPTMENU_FINISH_FRAMES 30, 0x40 FONT32_PARCH
+glyphs, 0x80 FONT32GAR0–5 intro burn, 0x200 entry colours), +0x24 button
+row y, +0x28/+0x2c/+0x30 off/on/highlight colours, +0x34 scale, +0x38 icon
+tree (ICON_ARROW), +0x44 background (SCROLL_A) and rectangle (margins 64),
++0x58 burn (LOGO_BURN1–5, frame (frames >> 3) % 5, z 1.0). Items use
+OPTMENU_FONT 6 (font32); the selection (optmenu_choice_twice) draws a
+FONT32_GLOW layer (flag 0x4000, highlight colour, alpha pulse over
+OPTMENU_FADE 40 / hold 5) then the "on" colour in plain font32;
+unselected PARCH items are white. Background z OPTMENU_SCROLLZ − 1
+(63899). gdl_core::game::optmenu draws them; the client maps its pages to
+the records (menu::page_record) and keeps its own input logic. Not drawn:
+the ICON_ARROW selector (an animated powerup tree placed with
+MBScreenToWorld at depth 1.1), value columns of audio_options.
+
 ## Native presentation
 
 A HUD camera with a fixed 512×384 orthographic projection on its own render
 layer draws the frame's blit list as pooled quads (blit.wgsl: MODULATE,
-alpha test, standard blending, bilinear, linear clamp), sorted far to near
-by z. Textures are decoded lazily per OBJECTS record (format 146 with the
+alpha test, standard blending on display values, bilinear, linear clamp),
+sorted far to near by z. The front end has its own STATIC-backed Hud. Textures are decoded lazily per OBJECTS record (format 146 with the
 white alpha CLUT). Samples are clamped half a texel inside the crop: at the
 original 640×448 frame edge taps never reach the neighbouring glyph cell.
 MBOX search order (STATIC, the character package, the level's packages) is
