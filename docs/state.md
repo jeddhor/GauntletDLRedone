@@ -31,10 +31,13 @@ original (PCSX2 reference on Xvfb :191, private captures):
    texture × vertex colour (0x80 scale), lightmaps (format 146 + observed
    CLUT), alpha test/blend, additive (node flag 0x800000), depth flags,
    record clamps, bilinear; world node MB flags (hidden/group/particle
-   nodes) and CameraFace billboards. Remaining: world particle systems
-   (WorldPsysActivate/MBDrawPsys), texture shift/scroll, chrome, distance
-   alpha, MBTreeSetAlpha fades, character VU1 lighting (MBDirLight/
-   MBAmbLight/pos lights), fog, effect trees, OANIM, DoTexMods.
+   nodes) and CameraFace billboards; 2026-10-20: projection corrected
+   (pb +0x90), world particle systems (gdl_core::psys), world texmods
+   (frames/scrolls), reference-camera pixel checks. Remaining: chrome,
+   distance alpha, MBTreeSetAlpha fades and scripted node hiding, item/
+   character texmods and psys (PsfxDoParticle/CritterDoParticle), character
+   VU1 lighting (MBDirLight/MBAmbLight/pos lights), fog, effect trees,
+   OANIM, linear-space blending of translucent draws.
 5. Front end and HUD: FNT fonts, original HUD panels, scroll parchment,
    original player select, shop screen, inventory, options, credits, movies.
 6. Audio completeness; secret characters; Sumner as a character;

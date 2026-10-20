@@ -10,7 +10,7 @@
 struct GsParams {
     // Constant colour in GS units (rgb 1.0 = 255, alpha 1.0 = 0x80).
     tint: vec4<f32>,
-    // x: base texture bound, y: lightmap bound.
+    // x: base texture bound, y: lightmap bound, z/w: UV shift add.
     options: vec4<f32>,
 };
 
@@ -35,7 +35,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     alpha = alpha * in.color.a;
 #endif
 #ifdef VERTEX_UVS_A
-    let t = textureSample(base_texture, base_sampler, in.uv);
+    let t = textureSample(base_texture, base_sampler, in.uv + params.options.zw);
     if params.options.x > 0.5 {
         rgb = rgb * t.rgb;
         alpha = alpha * t.a * (255.0 / 128.0);

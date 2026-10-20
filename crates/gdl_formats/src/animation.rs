@@ -524,3 +524,53 @@ mod tests {
         }
     }
 }
+
+/// One texture modifier (0x58-byte record; ANIM header +8 count, +0xc
+/// offset): InitTexMod 0x110f20 / DoTexModSub 0x110e10 consume it.
+#[derive(Debug, Clone, Serialize)]
+pub struct TexMod {
+    /// +0x00: −1 for modifiers DoTexMods steps (world/item/player tables).
+    pub owner: i16,
+    /// +0x04: the texture modified; +0x24: the frame-base texture name.
+    pub target_name: String,
+    pub frame_name: String,
+    /// +0x44: target bitmap record (package-relative), +0x48: frame-base
+    /// record or type (−1 copy by name, −2 U scroll, −3 V scroll, −4/−5
+    /// fade, −6 none).
+    pub target: i32,
+    pub frame_base: i32,
+    /// +0x4c frame count / scroll period (negative: reverse), +0x4e start,
+    /// +0x50 AFrame divisor, +0x54 initial counter.
+    pub count: i16,
+    pub start: i16,
+    pub divisor: i32,
+    pub counter: i32,
+    pub raw: Vec<u8>,
+}
+
+/// The texture modifier table of an ANIM.PS2 package.
+pub fn texmods(bytes: &[u8]) -> Result<Vec<TexMod>, ParseError> {
+    let r = Reader { bytes, family: "ANIM" };
+    r.range(0, 16)?;
+    let count = r.u32(8);
+    if count > 4096 {
+        return Err(r.error(8, "texmod count policy exceeded"));
+    }
+    let table = r.table(r.u32(12), count, 0x58, 16)?;
+    let name = |p: usize| -> String { bytes[p..p + 32].iter().take_while(|b| **b != 0).map(|b| char::from(*b)).collect() };
+    Ok((table.start..table.end)
+        .step_by(0x58)
+        .map(|p| TexMod {
+            owner: r.i16(p),
+            target_name: name(p + 4),
+            frame_name: name(p + 0x24),
+            target: r.i32(p + 0x44),
+            frame_base: r.i32(p + 0x48),
+            count: r.i16(p + 0x4c),
+            start: r.i16(p + 0x4e),
+            divisor: r.i32(p + 0x50),
+            counter: r.i32(p + 0x54),
+            raw: bytes[p..p + 0x58].to_vec(),
+        })
+        .collect())
+}

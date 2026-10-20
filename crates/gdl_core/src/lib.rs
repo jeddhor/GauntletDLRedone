@@ -15,6 +15,7 @@ pub mod player_collision;
 pub mod player_input;
 pub mod player_motion;
 pub mod player_sim;
+pub mod psys;
 pub mod rng;
 pub mod save;
 pub mod transform;

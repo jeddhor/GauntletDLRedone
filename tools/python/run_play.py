@@ -196,7 +196,7 @@ def main():
         return out
 
     known = known_names()
-    packages = dict(POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'))
+    packages = dict(POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), STATIC=package('STATIC'))
     monsters = {}
 
     def realm_levels(letter, first=None):
@@ -225,7 +225,7 @@ def main():
                     packages.setdefault(c['lib'], package(c['lib']))
             out.append(dict(name=code, index=index, world=world, wdata=str(wdata), title=title,
                             worlds=str(resolve([f'LEVELS/LEVEL{code}/WORLDS.PS2'])[0]),
-                            level=package(f'LEVELS/LEVEL{code}', anim=False), items=[f'ITEMS_{n[5:]}' for n in items],
+                            level=package(f'LEVELS/LEVEL{code}', anim=f'LEVELS/LEVEL{code}/ANIM.PS2' in known), items=[f'ITEMS_{n[5:]}' for n in items],
                             monsters=[p for _, p in realm_m], critters=critters))
         return out
 

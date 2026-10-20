@@ -99,7 +99,8 @@ impl Plugin for GsMaterialPlugin {
 pub struct GsParams {
     /// Constant colour in GS units (rgb 1.0 = 255, alpha 1.0 = 0x80).
     pub tint: Vec4,
-    /// x: base texture bound, y: lightmap bound.
+    /// x: base texture bound, y: lightmap bound, z/w: the texture shift's
+    /// U/V add (MB_tex_shift_tex via setTexShift; texture modifiers).
     pub options: Vec4,
 }
 
@@ -133,6 +134,10 @@ pub struct GsDraw {
     pub additive: bool,
     pub no_depth_write: bool,
     pub depth_always: bool,
+    /// ALPHA_1 0x89 (Cd·As): psys flag 0x10 sprites.
+    pub multiply: bool,
+    /// ALPHA C = FIX 0x80 (As = 1.0): psys flag 0x20 sprites.
+    pub fixed_alpha: bool,
 }
 
 impl From<&GsMaterial> for GsDraw {
@@ -151,6 +156,8 @@ impl GsDraw {
             additive: flags & 0x800000 != 0 && !lightmapped,
             no_depth_write: flags & 0x80 != 0,
             depth_always: flags & 0x40 != 0,
+            multiply: false,
+            fixed_alpha: false,
         }
     }
 }
@@ -215,11 +222,21 @@ impl Material for GsMaterial {
                 depth.depth_compare = CompareFunction::Always;
             }
         }
-        if draw.additive
+        // GS blend equations (Cs/Cd colours, As source alpha or FIX 0x80):
+        // 0x48 Cs·As + Cd, 0x89 Cd·As, 0x44 (Cs − Cd)·As + Cd.
+        let color = match (draw.additive, draw.multiply, draw.fixed_alpha) {
+            (true, _, false) => Some((BlendFactor::SrcAlpha, BlendFactor::One)),
+            (true, _, true) => Some((BlendFactor::One, BlendFactor::One)),
+            (false, true, false) => Some((BlendFactor::Zero, BlendFactor::SrcAlpha)),
+            (false, true, true) => Some((BlendFactor::Zero, BlendFactor::One)),
+            (false, false, true) => Some((BlendFactor::One, BlendFactor::Zero)),
+            (false, false, false) => None,
+        };
+        if let Some((src, dst)) = color
             && let Some(target) = descriptor.fragment.as_mut().and_then(|f| f.targets.get_mut(0)).and_then(|t| t.as_mut())
         {
             target.blend = Some(BlendState {
-                color: BlendComponent { src_factor: BlendFactor::SrcAlpha, dst_factor: BlendFactor::One, operation: BlendOperation::Add },
+                color: BlendComponent { src_factor: src, dst_factor: dst, operation: BlendOperation::Add },
                 alpha: BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add },
             });
         }
@@ -231,6 +248,12 @@ impl Material for GsMaterial {
 /// format-146 lightmaps, keyed by bitmap record index.
 pub struct MaterialSet {
     pub base: HashMap<u16, Handle<GsMaterial>>,
+    /// Decoded base images by TEXDEF label (upper case; MBOX_FindTexture).
+    pub labels: HashMap<String, Handle<Image>>,
+    /// Bitmap record by upper-case label, and every record's image
+    /// (placeholders included) for texture modifiers.
+    pub label_index: HashMap<String, u16>,
+    pub record_images: HashMap<u16, Handle<Image>>,
     pub lightmaps: HashMap<u16, Handle<Image>>,
     pub unknown: Handle<GsMaterial>,
     pub unresolved: Vec<u32>,
@@ -272,6 +295,9 @@ pub fn materials_for(
     materials: &mut Assets<GsMaterial>,
 ) -> MaterialSet {
     let mut base = HashMap::new();
+    let mut labels = HashMap::new();
+    let mut label_index = HashMap::new();
+    let mut record_images = HashMap::new();
     let mut lightmaps = HashMap::new();
     let mut unresolved = Vec::new();
     for bitmap in &objects.bitmap_records {
@@ -303,9 +329,25 @@ pub fn materials_for(
         } else {
             None
         };
+        if candidates.len() == 1 {
+            label_index.entry(candidates[0].label.to_uppercase()).or_insert(bitmap.index as u16);
+        }
         let Some(mut rgba) = decoded else {
             unresolved.push(bitmap.index);
-            base.insert(bitmap.index as u16, materials.add(GsMaterial::solid(Color::srgb(1.0, 0.0, 0.8), AlphaMode::Opaque)));
+            // A magenta placeholder image: texture modifiers (MBSetRomTexture /
+            // MBCopyTexture) may later copy a decoded frame into this record.
+            let image = images.add(raw_image(1, 1, vec![255, 0, 204, 128], TextureFormat::Rgba8Unorm, record_sampler(bitmap.flags)));
+            record_images.insert(bitmap.index as u16, image.clone());
+            base.insert(
+                bitmap.index as u16,
+                materials.add(GsMaterial {
+                    params: GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0) },
+                    base: Some(image),
+                    lightmap: None,
+                    alpha_mode: AlphaMode::Blend,
+                    draw: GsDraw::default(),
+                }),
+            );
             continue;
         };
         if matches!(bitmap.format, 0 | 16 | 48) {
@@ -325,6 +367,8 @@ pub fn materials_for(
             AlphaMode::Blend
         };
         let image = images.add(raw_image(bitmap.width, bitmap.height, rgba, TextureFormat::Rgba8Unorm, record_sampler(bitmap.flags)));
+        labels.entry(candidates[0].label.to_uppercase()).or_insert_with(|| image.clone());
+        record_images.insert(bitmap.index as u16, image.clone());
         base.insert(
             bitmap.index as u16,
             materials.add(GsMaterial {
@@ -337,7 +381,7 @@ pub fn materials_for(
         );
     }
     let unknown = materials.add(GsMaterial::solid(Color::srgb(1.0, 0.0, 0.8), AlphaMode::Opaque));
-    MaterialSet { base, lightmaps, unknown, unresolved }
+    MaterialSet { base, labels, label_index, record_images, lightmaps, unknown, unresolved }
 }
 
 /// Mesh/material handles for every object index, with unsupported parts listed.
@@ -430,3 +474,4 @@ pub fn tree_pose(animations: &Animations, tree_index: usize, bytes: &[u8], seque
     }
     Ok(worlds.into_iter().map(Option::unwrap).collect())
 }
+

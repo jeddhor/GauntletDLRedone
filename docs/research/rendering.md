@@ -83,10 +83,68 @@ truncation is not modelled; nested CameraFace nodes use the nearest one.
   private/reference/captures/render/g1-fixture-v1.png is a PCSX2 reference
   frame from the slot-1 fixture (tools/python/reference_screenshot.py).
 
+## Projection (corrected 2026-10-20)
+
+pbProjCalc's +0x90 matrix in the Tower reference is diag(1.73205, −2.88675,
+…): a 554.27-pixel focal length over the 640×384 viewport (square pixels,
+viewport +0xd0 scale 320/192, centre 2048/2016). The window angle
+(MboxWinPtr +0x1c, 60°) is horizontal. gdl_play drives its projection from the
+sim's pb +0x90 (it previously used 60° vertically: ~1.67× too wide).
+
+## Particle systems (gdl_core::psys)
+
+Instruction-derived port of the MB psys: WORLDS header words 0x1c/0x1d hold
+0x138-byte records (letter at +6 = the character after "PSYS" in the node
+label, GetWorldPsysIdx); preset_list (ELF 0x29a4c8, 8 records) applies first
+for records with +0x10 bit 0. setWorldParms decodes counts, emit/decay and
+fade times (×30 frames), cone angle, direction (else the negated first
+collision normal), box, rates (/30), rate randomness, gravity (×−0.0355556),
+speed (/30), four BGRA colours and sizes (MB_psys_parmscale 255/450),
+texture name, flag bits (+0x2c and node 0x800000/0x40000000/0x800/0x40/0x80).
+MBNewWorldPsys passes the node's file flag 0x1000 to createPsysNode (a3:
++0x2c |= 0xc0) and sets +0x2c |= 2 (loop). setupParms/setupNewPMode size the
+16-bit particle ring (position index | direction index | age gap) and pick
+the emitter functions; MBDrawPsys runs the emit state machine, retires,
+emits, assigns age gaps (including the original's overflow quirk) and draws
+newest → oldest; DrawPsysSub's sprites are camera-aligned squares (window
+right/up rows), colour R/G/B = slots 2/1/0, alpha = slot 3 >> 1, MODULATE.
+pbBlitSetDrawRegs: ALPHA 0x48 for node flag 0x800000, 0x89 for psys flag
+0x10, FIX 0x80 for 0x20; ZMSK for node 0x80, ZTST ALWAYS for 0x40.
+Verified against the Tower dump: the flame sprites' colour ramp 0, 42, 85,
+127, 170, 212, 255, … and alpha 127 equal the port's output for record E;
+the sprites bind WEAPONS' 64×64 P_TORCH (load order STATIC, WEAPONS,
+POWERUPS before the level). HYPOTHESES: 30 Hz psys frames
+(ticks_elapsed/1e7); a psys-owned rand state (the original shares one).
+
+## Texture modifiers (texmods)
+
+ANIM.PS2 header +8/+0xc: 0x58-byte records (+0x04 target name, +0x24 frame
+name, +0x44 target record, +0x48 frame base or type, +0x4c count/period,
++0x4e start, +0x50 AFrame divisor, +0x54 counter). DoTexModSub: every
+divisor AFrames the counter advances modulo |count|; frame modifiers copy
+record (+0x48 + counter) into the target (MBSetRomTexture keeps the target's
+flags), −1 resolves the frame base by name (MBCopyTexture); −2/−3 set the
+MB_tex_shift_tex U/V add = sign·(counter mod |count|)/|count| (setTexShift).
+gdl_play swaps image data per AFrame (30 Hz) and passes the shift in the
+material. Fades (−4/−5) and per-node shift (0x10000000) are not ported.
+
+## Render verification (2026-10-20)
+
+tools/python/reference_camera.py reads the paused reference's window camera;
+GDL_DEBUG_CAMERA pins gdl_play to it; tools/python/render_pixel_check.py
+evaluates texel × vertex colour × lightmap from the decoded data at chosen
+pixels. Tower (private/reports/render-pixel-check-l1-v1.txt): the podium
+pixels' data prediction (15,15,13)/(43,47,47)/(40,41,36) matches the
+reference (17,17,13)/(35,39,40)/(36,35,28). The native frame differs there
+because the sim had raised the FLOOR_CYL#09 elevator onto the podium (saved
+character; the reference is 4 s into a new game), not because of shading.
+A second Tower dump (…20261020081101.gs.zst) confirms the same CLUT, pass
+structure and a PSMCT16S render target (FRAME PSM 0x0a, two buffers).
+
 ## Not yet implemented
 
-Particle systems (PSYS nodes, MBDrawPsys), texture shift/scroll (record
-flag 0x40, node flag 0x10000000), chrome (0x8000/0xa0000, setChrome),
+Texture fades and per-node shifts, item/character texmods, MBTreeSetAlpha
+and EnterTower's node hiding (L1XPLIGHTRAY01), chrome (0x8000/0xa0000, setChrome),
 distance alpha fade, MBTreeSetAlpha consumers (item/enemy fades), the colour
 scale of setPrimColor and DoLighting, VU1 vertex lighting of characters
 (MBDirLight/MBAmbLight/pos lights), fog (InitFog/FogFadeIn; FGE was 0 in the

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Reload the preserved slot-1 fixture in the paused virtual reference, step a
+"""Reload a preserved savestate slot in the paused virtual reference (slot 1:
+the Poison Fields fixture, slot 2: the Tower new-game capture), step a
 bounded number of vblanks (F10, optional held keys) and save a screenshot of
 the virtual display. Research only; no guest writes; outputs stay private.
 """
@@ -15,10 +16,12 @@ from pine_probe import Pine, configured_socket
 from virtual_display import environment
 
 KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L']
+SLOTS = {1: 'poison-fields-original.p2s', 2: 'tower-newgame-v1.p2s'}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--slot', type=int, choices=sorted(SLOTS), default=1)
     parser.add_argument('--steps', type=int, default=2)
     parser.add_argument('--keys', nargs='*', choices=KEYS, default=[])
     parser.add_argument('--out', type=pathlib.Path, required=True)
@@ -31,10 +34,10 @@ def main():
     env = environment()
     if launch.get('display') != env['DISPLAY'] or not launch.get('diagnostic_hotkeys'):
         raise ValueError('reference was not launched with virtual-display stepping bindings')
-    fixture = pathlib.Path('private/reference/config/PCSX2/sstates/SLUS-20047 (15030637).01.p2s')
-    frozen = pathlib.Path('private/reference/captures/poison-fields-original.p2s')
+    fixture = pathlib.Path(f'private/reference/config/PCSX2/sstates/SLUS-20047 (15030637).{args.slot:02d}.p2s')
+    frozen = pathlib.Path('private/reference/captures') / SLOTS[args.slot]
     if hashlib.sha256(fixture.read_bytes()).digest() != hashlib.sha256(frozen.read_bytes()).digest():
-        raise ValueError('private slot 1 differs from preserved fixture')
+        raise ValueError(f'private slot {args.slot} differs from its preserved capture')
     profile = json.loads(pathlib.Path('profiles/ps2/slus-20047-reference.json').read_text())
     vb_counter = profile['symbols']['vb_counter']['guest_address']
 
@@ -54,8 +57,8 @@ def main():
         pine = Pine(connection)
         if pine.text(12) != 'SLUS-20047' or pine.status() != 1:
             raise ValueError('expected supported paused reference')
-        pine.request(b'\x0a\x01')
-        time.sleep(1.0)
+        pine.request(bytes([0x0a, args.slot]))
+        time.sleep(3.0)
         try:
             for key in args.keys:
                 xdo('keydown', key)
@@ -64,10 +67,15 @@ def main():
                 before, = pine.read_ee32([vb_counter])
                 xdo('key', '--delay', '20', 'F10')
                 deadline = time.monotonic() + 5
+                resend = time.monotonic() + 1.5
                 while True:
                     after, = pine.read_ee32([vb_counter])
                     if pine.status() == 1 and after != before:
                         break
+                    if time.monotonic() >= resend:
+                        # The first step after a state load can be dropped.
+                        xdo('key', '--delay', '20', 'F10')
+                        resend = deadline
                     if time.monotonic() >= deadline:
                         raise ValueError(f'frame step {step} did not settle')
                     time.sleep(0.01)
@@ -76,7 +84,7 @@ def main():
                 xdo('keyup', key)
     time.sleep(0.3)
     subprocess.run(['import', '-window', 'root', str(args.out)], env=env, check=True)
-    print(f'{args.steps} vblanks from the slot-1 fixture; keys {args.keys}; {args.out}')
+    print(f'{args.steps} vblanks from slot {args.slot} ({SLOTS[args.slot]}); keys {args.keys}; {args.out}')
 
 
 if __name__ == '__main__':

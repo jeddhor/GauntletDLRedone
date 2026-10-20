@@ -303,7 +303,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .filter(|x| x.texture_offset == b.texture_offset && x.format == b.format && x.width == b.width && x.height == b.height)
                 .map(|x| x.label.clone())
                 .collect();
-            println!("{} fmt {} flags {:#x} {}x{} off {:#x} candidates {:?}", b.index, b.format, b.flags, b.width, b.height, b.texture_offset, c);
+            println!("{} fmt {} flags {:#x} {}x{} off {:#x} tex0 {:#018x} candidates {:?}", b.index, b.format, b.flags, b.width, b.height, b.texture_offset, b.tex0, c);
         }
         return Ok(());
     }

@@ -105,6 +105,8 @@ struct Package {
 #[derive(Default)]
 struct Library {
     by_label: HashMap<String, Parts>,
+    /// Decoded base images by upper-case TEXDEF label (MBOX_FindTexture).
+    textures: HashMap<String, Handle<Image>>,
 }
 
 #[derive(Resource)]
@@ -684,7 +686,7 @@ struct Slot {
     index: usize,
     key: Option<String>,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SlotKind {
     Enemy,
     Item,
@@ -701,8 +703,9 @@ fn load_package(p: &Value) -> Result<Package, Box<dyn Error>> {
         objects: Objects::parse(&gdl_client::bounded_read(&path("objects")?)?)?,
         table: TextureTable::parse(&gdl_client::bounded_read(&path("texdef")?)?)?,
         textures: gdl_client::bounded_read(&path("textures")?)?,
+        // A level ANIM.PS2 may hold only texture modifiers (no trees).
         anim: match p["anim"].as_str() {
-            Some(a) => Some(Animations::parse(&gdl_client::bounded_read(Path::new(a))?)?),
+            Some(a) => Animations::parse(&gdl_client::bounded_read(Path::new(a))?).ok(),
             None => None,
         },
         anim_bytes: match p["anim"].as_str() {
@@ -726,7 +729,7 @@ fn build_library(
             by_label.entry(d.label.clone()).or_insert_with(|| list.clone());
         }
     }
-    Library { by_label }
+    Library { by_label, textures: set.labels }
 }
 
 /// Presentation heuristic: frame objects "<TREE>…<stem>F<nn>" grouped by stem,
@@ -788,9 +791,10 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: 
         Err(e) => eprintln!("title picture unavailable: {e}"),
     }
     commands.spawn((Sprite { color: Color::srgba(0.0, 0.0, 0.0, 0.6), custom_size: Some(Vec2::new(900.0, 290.0)), ..default() }, Transform::from_xyz(0.0, -300.0, -1.0), FrontBackdrop));
-    // Until a level's camera exists the session start camera's vertical
-    // angle stands in (presentation).
-    let tan_v = (presentation.fov * 0.5).tan();
+    // Until a level's camera exists the session start camera's window
+    // angle (MboxWinPtr +0x1c, horizontal) stands in; the 640×384 viewport
+    // has square pixels.
+    let tan_v = (presentation.fov * 0.5).tan() * 384.0 / 640.0;
     commands.spawn((
         Camera3d::default(),
         Tonemapping::None,
@@ -977,6 +981,8 @@ fn spawn_level(
             }
         }
     }
+    spawn_world_psys(commands, root, session, &set, meshes);
+    spawn_texmods(commands, &level.anim_bytes, &set);
     for index in 0..gdl_core::game::critters::MAX_INSTS {
         let e = commands.spawn((CritterSlot { index, shown: None }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
         commands.entity(root).add_child(e);
@@ -986,6 +992,335 @@ fn spawn_level(
             let e = commands.spawn((Slot { kind, index, key: None }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
             commands.entity(root).add_child(e);
         }
+    }
+}
+
+/// The GDL_DEBUG_CAMERA override: [eye, up, forward] in original space.
+fn debug_camera() -> Option<[Vec3; 3]> {
+    static CAMERA: std::sync::OnceLock<Option<[Vec3; 3]>> = std::sync::OnceLock::new();
+    *CAMERA.get_or_init(|| {
+        let path = std::env::var("GDL_DEBUG_CAMERA").ok()?;
+        let v: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        let vec = |k: &str| -> Option<Vec3> { Some(Vec3::from_array(serde_json::from_value::<[f32; 3]>(v[k].clone()).ok()?)) };
+        Some([vec("eye")?, vec("up")?, vec("forward")?])
+    })
+}
+
+/// The world's texture modifiers (GauntWorldInit → InitTexMods; stepped by
+/// DoWorldAnimation → DoTexMods once per game update).
+#[derive(Component)]
+struct TexMods {
+    mods: Vec<TexModState>,
+    aframe: u32,
+    accumulated: f32,
+    /// Materials by base image, built on first use (scroll targets).
+    by_image: Option<HashMap<AssetId<Image>, Vec<AssetId<gdl_client::GsMaterial>>>>,
+}
+
+enum TexModKind {
+    /// MBSetRomTexture(target, frame base + counter).
+    Frames { target: Handle<Image>, frames: Vec<Handle<Image>> },
+    /// DoTexScroll2Sub: the target's U (−2) or V (−3) shift add.
+    Scroll { target: AssetId<Image>, v: bool },
+}
+
+struct TexModState {
+    kind: TexModKind,
+    count: i16,
+    start: i16,
+    divisor: i32,
+    counter: i32,
+}
+
+/// InitTexMod 0x110f20 for the level package: frame modifiers resolve their
+/// frame base (+0x48, or by name for −1: MBOX_FindTexture + MBCopyTexture);
+/// −2/−3 become texture shifts; fades (−4/−5) and −6 are not ported.
+fn spawn_texmods(commands: &mut Commands, anim: &[u8], set: &gdl_client::MaterialSet) {
+    let Ok(list) = gdl_formats::animation::texmods(anim) else { return };
+    let mut mods = Vec::new();
+    for tm in list.iter().filter(|t| t.owner == -1) {
+        let Ok(target) = u16::try_from(tm.target) else { continue };
+        let Some(target_image) = set.record_images.get(&target) else { continue };
+        let kind = match tm.frame_base {
+            -2 | -3 => TexModKind::Scroll { target: target_image.id(), v: tm.frame_base == -3 },
+            -6..=-4 => continue,
+            base => {
+                let base = if base == -1 { set.label_index.get(&tm.frame_name.to_uppercase()).map(|&i| i32::from(i)) } else { Some(base) };
+                let Some(base) = base else { continue };
+                let n = i32::from(tm.count).abs().max(1);
+                let frames: Vec<_> = (0..n).filter_map(|k| u16::try_from(base + k).ok().and_then(|i| set.record_images.get(&i)).cloned()).collect();
+                if frames.is_empty() {
+                    continue;
+                }
+                TexModKind::Frames { target: target_image.clone(), frames }
+            }
+        };
+        mods.push(TexModState { kind, count: tm.count, start: tm.start, divisor: tm.divisor, counter: tm.counter });
+    }
+    if !mods.is_empty() {
+        commands.spawn((TexMods { mods, aframe: 0, accumulated: 0.0, by_image: None }, LevelEntity));
+    }
+}
+
+/// DoTexModSub 0x110e10 per AFrame (30 Hz presentation clock): every
+/// `divisor` frames the counter advances modulo |count|; frame modifiers
+/// copy frame `counter` into the target (initially frame 0, InitTexMod),
+/// scrolls set the shift add sign·(counter mod |count|)/|count|.
+fn present_texmods(time: Res<Time>, mut q: Query<&mut TexMods>, mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+    for mut tm in &mut q {
+        let tm = &mut *tm;
+        let first = tm.by_image.is_none();
+        if first {
+            let mut map: HashMap<AssetId<Image>, Vec<AssetId<gdl_client::GsMaterial>>> = HashMap::new();
+            for (id, m) in materials.iter() {
+                if let Some(b) = &m.base {
+                    map.entry(b.id()).or_default().push(id);
+                }
+            }
+            tm.by_image = Some(map);
+        }
+        tm.accumulated += time.delta_secs();
+        let mut changed = first;
+        let mut steps = 0;
+        while tm.accumulated >= 1.0 / 30.0 && steps < 4 {
+            tm.accumulated -= 1.0 / 30.0;
+            steps += 1;
+            tm.aframe = tm.aframe.wrapping_add(1);
+            for m in &mut tm.mods {
+                if 0 < m.divisor && tm.aframe % m.divisor as u32 != 0 {
+                    continue;
+                }
+                m.counter += 1;
+                if i32::from(m.count).abs() <= m.counter {
+                    m.counter = 0;
+                }
+                changed = true;
+            }
+        }
+        if !changed {
+            continue;
+        }
+        let by_image = tm.by_image.as_ref().unwrap();
+        for m in &tm.mods {
+            match &m.kind {
+                TexModKind::Frames { target, frames } => {
+                    let k = if first && steps == 0 { 0 } else { (m.counter.max(0) as usize).min(frames.len() - 1) };
+                    let Some(mut frame) = images.get(&frames[k]).cloned() else { continue };
+                    if let Some(old) = images.get(target) {
+                        frame.sampler = old.sampler.clone();
+                    }
+                    let _ = images.insert(target.id(), frame);
+                }
+                TexModKind::Scroll { target, v } => {
+                    let n = f32::from(m.count).abs().max(1.0);
+                    let sign = if m.count < 0 { -1.0 } else { 1.0 };
+                    let _ = m.start;
+                    let shift = sign * (m.counter.rem_euclid(n as i32) as f32 / n);
+                    for id in by_image.get(target).into_iter().flatten() {
+                        if let Some(mat) = materials.get_mut(*id) {
+                            if *v {
+                                mat.params.options.w = shift;
+                            } else {
+                                mat.params.options.z = shift;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A world particle system (WorldPsysActivate → MBNewWorldPsys) with its
+/// node's world matrix (row-major PS2 layout) and the sprites of the last
+/// psys frame.
+#[derive(Component)]
+struct Emitter {
+    psys: gdl_core::psys::Psys,
+    matrix: [f32; 16],
+    sprites: Vec<gdl_core::psys::Sprite>,
+    /// Level texture by name, resolved against the STATIC package later.
+    texture: Option<Handle<Image>>,
+    material: Option<Handle<gdl_client::GsMaterial>>,
+}
+
+/// MBPsysStartFrame's frame counter, the psys random source and the
+/// shared direction table, stepped at 30 Hz of presentation time.
+#[derive(Resource)]
+struct PsysClock {
+    global: gdl_core::psys::PsysGlobal,
+    accumulated: f32,
+}
+
+/// World psys nodes (file flag 0x800, not 0x10000000; NewWorldObject):
+/// the WORLDS psys record whose +6 letter follows "PSYS" in the node label
+/// (GetWorldPsysIdx), the negated first collision normal as direction.
+fn spawn_world_psys(commands: &mut Commands, root: Entity, session: &Session, set: &gdl_client::MaterialSet, meshes: &mut Assets<Mesh>) {
+    let world = &session.world;
+    let bytes = &world.bytes;
+    let header = |i: usize| bytes.get(i * 4..i * 4 + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+    let version = header(0x18);
+    if version & 0xf00bab00 != 0xf00bab00 || version & 0xff < 2 {
+        return;
+    }
+    let (count, offset) = (header(0x1c) as usize, header(0x1d) as usize);
+    let Some(table) = bytes.get(offset..offset + count * gdl_core::psys::RECORD) else { return };
+    let presets = gdl_formats::elf::Elf::parse(&session.elf_bytes)
+        .ok()
+        .and_then(|e| e.object("preset_list").ok().map(|b| b.to_vec()))
+        .unwrap_or_default();
+    let Ok(placements) = world.placements() else { return };
+    for p in placements {
+        let node = &world.nodes[p.node_index as usize];
+        if node.flags & 0x800 == 0 || node.flags & 0x10000000 != 0 {
+            continue;
+        }
+        let Some(at) = node.label.find("PSYS") else { continue };
+        let Some(letter) = node.label.as_bytes().get(at + 4).copied() else { continue };
+        let Some(record) = table.chunks_exact(gdl_core::psys::RECORD).find(|r| r[6] == letter) else { continue };
+        let dir = (0 < node.collision_count)
+            .then(|| world.collisions.get(node.collision_index as usize))
+            .flatten()
+            .map(|c| c.normal.map(|v| -v));
+        let Ok(psys) = gdl_core::psys::Psys::new_world(0, record, &presets, dir, node.flags & 0x1000 != 0) else { continue };
+        let [x, y, z] = p.summed_position;
+        let matrix = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0];
+        let texture = psys.texture.as_ref().and_then(|t| set.labels.get(&t.to_uppercase())).cloned();
+        let mesh = meshes.add(Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default()));
+        let e = commands
+            .spawn((
+                Emitter { psys, matrix, sprites: Vec::new(), texture, material: None },
+                Mesh3d(mesh),
+                Transform::default(),
+                Visibility::Hidden,
+                LevelEntity,
+            ))
+            .id();
+        commands.entity(root).add_child(e);
+    }
+}
+
+type EmitterQuery<'w, 's> = Query<'w, 's, (&'static mut Emitter, &'static Mesh3d, &'static mut Visibility, Option<&'static MeshMaterial3d<gdl_client::GsMaterial>>, Entity)>;
+
+/// MBDrawPsys per psys frame (30 Hz) for every emitter whose sphere
+/// (radius +0xa4) is in the camera frustum or that drew sprites last time
+/// (pbRenderNode case 0xc), then DrawPsysSub's camera-facing sprites
+/// rebuilt with the current window camera rows.
+#[allow(clippy::too_many_arguments)]
+fn present_particles(
+    time: Res<Time>,
+    sim: Res<Sim>,
+    mut clock: ResMut<PsysClock>,
+    libraries: Res<Libraries>,
+    cams: Query<&bevy::camera::primitives::Frustum, With<FollowCamera>>,
+    mut emitters: EmitterQuery,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut commands: Commands,
+) {
+    let Some(cam) = &sim.game.std_camera else { return };
+    let rows = cam.pb.cam_rows.map(Vec3::from_array);
+    let frustum = cams.iter().next();
+    clock.accumulated += time.delta_secs();
+    let mut steps = 0;
+    while clock.accumulated >= 1.0 / 30.0 && steps < 4 {
+        clock.accumulated -= 1.0 / 30.0;
+        steps += 1;
+        let PsysClock { global, .. } = &mut *clock;
+        global.start_frame();
+        for (mut em, ..) in &mut emitters {
+            let em = &mut *em;
+            if em.psys.finished() {
+                em.sprites.clear();
+                continue;
+            }
+            let center = Vec3::new(em.matrix[12], em.matrix[13], em.matrix[14]);
+            let visible = frustum.is_none_or(|f| {
+                f.intersects_sphere(&bevy::camera::primitives::Sphere { center: (center * MIRROR).into(), radius: em.psys.radius }, true)
+            });
+            if !visible && em.sprites.is_empty() {
+                continue;
+            }
+            em.sprites.clear();
+            em.psys.draw(global, &em.matrix, 1.0, visible, &mut em.sprites);
+        }
+    }
+    if 4 <= steps {
+        clock.accumulated = 0.0;
+    }
+    let (right, up) = (rows[0], rows[1]);
+    for (mut em, mesh, mut vis, material, entity) in &mut emitters {
+        if em.material.is_none() {
+            // MBOX_FindTexture searches the loaded packages in load order: the
+            // global STATIC, WEAPONS and POWERUPS before the level (the Tower
+            // dump's flame sprites bind WEAPONS' 64×64 P_TORCH, not the items
+            // package's). setupParms: no texture → particle2_a (particle2_xp for
+            // additive nodes).
+            let name = em.psys.texture.clone().map(|t| t.to_uppercase()).unwrap_or_else(|| {
+                if em.psys.node_flags & 0x800000 != 0 { "PARTICLE2_XP".into() } else { "PARTICLE2_A".into() }
+            });
+            let named = ["STATIC", "WEAPONS", "POWERUPS"]
+                .iter()
+                .find_map(|p| libraries.0.get(*p).and_then(|l| l.textures.get(&name)).cloned())
+                .or_else(|| em.texture.clone())
+                .or_else(|| libraries.0.values().find_map(|l| l.textures.get(&name).cloned()));
+            if named.is_none() && !libraries.0.contains_key("STATIC") {
+                continue;
+            }
+            let blend = em.psys.blend();
+            let (no_depth_write, depth_always) = em.psys.depth_flags();
+            let m = gdl_client::GsMaterial {
+                params: gdl_client::GsParams { tint: Vec4::ONE, options: Vec4::new(if named.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0) },
+                base: named,
+                lightmap: None,
+                alpha_mode: if blend == gdl_core::psys::Blend::Additive { AlphaMode::Add } else { AlphaMode::Blend },
+                draw: gdl_client::GsDraw {
+                    additive: blend == gdl_core::psys::Blend::Additive,
+                    multiply: blend == gdl_core::psys::Blend::Multiply,
+                    fixed_alpha: em.psys.fixed_alpha(),
+                    no_depth_write,
+                    depth_always,
+                },
+            };
+            let handle = materials.add(m);
+            em.material = Some(handle.clone());
+            if material.is_none() {
+                commands.entity(entity).insert(MeshMaterial3d(handle));
+            }
+        }
+        if em.sprites.is_empty() {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        *vis = Visibility::Inherited;
+        let Some(m) = meshes.get_mut(&mesh.0) else { continue };
+        let n = em.sprites.len();
+        let mut positions = Vec::with_capacity(n * 4);
+        let mut colors = Vec::with_capacity(n * 4);
+        let mut uvs = Vec::with_capacity(n * 4);
+        let mut indices = Vec::with_capacity(n * 6);
+        for (k, sp) in em.sprites.iter().enumerate() {
+            let c = Vec3::from_array(sp.position);
+            let h = sp.size * 0.5;
+            // GS sprite from (c − h·(R+U), UV 0) to (c + h·(R+U), UV size).
+            for (dx, dy, u, v) in [(-1.0, -1.0, 0.0, 0.0), (1.0, -1.0, 1.0, 0.0), (1.0, 1.0, 1.0, 1.0), (-1.0, 1.0, 0.0, 1.0)] {
+                positions.push((c + right * (dx * h) + up * (dy * h)).to_array());
+                uvs.push([u, v]);
+                colors.push([
+                    f32::from(sp.rgba[0]) / 128.0,
+                    f32::from(sp.rgba[1]) / 128.0,
+                    f32::from(sp.rgba[2]) / 128.0,
+                    f32::from(sp.rgba[3]) / 128.0,
+                ]);
+            }
+            let b = (k * 4) as u32;
+            indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
+        }
+        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; n * 4]);
+        m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        m.insert_indices(bevy::mesh::Indices::U32(indices));
     }
 }
 
@@ -1512,7 +1847,7 @@ fn present_sparks(
 
 type BodyQuery<'w, 's> = Query<'w, 's, (&'static CharacterRoot, &'static mut Transform, &'static mut Visibility), (Without<RigNode>, Without<FollowCamera>, Without<Slot>)>;
 type NodeQuery<'w, 's> = Query<'w, 's, (&'static RigNode, &'static mut Transform), (Without<CharacterRoot>, Without<FollowCamera>, Without<Slot>)>;
-type CameraQuery<'w, 's> = Query<'w, 's, &'static mut Transform, (With<FollowCamera>, Without<CharacterRoot>, Without<RigNode>, Without<Slot>)>;
+type CameraQuery<'w, 's> = Query<'w, 's, (&'static mut Transform, &'static mut Projection), (With<FollowCamera>, Without<CharacterRoot>, Without<RigNode>, Without<Slot>)>;
 
 #[allow(clippy::too_many_arguments)]
 fn present_player(
@@ -1559,10 +1894,26 @@ fn present_player(
         }
     }
     // The StdCam window camera (research/camera.md): eye and matrix rows.
-    if let (Some(cam), Ok(mut t)) = (&sim.game.std_camera, camera.single_mut()) {
+    if let (Some(cam), Ok((mut t, mut projection))) = (&sim.game.std_camera, camera.single_mut()) {
+        // pbProjCalc's +0x90 projection: x scale 1/tan_h, y scale −1/tan_v
+        // (reference: 1.73205 / −2.88675, a 554.27-pixel focal length over the
+        // 640×384 viewport; the 60° window angle is horizontal).
+        let (sx, sy) = (cam.pb.proj[0][0], cam.pb.proj[1][1]);
+        if 0.0 < sx.abs() && 0.0 < sy.abs()
+            && let Projection::Custom(custom) = &mut *projection
+            && let Some(p) = custom.get_mut::<Ps2Projection>()
+        {
+            p.tan_h = 1.0 / sx.abs();
+            p.tan_v = 1.0 / sy.abs();
+        }
         let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
         let [_, up, forward] = cam.pb.cam_rows.map(Vec3::from_array);
         *t = Transform::from_translation(eye * MIRROR).looking_to(forward * MIRROR, up * MIRROR);
+        // DEBUG (render comparisons, tools/python/reference_camera.py):
+        // GDL_DEBUG_CAMERA=<json> pins the window camera to a reference's.
+        if let Some(v) = debug_camera() {
+            *t = Transform::from_translation(v[0] * MIRROR).looking_to(v[2] * MIRROR, v[1] * MIRROR);
+        }
     }
     let g = &sim.game;
     let p = &g.players[0];
@@ -2311,6 +2662,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(Screen::Front)
         .insert_resource(presentation)
         .init_resource::<Libraries>()
+        .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
         .init_resource::<EnemyFrames>()
         .insert_resource(Time::<Fixed>::from_hz(30.0))
         .insert_resource(ClearColor(Color::srgb(0.035, 0.04, 0.05)))
@@ -2331,7 +2683,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_camera_face, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_camera_face, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
                 front_text,
             )
                 .chain(),
@@ -2343,7 +2695,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 /// Package names a level draws or reads: the shared packages, its item
 /// packages, its realm's monsters and its critter models.
 fn level_packages(lv: &LevelSource) -> Vec<String> {
-    let mut v: Vec<String> = ["POWERUPS", "WEAPONS"].iter().map(|s| s.to_string()).collect();
+    let mut v: Vec<String> = ["POWERUPS", "WEAPONS", "STATIC"].iter().map(|s| s.to_string()).collect();
     v.extend(lv.items.iter().cloned());
     v.extend(lv.monsters.iter().cloned());
     v.extend(lv.critters.iter().filter_map(|c| c.2.clone()));
