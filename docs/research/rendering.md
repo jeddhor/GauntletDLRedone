@@ -141,10 +141,31 @@ character; the reference is 4 s into a new game), not because of shading.
 A second Tower dump (…20261020081101.gs.zst) confirms the same CLUT, pass
 structure and a PSMCT16S render target (FRAME PSM 0x0a, two buffers).
 
+## Node state from game code and package trees (2026-10-20)
+
+- Game::world_labels / node_mb_set / node_mb_clear / node_alpha: ported
+  functions record MBTreeSetFlags / MBTreeClearFlags on named world nodes
+  (FindWorldObject). EnterTower hides L1XPLIGHTRAY01 unless the present
+  players hold all eight shards (class +0x1d7c & 0x1fe). gdl_play keeps every
+  modelled node (file-hidden ones too) with its ancestor chain and applies
+  flag 2 (subtree) / 1 (node) whenever the state changes.
+- ProcessItemWobjs fade objects (trigger kind 0x10xx, e.g. the Tower's
+  L1LITPODIUM, record 205, trigger 41) hide with their subtree when
+  items.object_visible is false.
+- MBSetupObject distance alpha for MB flags 0x100400 (alpha 255/100 or
+  255/200 × view depth) on per-entity materials.
+- Package tree nodes (items, missiles, enemy missiles) carry their MB flags
+  (ANIM node +0x30, AtreeNodeInit; DUMMY and +0x2e bit 0 hidden): draw
+  variants and CameraFace (CameraFaceLocal under item slots). The Tower's
+  crystals now show their additive glow nodes.
+- Package texmods (items, WEAPONS/POWERUPS, monsters, STATIC) run like the
+  world's (SetupItemTexMods / SetupWeaponPowerupTexMods / SetupEnemyTexMods).
+
 ## Not yet implemented
 
-Texture fades and per-node shifts, item/character texmods, MBTreeSetAlpha
-and EnterTower's node hiding (L1XPLIGHTRAY01), chrome (0x8000/0xa0000, setChrome),
+Texture fades and per-node shifts, character texmods (SetupPlayerTexMods),
+alpha fades driven by MBTreeSetAlpha callers (node_alpha is recorded, not
+yet drawn), tree psys nodes (type 4, InitPsysData), chrome (0x8000/0xa0000, setChrome),
 distance alpha fade, MBTreeSetAlpha consumers (item/enemy fades), the colour
 scale of setPrimColor and DoLighting, VU1 vertex lighting of characters
 (MBDirLight/MBAmbLight/pos lights), fog (InitFog/FogFadeIn; FGE was 0 in the

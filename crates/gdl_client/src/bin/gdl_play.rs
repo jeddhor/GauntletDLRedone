@@ -89,8 +89,18 @@ fn ps2_viewport(windows: Query<&Window>, mut cams: Query<&mut Camera, With<Follo
 type Parts = Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>;
 /// Spark sphere mesh, spark material, blast material.
 type SparkAssets = (Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>);
-/// Model parts with node offsets.
-type Model = Vec<(Vec3, Parts)>;
+/// Model parts with node offsets and the tree node's MB flags (+0x30,
+/// AtreeNodeInit's MBTreeSetFlags; 1 for DUMMY nodes).
+type Model = Vec<(Vec3, Parts, u32)>;
+
+/// The MB flags of a package tree node (AtreeNodeInit / AtreeInitSub).
+fn tree_node_flags(node: &gdl_formats::animation::Node) -> u32 {
+    let mut f = node.model_flags;
+    if node.label == "DUMMY" || node.flags & 1 != 0 {
+        f |= 1;
+    }
+    f
+}
 
 /// One OBJECTS/TEXDEF/TEXTURES(/ANIM) package.
 struct Package {
@@ -107,6 +117,11 @@ struct Library {
     by_label: HashMap<String, Parts>,
     /// Decoded base images by upper-case TEXDEF label (MBOX_FindTexture).
     textures: HashMap<String, Handle<Image>>,
+    /// Every bitmap record's image and records by label (texture modifiers).
+    record_images: HashMap<u16, Handle<Image>>,
+    label_index: HashMap<String, u16>,
+    /// The package's texture modifiers (ANIM.PS2 header +8/+0xc).
+    texmods: Vec<gdl_formats::animation::TexMod>,
 }
 
 #[derive(Resource)]
@@ -443,6 +458,12 @@ struct WorldNode {
     rest: Vec3,
 }
 
+/// The node's draw-visibility inputs: itself then its ancestors with their
+/// file MB flags (CreateWorldNode); game code overrides them through
+/// Game::node_mb_set / node_mb_clear (MBTreeSetFlags / MBTreeClearFlags).
+#[derive(Component)]
+struct NodeChain(Vec<(usize, u32)>);
+
 /// Presentation of moving world objects (elevators' item-driven y, rotators'
 /// YawMat3): a node follows the nearest moved object among itself and its
 /// ancestors, displaced and rotated relative to that object's rest matrix.
@@ -541,15 +562,74 @@ fn present_camera_face(sim: Res<Sim>, mut nodes: Query<(&CameraFace, &mut Transf
     }
 }
 
+/// MBSetupObject 0x1c7fe8 for flags 0x100400: node alpha +0x53 =
+/// 255 / ALPHADISTMAX (100, or ALPHADIST2MAX 200 for 0x100000) × view
+/// depth, clamped to [0, 255]; setPrimAlpha draws with As = +0x53 × 0.502.
+#[derive(Component)]
+struct DistanceFade {
+    max: f32,
+    at: Vec3,
+}
+
+fn present_distance_fade(sim: Res<Sim>, q: Query<(&DistanceFade, &MeshMaterial3d<gdl_client::GsMaterial>)>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+    let Some(cam) = &sim.game.std_camera else { return };
+    let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+    let forward = Vec3::from_array(cam.pb.cam_rows[2]);
+    for (fade, m) in &q {
+        let depth = (fade.at - eye).dot(forward);
+        let alpha = ((255.0 / fade.max) * depth).clamp(0.0, 255.0).floor();
+        let a = alpha * 0.5019608 / 128.0;
+        if let Some(mat) = materials.get_mut(&m.0)
+            && (mat.params.tint.w - a).abs() > 1e-4
+        {
+            mat.params.tint.w = a;
+        }
+    }
+}
+
+/// pbTraverseDrawObjects: MB flag 2 skips a node and its subtree, flag 1
+/// only the node; `set`/`clear` are the game's per-node overrides.
+fn node_hidden(chain: &[(usize, u32)], set: &[u32], clear: &[u32]) -> bool {
+    chain.iter().enumerate().any(|(depth, &(n, f))| {
+        let f = (f | set.get(n).copied().unwrap_or(0)) & !clear.get(n).copied().unwrap_or(0);
+        f & 2 != 0 || (depth == 0 && f & 1 != 0)
+    })
+}
+
+/// Apply the game's node flag overrides when they change.
+fn present_node_flags(sim: Res<Sim>, mut seen: Local<Option<u32>>, mut q: Query<(&NodeChain, &mut Visibility), With<WorldNode>>) {
+    let g = &sim.game;
+    if *seen == Some(g.node_state_version) {
+        return;
+    }
+    *seen = Some(g.node_state_version);
+    for (chain, mut vis) in &mut q {
+        let hidden = node_hidden(&chain.0, &g.node_mb_set, &g.node_mb_clear);
+        let want = if hidden { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != want && !(*vis == Visibility::Visible && !hidden) {
+            *vis = want;
+        }
+    }
+}
+
 /// World objects removed by WorldObjectExplode (object +0x10 bit
 /// 0x10000000) are hidden with their meshes.
-fn hide_exploded_nodes(sim: Res<Sim>, mut nodes: Query<(&WorldNode, &mut Visibility)>) {
+fn hide_exploded_nodes(sim: Res<Sim>, mut nodes: Query<(Entity, &WorldNode, &NodeChain, &mut Visibility)>, mut was: Local<HashMap<Entity, bool>>) {
     let objs = &sim.game.items.objects;
-    for (n, mut vis) in &mut nodes {
+    let visible = &sim.game.items.object_visible;
+    let g = &sim.game;
+    for (e, n, chain, mut vis) in &mut nodes {
         let gone = objs.get(n.node).is_some_and(|o| o.flags_10 & 0x1000_0000 != 0);
-        if gone && *vis != Visibility::Hidden {
+        // ProcessItemWobjs' fade objects (trigger kind 0x10xx) hide with
+        // their subtree (MBTreeSetAlpha on the object's tree).
+        let faded = chain.0.iter().any(|&(i, _)| visible.get(i).is_some_and(|v| !*v));
+        let off = gone || faded;
+        if off && *vis != Visibility::Hidden {
             *vis = Visibility::Hidden;
+        } else if !off && was.get(&e).copied().unwrap_or(false) {
+            *vis = if node_hidden(&chain.0, &g.node_mb_set, &g.node_mb_clear) { Visibility::Hidden } else { Visibility::Inherited };
         }
+        was.insert(e, off);
     }
 }
 
@@ -729,7 +809,8 @@ fn build_library(
             by_label.entry(d.label.clone()).or_insert_with(|| list.clone());
         }
     }
-    Library { by_label, textures: set.labels }
+    let texmods = gdl_formats::animation::texmods(&pkg.anim_bytes).unwrap_or_default();
+    Library { by_label, textures: set.labels, record_images: set.record_images, label_index: set.label_index, texmods }
 }
 
 /// Presentation heuristic: frame objects "<TREE>…<stem>F<nn>" grouped by stem,
@@ -894,6 +975,7 @@ fn setup(
             frames.0.insert(name.clone(), enemy_frames(pkg));
         }
     }
+    spawn_package_texmods(&mut commands, &libraries, &level_packages(&session.levels[session.current]));
 }
 
 /// Level geometry (original translation-only placements) and entity slots.
@@ -938,22 +1020,21 @@ fn spawn_level(
             let has_object = node.flags & 0x800 == 0
                 && (i32::from_le_bytes(node.raw[40..44].try_into().unwrap()) == 1 || node.flags & 0x80000000 != 0);
             let flags = mb_flags(i);
-            let mut hidden = flags & 3 != 0;
             let mut face = None;
+            let mut chain = Vec::new();
             let mut k = Some(i);
             while let Some(a) = k {
                 let f = mb_flags(a);
-                if a != i && f & 2 != 0 {
-                    hidden = true;
-                }
+                chain.push((a, f));
                 if face.is_none() && f & 0xf000000 != 0 {
                     face = Some((a, f & 0xf000000));
                 }
                 k = parent.get(&a).copied();
             }
-            if !has_object || hidden {
+            if !has_object {
                 continue;
             }
+            let hidden = node_hidden(&chain, &[], &[]);
             let Some(list) = names.get(node.label.as_str()).and_then(|i| parts.get(i)) else { continue };
             let rest = Vec3::from_array(p.summed_position);
             for (mesh, material) in list {
@@ -970,11 +1051,22 @@ fn spawn_level(
                     MeshMaterial3d(material),
                     Transform::from_translation(rest),
                     WorldNode { node: i, rest },
+                    NodeChain(chain.clone()),
+                    if hidden { Visibility::Hidden } else { Visibility::Inherited },
                     LevelEntity,
                 ));
                 if let Some((anchor, mode)) = face {
                     let at = position.get(&anchor).copied().unwrap_or(rest);
                     entity.insert(CameraFace { mode, anchor: at, offset: rest - at });
+                }
+                if flags & 0x100400 != 0 {
+                    // A material of its own: the alpha follows the distance.
+                    let mut m = materials.get(&variants[&key]).cloned().expect("variant");
+                    if m.alpha_mode == AlphaMode::Opaque || matches!(m.alpha_mode, AlphaMode::Mask(_)) {
+                        m.alpha_mode = AlphaMode::Blend;
+                    }
+                    let own = materials.add(m);
+                    entity.insert((MeshMaterial3d(own), DistanceFade { max: if flags & 0x100000 != 0 { 200.0 } else { 100.0 }, at: rest }));
                 }
                 let child = entity.id();
                 commands.entity(root).add_child(child);
@@ -1036,19 +1128,38 @@ struct TexModState {
 /// frame base (+0x48, or by name for −1: MBOX_FindTexture + MBCopyTexture);
 /// −2/−3 become texture shifts; fades (−4/−5) and −6 are not ported.
 fn spawn_texmods(commands: &mut Commands, anim: &[u8], set: &gdl_client::MaterialSet) {
-    let Ok(list) = gdl_formats::animation::texmods(anim) else { return };
+    let list = gdl_formats::animation::texmods(anim).unwrap_or_default();
+    spawn_texmod_list(commands, &list, &set.label_index, &set.record_images);
+}
+
+/// SetupItemTexMods / SetupWeaponPowerupTexMods: the texture modifiers of
+/// the level's item packages and of WEAPONS/POWERUPS (stepped by do_items).
+fn spawn_package_texmods(commands: &mut Commands, libraries: &Libraries, names: &[String]) {
+    for name in names {
+        if let Some(lib) = libraries.0.get(name) {
+            spawn_texmod_list(commands, &lib.texmods, &lib.label_index, &lib.record_images);
+        }
+    }
+}
+
+fn spawn_texmod_list(
+    commands: &mut Commands,
+    list: &[gdl_formats::animation::TexMod],
+    label_index: &HashMap<String, u16>,
+    record_images: &HashMap<u16, Handle<Image>>,
+) {
     let mut mods = Vec::new();
     for tm in list.iter().filter(|t| t.owner == -1) {
         let Ok(target) = u16::try_from(tm.target) else { continue };
-        let Some(target_image) = set.record_images.get(&target) else { continue };
+        let Some(target_image) = record_images.get(&target) else { continue };
         let kind = match tm.frame_base {
             -2 | -3 => TexModKind::Scroll { target: target_image.id(), v: tm.frame_base == -3 },
             -6..=-4 => continue,
             base => {
-                let base = if base == -1 { set.label_index.get(&tm.frame_name.to_uppercase()).map(|&i| i32::from(i)) } else { Some(base) };
+                let base = if base == -1 { label_index.get(&tm.frame_name.to_uppercase()).map(|&i| i32::from(i)) } else { Some(base) };
                 let Some(base) = base else { continue };
                 let n = i32::from(tm.count).abs().max(1);
-                let frames: Vec<_> = (0..n).filter_map(|k| u16::try_from(base + k).ok().and_then(|i| set.record_images.get(&i)).cloned()).collect();
+                let frames: Vec<_> = (0..n).filter_map(|k| u16::try_from(base + k).ok().and_then(|i| record_images.get(&i)).cloned()).collect();
                 if frames.is_empty() {
                     continue;
                 }
@@ -1600,7 +1711,7 @@ fn record_transform(rows: [Vec3; 3], pos: Vec3) -> Transform {
 
 /// Item model key and parts: tree rest pose (nodes at summed initial
 /// positions), else "<NAME>L1", else "<NAME>".
-fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str) -> Vec<(Vec3, Parts)> {
+fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str) -> Model {
     for pkg in items.iter().map(String::as_str).chain(["POWERUPS"]) {
         let (Some(p), Some(lib)) = (sources.packages.get(pkg), libs.0.get(pkg)) else { continue };
         if let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == name)) {
@@ -1610,14 +1721,9 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
                 let parent = usize::try_from(node.parent).ok().and_then(|i| sums.get(i).copied()).unwrap_or(Vec3::ZERO);
                 let at = parent + Vec3::from_array(node.initial_position);
                 sums.push(at);
-                // Camera-facing glow/sprite nodes ("CF…") need billboarding and
-                // blending that are not modelled; they are omitted.
-                if node.label.starts_with("CF") {
-                    continue;
-                }
                 let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
                 if let Some(parts) = lib.by_label.get(&label) {
-                    out.push((at, parts.clone()));
+                    out.push((at, parts.clone(), tree_node_flags(node)));
                 }
             }
             if !out.is_empty() {
@@ -1626,20 +1732,65 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
         }
         for label in [format!("{name}L1"), name.to_string()] {
             if let Some(parts) = lib.by_label.get(&label) {
-                return vec![(Vec3::ZERO, parts.clone())];
+                return vec![(Vec3::ZERO, parts.clone(), 0)];
             }
         }
     }
     Vec::new()
 }
 
-fn spawn_parts(commands: &mut Commands, parent: Entity, list: Vec<(Vec3, Parts)>) {
+/// Spawn a model's parts under `parent`: MB flags 1/2 hide a node, the draw
+/// flags select a GsMaterial variant (cached), face flags add CameraFaceLocal.
+fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: &mut Assets<gdl_client::GsMaterial>, cache: &mut PartVariants) {
     commands.entity(parent).despawn_related::<Children>();
-    for (offset, parts) in list {
+    for (offset, parts, flags) in list {
+        if flags & 3 != 0 {
+            continue;
+        }
         for (mesh, material) in parts {
-            let child = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_translation(offset))).id();
+            let draw = flags & (0x800000 | 0x4000 | 0x80 | 0x40);
+            let material = if draw == 0 {
+                material
+            } else {
+                cache
+                    .0
+                    .entry((material.id(), draw))
+                    .or_insert_with(|| {
+                        let m = materials.get(&material).cloned().map(|m| m.with_draw(flags));
+                        m.map_or(material.clone(), |m| materials.add(m))
+                    })
+                    .clone()
+            };
+            let mut child = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_translation(offset)));
+            if flags & 0xf000000 != 0 {
+                child.insert(CameraFaceLocal { mode: flags & 0xf000000 });
+            }
+            let child = child.id();
             commands.entity(parent).add_child(child);
         }
+    }
+}
+
+/// Draw-flag material variants of package parts.
+#[derive(Resource, Default)]
+struct PartVariants(HashMap<(AssetId<gdl_client::GsMaterial>, u32), Handle<gdl_client::GsMaterial>>);
+
+/// CameraFace on a model node under an item/effect slot (the slot's
+/// Transform is in original coordinates).
+#[derive(Component)]
+struct CameraFaceLocal {
+    mode: u32,
+}
+
+fn present_camera_face_local(sim: Res<Sim>, parents: Query<&Transform, Without<CameraFaceLocal>>, mut q: Query<(&CameraFaceLocal, &ChildOf, &mut Transform)>) {
+    let Some(cam) = &sim.game.std_camera else { return };
+    let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+    let rows = cam.pb.cam_rows.map(Vec3::from_array);
+    for (face, child_of, mut tf) in &mut q {
+        let Ok(p) = parents.get(child_of.parent()) else { continue };
+        let at = p.transform_point(tf.translation);
+        let m = camera_face_rotation(face.mode, at, eye, rows);
+        tf.rotation = p.rotation.inverse() * Quat::from_mat3(&m);
     }
 }
 
@@ -1653,6 +1804,7 @@ fn present_world(
     libs: Res<Libraries>,
     frames: Res<EnemyFrames>,
     mut slots: SlotQuery,
+    (mut materials, mut variants): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<PartVariants>),
 ) {
     let g = &sim.game;
     let items = &session.levels[session.current].items;
@@ -1684,7 +1836,7 @@ fn present_world(
                 let label = label.or_else(|| frames.0.get(pkg).and_then(|m| m.get(&tree)).and_then(|s| s.first()).and_then(|l| l.first().cloned()));
                 match label {
                     Some(l) => {
-                        let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&l)).cloned().map(|p| vec![(Vec3::ZERO, p)]);
+                        let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&l)).cloned().map(|p| vec![(Vec3::ZERO, p, 0)]);
                         (Some(l), parts, tf)
                     }
                     None => (None, None, tf),
@@ -1712,7 +1864,7 @@ fn present_world(
                         continue;
                     };
                     let key = format!("GEN_{pkg}{level}");
-                    let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&key)).cloned().map(|p| vec![(Vec3::ZERO, p)]);
+                    let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&key)).cloned().map(|p| vec![(Vec3::ZERO, p, 0)]);
                     (Some(key), parts, tf)
                 } else {
                     let name = String::from_utf8_lossy(d.name()).into_owned();
@@ -1760,7 +1912,7 @@ fn present_world(
         *vis = Visibility::Inherited;
         if slot.key != key {
             if let Some(list) = parts {
-                spawn_parts(&mut commands, entity, list);
+                spawn_parts(&mut commands, entity, list, &mut materials, &mut variants);
             } else {
                 commands.entity(entity).despawn_related::<Children>();
             }
@@ -1775,12 +1927,9 @@ fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Mo
     let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == label)) else { return Vec::new() };
     let mut out = Vec::new();
     for node in &tree.nodes {
-        if node.label.starts_with("CF") {
-            continue;
-        }
         let l: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
         if let Some(parts) = lib.by_label.get(&l) {
-            out.push((Vec3::from_array(node.initial_position), parts.clone()));
+            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node)));
         }
     }
     out
@@ -1789,14 +1938,14 @@ fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Mo
 /// The character's thrown missile tree (InitPlayerMissiles: the
 /// "<PlayerMissileDesc>_THROW<n>" tree of the SFX or model package) at rest
 /// pose (presentation; the tree is not animated).
-fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) -> Vec<(Vec3, Parts)> {
+fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) -> Model {
     let (Some(p), Some(lib)) = (sources.packages.get(&throw.0), libs.0.get(&throw.0)) else { return Vec::new() };
     let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == throw.1)) else { return Vec::new() };
     let mut out = Vec::new();
     for node in &tree.nodes {
         let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
         if let Some(parts) = lib.by_label.get(&label) {
-            out.push((Vec3::from_array(node.initial_position), parts.clone()));
+            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node)));
         }
     }
     out
@@ -2662,6 +2811,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(Screen::Front)
         .insert_resource(presentation)
         .init_resource::<Libraries>()
+        .init_resource::<PartVariants>()
         .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
         .init_resource::<EnemyFrames>()
         .insert_resource(Time::<Fixed>::from_hz(30.0))
@@ -2683,7 +2833,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_camera_face, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_distance_fade, present_camera_face, present_camera_face_local, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player).chain().run_if(playing),
                 front_text,
             )
                 .chain(),
@@ -2865,6 +3015,7 @@ fn advance_level(
             if let Ok(root) = root.single() {
                 let n = sim.game.items.records.len();
                 spawn_level(&mut commands, root, &session, n, &mut meshes, &mut images, &mut materials);
+                spawn_package_texmods(&mut commands, &libraries, &level_packages(&session.levels[session.current]));
                 if new_body {
                     for b in &bodies {
                         commands.entity(b).despawn();

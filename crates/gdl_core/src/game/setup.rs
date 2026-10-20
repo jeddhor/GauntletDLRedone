@@ -441,6 +441,11 @@ impl Game {
             milestones: Vec::new(),
             player_start: inp.world.locators.iter().find(|l| l.kind == 7 && l.id == 0).map_or(([0.0; 3], 0.0), |l| (l.position, l.rotation[1])),
             player_init_start: inp.world.locators.iter().find(|l| l.kind == 7 && l.id == 0).map_or([0.0; 3], |l| l.position),
+            world_labels: inp.world.nodes.iter().map(|n| n.label.clone()).collect(),
+            node_mb_set: vec![0; inp.world.nodes.len()],
+            node_mb_clear: vec![0; inp.world.nodes.len()],
+            node_alpha: vec![None; inp.world.nodes.len()],
+            node_state_version: 0,
             enemy_slot_names: (0..8)
                 .map(|k| {
                     let name = types.data[k].and_then(|d| inp.wdata.enemies.get(d)).map(|e| {

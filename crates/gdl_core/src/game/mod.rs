@@ -393,6 +393,15 @@ pub struct Game {
     /// placement) and PlayerInitStartPos[0] 0x234450 (the id-0 start locator).
     pub player_start: ([f32; 3], f32),
     pub player_init_start: [f32; 3],
+    /// World node labels (FindWorldObject 0x11c318 / FindWORLDOBJ).
+    pub world_labels: Vec<String>,
+    /// Presentation state of world MB nodes changed by game code:
+    /// MBTreeSetFlags / MBTreeClearFlags bits (node only) and MBTreeSetAlpha
+    /// values, with a counter bumped on every change.
+    pub node_mb_set: Vec<u32>,
+    pub node_mb_clear: Vec<u32>,
+    pub node_alpha: Vec<Option<u8>>,
+    pub node_state_version: u32,
     pub sounds: sound::SoundTables,
     pub log: setup::FrameLog,
 }

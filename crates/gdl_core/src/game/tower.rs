@@ -241,6 +241,18 @@ impl Game {
         if runes & 0x1000 != 0 {
             self.activate_special_trigger(0xff, true)?;
         }
+        // Without all eight shards (class +0x1d7c) the light ray is hidden:
+        // MBTreeSetFlags(L1XPLIGHTRAY01, 2, 0). The SHARD/RUNE display
+        // effects are not ported.
+        let mut shards = 0u16;
+        for k in 0..4 {
+            if self.players[k].i32_(0xfc) != 0 {
+                shards |= self.players[k].u16_(self.class_at(k, 0x1d7c));
+            }
+        }
+        if shards & 0x1fe != 0x1fe {
+            self.world_node_set_flags("L1XPLIGHTRAY01", 2);
+        }
         self.hide_exits();
         self.tower_check_messages(true)
     }
@@ -284,6 +296,29 @@ impl Game {
                 self.items.records[s].set_u16(0xd8, 0x8000);
                 self.events.push(Event::ExitHidden { slot: s });
             }
+        }
+    }
+
+    /// FindWorldObject 0x11c318 by exact label.
+    pub fn find_world_object(&self, name: &str) -> Option<usize> {
+        self.world_labels.iter().position(|l| l == name)
+    }
+
+    /// MBTreeSetFlags(node, bits, 0) on a named world node (presentation).
+    pub fn world_node_set_flags(&mut self, name: &str, bits: u32) {
+        if let Some(i) = self.find_world_object(name) {
+            self.node_mb_set[i] |= bits;
+            self.node_mb_clear[i] &= !bits;
+            self.node_state_version = self.node_state_version.wrapping_add(1);
+        }
+    }
+
+    /// MBTreeClearFlags(node, bits, 0) on a named world node.
+    pub fn world_node_clear_flags(&mut self, name: &str, bits: u32) {
+        if let Some(i) = self.find_world_object(name) {
+            self.node_mb_clear[i] |= bits;
+            self.node_mb_set[i] &= !bits;
+            self.node_state_version = self.node_state_version.wrapping_add(1);
         }
     }
 
