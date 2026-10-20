@@ -1973,6 +1973,7 @@ fn present_camera_face_local(sim: Res<Sim>, parents: Query<&Transform, Without<C
 
 type SlotQuery<'w, 's> = Query<'w, 's, (Entity, &'static mut Slot, &'static mut Transform, &'static mut Visibility), Without<CharacterRoot>>;
 
+#[allow(clippy::too_many_arguments)]
 fn present_world(
     mut commands: Commands,
     sim: Res<Sim>,
