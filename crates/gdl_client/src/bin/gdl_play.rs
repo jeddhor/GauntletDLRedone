@@ -278,11 +278,9 @@ struct Front {
     game_opts: Vec<u8>,
     /// SHPDATA/SHOP.WAD ITEM records.
     shop: Vec<gdl_core::game::powerups::ShopItem>,
-    /// TEXT/ENGLISH.ROM, TEXT/SCROLL_E.ROM and helptab 0x24bf08 (+0x10 text
-    /// entry, +0x14 line or −1 for all lines).
+    /// TEXT/ENGLISH.ROM (GameText) and TEXT/SCROLL_E.ROM.
     english: gdl_formats::textrom::TextRom,
     scrolls: gdl_formats::textrom::TextRom,
-    helptab: Vec<(i32, i32)>,
     base: Base,
 }
 
@@ -697,9 +695,6 @@ struct Sim {
     last_event: String,
     /// Co-op players 1–3 in play (PLACEHOLDER join, see `simulate`).
     coop: [bool; 3],
-    /// NewHelp text on screen (seconds left) and when each id last showed.
-    hint: Option<(f32, String)>,
-    hint_shown: HashMap<i32, f64>,
     /// ScrollMessageBox: the game waits until the box is dismissed.
     /// ScrollMessageBox (modal; the simulation waits).
     message_box: Option<gdl_core::game::hud::ScrollBox>,
@@ -1796,6 +1791,13 @@ fn simulate(
         g.do_players().map(|_| ())
     });
     sim.updates += 1;
+    // DEBUG (presentation checks): GDL_DEBUG_HELP=<id> raises NewHelp(id,
+    // player 0) once, 60 updates into the level. Not a game feature.
+    if sim.updates == 60
+        && let Some(id) = std::env::var("GDL_DEBUG_HELP").ok().and_then(|v| i32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+    {
+        sim.game.help(id, 0);
+    }
     let new: Vec<Event> = sim.game.events.drain(before..).collect();
     sim.game.events.clear();
     let me = Vec3::from_array(sim.game.players[0].v3(0x50));
@@ -1826,30 +1828,7 @@ fn simulate(
             Event::GotIt { kind, amount, .. } => sim.last_event = format!("picked up (kind {kind}, amount {amount})"),
             Event::PlayerDied { .. } => sim.last_event = "YOU DIED".into(),
             Event::Audio { cue: "AudioEnemyDies", .. } => sim.kills += 1,
-            Event::Help { id, player } => {
-                // NewHelp(id): helptab entry → ENGLISH.ROM lines. PRESENTATION:
-                // help_displayed/help_interval are not ported; an id repeats
-                // after 20 s at the earliest.
-                let now = sim.game.globals.time as f64;
-                let recent = sim.hint_shown.get(&id).is_some_and(|t| now - t < 20.0);
-                if let Some(&(entry, line)) = usize::try_from(id).ok().and_then(|i| front.helptab.get(i))
-                    && !recent
-                    && let Some(e) = usize::try_from(entry).ok().and_then(|k| front.english.entries.get(k))
-                {
-                    let lines: Vec<&str> = match usize::try_from(line) {
-                        Ok(l) => e.lines.get(l).map(String::as_str).into_iter().collect(),
-                        Err(_) => e.lines.iter().map(String::as_str).collect(),
-                    };
-                    let p = sim.game.players.get(player).unwrap_or(&sim.game.players[0]);
-                    let class = gdl_client::menu::CLASS_NAMES.get(p.u32_(0xc) as usize).copied().unwrap_or("");
-                    let colour = gdl_client::menu::COLOUR_NAMES.get(p.u32_(4) as usize).copied().unwrap_or("");
-                    let text = lines.join("\n").replacen("%s", colour, 1).replacen("%s", class, 1).replace("%d", &p.i32_(0x2ac0).to_string());
-                    if !text.is_empty() {
-                        sim.hint = Some((3.0, text));
-                        sim.hint_shown.insert(id, now);
-                    }
-                }
-            }
+            // NewHelp draws its own box (Game::new_help / DoHelp).
             Event::HintMenu { .. } => sim.hint_menu = true,
             Event::ScrollMessage { text, .. } => {
                 // A scroll item: line `text` of SCROLLS<level code>
@@ -1881,12 +1860,6 @@ fn simulate(
         }
     }
     let spf = sim.game.globals.spf;
-    if let Some((t, _)) = sim.hint.as_mut() {
-        *t -= spf;
-        if *t <= 0.0 {
-            sim.hint = None;
-        }
-    }
     sim.sparks.retain_mut(|(_, t)| {
         *t -= spf;
         0.0 < *t
@@ -2364,8 +2337,6 @@ fn present_player(
             format!("SIMULATION STOPPED\n{e}")
         } else if health <= 0.0 {
             "YOU DIED".to_string()
-        } else if let Some((_, h)) = &sim.hint {
-            h.clone()
         } else {
             String::new()
         };
@@ -2427,7 +2398,7 @@ fn present_player(
 /// then the level's packages: a presentation choice — the panel labels are
 /// unique across them) and the FONTS/*.FNT files of font_desc, then the
 /// panels' reset/level-start setup.
-fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl_client::catalog::Catalog, sets: &mut HudSets) {
+fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl_client::catalog::Catalog, english: &gdl_formats::textrom::TextRom, sets: &mut HudSets) {
     let mut keys = vec!["STATIC".to_string(), String::new()];
     keys.extend(level_packages(&session.levels[session.current]).into_iter().filter(|k| k != "STATIC"));
     keys.retain(|k| k.is_empty() || sources.packages.contains_key(k));
@@ -2449,7 +2420,7 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl
             }
         })
         .collect();
-    game.hud_init(tex, fonts);
+    game.hud_init(tex, fonts, Some(english.clone()));
     if !game.hud.missing.is_empty() {
         eprintln!("panel textures not found: {:?}", game.hud.missing);
     }
@@ -2709,7 +2680,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
         };
         let mut game = build_game(&session, idx, &record)?;
         let sources = Sources { character, clips, clip_bytes, rig, packages, monsters: b.monsters.clone() };
-        init_hud(&mut game, &sources, &session, &front.catalog, &mut hud_sets);
+        init_hud(&mut game, &sources, &session, &front.catalog, &front.english, &mut hud_sets);
         (session, sources, game, loaded.recovered)
     };
     let attention = Vec3::from_array(game.players[0].v3(0x810));
@@ -2718,7 +2689,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], hint: None, hint_shown: HashMap::new(), message_box: None, hint_menu: false, scroll_clock: 0.0 });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0 });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -3157,11 +3128,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     let shop = gdl_core::game::powerups::shop_items(&catalog.read("SHPDATA/SHOP.WAD")?)?;
     let english = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/ENGLISH.ROM")?)?;
     let scrolls = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/SCROLL_E.ROM")?)?;
-    let helptab: Vec<(i32, i32)> = elf
-        .object("helptab")?
-        .chunks_exact(0x1c)
-        .map(|r| (i32::from_le_bytes(r[0x10..0x14].try_into().unwrap()), i32::from_le_bytes(r[0x14..0x18].try_into().unwrap())))
-        .collect();
     let store = SaveStore::open(p("saves")?)?;
     // GameOpts: the stored block, else the captured session's GamePrefs
     // (sfx 128, music 128, stereo 1, …).
@@ -3193,7 +3159,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         shop,
         english,
         scrolls,
-        helptab,
         base: Base { package_cfg, start, levels, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
     refresh_saves(&mut front);
@@ -3413,7 +3378,7 @@ fn advance_level(
                 }
             }
             session.current = idx;
-            init_hud(&mut game, &sources, &session, &front.catalog, &mut hud_sets);
+            init_hud(&mut game, &sources, &session, &front.catalog, &front.english, &mut hud_sets);
             sim.game = game;
             for e in &old {
                 commands.entity(e).despawn();

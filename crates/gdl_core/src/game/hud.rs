@@ -49,6 +49,8 @@ mod o {
     pub const XP: usize = 0x1a1c;
     pub const GOLD: usize = 0x1a20;
     pub const RUNES: usize = 0x1a26;
+    /// help_displayed bytes (0x222e60 − players), one per help id.
+    pub const HELP_SEEN: usize = 0x1910;
     pub const POTION_SLOTS: usize = 0x2a9c;
     pub const LEVEL: usize = 0x2ac0;
     pub const SUBSTATE: usize = 0x2ad4;
@@ -167,6 +169,14 @@ pub struct HudTables {
     pub garg_item_desc: Vec<String>,
     pub max_crystals: Vec<i32>,
     pub max_garg_items: Vec<i32>,
+    /// helptab 0x24bf08 (0x1c each: +4 pause kind, +8 priority, +0xc
+    /// display rule, +0x10 ENGLISH.ROM entry, +0x14 line, +0x18 audio),
+    /// border_names, text_colors (per player, 4 = none) and
+    /// announcer_interval_tab.
+    pub helptab: Vec<[i32; 7]>,
+    pub border_names: Vec<String>,
+    pub text_colors: Vec<u32>,
+    pub announcer_interval: Vec<i32>,
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -213,6 +223,10 @@ impl HudTables {
             garg_item_desc: strings("GargItemDesc", 0xc)?,
             max_crystals: ints("MAX_CRYSTALS")?,
             max_garg_items: ints("MAX_GARG_ITEMS")?,
+            helptab: ints("helptab")?.chunks_exact(7).map(|c| c.try_into().unwrap()).collect(),
+            border_names: pointed("border_names")?,
+            text_colors: words("text_colors")?,
+            announcer_interval: ints("announcer_interval_tab")?,
         })
     }
 }
@@ -276,11 +290,32 @@ pub struct Hud {
     pub button_tri: Option<TexRef>,
     /// Texture names MBOX_FindTexture did not resolve.
     pub missing: BTreeSet<String>,
+    /// GameText (TEXT/ENGLISH.ROM) for help messages.
+    pub text: Option<gdl_formats::textrom::TextRom>,
+    pub help: HelpState,
+}
+
+/// NewHelp/DoHelp state (InitHelp 0x18e0b0 zeroes it per level).
+#[derive(Clone, Debug, Default)]
+pub struct HelpState {
+    pub flag: bool,
+    pub num: i32,
+    pub player: usize,
+    pub time: i32,
+    pub interval: i32,
+    pub interval_idx: usize,
+    pub lv: i32,
+    pub x: i32,
+    pub y: i32,
+    pub testflag: bool,
+    pub colour: u32,
+    border: Option<usize>,
 }
 
 impl Hud {
     pub fn new(tables: HudTables) -> Self {
-        Self { tables: Some(tables), font_z: FONT_Z, ..Default::default() }
+        // MBResetFontData: fontZ 0.25.
+        Self { tables: Some(tables), font_z: 0.25, ..Default::default() }
     }
 
     /// The client's texture sets (search order) and fonts (font_desc order).
@@ -501,6 +536,121 @@ impl Hud {
         }
     }
 
+    /// The FONT entry of a text-ROM entry resolved against font_desc
+    /// (StringInitSub), its scale (× DrawStringScale 1.0) and space scale.
+    fn entry_style(&self, e: usize) -> Option<(usize, f32, f32)> {
+        let rom = self.text.as_ref()?;
+        let entry = rom.entries.get(e)?;
+        let name = rom.fonts.get(entry.font as usize)?;
+        let font = self.tables.as_ref()?.font_desc.iter().position(|n| n == name).unwrap_or(0);
+        Some((font, entry.scale, entry.space))
+    }
+
+    fn entry_lines(&self, e: usize) -> Vec<String> {
+        self.text.as_ref().and_then(|r| r.entries.get(e)).map(|x| x.lines.iter().map(|l| l.replace('\r', "")).collect()).unwrap_or_default()
+    }
+
+    /// GetStringText(entry, line).
+    pub fn string_text(&self, e: i32, line: i32) -> Option<String> {
+        let l = usize::try_from(line).ok()?;
+        self.entry_lines(usize::try_from(e).ok()?).get(l).cloned()
+    }
+
+    /// StringTextHeightSub(scale, entry, line, dy): (FontHeight + dy) per
+    /// sub-line of the line (or of every line for line < 0).
+    pub fn string_text_height(&self, scale: f32, e: i32, line: i32, dy: i32) -> i32 {
+        let Ok(eu) = usize::try_from(e) else { return 0 };
+        let Some((font, es, _)) = self.entry_style(eu) else { return 0 };
+        let fh = self.font_height(font, scale * es);
+        let lines = self.entry_lines(eu);
+        let sub = |l: &String| l.matches('\n').count().min(15) as i32 + 1;
+        match usize::try_from(line) {
+            Ok(l) => lines.get(l).map_or(0, |x| (fh + dy) * sub(x)),
+            Err(_) => lines.iter().map(|x| (fh + dy) * sub(x)).sum(),
+        }
+    }
+
+    /// StringTextWidthSub(scale, entry, line): the widest sub-line.
+    pub fn string_text_width(&self, scale: f32, e: i32, line: i32) -> i32 {
+        let Ok(eu) = usize::try_from(e) else { return 0 };
+        let Some((font, es, _)) = self.entry_style(eu) else { return 0 };
+        let lines = self.entry_lines(eu);
+        let w = |l: &String| l.split('\n').take(16).map(|s| self.string_width(font, scale * es, s.as_bytes())).max().unwrap_or(0);
+        match usize::try_from(line) {
+            Ok(l) => lines.get(l).map_or(0, w),
+            Err(_) => lines.iter().map(w).max().unwrap_or(0),
+        }
+    }
+
+    /// DrawTextSub with its vertical-centre bit (y & 0x1000, y > 0).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_sub(&mut self, scale: f32, space: f32, x: i32, y: i32, font: usize, colour: u32, text: &str) {
+        let space = if 0.0 < space {
+            space * scale
+        } else if space < 0.0 {
+            -space
+        } else {
+            1.0
+        };
+        let mut y = y;
+        if 0 < y && y & 0x1000 != 0 {
+            y = (y & !0x1000) - self.font_height(font, scale) / 2;
+        }
+        if let Some(m) = self.message(scale, space, x, y, font, pack_rgb(colour, 0x80), self.font_z, 0, text) {
+            self.messages.push(m);
+        }
+    }
+
+    /// DrawStringText(x, y, font, colour, entry, line, args…): the line's
+    /// sub-lines, each through DrawTextSub, stepping FontHeight (dy 0).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_string_text(&mut self, x: i32, y: i32, font: i32, colour: u32, e: i32, line: i32, args: &[Arg]) {
+        let Some(text) = self.string_text(e, line) else { return };
+        let Some((efont, scale, space)) = self.entry_style(e as usize) else { return };
+        let font = if (0..10).contains(&font) && efont < 10 { font as usize } else { efont };
+        let text = format_c(&text, args);
+        let fh = self.font_height(font, scale);
+        let mut y = y;
+        for l in text.split('\n').take(16) {
+            self.draw_text_sub(scale, space, x, y, font, colour, l);
+            y += fh;
+        }
+    }
+
+    /// DrawStringTextMulti(x, y, dy, font, colour, entry): every line of the
+    /// entry; y & 0x1000 centres the block.
+    pub fn draw_string_text_multi(&mut self, x: i32, y: i32, dy: i32, colour: u32, e: i32) {
+        let Some((font, scale, space)) = self.entry_style(e as usize) else { return };
+        let lines = self.entry_lines(e as usize);
+        let fh = self.font_height(font, scale);
+        let mut y = y;
+        if y & 0x1000 != 0 {
+            y = (y & !0x1000) - ((dy + fh) * (lines.len() as i32 - 1) + fh) / 2;
+        }
+        for l in &lines {
+            self.draw_text_sub(scale, space, x, y, font, colour, l);
+            y += dy + fh;
+        }
+    }
+
+    /// DrawStringTextMLines: the entry's lines joined, formatted, split.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_string_text_mlines(&mut self, x: i32, y: i32, dy: i32, colour: u32, e: i32, args: &[Arg]) {
+        let Some((font, scale, space)) = self.entry_style(e as usize) else { return };
+        let lines = self.entry_lines(e as usize);
+        let n = lines.len().min(16);
+        let fh = self.font_height(font, scale);
+        let mut y = y;
+        if y & 0x1000 != 0 {
+            y = (y & !0x1000) - ((dy + fh) * (n as i32 - 1) + fh) / 2;
+        }
+        let text = format_c(&lines.iter().take(16).map(|l| format!("{l}\n")).collect::<String>(), args);
+        for l in text.split('\n').take(n) {
+            self.draw_text_sub(scale, space, x, y, font, colour, l);
+            y += dy + fh;
+        }
+    }
+
     /// The frame's blits in draw order: node blits, temp blits, then the font
     /// messages' glyphs (MBDrawBlits then MBRenderText in pbRenderNode).
     pub fn draw_list(&self) -> Vec<Blit> {
@@ -708,6 +858,45 @@ impl ScrollBox {
 
 fn glyph(f: &HudFont, c: u8) -> Option<gdl_formats::fnt::Glyph> {
     f.font.glyphs.iter().find(|g| g.code == i32::from(c)).copied()
+}
+
+/// A vsprintf argument.
+#[derive(Clone, Debug)]
+pub enum Arg {
+    S(String),
+    D(i32),
+}
+
+/// vsprintf for the help strings' %s / %d (and %%).
+pub fn format_c(fmt: &str, args: &[Arg]) -> String {
+    let mut out = String::new();
+    let mut it = args.iter();
+    let mut chars = fmt.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('%') => out.push('%'),
+            Some('s') => {
+                if let Some(Arg::S(v)) = it.next() {
+                    out.push_str(v);
+                }
+            }
+            Some('d') => match it.next() {
+                Some(Arg::D(v)) => out.push_str(&v.to_string()),
+                Some(Arg::S(v)) => out.push_str(v),
+                None => {}
+            },
+            Some(o) => {
+                out.push('%');
+                out.push(o);
+            }
+            None => out.push('%'),
+        }
+    }
+    out
 }
 
 /// MBBlitSetColor / MBSetFontColor packing of 0xRRGGBB.
@@ -1256,11 +1445,242 @@ impl Game {
         }
     }
 
+    /// NewHelp 0x18e710 (`player` None = −1; `at` the world point placing
+    /// the box above it via MBWorldToScreen, else centred or over the box).
+    pub fn new_help(&mut self, id: i32, player: Option<usize>, at: Option<[f32; 3]>) -> R<()> {
+        let Some(t) = self.hud.tables.clone() else { return Ok(()) };
+        if self.hud.text.is_none() || !(0..0x100).contains(&id) {
+            return Ok(());
+        }
+        let Some(&h) = t.helptab.get(id as usize) else { return Ok(()) };
+        if h[4] < 0 || self.globals.trig_cam_active != 0 {
+            return Ok(());
+        }
+        // help_displayed: bit 0x100 while every active player has seen it.
+        let seen = |g: &Game, p: Option<usize>| -> u32 {
+            let mut v = 0x100u32;
+            for k in p.map_or(0..4, |k| k..k + 1) {
+                if g.players[k].i32_(o::STATE) != 0 {
+                    let b = u32::from(g.players[k].u8_(o::HELP_SEEN + id as usize));
+                    v = if b == 0 { v & 0xff } else { v | b };
+                }
+            }
+            v
+        };
+        let blocked = match h[3] {
+            0 => false,
+            1 => seen(self, None) & 0xf != 0,
+            2 => seen(self, player) != 0,
+            _ => seen(self, None) & 0x100 != 0,
+        };
+        if blocked {
+            return Ok(());
+        }
+        let hs = &self.hud.help;
+        if hs.flag && h[2] <= t.helptab.get(hs.num as usize).map_or(0, |c| c[2]) {
+            return Ok(());
+        }
+        let gm = self.globals.game_mode;
+        if (id < 0x1d || matches!(id, 0x2c | 0x2d | 0x37 | 0x50)) && gm != 0x8006 && gm != 0x8003 && 0 < hs.interval {
+            return Ok(());
+        }
+        let dy = 8; // low_res 0xc, Japanese 0xe
+        let style = player.unwrap_or(4);
+        let p = player.unwrap_or(0);
+        let (mut cx, mut cy) = match at {
+            None => match player {
+                None => (0x100, 0xc0),
+                Some(k) => (t.box_cx[k & 3], 0xfa),
+            },
+            Some(pos) => {
+                let s = match self.std_camera.as_mut() {
+                    Some(cam) => {
+                        let w = cam.window.clone();
+                        cam.pb.world_to_screen(&w, pos)?
+                    }
+                    None => [256.0, 192.0, 1.0],
+                };
+                (s[0] as i32, s[1] as i32 - 0x3e)
+            }
+        };
+        let lines = if h[5] < 0 { self.hud.entry_lines(h[4] as usize).len() as i32 } else { 1 };
+        let bh = self.hud.string_text_height(1.0, h[4], h[5], dy) + 0x10;
+        let mut by = cy - (bh >> 1);
+        if by < 2 {
+            cy = cy + 2 - by;
+            by = 2;
+        } else if 0x130 < by + bh {
+            cy = cy + 0x130 - (by + bh);
+            by = 0x130 - bh;
+        }
+        // msg_width (with the previous help_player, as the original reads it).
+        let prev = self.hud.help.player;
+        let mut bw = self.hud.string_text_width(1.0, h[4], h[5]);
+        if matches!(id, 0x32 | 0x59 | 0x5d) {
+            let c = self.players[prev].i32_(o::CLASS);
+            bw = bw.max(self.hud.string_text_width(1.0, 2, prev as i32) + self.hud.string_text_width(1.0, 3, c) + 0xc);
+        }
+        let bw = bw + 0x40;
+        let mut bx = cx - (bw >> 1);
+        if bx < 0 {
+            cx -= bx;
+            bx = 0;
+        } else if 0x1ff < bx + bw {
+            cx = cx + 0x1ff - (bx + bw);
+            bx = 0x1ff - bw;
+        }
+        if let Some(b) = self.hud.help.border.take() {
+            self.hud.remove(b);
+        }
+        let tex = t.border_names.get(style).and_then(|n| self.hud.find(n));
+        let b = self.hud.new_blit(tex, bx, by, -1, -1);
+        self.hud.set_size(b, bw, bh);
+        self.hud.set_alpha(b, 0x40);
+        self.hud.set_hide(b, false);
+        let lv = self.players[p].i32_(o::LEVEL);
+        let hs = &mut self.hud.help;
+        hs.border = Some(b);
+        hs.x = cx;
+        hs.y = cy;
+        hs.colour = t.text_colors.get(style).copied().unwrap_or(0xffffff);
+        hs.lv = lv;
+        hs.flag = true;
+        hs.num = id;
+        hs.player = p;
+        self.write_help_text();
+        self.hud.help.time = lines * 0x3c + 0x1e;
+        if h[3] != 0 {
+            // set_help_displayed: |= 0x11 for the player (rule 2) or all.
+            let range = if h[3] == 2 { p..p + 1 } else { 0..4 };
+            for k in range {
+                if self.players[k].i32_(o::STATE) != 0 {
+                    let v = self.players[k].u8_(o::HELP_SEEN + id as usize) | 0x11;
+                    self.players[k].set_u8(o::HELP_SEEN + id as usize, v);
+                }
+            }
+        }
+        let kind = if gm == 0x8003 || self.hud.help.testflag { -1 } else { h[1] };
+        self.globals.help = match kind {
+            -1 => 0x3c,
+            1 => 0x1e,
+            _ => 0,
+        };
+        if h[6] != 0 {
+            if id == 0x65 && 9 < self.hud.help.lv {
+                self.audio("AudioExp", player, self.hud.help.lv.min(99));
+            } else {
+                self.audio("AudioHelp", player, h[6]);
+            }
+        }
+        if self.globals.aux_levels & 0x10 == 0 {
+            if gm == 0x8003 || gm == 0x8006 {
+                self.hud.help.interval = 0x3c;
+            } else {
+                let i = self.hud.help.interval_idx;
+                self.hud.help.interval = t.announcer_interval.get(i).copied().unwrap_or(0);
+                if 0 <= t.announcer_interval.get(i + 1).copied().unwrap_or(-1) {
+                    self.hud.help.interval_idx += 1;
+                }
+            }
+        } else {
+            self.hud.help.interval = 0;
+        }
+        Ok(())
+    }
+
+    /// write_text 0x18e120: the current help message (centred on help_x,
+    /// help_y | 0x1000).
+    fn write_help_text(&mut self) {
+        let Some(t) = self.hud.tables.clone() else { return };
+        let hs = self.hud.help.clone();
+        let Some(&h) = t.helptab.get(hs.num as usize) else { return };
+        if h[4] < 0 {
+            return;
+        }
+        let (x, y, c) = (-hs.x, hs.y | 0x1000, hs.colour);
+        let class = self.players[hs.player].i32_(o::CLASS);
+        let colour_idx = self.players[hs.player].i32_(o::COLOUR);
+        let name = |hud: &Hud, e: i32, l: i32| Arg::S(hud.string_text(e, l).unwrap_or_default());
+        if hs.num == 0x65 && 9 < hs.lv {
+            let rank = if hs.lv == 99 {
+                self.hud.string_text(0x15, 0)
+            } else {
+                let list = self.hud.text.as_ref().and_then(|r| r.lists.first()).and_then(|(_, v)| v.get(class as usize).copied());
+                list.and_then(|e| self.hud.string_text(e as i32, (hs.lv / 10) >> 1))
+            }
+            .unwrap_or_default();
+            let step = self.hud.string_text_height(1.0, 0x18, 0, 2) + 2;
+            let (cn, kn) = (name(&self.hud, 2, colour_idx), name(&self.hud, 3, class));
+            self.hud.draw_string_text(x, y - step, -1, c, 0x18, 0, &[cn, kn]);
+            self.hud.draw_string_text(x, y, -1, c, 0x18, 1, &[]);
+            self.hud.draw_string_text(x, y + step, -1, c, 0x18, 2, &[Arg::D(hs.lv), Arg::S(rank)]);
+        } else if hs.num == 0x22 {
+            self.hud.draw_string_text_mlines(x, y, 2, c, h[4], &[Arg::D(hs.lv)]);
+        } else if matches!(hs.num, 0x32 | 0x59 | 0x5d) {
+            let (cn, kn) = (name(&self.hud, 2, colour_idx), name(&self.hud, 3, class));
+            let step = (self.hud.string_text_height(1.0, h[4], 0, 2) + 2) >> 1;
+            if self.players[hs.player].u32_(0x138) & 0x400 == 0 || hs.num == 0x5d {
+                self.hud.draw_string_text(x, y - step, 1, c, h[4], 0, &[cn, kn]);
+            } else {
+                self.hud.draw_string_text(x, y - step, -1, c, 4, 0, &[]);
+            }
+            self.hud.draw_string_text(x, y + step, 1, c, h[4], 1, &[]);
+        } else if h[5] < 0 {
+            self.hud.draw_string_text_multi(x, y, 2, c, h[4]);
+        } else {
+            self.hud.draw_string_text(x, y, -1, c, h[4], h[5], &[]);
+        }
+    }
+
+    /// DoHelp 0x18ed58 (do_players, before the player loop): the interval,
+    /// the help pause (`help`, which stops do_players) and the message's
+    /// lifetime (lines × 60 + 30 vblanks).
+    pub fn do_help(&mut self) {
+        let vb = self.globals.vb_elapsed;
+        let paused = self.globals.paused != 0;
+        if !paused {
+            self.hud.help.interval = (self.hud.help.interval - vb).max(0);
+        }
+        if !(0..4).any(|k| matches!(self.players[k].i32_(o::STATE), 1 | 2 | 3 | 5)) {
+            self.hud.help.time = 0;
+        }
+        if !self.hud.help.flag {
+            return;
+        }
+        let border = self.hud.help.border;
+        if self.hud.optmenu_active != 0 || self.globals.trig_cam_active != 0 {
+            if let Some(b) = border {
+                self.hud.set_hide(b, true);
+            }
+            return;
+        }
+        if !paused {
+            self.globals.help = (self.globals.help - vb).max(0);
+            self.hud.help.time -= vb;
+            if self.hud.help.time < 1 {
+                if let Some(b) = self.hud.help.border.take() {
+                    self.hud.remove(b);
+                }
+                self.hud.help.flag = false;
+                self.globals.help = 0;
+                self.hud.help.testflag = false;
+                return;
+            }
+        } else if self.hud.help.time < 1 {
+            return;
+        }
+        self.write_help_text();
+        if let Some(b) = border {
+            self.hud.set_hide(b, false);
+        }
+    }
+
     /// The client's textures and fonts, then reset_players' panel part and
     /// init_next_level's (setup_player_display for every box,
     /// SetPlayerWindows(0)).
-    pub fn hud_init(&mut self, textures: Vec<TexSet>, fonts: Vec<Option<Font>>) {
+    pub fn hud_init(&mut self, textures: Vec<TexSet>, fonts: Vec<Option<Font>>, text: Option<gdl_formats::textrom::TextRom>) {
         self.hud.missing.clear();
+        self.hud.text = text;
         self.hud.set_resources(textures, fonts);
         self.hud_reset_players();
         for p in 0..4 {

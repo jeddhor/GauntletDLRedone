@@ -363,7 +363,8 @@ impl Game {
         let mut same_level = 0;
         let vb = self.globals.vb_elapsed;
         if !self.excluded_mode() {
-            // DoHelp (help text queue) is presentation.
+            // DoHelp: help timers, the help pause and the message box.
+            self.do_help();
             for k in 0..4 {
                 if self.players[k].i32_(0xfc) != 0 && !self.player_selecting(k) {
                     self.get_obj_world_mat(k)?;

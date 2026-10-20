@@ -419,8 +419,18 @@ impl Game {
     pub fn level_u32(&self, o: usize) -> u32 {
         u32::from_le_bytes(self.level[o..o + 4].try_into().unwrap())
     }
+    /// NewHelp(id, player, point): most callers pass the player record's
+    /// +0x60 (attention point); `usize::MAX` = −1 with no point.
     pub fn help(&mut self, id: i32, player: usize) {
+        let at = self.players.get(player).map(|r| r.v3(0x60));
+        self.help_at(id, player, at);
+    }
+    pub fn help_at(&mut self, id: i32, player: usize, at: Option<[f32; 3]>) {
         self.events.push(Event::Help { id, player });
+        let p = (player < 4).then_some(player);
+        if let Err(e) = self.new_help(id, p, at) {
+            self.log.note("NewHelp", &e);
+        }
     }
     pub fn audio(&mut self, cue: &'static str, player: Option<usize>, arg: i32) {
         self.events.push(Event::Audio { cue, player, arg });

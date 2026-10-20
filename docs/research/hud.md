@@ -94,6 +94,28 @@ private/reference/captures/render/tower-newgame-v1-240.png). Port:
 - The welcome box precedes CrystalCamActivate, so no letterbox is drawn
   under it.
 
+## Help messages (NewHelp / DoHelp)
+
+- helptab 0x24bf08: 0x100 entries of 0x1c bytes (+4 pause kind: −1 → help
+  0x3c, 1 → 0x1e vblanks of do_players pause; +8 priority; +0xc display
+  rule: 1 any player saw it, 2 this player, 3 all players; +0x10
+  ENGLISH.ROM entry, +0x14 line or −1 for every line; +0x18 audio).
+  help_displayed bytes live at player +0x1910 + id (|= 0x11 when shown).
+- NewHelp 0x18e710: refused during trigger cameras, for a lower or equal
+  priority than the shown one, and (ids < 0x1d, 0x2c/0x2d/0x37/0x50) while
+  help_interval runs (announcer_interval_tab 0, 120, 240, 420, 600).
+  Placement: the caller's world point through MBWorldToScreen, 0x3e above
+  (most callers pass the player's +0x60 attention point or an item's +0x50),
+  else (0x100, 0xc0) or over the player's box; clamped to the screen. Box:
+  border_names[player] (SCROLL_A) sized text width + 0x40 × text height (dy
+  8) + 0x10, MBBlitSetAlpha 0x40; text colour text_colors[player] (none:
+  0x160c03). Lifetime lines × 60 + 30 vblanks.
+- DoHelp 0x18ed58 at the start of do_players' player section counts the
+  interval, the pause and the lifetime and draws write_text 0x18e120 (the
+  level-up, player-name and multi-line variants included).
+- Verified natively (GDL_DEBUG_HELP=11 in G1): "COLLECT GOLD TO BUY
+  POWERUPS" on the translucent parchment above the player.
+
 ## Native presentation
 
 A HUD camera with a fixed 512×384 orthographic projection on its own render
@@ -112,4 +134,7 @@ button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, del_player_blits,
 low_res flags, the shadow/0x1000 text flags, menu_on/optmenu state from the
 front end, ability blits, SandglassBlit/ThermoBlit (boss and timers), the
 inventory/map/shop panels and DrawBlit's corner_hilite colour sweep are not
-ported. The scroll box's timing uses wall-clock vblanks (59.94 Hz).
+ported. Help sites whose original point is a local vector (ids 0x1b, 0x14,
+0xe) use the player's attention point or none; AudioHelp/AudioExp cues are
+emitted as events but not voiced; low-res/Japanese help variants are not
+modelled. The scroll box's timing uses wall-clock vblanks (59.94 Hz).
