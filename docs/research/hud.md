@@ -165,6 +165,19 @@ menu or the title menu is up. do_titlescreen draws DrawGlowText(1.0,
 "Press Start") at y 0x140 until the title menu opens. Native: the
 attract-mode timeout and the flyby are not ported.
 
+## Sumner's hints
+
+HintMenu opens hint_menu ("How Can I Help You?"); DoOptions case 0x16 picks
+the next hint of the category (next_general/boss/legend/rune_hint) and opens
+hint_general_menu (flags 0x71: fade, PARCH, "Player n", Back) titled "A
+Hint for You" (general; the other categories use a HINTS_E.ROM line as the
+title); case 0x17 draws the hint with DrawScrollListText(hints, x −256,
+font 6) at DrawStringScale = the menu scale (0.667) in the menu's off
+colour. NATIVE: the client pages through every hint of a category and
+shows the hint_menu label as the title of the non-general categories;
+next_*_hint's progress-based choice is not ported. GDL_DEBUG_HINTS opens
+the menu for presentation checks.
+
 ## Player select
 
 init_player_select 0x1851b0 creates 11 sel_bg blits per column (sel_xpos

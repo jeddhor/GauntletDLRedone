@@ -114,6 +114,7 @@ pub fn page_record(page: &Page) -> Option<(&'static str, usize)> {
         Page::ConfirmQuit { at } => ("quitgame_question", *at),
         Page::Hints { at } => ("hint_menu", *at),
         Page::Audio { at, .. } => ("audio_options", *at),
+        Page::HintText { .. } => ("hint_general_menu", 0),
         _ => return None,
     })
 }

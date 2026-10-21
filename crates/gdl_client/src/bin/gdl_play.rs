@@ -1782,6 +1782,10 @@ fn simulate(
     {
         sim.game.help(id, 0);
     }
+    // DEBUG: GDL_DEBUG_HINTS=1 opens Sumner's hint menu once.
+    if sim.updates == 60 && std::env::var("GDL_DEBUG_HINTS").is_ok() {
+        sim.hint_menu = true;
+    }
     // DEBUG: GDL_DEBUG_GOTIT=<kind>:<amount> raises add_got_it(0, …) once.
     if sim.updates == 60
         && let Some((k, a)) = std::env::var("GDL_DEBUG_GOTIT").ok().and_then(|v| v.split_once(':').and_then(|(k, a)| Some((k.parse().ok()?, a.parse().ok()?))))
@@ -2493,7 +2497,22 @@ fn present_hud(
     if let (Some((key, at)), Some(style)) = (view, front.opt_style.as_ref()) {
         let sliders = if key == "audio_options" { vec![(0, front.menu.music), (1, front.menu.sfx)] } else { Vec::new() };
         let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0), sliders };
-        front_list.extend(front.ui_hud.optmenu_blits(style, &front.menus[key], &state));
+        let mut menu = front.menus[key].clone();
+        if let gdl_client::menu::Page::HintText { list, at } = &front.menu.page {
+            // DoOptions case 0x16: "A Hint for You" (general); the other
+            // categories' titles (guardian/legend/rune names from
+            // HINTS_E.ROM) are NATIVE: the hint_menu label is shown.
+            menu.title = Some(if *list == 0 { "A Hint for You".to_string() } else { front.menus.get("hint_menu").and_then(|h| h.entries.get(*list)).map_or(String::new(), |e| e.label.clone()) });
+            if let Some(text) = front.menu.hints.get(*list).and_then(|h| h.get(*at)) {
+                // DrawScrollListText(hints, x −256, font 6) at DrawStringScale
+                // = the menu scale, in the menu's "off" colour.
+                let c = menu.rgb[0];
+                let colour = (c[0].clamp(0, 255) as u32) << 16 | (c[1].clamp(0, 255) as u32) << 8 | c[2].clamp(0, 255) as u32;
+                let lines: Vec<&str> = text.split('\n').collect();
+                front_list.extend(front.ui_hud.text_block_blits(menu.scale, 0xd0, 6, colour, &lines, 0));
+            }
+        }
+        front_list.extend(front.ui_hud.optmenu_blits(style, &menu, &state));
     }
     if let (Some(cols), Some(style), Some(def)) = (select_columns(&front, *screen), front.opt_style.as_ref(), front.menus.get("sel_def_menu")) {
         front_list.extend(front.ui_hud.select_blits(style, def, &cols, front.menu_clock.1 as i32));

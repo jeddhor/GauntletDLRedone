@@ -712,6 +712,23 @@ impl Hud {
         out
     }
 
+    /// Lines of text centred on x 256 as a block around `y_mid` (font,
+    /// scale, GS colour 0xRRGGBB, line step FontHeight + dy; font z 0.25).
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_block_blits(&self, scale: f32, y_mid: i32, font: usize, colour: u32, lines: &[&str], dy: i32) -> Vec<Blit> {
+        let fh = self.font_height(font, scale);
+        let n = lines.len() as i32;
+        let mut y = y_mid - ((fh + dy) * (n - 1) + fh) / 2;
+        let mut out = Vec::new();
+        for l in lines {
+            if let Some(m) = self.message(scale, scale, -0x100, y, font, pack_rgb(colour, 0x80), 0.25, 0, l) {
+                out.extend(self.glyphs(&m));
+            }
+            y += fh + dy;
+        }
+        out
+    }
+
     /// The frame's blits in draw order: node blits, temp blits, then the font
     /// messages' glyphs (MBDrawBlits then MBRenderText in pbRenderNode).
     pub fn draw_list(&self) -> Vec<Blit> {
