@@ -743,8 +743,9 @@ impl Game {
             }
             *angle = wrap(a)?;
         }
-        // AddPlayerHitCol (unless 0x1000000) and SetSkinFX(TextureWhite) are
-        // presentation.
+        // AddPlayerHitCol (unless 0x1000000) is presentation; the white
+        // hit flash SetSkinFX(1, TextureWhite, 1, 1).
+        super::skin::set_skin_fx(r, 0x7b4, 1.0, super::skin::SkinTex::White, 1, 1.0);
         r.set_f32(0x8b4, 0.0);
         clear(r);
         Ok(code)

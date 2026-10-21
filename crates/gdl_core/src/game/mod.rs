@@ -18,6 +18,7 @@ pub mod select;
 pub mod enemies;
 pub mod enemy_ai;
 pub mod item_runtime;
+pub mod lighting;
 pub mod lookouts;
 pub mod pad;
 pub mod pcontact;
@@ -31,6 +32,7 @@ pub mod progress;
 pub mod psfx;
 pub mod record;
 pub mod setup;
+pub mod skin;
 pub mod tower;
 pub mod world_anim;
 pub mod sound;
@@ -231,8 +233,6 @@ pub enum Event {
     /// player_lightrad/attn at the attention point + player_lightdy, colour
     /// player_light_color[+4].
     PlayerLight { player: usize },
-    /// SetAmbientSpecial(1/30, value): the class special's ambient flash.
-    AmbientSpecial { value: f32 },
 }
 
 pub struct Game {
@@ -393,6 +393,8 @@ pub struct Game {
     pub lock_cam_req: i32,
     /// Enemy tree alpha (presentation; see enemy_mod_alpha).
     pub enemy_alpha: Vec<i32>,
+    /// Enemy and player trees' skin state (MBTreeSetAltTex / AmbientAdd).
+    pub skin_views: skin::SkinViews,
     /// Labels of the loaded MBOX object tables (MBOX_FindObject_Sub).
     pub mb_objects: Option<std::collections::HashSet<String>>,
     /// LevelEnemyDesc 0x1626c8 inputs: EnemyType slots (kind, ENMY +0x10
@@ -417,6 +419,8 @@ pub struct Game {
     pub node_mb_clear: Vec<u32>,
     pub node_alpha: Vec<Option<u8>>,
     pub node_state_version: u32,
+    /// InitLighting / DoLighting / SetAmbientSpecial state (game::lighting).
+    pub lighting: lighting::Lighting,
     pub sounds: sound::SoundTables,
     pub log: setup::FrameLog,
 }

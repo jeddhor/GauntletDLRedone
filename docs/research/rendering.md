@@ -214,12 +214,54 @@ they keep their vertex colours. The VU1 microcode was not read.
 
 ## Not yet implemented
 
+## Scene lighting and skins (2026-10-21)
+
+- InitLighting 0x180a30 (init_next_level): Ambient = LEVL +0xec, one
+  directional light (+0x108 × +0xfc along +0xf0), GlobalInten 1. DoLighting
+  0x180888 (main, every frame): MBPosLightDeleteAll; AmbientSpecialValue
+  decays (× 0.6 once AmbientSpecialTime passed, 0 below 0.05);
+  AmbientSpecialCurValue follows it by +0.05 / −0.25 per frame;
+  MBSetAmbient(clamp(Ambient · GlobalInten + current, 0, 1)),
+  MBLightmapMod(1, current), MBNoShadeMod(1, current). LEVL flag 8 (forced
+  darkness with player lights) is set by no shipped level (all 52 LEVL
+  records have flags 0). SetAmbientSpecial callers: the class specials'
+  DAMG flags (−0.8/−0.6/−0.4), the quest item (−0.8), A5/F2 lightning
+  (+0.5 for 0.1 s; GauntWorldInit hides A5XPXLNC_LNING1..4 /
+  F2XPNC_LNING1..4, each flashing for 0.2 s every 5 + Random(10) s).
+  world_update's end of stage: GlobalInten 1 − t, then −1 and
+  end_of_stage 2 after 2 s. gdl_core::game::lighting holds the state.
+- setPrimColor 0x1beca8 puts a scale (+0x10..+0x18 = scale × 128) and an
+  ambient term (+0x48 = node +0x6a ambient add + the mod's add + 1 for
+  lightmapped/no-shade draws, + 0 for directionally lit ones) into the
+  object info. HYPOTHESIS (VU1 microcode unread): the term scales the
+  colour; gdl_play draws unlit materials × (1 + add) and adds the ambient
+  add / 255 to lit ones' ambient.
+- Skins (gdl_core::game::skin): SetSkinFX(rate, skin, texture, end,
+  repeats) writes six floats (enemy +0x1f8, player +0x7b4, critter +0xec);
+  ProcessSkinFX advances current by (vb >> 1) × rate; while end > 0
+  DoProcessSkinFX sets MBTreeSetAltTex(−4, or −3 for CHROMESILVER/GOLD;
+  texture + (int)current) and MBTreeSetAmbientAdd(999). Uses: enemy deaths
+  (DEATHBLOOD/FIRE/ELEC/LIGHT/ACID texmod frames by damage type, DEATHALT,
+  DEATHGOLEM; 10 or 15 frames at 0.5) with ambient add 999 — the dying
+  enemy stays (state 8) while its skin runs; knockback white flashes
+  (AAAWHITE 1 frame, 1 repeat) for enemies and players; the exit glow
+  (DEATHLIGHT, 0.4 / 0.5 rate); gold/silver powerup chrome blinking in its
+  last 3 s; PlayerProcessSkinFX's special flash (+0x7d4 × 255, × 0.9 per
+  frame). The record's texture word holds a SkinTex code (pointer-class
+  word). gdl_play replaces every part texture (−3 chrome drawn as a plain
+  replacement: HYPOTHESIS) and adds the ambient. Not ported:
+  CritterUpdateSkinfx (critter white flashes +0xb44/+0xb46/+0xb4c).
+- Package tree nodes: the named object only without +0x2e bit 0 (an OANIM
+  node draws its frame object instead), e.g. barrels' BAROBJ/BAREXP/BARPOI
+  break animations.
+
 MBTreeSetAlpha on items (Game::item_alpha) and world nodes
 (Game::node_alpha) is drawn as material alpha × (255 − alpha)/255
 (HYPOTHESIS: the +0x53 byte's use in the draw path is not traced).
 
 Texture scrolls and per-node shifts, character texmods (SetupPlayerTexMods),
-enemy MBTreeSetAlpha fades, chrome (0x8000/0xa0000, setChrome), the colour
+enemy MBTreeSetAlpha fades, chrome (0x8000/0xa0000, setChrome), effect point
+lights (SfxSetLight → ProcessEffects' MBPosLightNew on lit objects), the colour
 scale of setPrimColor and DoLighting, VU1 vertex lighting of characters
 (point lights MBPosLight*, setPrimColor scales, AmbientSpecial flashes), fog (InitFog/FogFadeIn; FGE was 0 in the
 G1 frame), Z modifiers, sorted transparency order.

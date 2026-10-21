@@ -216,6 +216,10 @@ pub struct GsParams {
     pub light_dir: Vec4,
     /// rgb the directional light colour × intensity, a the ambient.
     pub light: Vec4,
+    /// x: colour add of unlit draws (MBLightmapMod / MBNoShadeMod's add:
+    /// colour × (1 + x)), y: ambient add of lit draws (MBTreeSetAmbientAdd
+    /// / 255). HYPOTHESIS: setPrimColor's +0x48 term scales the colour.
+    pub scale: Vec4,
 }
 
 /// The observed G1 world material state folded into one pass (gs.wgsl):

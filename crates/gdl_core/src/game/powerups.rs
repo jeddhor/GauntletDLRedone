@@ -93,6 +93,8 @@ impl Game {
         // presentation code reads (fVar21 gold skin, fVar20 invisibility,
         // fVar18 fade) — only the first matters to the simulation.
         let mut weapon_time = -1.0f32;
+        // fVar21: the longest kind-6 0x10000 timer (negative: unlimited).
+        let mut skin_time = 0.0f32;
         for k in 0..8 {
             let o = 0x144 + 16 * k;
             let mut time = r.f32_(o);
@@ -127,6 +129,9 @@ impl Game {
                 6 => {
                     let v = r.u32_(0x134) | flags;
                     r.set_u32(0x134, v);
+                    if flags & 0x1_0000 != 0 && (time < 0.0 || skin_time < time) {
+                        skin_time = time;
+                    }
                 }
                 7 => {
                     r.set_f32(0x124, add(r.f32_(0x124), amount)?);
@@ -147,6 +152,17 @@ impl Game {
                 }
                 _ => {}
             }
+        }
+        // The chrome skins: gold (+0x134 0x100000) or silver (0x10000),
+        // blinking over the last 3 s (SetSkinFX(1, CHROMEGOLD/SILVER, 1, 1)).
+        let blink_off = (0.0..=3.0).contains(&skin_time) && ((skin_time * 8.0) as i32) & 1 == 0;
+        let r134 = r.u32_(0x134);
+        if r134 & 0x10_0000 != 0 {
+            if !blink_off {
+                super::skin::set_skin_fx(r, 0x7b4, 1.0, super::skin::SkinTex::Gold, 1, 1.0);
+            }
+        } else if r134 & 0x1_0000 != 0 && !blink_off {
+            super::skin::set_skin_fx(r, 0x7b4, 1.0, super::skin::SkinTex::Silver, 1, 1.0);
         }
         // PlayerProcessFamiliar: the familiar tree +0x720 exists from level
         // 30 (native marker 1; the tree itself is presentation).

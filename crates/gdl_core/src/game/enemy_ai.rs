@@ -1500,7 +1500,8 @@ impl Game {
             if self.ef(i, e::HEALTH) <= self.ef(i, 0x2b4) {
                 self.request_enemy_action(i, 0x20);
             } else {
-                self.audio("SetSkinFX", None, i as i32);
+                // SetSkinFX(1, TextureWhite, 1, 1): the knockback flash.
+                super::skin::set_skin_fx(&mut self.enemies[i], 0x1f8, 1.0, super::skin::SkinTex::White, 1, 1.0);
             }
         }
         let r = &mut self.enemies[i];
@@ -2427,6 +2428,7 @@ impl Game {
                                 self.enemies[k].set_i32(0x3a4, v);
                             }
                         }
+                        self.enemy_process_skin_fx(k)?;
                     }
                 }
                 6 => {}
@@ -2465,9 +2467,17 @@ impl Game {
                         self.do_enemy_move(k)?;
                         let a = self.do_enemy_action(k)?;
                         self.enemies[k].set_u32(0xe0, a);
-                        let still = (a.wrapping_sub(0x1c) < 2 || a == 0x20)
-                            && self.enemy_anims.get(k).cloned().flatten().is_some_and(|an| an.clock.mode_bits & 0xff != 0xff);
+                        // The dying enemy stays while its death skin runs
+                        // (actions 0x1c/0x1d/0x20).
+                        self.enemy_process_skin_fx(k)?;
+                        let still = (a.wrapping_sub(0x1c) < 2 || a == 0x20) && 0.0 < self.enemies[k].f32_(0x1f8);
                         if !still {
+                            if self.enemies[k].i32_(e::TYPE) == 0x1d {
+                                let r = self.rng.rand_int(2).ok_or_else(|| super::Unsupported("RandInt(2)".into()))?;
+                                let cue = if r == 0 { "AudioSuchBravery" } else { "AudioHeroicEffort" };
+                                let killer = self.enemies[k].i16_(0x212);
+                                self.audio(cue, usize::try_from(killer).ok(), 0);
+                            }
                             self.kill_enemy(k)?;
                         }
                     }

@@ -522,6 +522,8 @@ impl Game {
                 return super::unsupported("do_exit Next/PrevWorldLevel");
             }
             self.players[p].set_i32(0x808, dest);
+            // SetSkinFX(0.4, TextureExit, 10, 1): the exit glow.
+            super::skin::set_skin_fx(&mut self.players[p], 0x7b4, f32::from_bits(0x3ecc_cccd), super::skin::SkinTex::Exit, 10, 1.0);
         }
         let left = i32::from(self.players[p].u16_(0x1ca)) - (vb & 0xffff);
         self.players[p].set_i16(0x1ca, left as i16);

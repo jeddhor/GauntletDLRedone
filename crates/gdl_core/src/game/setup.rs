@@ -413,6 +413,7 @@ impl Game {
             randpottype: s.extra.randpottype,
             active_player_mask: 0,
             enemy_alpha: vec![0xff; 25],
+            skin_views: Default::default(),
             lock_cam_req: 0,
             critters: Vec::new(),
             critter_data: super::critters::CritterData {
@@ -453,6 +454,7 @@ impl Game {
             node_mb_clear: vec![0; inp.world.nodes.len()],
             node_alpha: vec![None; inp.world.nodes.len()],
             node_state_version: 0,
+            lighting: Default::default(),
             enemy_slot_names: (0..8)
                 .map(|k| {
                     let name = types.data[k].and_then(|d| inp.wdata.enemies.get(d)).map(|e| {
@@ -484,6 +486,9 @@ impl Game {
             },
             log: FrameLog::default(),
         };
+        // init_next_level: InitLighting(1); GauntWorldInit's lightning.
+        game.init_lighting();
+        game.init_lightning().map_err(|e| format!("lightning: {}", e.0))?;
         // InitWorldInfo: objects driven by a world animation get flag 0x2000000.
         for e in game.world_anims.entries.iter().filter(|e| e.active) {
             if let Some(o) = game.items.objects.get_mut(e.object) {
@@ -649,6 +654,14 @@ impl Game {
         if let Err(e) = self.world_update_stage_start() {
             self.log.note("world_update", &e);
         }
+        if self.globals.paused == 0 && self.globals.help == 0 {
+            if let Err(e) = self.world_update_lightning() {
+                self.log.note("world_update", &e);
+            }
+            if let Err(e) = self.world_update_end_of_stage() {
+                self.log.note("world_update", &e);
+            }
+        }
         if let Err(e) = self.setup_dyn_grid() {
             self.log.note("world_update", &e);
         }
@@ -684,6 +697,8 @@ impl Game {
         if let Err(e) = self.camera_step() {
             self.log.note("camera", &e);
         }
+        // main: DoLighting once per frame.
+        self.do_lighting();
     }
 
     /// Copy the item system's runtime object state into the collision world.

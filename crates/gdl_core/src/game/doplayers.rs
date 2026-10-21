@@ -458,6 +458,7 @@ impl Game {
                     if self.players[k].i32_(0xfc) == 1 {
                         self.player_process_powerups(k)?;
                         self.do_player_start(k)?;
+                        self.player_process_skin_fx(k)?;
                         self.update_player_world_mat(k, false)?;
                     }
                     continue;
@@ -499,6 +500,7 @@ impl Game {
                         }
                         if (same_level != 0 || self.globals.end_of_stage != 0)
                             && !self.anybody_playing() {
+                                self.player_process_skin_fx(k)?;
                                 self.do_exit(k, same_level)?;
                                 self.players[k].set_i32(0x100, state);
                                 continue;
@@ -555,6 +557,7 @@ impl Game {
                         self.players[k].set_f32(0x910, 0.0);
                         self.players[k].set_i32(0x90c, 0);
                     }
+                    self.player_process_skin_fx(k)?;
                     self.do_weakening(k, k as i32 == weakest);
                     if self.globals.auto_exit_flag == 0 {
                         result = false;
@@ -589,6 +592,7 @@ impl Game {
                     if self.players[k].i32_(0x8f8) < 1 && self.players[k].u32_(0x1e0) == 0x7e {
                         self.players[k].set_u32(0x1e4, 0);
                     }
+                    self.player_process_skin_fx(k)?;
                     result = false;
                     if self.players[k].i32_(0x8f8) < 1 && self.players[k].u32_(0x1e0) != 0x7e {
                         self.kill_player(k)?;

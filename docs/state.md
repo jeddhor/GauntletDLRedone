@@ -36,8 +36,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    effect header/familiar trees posed per frame; tools: reference_camera.py,
    GDL_DEBUG_CAMERA, render_pixel_check.py, reference_screenshot.py --slot.
    2026-10-21: OANIM and texmod (alt texture, fade) tree nodes in effect
-   and item trees, MBTreeSetAlpha fades of items and world nodes.
-   Remaining: chrome, texture scrolls/per-node shifts, point lights,
+   and item trees, MBTreeSetAlpha fades of items and world nodes;
+   DoLighting/SetAmbientSpecial state, A5/F2 lightning, end-of-stage
+   intensity; skins (death dissolves, hit flashes, exit glow, chrome).
+   Remaining: chrome env mapping, texture scrolls/per-node shifts, effect point lights,
    AmbientSpecial flashes, fog (D1/D3), splash shadow texture, critter
    shadows, item tree animation.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —

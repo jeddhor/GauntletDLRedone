@@ -115,7 +115,7 @@ impl Game {
                 };
                 if let Some(v) = amb {
                     // SetAmbientSpecial(1/30, value): the screen flash.
-                    self.events.push(Event::AmbientSpecial { value: f32::from_bits(v) });
+                    self.set_ambient_special(f32::from_bits(0x3d08_8889), f32::from_bits(v))?;
                     self.players[p].set_f32(0x7d4, 2.0);
                     if let Some(k) = partner {
                         self.players[k].set_f32(0x7d4, 2.0);

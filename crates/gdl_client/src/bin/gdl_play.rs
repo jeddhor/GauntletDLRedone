@@ -170,6 +170,8 @@ struct Library {
     /// definition label (OANIM frames are consecutive object indices).
     by_index: HashMap<u32, Parts>,
     index_of: HashMap<String, u32>,
+    /// Bitmap records whose image could not be decoded (placeholders).
+    unresolved: std::collections::HashSet<u16>,
 }
 
 #[derive(Resource)]
@@ -646,17 +648,26 @@ fn present_distance_fade(sim: Res<Sim>, q: Query<(&DistanceFade, &MeshMaterial3d
 #[derive(Resource, Default)]
 struct MatRequests(HashMap<Entity, MatReq>);
 
+#[derive(Default)]
 struct MatReq {
     swap: Vec<(AssetId<Image>, Handle<Image>)>,
-    alpha: f32,
+    /// MBTreeSetAltTex −4/−3: every texture replaced.
+    replace: Option<Handle<Image>>,
+    alpha: Option<f32>,
+    /// MBTreeSetAmbientAdd / 255.
+    ambient: f32,
 }
 
 impl MatRequests {
+    fn get(&mut self, e: Entity) -> &mut MatReq {
+        self.0.entry(e).or_default()
+    }
     fn alpha(&mut self, e: Entity, f: f32) {
-        self.0.entry(e).or_insert(MatReq { swap: Vec::new(), alpha: 1.0 }).alpha *= f;
+        let r = self.get(e);
+        r.alpha = Some(r.alpha.unwrap_or(1.0) * f);
     }
     fn swap(&mut self, e: Entity, target: AssetId<Image>, alt: Handle<Image>) {
-        self.0.entry(e).or_insert(MatReq { swap: Vec::new(), alpha: 1.0 }).swap.push((target, alt));
+        self.get(e).swap.push((target, alt));
     }
 }
 
@@ -702,6 +713,71 @@ fn present_tree_alpha(sim: Res<Sim>, slots: Query<(&Slot, &Children)>, children:
     }
 }
 
+/// The image of a skin texture (InitEffects' names) at `frame`: WEAPONS
+/// texmod frame bases (DEATH*), POWERUPS' AAAWHITE, WEAPONS' CHROME*
+/// textures, or the enemy packages' DEATHALT / DEATHGOLEM texmods.
+fn skin_image(libs: &Libraries, monsters: &[String], v: &gdl_core::game::skin::SkinView) -> Option<Handle<Image>> {
+    let tex = gdl_core::game::skin::SkinTex::from_code(v.tex)?;
+    let (kind, name) = tex.source();
+    let texmod = |lib: &Library| -> Option<Handle<Image>> {
+        let t = lib.texmods.iter().find(|t| t.target_name == name)?;
+        let r = u16::try_from(t.frame_base + v.frame.max(0)).ok()?;
+        lib.record_images.get(&r).cloned()
+    };
+    match kind {
+        0 => texmod(libs.0.get("WEAPONS")?),
+        1 => libs.0.get("POWERUPS")?.textures.get(name).cloned(),
+        2 => libs.0.get("WEAPONS")?.textures.get(name).cloned(),
+        _ => monsters.iter().find_map(|m| libs.0.get(m).and_then(texmod)),
+    }
+}
+
+/// Enemy and player trees' skins (MBTreeSetAltTex −4/−3 → the skin image on
+/// every part; HYPOTHESIS: −3 chrome draws as a plain replacement) and
+/// ambient adds (MBTreeSetAmbientAdd / 255).
+#[allow(clippy::type_complexity)]
+fn present_skins(
+    sim: Res<Sim>,
+    session: Res<Session>,
+    libs: Res<Libraries>,
+    slots: Query<(&Slot, &Children)>,
+    bodies: Query<(&CharacterRoot, &Children)>,
+    children: Query<&Children>,
+    mut req: ResMut<MatRequests>,
+) {
+    let g = &sim.game;
+    let monsters = &session.levels[session.current].monsters;
+    let apply = |root: &Children, v: &gdl_core::game::skin::SkinView, req: &mut MatRequests| {
+        let image = if v.mode < -1 { skin_image(&libs, monsters, v) } else { None };
+        if image.is_none() && v.ambient == 0 {
+            return;
+        }
+        let mut stack: Vec<Entity> = root.iter().collect();
+        while let Some(e) = stack.pop() {
+            let r = req.get(e);
+            if let Some(i) = &image {
+                r.replace = Some(i.clone());
+            }
+            r.ambient += v.ambient as f32 / 255.0;
+            if let Ok(c) = children.get(e) {
+                stack.extend(c.iter());
+            }
+        }
+    };
+    for (slot, kids) in &slots {
+        if slot.kind == SlotKind::Enemy
+            && let Some(v) = g.skin_views.enemies.get(slot.index)
+        {
+            apply(kids, v, &mut req);
+        }
+    }
+    for (root, kids) in &bodies {
+        if let Some(v) = g.skin_views.players.get(root.0) {
+            apply(kids, v, &mut req);
+        }
+    }
+}
+
 /// Realise this frame's material requests (clone on first use, restore the
 /// shared material when nothing is requested).
 fn apply_material_requests(
@@ -714,14 +790,14 @@ fn apply_material_requests(
         let r = req.0.remove(&e);
         let base = ov.map_or_else(|| m.0.clone(), |o| o.base.clone());
         let Some(b) = materials.get(&base).cloned() else { continue };
-        let (image, alpha) = match &r {
+        let (image, alpha, ambient) = match &r {
             Some(r) => {
-                let image = b.base.as_ref().and_then(|img| r.swap.iter().find(|(t, _)| *t == img.id()).map(|(_, alt)| alt.clone()));
-                (image, r.alpha)
+                let image = r.replace.clone().or_else(|| b.base.as_ref().and_then(|img| r.swap.iter().find(|(t, _)| *t == img.id()).map(|(_, alt)| alt.clone())));
+                (image, r.alpha.unwrap_or(1.0), r.ambient)
             }
-            None => (None, 1.0),
+            None => (None, 1.0, 0.0),
         };
-        if image.is_none() && 0.999 <= alpha {
+        if image.is_none() && 0.999 <= alpha && ambient == 0.0 {
             if ov.is_some() {
                 m.0 = base;
                 commands.entity(e).remove::<MatOverride>();
@@ -737,13 +813,24 @@ fn apply_material_requests(
             commands.entity(e).insert(MatOverride { base: base.clone() });
         }
         if let Some(own) = materials.get_mut(&m.0) {
+            let replaced = image.is_some();
             let img = image.or_else(|| b.base.clone());
             if own.base != img {
                 own.base = img;
             }
-            let w = b.params.tint.w * alpha;
-            if (own.params.tint.w - w).abs() > 1e-4 {
-                own.params.tint.w = w;
+            // The shared material's scene state, then this tree's.
+            let mut p = b.params;
+            if replaced {
+                p.options.x = 1.0;
+            }
+            p.tint.w = b.params.tint.w * alpha;
+            if b.lit {
+                p.scale.y += ambient;
+            } else {
+                p.scale.x += ambient;
+            }
+            if own.params.tint != p.tint || own.params.scale != p.scale || own.params.light != p.light || own.params.light_dir != p.light_dir || own.params.options != p.options {
+                own.params = p;
             }
         }
     }
@@ -826,6 +913,9 @@ fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, frame: f32, meshes: 
                     }
                 }
                 let (Ok(t), Ok(a)) = (u16::try_from(m.target), u16::try_from(b + k)) else { continue };
+                if lib.unresolved.contains(&a) {
+                    continue;
+                }
                 let (Some(target), Some(alt)) = (lib.record_images.get(&t), lib.record_images.get(&a)) else { continue };
                 for &(e, n) in meshes {
                     if m.subtree.contains(&n) {
@@ -842,25 +932,29 @@ fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, frame: f32, meshes: 
 /// one directional light (MBAddLight: intensity +0x108 × colour +0xfc,
 /// direction +0xf0, normalised). Lit materials get the light towards which
 /// normals shade (−direction, mirrored into render space).
-fn present_scene_light(sim: Res<Sim>, mut last: Local<Option<([f32; 7], usize)>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+fn present_scene_light(sim: Res<Sim>, mut last: Local<Option<([f32; 8], usize)>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
     let g = &sim.game;
     if g.level.len() < 0x10c {
         return;
     }
-    let ambient = g.level_f32(0xec).clamp(0.0, 1.0);
+    // DoLighting: MBSetAmbient(clamp(Ambient · GlobalInten + special)) and
+    // MBLightmapMod(1, special) for unlit draws.
+    let ambient = g.lighting.ambient_out;
+    let add = g.lighting.lightmap_add;
     let dir = Vec3::new(g.level_f32(0xf0), g.level_f32(0xf4), g.level_f32(0xf8));
     let colour = Vec3::new(g.level_f32(0xfc), g.level_f32(0x100), g.level_f32(0x104)) * g.level_f32(0x108);
     let towards = if dir.length() > 0.0 { -dir.normalize() * MIRROR } else { Vec3::Y };
-    let ids: Vec<_> = materials.iter().filter(|(_, m)| m.lit).map(|(id, _)| id).collect();
-    let key = ([ambient, towards.x, towards.y, towards.z, colour.x, colour.y, colour.z], ids.len());
+    let key = ([ambient, towards.x, towards.y, towards.z, colour.x, colour.y, colour.z, add], materials.len());
     if *last == Some(key) {
         return;
     }
     *last = Some(key);
-    for id in ids {
-        if let Some(m) = materials.get_mut(id) {
+    for (_, m) in materials.iter_mut() {
+        if m.lit {
             m.params.light_dir = towards.extend(1.0);
             m.params.light = colour.extend(ambient);
+        } else {
+            m.params.scale.x = add;
         }
     }
 }
@@ -1105,7 +1199,8 @@ fn build_library(
         }
     }
     let texmods = gdl_formats::animation::texmods(&pkg.anim_bytes).unwrap_or_default();
-    Library { by_label, textures: set.labels, record_images: set.record_images, label_index: set.label_index, texmods, by_index: parts, index_of }
+    let unresolved = set.unresolved.iter().map(|&i| i as u16).collect();
+    Library { by_label, textures: set.labels, record_images: set.record_images, label_index: set.label_index, texmods, by_index: parts, index_of, unresolved }
 }
 
 /// The OANIM frames of a package's trees (InitOAnimList / DoObjAnimation):
@@ -2244,7 +2339,7 @@ fn present_world(
             SlotKind::Enemy => {
                 let r = &g.enemies[slot.index];
                 let st = r.i32_(0xc8);
-                let Some(anim) = g.enemy_anims[slot.index].as_ref().filter(|_| st != 0 && st != 8) else {
+                let Some(anim) = g.enemy_anims[slot.index].as_ref().filter(|_| st != 0) else {
                     *vis = Visibility::Hidden;
                     continue;
                 };
@@ -2555,7 +2650,10 @@ fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Mo
 /// (type 4) or its OANIM frame objects (type 2, every sequence's entry).
 fn tree_node_model(p: &Package, lib: &Library, tree: &gdl_formats::animation::Tree, node: &gdl_formats::animation::Node, at: Vec3, out: &mut Model) {
     let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
-    if let Some(parts) = lib.by_label.get(&label) {
+    // AtreeNodeInit: the named object only without +0x2e bit 0; an OANIM
+    // node's object is DoObjAnimation's frame object.
+    let named = (node.flags & 1 == 0 && node.node_type != 2).then(|| lib.by_label.get(&label)).flatten();
+    if let Some(parts) = named {
         out.push((at, parts.clone(), tree_node_flags(node), Some(node.index as usize), None));
     } else if let Some(ps) = tree_node_psys(&p.anim_bytes, tree, node) {
         out.push((at, Vec::new(), 0, Some(node.index as usize), Some(NodeExtra::Psys(ps))));
@@ -3722,7 +3820,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, apply_material_requests).chain(), present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, present_skins, apply_material_requests).chain(), present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
                 present_hud,
             )

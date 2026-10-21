@@ -1162,6 +1162,24 @@ impl Game {
         if player < -1 {
             return Ok(1);
         }
+        // The death skin by damage type (f & 0xf): golems DEATHGOLEM (15
+        // frames), type 0xb and 5 AltTexDeath for type 0, else
+        // TextureDeath[type] above half height 2; ambient add 999.
+        {
+            use super::skin::{set_skin_fx, SkinTex};
+            let d = f & 0xf;
+            let r = &mut self.enemies[i];
+            if t == 0x1d && d == 0 {
+                set_skin_fx(r, 0x1f8, 0.5, SkinTex::GolemDeath, 0xf, 0.0);
+            } else if (t == 0xb || t == 5) && d == 0 {
+                set_skin_fx(r, 0x1f8, 0.5, SkinTex::AltDeath, 10, 0.0);
+            } else if 2.0 < r.f32_(e::HALF_HEIGHT) {
+                set_skin_fx(r, 0x1f8, 0.5, SkinTex::death(d), 10, 0.0);
+            }
+            if let Some(v) = self.skin_views.enemies.get_mut(i) {
+                v.ambient = 999;
+            }
+        }
         if f & 0x100_0000 == 0 && t != self.globals.boss_type {
             self.audio("AddEnemyHitCol", None, 0x100 | (f & 0xf) as i32);
         }

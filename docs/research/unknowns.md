@@ -62,3 +62,5 @@ are in [state.md](../state.md); movement evidence is in [movement.md](movement.m
 | MBTreeSetAlpha draw use | Node +0x53 = ~alpha and flag 0x200; drawn as material alpha × (255 − alpha)/255 (HYPOTHESIS) | Trace the +0x53 byte through the draw path or compare a fading exit/crystal in a capture |
 | Sumner's ghost placement | WIZARD tree at the nearest waypoint's matrix; not seen in the native Sumner camera view | Capture a shard/rune speech in the reference |
 | Tree texmod frame | DoTexModNode's frame argument taken as (int)(frame + 0.5) (HYPOTHESIS) | Read AnimateNode's frame argument |
+| setPrimColor +0x48 ambient term | Lightmap/no-shade add and per-tree ambient add (0..999) feed +0x48; drawn as colour × (1 + add) / lit ambient + add/255 (HYPOTHESIS) | Read the VU1 microcode's use of +0x48 or capture a flash (lightning in A5/F2, an enemy death) |
+| Skin chrome (alt tex −3) | CHROMESILVER/CHROMEGOLD drawn as a plain texture replacement | Capture a gold/silver powerup |

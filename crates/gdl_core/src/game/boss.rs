@@ -127,7 +127,7 @@ impl Game {
             _ => return Ok(()),
         }
         // SetAmbientSpecial(0.1, -0.8): the darkened screen while the item is up.
-        self.events.push(super::Event::AmbientSpecial { value: f32::from_bits(0xbf4c_cccd) });
+        self.set_ambient_special(f32::from_bits(0x3dcc_cccd), f32::from_bits(0xbf4c_cccd))?;
         Ok(())
     }
 
@@ -172,7 +172,12 @@ impl Game {
             9 => self.globals.good_wizard = 10,
             10 => {
                 if self.auto_exit_timer <= 35 {
-                    // SetSkinFX(TextureExit) on active players: presentation.
+                    // SetSkinFX(0.5, TextureExit, 10, 1) on players in state 1.
+                    for k in 0..4 {
+                        if self.players[k].i32_(0xfc) == 1 {
+                            super::skin::set_skin_fx(&mut self.players[k], 0x7b4, 0.5, super::skin::SkinTex::Exit, 10, 1.0);
+                        }
+                    }
                     self.globals.good_wizard = 11;
                 }
             }
