@@ -150,6 +150,9 @@ pub struct HudFont {
     pub per_page: i32,
 }
 
+/// An inventory panel piece: name and the eight words after it.
+pub type Piece = (Option<String>, [i32; 8]);
+
 #[derive(Clone, Debug)]
 pub struct HudTables {
     pub box_lx: [i32; 4],
@@ -186,10 +189,10 @@ pub struct HudTables {
     /// (f32 bits), text dx, text dy, …): Panel_Pieces, I_Pieces,
     /// Quest_Pieces, Shard_Pieces; cos_table/sin_table (60 steps),
     /// swirl_mult, SWIRL_RATE, IFONT_FONT.
-    pub panel_pieces: Vec<(Option<String>, [i32; 8])>,
-    pub i_pieces: Vec<(Option<String>, [i32; 8])>,
-    pub quest_pieces: Vec<(Option<String>, [i32; 8])>,
-    pub shard_pieces: Vec<(Option<String>, [i32; 8])>,
+    pub panel_pieces: Vec<Piece>,
+    pub i_pieces: Vec<Piece>,
+    pub quest_pieces: Vec<Piece>,
+    pub shard_pieces: Vec<Piece>,
     pub cos_table: Vec<f32>,
     pub sin_table: Vec<f32>,
     pub swirl_mult: i32,
@@ -225,7 +228,7 @@ impl HudTables {
         let pointed = |n: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
             words(n)?.into_iter().map(|p| Ok(cstr(elf.read(p, 32)?))).collect()
         };
-        let pieces = |n: &str| -> Result<Vec<(Option<String>, [i32; 8])>, Box<dyn std::error::Error>> {
+        let pieces = |n: &str| -> Result<Vec<Piece>, Box<dyn std::error::Error>> {
             let mut v = Vec::new();
             for c in elf.object(n)?.chunks_exact(0x24) {
                 let w = |k: usize| i32::from_le_bytes(c[4 * k..4 * k + 4].try_into().unwrap());

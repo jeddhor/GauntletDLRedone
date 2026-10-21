@@ -664,9 +664,11 @@ fn hide_exploded_nodes(sim: Res<Sim>, mut nodes: Query<(Entity, &WorldNode, &Nod
     }
 }
 
-/// Per monster package: tree label → sequence index → frame object labels.
+/// Per sequence: the OANIM start frame and the frame objects' labels.
+type SeqFrames = Vec<(i16, Vec<String>)>;
+/// Per monster package: tree label → per-sequence OANIM frames.
 #[derive(Resource, Default)]
-struct EnemyFrames(HashMap<String, HashMap<String, Vec<(i16, Vec<String>)>>>);
+struct EnemyFrames(HashMap<String, HashMap<String, SeqFrames>>);
 
 #[derive(Resource)]
 struct Sim {
