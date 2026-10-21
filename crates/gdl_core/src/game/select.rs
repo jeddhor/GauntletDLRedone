@@ -17,7 +17,9 @@ pub enum Column {
     /// A player slot not in play: the column frame only.
     Empty,
     /// A menu (sel_def_menu style): entries and the selection.
-    Menu { title: Vec<String>, entries: Vec<String>, selected: usize },
+    /// `file_list`: setup_sel_menu case 8's placement (x + 8, y 0x46,
+    /// scale 0.6); otherwise sel_def_menu's (centred on the column).
+    Menu { title: Vec<String>, entries: Vec<String>, selected: usize, file_list: bool },
     /// Class / colour choice: the S12 art, weapon, name and the
     /// L/R "Change" hint (do_sel_menu case 3).
     Class { class: usize, colour: usize },
@@ -75,18 +77,23 @@ impl Hud {
             };
             match col {
                 Column::Empty => {}
-                Column::Menu { title, entries, selected } => {
+                Column::Menu { title, entries, selected, file_list } => {
                     let mut y = 0x30;
                     for t in title {
                         text(self, &mut out, 0.8, 6, cx, y, t);
                         y += 0x1a;
                     }
                     let mut menu = def_menu.clone();
-                    // setup_sel_menu case 8 (the file list): x = sel_xpos + 8,
-                    // y 0x46, scale 0.6.
-                    menu.x = xp + 8;
-                    menu.y = 0x46;
-                    menu.scale = f32::from_bits(0x3f19_999a);
+                    if *file_list {
+                        // setup_sel_menu case 8 (the file list): x = sel_xpos
+                        // + 8, y 0x46, scale 0.6.
+                        menu.x = xp + 8;
+                        menu.y = 0x46;
+                        menu.scale = f32::from_bits(0x3f19_999a);
+                    } else {
+                        // setup_sel_menu: x −= sel_xpos.
+                        menu.x -= xp;
+                    }
                     menu.entries = entries.iter().map(|e| MenuEntry { label: e.clone(), action: 0, gap: 0, value: None, colour: 0, mark: 0, state: 0 }).collect();
                     let state = MenuState { selected: *selected, frames, ..Default::default() };
                     out.extend(self.optmenu_blits(style, &menu, &state));

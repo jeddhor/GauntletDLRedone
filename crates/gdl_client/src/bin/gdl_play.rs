@@ -2439,11 +2439,16 @@ fn load_fonts(catalog: &gdl_client::catalog::Catalog, names: Vec<String>) -> Vec
 fn select_columns(front: &Front, screen: Screen) -> Option<[gdl_core::game::select::Column; 4]> {
     use gdl_client::menu::Page;
     use gdl_core::game::select::Column;
+    if let Page::Manage { at } = &front.menu.page {
+        // Manage Character → the select screen's active-player menu
+        // (sel_active_entries: Save … Done; Change/Load/Quit not ported).
+        return (screen == Screen::Playing).then(|| [Column::Menu { title: Vec::new(), entries: vec!["Save".into(), "Done".into()], selected: *at, file_list: false }, Column::Empty, Column::Empty, Column::Empty]);
+    }
     if screen != Screen::Front {
         return None;
     }
     let first = match &front.menu.page {
-        Page::Select { at } => Column::Menu { title: Vec::new(), entries: front.menu.select_entries(), selected: *at },
+        Page::Select { at } => Column::Menu { title: Vec::new(), entries: front.menu.select_entries(), selected: *at, file_list: true },
         Page::Class { at } => Column::Class { class: *at, colour: 0 },
         Page::Colour { class, at } => Column::Class { class: *class as usize, colour: *at },
         Page::Name { class, colour, name } => Column::Name { class: *class as usize, colour: *colour as usize, name: name.clone() },
