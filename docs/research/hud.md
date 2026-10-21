@@ -205,6 +205,27 @@ with DrawGlowText, MORE_UP/MORE_DOWN when cut off. NATIVE: items jump to
 their places (no scroll speed), no skip list / highlight timers, the
 stats/level panels (shop_show_*) are not drawn.
 
+## Sumner's speeches and captions
+
+SumnerLevelSpeechStart queues a speech for players with a new level tier
+(0.5 s, DisablePlayerControls, CaptionTextReset). SumnerDoSpeech 0x1750a0:
+Sumner's camera (SumnerCamActivate: table 0 for level speeches, 1 shard, 2
+rune; index = the nearest waypoint's +0x72) and the ghost at that waypoint;
+after 120 vblanks each player's caption — GameText 0x18 ("%s %s is now\na
+level %d %s!") with the colour (0x16), class (0x17), level and rank (0x15
+or the class list) — through CaptionTextSub 0x165290 at y 0x138, scale
+0.667: characters revealed at 1.75 frames each ('.'/',' +2, tab 5, '\r'
+30 + page), the partial line re-centred on x 256, white over a shadow.
+GameText's FONT '8Hi_fonts5' matches no font_desc name, so StringInitSub
+leaves font 0 (font8x8). The text (font z 0.25) draws over the letterbox
+(z 0.5), which is now a z-sorted blit pair (AAAWHITE, colour 0).
+HYPOTHESIS: a player's speech ends once the caption is revealed and 0x168
+frames passed (AudioSoundPlaying of the speech is not modelled). Not
+ported: the shard/rune captions and SumnerSpeechEnd's events
+(sumner_event_flag machine), StartLevelUpFX/StartGemFX during the speech,
+the ghost's tree. GDL_DEBUG_EXP=<exp>:<update> sets player 1's experience
+for checks.
+
 ## Player select
 
 init_player_select 0x1851b0 creates 11 sel_bg blits per column (sel_xpos

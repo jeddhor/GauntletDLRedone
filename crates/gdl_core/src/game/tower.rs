@@ -35,6 +35,18 @@ pub struct TowerState {
     pub sumner_speech_time: f32,
     /// sumner_plyr_newlevel[4]: the level each player reached a new tier at.
     pub plyr_newlevel: [i32; 4],
+    /// SumnerDoSpeech: sumner_speech_frame, sumner_speech_idx (−1 none,
+    /// 0..=8 shards, ≥ 100 runes), sumner_delay, sumner_cam_active,
+    /// sumner_plyr_sidx (the speech sound started), the caption state
+    /// (CaptionText's msgidx / startframe / delay) and the ghost's matrix
+    /// (SumnerGhostStart at the nearest waypoint; presentation).
+    pub speech_frame: i32,
+    pub speech_idx: i32,
+    pub delay: i32,
+    pub cam_active: bool,
+    pub plyr_sidx: i32,
+    pub caption: (i32, i32, i32),
+    pub ghost: Option<[[f32; 4]; 4]>,
 }
 
 /// Sumner (the GWIZ tree of the level's item animations at lookout param 0):
@@ -335,6 +347,9 @@ impl Game {
         let matrix = super::lookouts::lookout_matrix(l)?;
         self.tower.sumner = Some(SumnerState { matrix, danim: 0, anim_now: false, clock: super::setup::fresh_clock(), clips, current: 0 });
         self.tower.sumner_pidx = 0;
+        self.tower.speech_idx = -1;
+        self.tower.plyr_sidx = -1;
+        self.tower.caption = (0, 0, 0x3c);
         Ok(())
     }
 
@@ -467,8 +482,112 @@ impl Game {
         Ok(())
     }
 
-    /// TowerCheckMessages(param) (Tower only): SumnerAnimate (the speech
-    /// presentation of SumnerDoSpeech and the event cameras are not ported);
+    /// SumnerDoSpeech 0x1750a0 (level-up speeches; the shard/rune captions
+    /// follow, their SumnerSpeechEnd events are not ported): after 120
+    /// vblanks the caption of each player with a new level tier
+    /// (GameText 0x18 formatted with the colour 0x16 and class 0x17 names,
+    /// the level and the rank list text) at y 0x138; Sumner's camera at the
+    /// nearest waypoint while it speaks. HYPOTHESIS: a player's speech ends
+    /// when the caption is revealed and 0x168 frames passed (the speech
+    /// sound's end is not observable here).
+    fn sumner_do_speech(&mut self) -> R<()> {
+        let t = &mut self.tower;
+        if t.sumner_speech_time <= 0.0 || self.globals.cam_wait != 0 || self.globals.start_of_stage != 0 {
+            return Ok(());
+        }
+        if 0 < t.delay {
+            t.delay -= self.globals.vb_elapsed;
+            return Ok(());
+        }
+        let level_up = 0 <= t.sumner_pidx && t.plyr_newlevel.iter().any(|&n| 0 < n);
+        if !t.cam_active {
+            let avg = {
+                let ps: Vec<[f32; 3]> = (0..4).filter(|&k| self.players[k].i32_(0xfc) == 1).map(|k| self.players[k].v3(0x50)).collect();
+                let n = ps.len().max(1) as f32;
+                let s = ps.iter().fold([0.0f32; 3], |a, p| [a[0] + p[0], a[1] + p[1], a[2] + p[2]]);
+                [s[0] / n, s[1] / n, s[2] / n]
+            };
+            if let Some(k) = self.find_closest_waypoint(100_000.0, avg, true)? {
+                let l = self.lookouts[k];
+                self.tower.ghost = Some(super::lookouts::lookout_matrix(&l)?);
+                let idx = self.tower.speech_idx;
+                let table = if level_up {
+                    0
+                } else if idx < 100 {
+                    usize::from(0 <= idx)
+                } else {
+                    2
+                };
+                self.sumner_cam_activate(table, usize::try_from(l.param).unwrap_or(0))?;
+            }
+            self.tower.cam_active = true;
+        }
+        for k in 0..4 {
+            self.players[k].set_u16(0x1d8, 0);
+            self.players[k].set_u16(0x1da, 0);
+        }
+        self.tower.speech_frame += self.globals.vb_elapsed;
+        let frame = self.tower.speech_frame - 0x78;
+        if frame < 0 {
+            return Ok(());
+        }
+        if 0 <= self.tower.sumner_pidx {
+            while self.tower.sumner_pidx < 4 {
+                let p = self.tower.sumner_pidx as usize;
+                if 0 < self.tower.plyr_newlevel[p] {
+                    let r = &self.players[p];
+                    let (colour, class, lv) = (r.i32_(4), r.i32_(0xc), r.i32_(0x2ac0));
+                    let h = &self.hud;
+                    let fmt = h.string_text(0x18, 0).unwrap_or_default();
+                    let rank = if lv == 99 {
+                        h.string_text(0x15, 0)
+                    } else {
+                        let list = h.text.as_ref().and_then(|r| r.lists.first()).and_then(|(_, v)| v.get(class as usize).copied());
+                        list.and_then(|e| h.string_text(e as i32, (lv / 10) >> 1))
+                    }
+                    .unwrap_or_default();
+                    use super::hud::Arg;
+                    let text = super::hud::format_c(&fmt, &[Arg::S(h.string_text(0x16, colour).unwrap_or_default()), Arg::S(h.string_text(0x17, class).unwrap_or_default()), Arg::D(lv), Arg::S(rank)]);
+                    let font = h.text.as_ref().and_then(|r| r.entries.get(0x18)).and_then(|e| r_font(h, r_fonts(h), e.font)).unwrap_or(0);
+                    let done = self.hud.caption(f32::from_bits(0x3f2a_c083), &text, font, frame >> 1, 0x138);
+                    if self.tower.plyr_sidx < 0 {
+                        self.audio("AudioExp", Some(p), lv);
+                        self.tower.plyr_sidx = 1;
+                    }
+                    if !done || frame < 0x168 {
+                        break;
+                    }
+                    self.tower.caption = (0, 0, 0x3c);
+                    self.tower.speech_frame = 0x78;
+                    self.tower.plyr_sidx = -1;
+                }
+                self.tower.sumner_pidx += 1;
+            }
+            if self.tower.sumner_pidx == 4 {
+                self.tower.sumner_pidx = -1;
+            }
+            return Ok(());
+        }
+        // Shard/rune speeches: their captions and SumnerSpeechEnd events are
+        // not ported; the speech runs out.
+        self.tower.sumner_speech_time = sub(self.tower.sumner_speech_time, self.globals.spf)?;
+        if self.tower.sumner_speech_time <= 0.0 {
+            self.sumner_speech_end();
+        }
+        Ok(())
+    }
+
+    /// SumnerSpeechEnd 0x174cc8 (common part): the ghost goes, the trigger
+    /// camera ends, controls return. The shard/rune effects and
+    /// sumner_event_flag are not ported.
+    fn sumner_speech_end(&mut self) {
+        self.tower.ghost = None;
+        self.trigger_camera_end();
+        self.tower.cam_active = false;
+        self.disable_player_controls = 0;
+    }
+
+    /// TowerCheckMessages(param) (Tower only): SumnerDoSpeech, SumnerAnimate;
     /// with `param` the newly collected shards and runes are merged into the
     /// class record and its backup; after 3 s, complete gargoyle-item and
     /// crystal sets are announced (UnlockSection / UnlockLevel with Sumner's
@@ -478,11 +597,7 @@ impl Game {
             return Ok(());
         }
         if self.globals.game_mode == 0x4010 {
-            // SumnerDoSpeech: INTERIM — the speech runs down by SPF per update
-            // (its captions, ghost and camera are not ported).
-            if 0.0 < self.tower.sumner_speech_time && self.globals.cam_wait == 0 && self.globals.start_of_stage == 0 {
-                self.tower.sumner_speech_time = sub(self.tower.sumner_speech_time, self.globals.spf)?;
-            }
+            self.sumner_do_speech()?;
             self.sumner_animate()?;
         }
         if self.globals.cam_wait != 0 || self.globals.start_of_stage != 0 || self.globals.trig_cam_active != 0 || self.globals.paused != 0 {
@@ -580,9 +695,12 @@ impl Game {
             self.players[k].set_i32(0x9ac + 0x18 * c, exp);
         }
         if n != 0 {
-            // SumnerGhostStart, 0.5 s of speech, DisablePlayerControls: the
-            // caption presentation is not ported yet.
+            // SumnerGhostStart, 0.5 s of speech, DisablePlayerControls,
+            // CaptionTextReset.
             self.tower.sumner_speech_time = 0.5;
+            self.tower.speech_frame = 0;
+            self.tower.caption = (0, 0, 0x3c);
+            self.disable_player_controls = 1;
             self.events.push(Event::SumnerAnim { player: usize::MAX });
         }
         n
@@ -594,3 +712,14 @@ impl Game {
         self.speech_tables.get(table).and_then(|v| v.get(n)).copied().unwrap_or(-1)
     }
 }
+
+/// The FONT table names of a text ROM, resolved against font_desc
+/// (StringInitSub: no match leaves font 0).
+fn r_fonts(h: &super::hud::Hud) -> Vec<String> {
+    h.text.as_ref().map(|r| r.fonts.clone()).unwrap_or_default()
+}
+fn r_font(h: &super::hud::Hud, fonts: Vec<String>, k: u32) -> Option<usize> {
+    let name = fonts.get(k as usize)?;
+    h.tables.as_ref()?.font_desc.iter().position(|n| n == name)
+}
+

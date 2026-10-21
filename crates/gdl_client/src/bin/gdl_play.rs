@@ -916,17 +916,6 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
         }),
         bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
     ));
-    // TriggerCamUpdate's temp blits (TextureWhite, MBBlitSetColor 0 → GS
-    // colour 1/128, z 0.5: in front of the panels) on the blit layer.
-    for (top, bottom) in [(0.0f32, 48.0f32), (304.0, 384.0)] {
-        commands.spawn((
-            Sprite { color: Color::linear_rgb(1.0 / 128.0, 1.0 / 128.0, 1.0 / 128.0), custom_size: Some(Vec2::new(512.0, bottom - top)), ..default() },
-            Transform::from_xyz(0.0, 192.0 - (top + bottom) * 0.5, 100.0),
-            Visibility::Hidden,
-            bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
-            LetterBox,
-        ));
-    }
     commands.spawn((
         Text2d::new(String::new()),
         TextFont { font_size: 15.0, ..default() },
@@ -1760,6 +1749,14 @@ fn simulate(
     {
         sim.game.help(id, 0);
     }
+    // DEBUG: GDL_DEBUG_EXP=<exp>:<update> sets player 1's experience (+0x1a1c
+    // and the level +0x2ac0) once, e.g. to see Sumner's level speech.
+    if let Some((exp, at)) = std::env::var("GDL_DEBUG_EXP").ok().and_then(|v| v.split_once(':').and_then(|(e, u)| Some((e.parse::<i32>().ok()?, u.parse::<u64>().ok()?))))
+        && sim.updates == at
+    {
+        sim.game.players[0].set_i32(0x1a1c, exp);
+        sim.game.players[0].set_i32(0x2ac0, gdl_core::player_class::exp_to_level(exp));
+    }
     // DEBUG: GDL_DEBUG_HINTS=1 opens Sumner's hint menu once.
     if sim.updates == 60 && std::env::var("GDL_DEBUG_HINTS").is_ok() {
         sim.hint_menu = true;
@@ -2545,6 +2542,10 @@ fn present_hud(
     let mut list = Vec::new();
     if let Some(sim) = sim.as_ref().filter(|_| playing) {
         list = sim.game.hud.draw_list();
+        // ScrollMessageBox runs (modal) before the trigger camera it precedes.
+        if sim.game.trigger_view_active() && sim.message_box.is_none() {
+            list.extend(sim.game.hud.letterbox_blits());
+        }
         if let Some(sb) = &sim.message_box {
             list.extend(sim.game.hud.scroll_blits(sb));
         }

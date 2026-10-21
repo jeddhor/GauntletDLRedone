@@ -764,6 +764,70 @@ impl Hud {
         out
     }
 
+    /// CaptionTextSub 0x165290: `text` revealed by `frame` (1.75 per
+    /// character, '.'/',' 2 more, '\t' 5, '\r' 30 and a new page), each line
+    /// centred on x 256 from `y` stepping scale × 32, white over the font's
+    /// shadow (font flag 0x100: shadow colour 0 at −2/−2). Returns whether
+    /// the whole text has been revealed.
+    pub fn caption(&mut self, scale: f32, text: &str, font: usize, frame: i32, y: i32) -> bool {
+        let mut f = frame.max(0) as f32;
+        let mut y = y as f32;
+        let mut line = String::new();
+        let mut page_lines: Vec<(String, f32)> = Vec::new();
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        let mut done = true;
+        while i < chars.len() {
+            if f <= 0.0 {
+                done = false;
+                break;
+            }
+            let c = chars[i];
+            i += 1;
+            match c {
+                '\n' => {
+                    if !line.is_empty() {
+                        page_lines.push((std::mem::take(&mut line), y));
+                    }
+                    y += scale * 32.0;
+                }
+                '\t' => f -= 5.0,
+                '\r' => {
+                    f -= 30.0;
+                    if 0.0 <= f {
+                        // A new page: what was shown so far goes.
+                        line.clear();
+                        page_lines.clear();
+                        y -= 0.0;
+                        if chars.get(i) == Some(&'\n') {
+                            i += 1;
+                        }
+                    }
+                }
+                _ => {
+                    if c == ',' || c == '.' {
+                        f -= 2.0;
+                    }
+                    f -= 1.75;
+                    line.push(c);
+                }
+            }
+        }
+        if !line.is_empty() {
+            page_lines.push((line, y));
+        }
+        for (l, ly) in page_lines {
+            let w = self.string_width(font, scale, l.as_bytes());
+            let x = 0x100 - (w >> 1);
+            for (dx, colour) in [(-2, 0), (0, 0xffffff)] {
+                if let Some(m) = self.message(scale, scale, x + dx, ly as i32 + dx, font, pack_rgb(colour, 0x80), self.font_z, 0, &l) {
+                    self.messages.push(m);
+                }
+            }
+        }
+        done
+    }
+
     /// Lines of text centred on x 256 as a block around `y_mid` (font,
     /// scale, GS colour 0xRRGGBB, line step FontHeight + dy; font z 0.25).
     #[allow(clippy::too_many_arguments)]
@@ -779,6 +843,21 @@ impl Hud {
             y += fh + dy;
         }
         out
+    }
+
+    /// TriggerCamUpdate's letterbox temp blits: TextureWhite (AAAWHITE)
+    /// with MBBlitSetColor 0, z 0.5: rows 0..BORDER_HT (0x30) and
+    /// 0x130..0x180.
+    pub fn letterbox_blits(&self) -> Vec<Blit> {
+        [(0, 0x30), (0x130, 0x50)]
+            .into_iter()
+            .map(|(y, h)| {
+                let mut b = self.make(self.lookup("AAAWHITE"), 0, y, 0x200, h);
+                b.rgba = pack_rgb(0, 0x80);
+                b.z = 0.5;
+                b
+            })
+            .collect()
     }
 
     /// The frame's blits in draw order: node blits, temp blits, then the font
