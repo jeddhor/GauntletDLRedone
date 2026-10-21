@@ -146,7 +146,12 @@ impl Game {
             }
             _ => {
                 self.critter_animate(i)?;
-                self.critter_floor(i)?;
+                if let Some(h) = self.critter_floor(i)?
+                    && let Some((n, _)) = self.crit(i).shadow
+                {
+                    let p = self.crit(i).rec.v3(c::POS);
+                    self.crit_mut(i).shadow = Some((n, [p[0], h.position[1] + 0.1, p[2]]));
+                }
             }
         }
         // CritterUpdateSkinfx for the root and its children (DoTexMods and

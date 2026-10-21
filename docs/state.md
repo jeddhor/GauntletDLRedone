@@ -39,9 +39,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    and item trees, MBTreeSetAlpha fades of items and world nodes;
    DoLighting/SetAmbientSpecial state, A5/F2 lightning, end-of-stage
    intensity; skins (death dissolves, hit flashes, exit glow, chrome).
-   Remaining: chrome env mapping, texture scrolls/per-node shifts, effect point lights,
-   AmbientSpecial flashes, fog (D1/D3), splash shadow texture, critter
-   shadows, item tree animation.
+   Later 2026-10-21: effect point lights, hit effects (AddEnemyHitCol),
+   boss meters, rune thermometer, compass.
+   Fog: MBFogInit is empty in this build (nothing to draw).
+   Critter shadows (CritterAddShadow).
+   Remaining: chrome env mapping, texture scrolls/per-node shifts, splash
+   shadow texture.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,
@@ -65,7 +68,7 @@ original (PCSX2 reference on Xvfb :191, private captures):
    select-screen memory-card/join flow and the Tower scene
    behind it, control style/screen adjust
    options effects, credits, movies,
-   the ICON_ARROW menu selector, shop stats panels.
+   the ICON_ARROW menu selector.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.
 

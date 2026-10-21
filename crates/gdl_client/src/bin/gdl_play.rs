@@ -619,6 +619,56 @@ fn present_camera_face(sim: Res<Sim>, mut nodes: Query<(&CameraFace, &mut Transf
     }
 }
 
+/// CritterAddShadow's object per critter with a shadow (Critter::shadow):
+/// SHADOW<n>L1 from the critter's model package at the simulated position,
+/// world-aligned.
+#[derive(Component)]
+struct CritterShadow(usize);
+
+#[allow(clippy::type_complexity)]
+fn present_critter_shadows(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    session: Res<Session>,
+    libs: Res<Libraries>,
+    root: Query<Entity, With<MirrorRoot>>,
+    mut shadows: Query<(Entity, &CritterShadow, &mut Transform, &mut Visibility)>,
+) {
+    let g = &sim.game;
+    let mut have = std::collections::HashSet::new();
+    for (e, cs, mut tf, mut vis) in &mut shadows {
+        match g.critters.get(cs.0).and_then(Option::as_ref).and_then(|c| c.shadow) {
+            Some((_, at)) => {
+                tf.translation = Vec3::from_array(at);
+                if *vis != Visibility::Inherited {
+                    *vis = Visibility::Inherited;
+                }
+                have.insert(cs.0);
+            }
+            None => commands.entity(e).despawn(),
+        }
+    }
+    let Ok(r) = root.single() else { return };
+    for (i, c) in g.critters.iter().enumerate() {
+        let Some(c) = c else { continue };
+        let Some((n, at)) = c.shadow else { continue };
+        if have.contains(&i) {
+            continue;
+        }
+        let file = &g.critter_data.files[c.ty.0];
+        let prefix = file.trees[c.ty.1].and_then(|t| file.model.as_ref().map(|m| m.0.trees[t].prefix.clone())).unwrap_or_default();
+        let lib_name = session.levels.get(session.current).and_then(|l| l.critters.get(c.ty.0)).and_then(|x| x.2.clone()).unwrap_or(prefix);
+        let label = format!("SHADOW{n}L1");
+        let Some(parts) = libs.0.get(&lib_name).and_then(|l| l.by_label.get(&label)) else { continue };
+        let e = commands.spawn((CritterShadow(i), Transform::from_translation(Vec3::from_array(at)), Visibility::Inherited, LevelEntity)).id();
+        commands.entity(r).add_child(e);
+        for (mesh, material) in parts {
+            let ch = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+            commands.entity(e).add_child(ch);
+        }
+    }
+}
+
 /// The compass (StartCompass: POWERUPS' COMPASS object under the world
 /// root; UpdateCompass: shown with GamePrefs +0x18 outside menus, at
 /// MBWindowTo3D(CompassZ 10, CompassPos (64, 128)), scale CompassScale 1.5,
@@ -4084,7 +4134,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, present_skins, present_compass, apply_material_requests).chain(), present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_tree_alpha, present_skins, present_compass, apply_material_requests).chain(), present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
                 present_hud,
             )

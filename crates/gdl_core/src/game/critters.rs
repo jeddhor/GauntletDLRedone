@@ -162,6 +162,11 @@ pub struct Critter {
     pub node_e8: Option<usize>,
     /// Collision node tree nodes (+0x540 + 0x60k: +4 node, +8 reference node).
     pub colnode_nodes: Vec<(Option<usize>, Option<usize>)>,
+    /// CritterAddShadow (type +0x5c bit 0): SHADOW<n>L1 of the critter's
+    /// model (n = slot + 1, slots ≥ 3 → 2) and its position (the critter's
+    /// x/z at the floor + 0.1 after ProcessCritter's floor test;
+    /// presentation, world-aligned, z mod −32).
+    pub shadow: Option<(usize, [f32; 3])>,
 }
 
 impl Game {
@@ -545,6 +550,11 @@ impl Game {
         let Some(i) = self.critter_empty_inst() else { return Ok(None) };
         self.critter_init_inst(i, t)?;
         self.critter_init_geo(i, m)?;
+        if self.type_u32(i, 0x5c) & 1 != 0 {
+            let n = if slot < 3 { slot } else { 1 };
+            let at = self.crit(i).rec.v3(c::POS);
+            self.crit_mut(i).shadow = Some((n + 1, at));
+        }
         self.critter_init_colnodes(i);
         self.critter_add_health_meter(i);
         self.crm(i).set_u8(c::NCHILDREN, 0);
@@ -624,6 +634,7 @@ impl Game {
             node_d8: None,
             node_e8: None,
             colnode_nodes: vec![(None, None); ncol],
+            shadow: None,
         };
         self.critters[i] = Some(crit);
         self.skin_views.critters.remove(&i);

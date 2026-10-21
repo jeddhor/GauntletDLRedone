@@ -266,6 +266,17 @@ they keep their vertex colours. The VU1 microcode was not read.
   to lit materials. HYPOTHESES: falloff (1 − d/r)^attenuation × N·L, no life
   fade. Not set yet: StartMagicFX, StartComboFX, StartFamiliarFireBall and
   EnemyStartMissile lights; the dark-level player light.
+- Critter shadows: CritterInitGeo calls CritterAddShadow 0x193400 for types
+  with +0x5c bit 0: SHADOW<n>L1 (shadowdesc; n = slot + 1, slots ≥ 3 → 2)
+  of the critter's model, MBNewObject flags 0x880, z mod −32, at the
+  critter position; ProcessCritter (kinds 0/1/2/5/6) keeps it at x/z and
+  the floor + 0.1 with an identity rotation. Not verified visually (no
+  shadowed critter met in the checks). UpdatePlayerShadow's splash
+  (TextureSplash while the water +0x8a4 is above the floor +0x88c) is not
+  drawn yet.
+- Fog: InitFog 0x162d40 / FogFadeIn 0x162de0 pass LEVL +0x70..+0x88 to
+  MBFogInit 0x1cfa30, which (like MBFogSet) is an empty function in this
+  build — there is no fog to draw (consistent with FGE 0 in the G1 dump).
 - Hit effects: AddEnemyHitCol 0x17db28 (damage_enemy hurt/kill,
   enemy_ai_control's boss-death kill, CritterDamage) and AddPlayerHitCol
   0x17dd70 (PlayerKnockback) start EffectHeaders from Damage/Kill
