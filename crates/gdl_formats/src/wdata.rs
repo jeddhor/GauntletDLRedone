@@ -100,6 +100,11 @@ pub struct WorldData {
     /// BCAM boss-camera records (0x54 bytes; BossCameraStart 0x19fe68 and the
     /// BossCam calculators read and rewrite them), kept raw.
     pub boss_cameras: Vec<Vec<u8>>,
+    /// MAPS records (0x48 bytes: the map screen's glow x, y then eight dash
+    /// x, y; a negative x ends the list), indexed by LEVL +0x5c
+    /// (ResolveWorldData: LEVL +0x68 = world_data +0x30 + index × 0x48,
+    /// none for a negative index).
+    pub maps: Vec<[f32; 18]>,
     /// world_data +4 (WRLD chunk +4, 16 bytes): the realm's model directory
     /// name, e.g. "levelG" (GetCritterDesc, LevelEnemyDesc).
     pub world_dir: Option<String>,
@@ -234,6 +239,17 @@ impl WorldData {
                 return Err(r.error(0, "level camera index outside CAMS"));
             }
         }
+        let mut maps = Vec::new();
+        if let Some(c) = find("MAPS") {
+            let range = r.table(c.offset, c.count, 0x48, 8)?;
+            for p in range.step_by(0x48) {
+                let mut m = [0f32; 18];
+                for (k, v) in m.iter_mut().enumerate() {
+                    *v = r.float(p + 4 * k)?;
+                }
+                maps.push(m);
+            }
+        }
         let world_dir = match find("WRLD") {
             Some(c) => {
                 r.range(c.offset as usize + 4, 16)?;
@@ -241,7 +257,7 @@ impl WorldData {
             }
             None => None,
         };
-        Ok(Self { chunks, levels, enemies, sounds, stages, cameras, boss_cameras, world_dir })
+        Ok(Self { chunks, levels, enemies, sounds, stages, cameras, boss_cameras, maps, world_dir })
     }
 }
 

@@ -398,6 +398,17 @@ impl Hud {
     }
 
     /// The client's texture sets (search order) and fonts (font_desc order).
+    /// A texture set searched after the others (LoadModel of a screen's
+    /// package, e.g. the realm map): its set number.
+    pub fn add_texture_set(&mut self, set: TexSet) -> u16 {
+        let s = self.textures.len() as u16;
+        for (label, i) in &set.names {
+            self.index.entry(label.to_uppercase()).or_insert(TexRef { set: s, index: *i });
+        }
+        self.textures.push(set);
+        s
+    }
+
     pub fn set_resources(&mut self, textures: Vec<TexSet>, fonts: Vec<Option<Font>>) {
         self.index.clear();
         for (s, set) in textures.iter().enumerate() {

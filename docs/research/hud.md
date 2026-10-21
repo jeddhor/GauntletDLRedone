@@ -236,6 +236,23 @@ the final stats' "%d Days" argument (missing in the decompile) is the
 whole days; the Tower menu's shop (init_shop(1)) still uses the interim
 menu page.
 
+## The realm map between levels (game mode 0x400f)
+
+game_main sends a normal exit to init_mapscreen(0x78, skip) (skip_wave in
+0xd..0xffff skips the map); do_mapscreen then init_gamemovie (movies are
+not ported) and init_next_level. ResolveWorldData sets LEVL +0x68 =
+world_data +0x30 + LEVL +0x5c × 0x48 (WDATA MAPS chunk: glow x, y and up
+to eight dash x, y; negative x ends). With a record: LoadModel
+maps/level<code>, map_<code>_00..03 at screenblitxy (0,0)/(256,0)/(0,256)/
+(256,256) z 64100, ldmap_<code>_0n above (z 63950, alpha 0xff), dash
+_<code>_n appearing every 0x1e vblanks (AudioMapDot), then
+map_<code>glow pulsing (mapglow_fade 60, hold 10) for mapglow_tottime 210,
+after which the glow fades out and the ldmap layer in at 4 per vblank over
+map2_tottime 180; "Loading..." (glow, 1.0 at 0x154, 0x140) and 60
+vblanks later the level starts. Without a record: TRANSITION_SCREEN
+(0, 0, 0x200, 0x140) for 0x78 vblanks. Verified natively (F9 from G1): the
+Forsaken Province map, path to Town, glow and the Town picture.
+
 ## Sumner's speeches and captions
 
 SumnerLevelSpeechStart queues a speech for players with a new level tier

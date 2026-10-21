@@ -19,6 +19,7 @@ pub mod enemies;
 pub mod enemy_ai;
 pub mod item_runtime;
 pub mod lighting;
+pub mod mapscreen;
 pub mod lookouts;
 pub mod pad;
 pub mod pcontact;

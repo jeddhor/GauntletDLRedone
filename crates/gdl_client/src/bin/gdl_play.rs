@@ -1103,6 +1103,9 @@ struct Sim {
     /// game mode 0x4012 between a realm and the Tower (init_shop/do_shop),
     /// the Tower level it leads to, and do_shop's result once finished.
     shop: Option<(gdl_core::game::shopflow::ShopFlow, usize)>,
+    /// game mode 0x400f before the next level of a realm (init_mapscreen).
+    map: Option<(gdl_core::game::mapscreen::MapScreen, usize)>,
+    /// The level to load once the shop or map screen finished.
     shop_done: Option<usize>,
 }
 
@@ -2169,6 +2172,17 @@ fn simulate(
         // Only ports with a device are connected (keyboard: ports 0 and 1).
         port.connected = k < 2 || pads.get(k).is_some();
     }
+    // game mode 0x400f: do_mapscreen until the next level loads.
+    if let Some((mut m, next)) = sim.map.take() {
+        let g = &mut sim.game;
+        g.hud.begin_frame();
+        if g.do_mapscreen(&mut m) {
+            sim.shop_done = Some(next);
+        } else {
+            sim.map = Some((m, next));
+        }
+        return;
+    }
     // game mode 0x4012: game_main runs do_shop (and WritePlayerInfo) only.
     if let Some((mut flow, tower)) = sim.shop.take() {
         let g = &mut sim.game;
@@ -2579,6 +2593,31 @@ fn present_world(
             slot.key = key;
         }
     }
+}
+
+/// init_mapscreen for level `k`: its WDATA MAPS record (LEVL +0x5c) and
+/// the MAPS/level<code> package as a HUD texture set. False when the map
+/// package cannot be loaded (the caller goes straight on).
+fn start_map(sim: &mut Sim, sources: &mut Sources, sets: &mut HudSets, front: &Front, session: &Session, k: usize) -> bool {
+    let lv = &session.levels[k];
+    let code = lv.name.clone();
+    let map = (|| -> Option<[f32; 18]> {
+        let w = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&lv.wdata).ok()?).ok()?;
+        let rec = w.levels.get(lv.index)?;
+        let i = i16::from_le_bytes([rec.raw[0x5c], rec.raw[0x5d]]);
+        w.maps.get(usize::try_from(i).ok()?).copied()
+    })();
+    let key = format!("MAPS/level{code}");
+    if !sources.packages.contains_key(&key) {
+        let Ok(pkg) = package_entry(&front.catalog, &key, false).and_then(|v| load_package(&v)) else { return false };
+        sources.packages.insert(key.clone(), pkg);
+    }
+    let set = gdl_client::hud_texture_set(&key, &sources.packages[&key].objects);
+    sim.game.hud.add_texture_set(set);
+    sets.keys.push(key);
+    let m = sim.game.init_mapscreen(0x78, false, &code, map);
+    sim.map = Some((m, k));
+    true
 }
 
 /// init_shop(0) on the finished realm's game, leading to Tower level `k`.
@@ -3388,7 +3427,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, shop_done: None });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -4027,6 +4066,11 @@ fn advance_level(
         {
             // game_main: an exit to TowerWave goes through init_shop(0).
             start_shop(&mut sim, &front, k);
+        } else if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world)
+            && start_map(&mut sim, &mut sources, &mut hud_sets, &front, &session, k)
+        {
+            // game_main → init_mapscreen(0x78, skip) for the next level
+            // (init_gamemovie afterwards: movies are not ported).
         } else if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world) {
             session.next = Some(k);
             let to = if session.levels[k].world == session.world_number { session.levels[k].name.clone() } else { format!("{} {}", session.levels[k].title, session.levels[k].name) };
