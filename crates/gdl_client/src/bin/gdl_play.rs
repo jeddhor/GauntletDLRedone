@@ -2153,6 +2153,47 @@ fn present_effect_trees(sim: Res<Sim>, sources: Res<Sources>, slots: Query<(&Eff
     }
 }
 
+/// Item trees posed by the simulation's item animation clocks
+/// (ProcessItems' AnimateATree: the current sequence and frame).
+#[allow(clippy::type_complexity)]
+fn present_item_trees(
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    session: Res<Session>,
+    slots: Query<(&Slot, &Children, &Visibility)>,
+    mut parts: Query<(&TreeNodeIdx, &mut Transform)>,
+    mut trees: Local<HashMap<String, Option<(String, usize)>>>,
+) {
+    let items = &session.levels[session.current].items;
+    for (slot, children, vis) in &slots {
+        if slot.kind != SlotKind::Item || *vis == Visibility::Hidden {
+            continue;
+        }
+        let Some(Some(anim)) = sim.game.item_anims.get(slot.index) else { continue };
+        let Some(name) = slot.key.as_deref().and_then(|k| k.split('#').next()) else { continue };
+        let found = trees
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                items.iter().map(String::as_str).chain(["POWERUPS"]).find_map(|pkg| {
+                    let t = sources.packages.get(pkg)?.anim.as_ref()?.trees.iter().position(|t| t.label == name)?;
+                    Some((pkg.to_string(), t))
+                })
+            })
+            .clone();
+        let Some((pkg, tree)) = found else { continue };
+        let Some(p) = sources.packages.get(&pkg) else { continue };
+        let Some(a) = p.anim.as_ref() else { continue };
+        let Ok(pose) = gdl_client::tree_pose(a, tree, &p.anim_bytes, anim.current as usize, anim.clock.frame.max(0.0), true) else { continue };
+        for child in children.iter() {
+            if let Ok((idx, mut tf)) = parts.get_mut(child)
+                && let Some(m) = pose.get(idx.0)
+            {
+                *tf = Transform::from_matrix(*m);
+            }
+        }
+    }
+}
+
 /// A package tree's nodes at their initial positions (presentation).
 fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Model {
     let (Some(p), Some(lib)) = (sources.packages.get(pkg), libs.0.get(pkg)) else { return Vec::new() };
@@ -3316,7 +3357,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
                 present_hud,
             )
