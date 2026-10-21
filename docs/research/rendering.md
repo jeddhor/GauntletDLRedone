@@ -266,6 +266,15 @@ they keep their vertex colours. The VU1 microcode was not read.
   to lit materials. HYPOTHESES: falloff (1 − d/r)^attenuation × N·L, no life
   fade. Not set yet: StartMagicFX, StartComboFX, StartFamiliarFireBall and
   EnemyStartMissile lights; the dark-level player light.
+- Hit effects: AddEnemyHitCol 0x17db28 (damage_enemy hurt/kill,
+  enemy_ai_control's boss-death kill, CritterDamage) and AddPlayerHitCol
+  0x17dd70 (PlayerKnockback) start EffectHeaders from Damage/Kill
+  Alt/Hit/Blood tables (gore_level 0: blood; 4/5 alternate 6/7 and 8/9 by
+  sfx_ene_bloodidx), scaled (half-height × 0.5) and oriented by the
+  victim's matrix; weapon wall/item hits and the effects' HIT_FX are
+  StartFXSub calls too. The class SFX package's texture modifiers run with
+  the level's (their flag-0x20 textures are filled by them). The interim
+  spark/blast spheres are gone.
 - Package tree nodes: the named object only without +0x2e bit 0 (an OANIM
   node draws its frame object instead), e.g. barrels' BAROBJ/BAREXP/BARPOI
   break animations.

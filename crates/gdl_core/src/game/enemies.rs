@@ -1140,8 +1140,9 @@ impl Game {
                 if let Some(h) = hit.filter(|_| 4.0 <= self.enemies[i].f32_(e::HALF_HEIGHT)) {
                     at = h;
                 }
-                let _ = at;
-                self.audio("AddEnemyHitCol", None, (f & 0xf) as i32);
+                let rows = [self.enemies[i].v3(0x10), self.enemies[i].v3(0x20), self.enemies[i].v3(0x30)];
+                let scale = self.enemies[i].f32_(e::HALF_HEIGHT);
+                self.add_enemy_hit_col(scale, at, Some(rows), f, false, t)?;
             }
             return Ok(0);
         }
@@ -1181,7 +1182,9 @@ impl Game {
             }
         }
         if f & 0x100_0000 == 0 && t != self.globals.boss_type {
-            self.audio("AddEnemyHitCol", None, 0x100 | (f & 0xf) as i32);
+            let rows = [self.enemies[i].v3(0x10), self.enemies[i].v3(0x20), self.enemies[i].v3(0x30)];
+            let scale = self.enemies[i].f32_(e::HALF_HEIGHT);
+            self.add_enemy_hit_col(scale, at, Some(rows), f, true, t)?;
         }
         Ok(1)
     }

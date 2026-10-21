@@ -743,11 +743,15 @@ impl Game {
             }
             *angle = wrap(a)?;
         }
-        // AddPlayerHitCol (unless 0x1000000) is presentation; the white
-        // hit flash SetSkinFX(1, TextureWhite, 1, 1).
+        // AddPlayerHitCol(+0x60, flags, 0) unless 0x1000000 (below), the
+        // white hit flash SetSkinFX(1, TextureWhite, 1, 1).
+        let (hit_at, hit_flags) = (r.v3(0x60), r.u32_(0x8ac));
         super::skin::set_skin_fx(r, 0x7b4, 1.0, super::skin::SkinTex::White, 1, 1.0);
         r.set_f32(0x8b4, 0.0);
         clear(r);
+        if hit_flags & 0x100_0000 == 0 {
+            self.add_player_hit_col(hit_at, hit_flags, false)?;
+        }
         Ok(code)
     }
 

@@ -10,7 +10,7 @@ use super::critter_ai::{pitch_vec3, yaw_vec3};
 use super::critters::{c, mul_vec_mat3, CritterFile};
 use super::damage::pd;
 use super::effects::{calc_target_dir, fx, Visual};
-use super::{unsupported, Event, Game, Unsupported, R};
+use super::{unsupported, Game, Unsupported, R};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
 
 type V3 = [f32; 3];
@@ -952,7 +952,7 @@ impl Game {
                     if 0 <= self.critter_damage(damage, c_, owner, df, None, Some(d), 2)? {
                         let hf = self.fx(k).i16_(fx::HIT_FX);
                         if 0 <= hf && self.critters[c_].is_some() {
-                            self.events.push(Event::Effect { header: hf as usize, position: self.crit(c_).rec.v3(c::ATTN) });
+                            self.start_hit_fx(hf as usize, self.crit(c_).rec.v3(c::ATTN))?;
                         }
                     }
                 }
@@ -1186,8 +1186,10 @@ impl Game {
                     self.critter_do_sfx(i, s, Some(at), false)?;
                 }
             } else {
-                // AddEnemyHitCol: hit spark (presentation).
-                self.events.push(Event::Effect { header: 2, position: at });
+                // AddEnemyHitCol(type +0x78, at, the critter's matrix, flags, 0).
+                let rows = [self.crit(i).rec.v3(c::MATRIX), self.crit(i).rec.v3(c::MATRIX + 0x10), self.crit(i).rec.v3(c::MATRIX + 0x20)];
+                let scale = self.critter_type_f32(i, 0x78);
+                self.add_enemy_hit_col(scale, at, Some(rows), fl, false, -1)?;
             }
             if fl & 0x10_0320 == 0 {
                 if let Ok(n) = usize::try_from(self.crit(i).rec.i16_(c::COLNODE_HIT)) {

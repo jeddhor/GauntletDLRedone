@@ -17,8 +17,7 @@
 //! Presentation: GS-equivalent materials and display-space blending
 //! (gs.wgsl, blit.wgsl), the StdCam camera, original HUD/menus/front end
 //! (game::hud, optmenu, select); enemy frame objects from OANIM entries.
-//! Still interim: item models at their tree rest pose, missiles drawn with
-//! the SFXYEL WEAP_TW_Y rest pose, hit sparks as short glows. Audio: original
+//! Still interim: missiles drawn with the SFXYEL WEAP_TW_Y rest pose. Audio: original
 //! banks and music through gdl_client::audio (approximate mixing).
 use bevy::{core_pipeline::tonemapping::Tonemapping, ecs::system::RunSystemOnce, ecs::world::World as EcsWorld, prelude::*, sprite::Anchor};
 use gdl_client::menu::{Action, Entry, Key, Menu};
@@ -87,8 +86,6 @@ fn ps2_viewport(windows: Query<&Window>, mut cams: Query<&mut Camera, With<Follo
 }
 
 type Parts = Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>;
-/// Spark sphere mesh, spark material, blast material.
-type SparkAssets = (Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>);
 /// Model parts with node offsets and the tree node's MB flags (+0x30,
 /// AtreeNodeInit's MBTreeSetFlags; 1 for DUMMY nodes).
 type Model = Vec<(Vec3, Parts, u32, Option<usize>, Option<NodeExtra>)>;
@@ -1298,9 +1295,6 @@ enum SlotKind {
     Item,
     Effect,
 }
-#[derive(Component)]
-struct Spark;
-
 fn load_package(p: &Value) -> Result<Package, Box<dyn Error>> {
     let path = |k: &str| -> Result<std::path::PathBuf, Box<dyn Error>> {
         Ok(p[k].as_str().ok_or_else(|| format!("package {k} path"))?.into())
@@ -1543,7 +1537,7 @@ fn setup(
             frames.0.insert(name.clone(), enemy_frames(pkg));
         }
     }
-    spawn_package_texmods(&mut commands, &libraries, &level_packages(&session.levels[session.current]));
+    spawn_package_texmods(&mut commands, &libraries, &texmod_packages(&session));
 }
 
 /// Level geometry (original translation-only placements) and entity slots.
@@ -2330,7 +2324,6 @@ fn simulate(
         match e {
             Event::Exp { amount, .. } => sim.exp += i64::from(amount),
             Event::LevelUp { level, .. } => sim.last_event = format!("LEVEL UP! now level {level}"),
-            Event::Effect { position, .. } => sim.sparks.push((Vec3::from_array(position), 0.3)),
             Event::GeneratorHit { destroyed: true, .. } => sim.last_event = "generator destroyed".into(),
             Event::GotIt { kind, amount, .. } => sim.last_event = format!("picked up (kind {kind}, amount {amount})"),
             Event::PlayerDied { .. } => sim.last_event = "YOU DIED".into(),
@@ -2883,49 +2876,6 @@ fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) 
         tree_node_model(p, lib, tree, node, Vec3::from_array(node.initial_position), &mut out);
     }
     out
-}
-
-fn present_sparks(
-    mut commands: Commands,
-    sim: Res<Sim>,
-    old: Query<Entity, With<Spark>>,
-    root: Query<Entity, With<MirrorRoot>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut cache: Local<Option<SparkAssets>>,
-) {
-    for e in &old {
-        commands.entity(e).despawn();
-    }
-    let (mesh, mat, blast) = cache
-        .get_or_insert_with(|| {
-            (
-                meshes.add(Sphere::new(0.5)),
-                materials.add(StandardMaterial { base_color: Color::linear_rgb(1.0, 0.9, 0.3), unlit: true, ..default() }),
-                materials.add(StandardMaterial {
-                    base_color: Color::linear_rgba(0.8, 0.5, 1.0, 0.25),
-                    unlit: true,
-                    alpha_mode: AlphaMode::Blend,
-                    cull_mode: None,
-                    ..default()
-                }),
-            )
-        })
-        .clone();
-    let Ok(root) = root.single() else { return };
-    // Area effects (potion magic): a translucent sphere at the blast radius.
-    for n in sim.game.effects.nodes.iter().flatten() {
-        if 0.0 < n.radius && matches!(n.visual, Visual::Header(_)) {
-            let s = commands
-                .spawn((Spark, Mesh3d(mesh.clone()), MeshMaterial3d(blast.clone()), Transform::from_translation(Vec3::from_array(n.position)).with_scale(Vec3::splat(2.0 * n.radius))))
-                .id();
-            commands.entity(root).add_child(s);
-        }
-    }
-    for (p, t) in &sim.sparks {
-        let s = commands.spawn((Spark, Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), Transform::from_translation(*p).with_scale(Vec3::splat(0.5 + *t * 3.0)))).id();
-        commands.entity(root).add_child(s);
-    }
 }
 
 type BodyQuery<'w, 's> = Query<'w, 's, (&'static CharacterRoot, &'static mut Transform, &'static mut Visibility), (Without<RigNode>, Without<FollowCamera>, Without<Slot>)>;
@@ -4134,7 +4084,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, present_skins, present_compass, apply_material_requests).chain(), present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, present_skins, present_compass, apply_material_requests).chain(), present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
                 present_hud,
             )
@@ -4146,6 +4096,17 @@ fn run() -> Result<(), Box<dyn Error>> {
 
 /// Package names a level draws or reads: the shared packages, its item
 /// packages, its realm's monsters and its critter models.
+/// SetupItemTexMods / SetupWeaponPowerupTexMods / SetupEnemyTexMods and
+/// SetupPlayerTexMods' class SFX package: the packages whose texture
+/// modifiers run.
+fn texmod_packages(session: &Session) -> Vec<String> {
+    let mut v = level_packages(&session.levels[session.current]);
+    if !v.contains(&session.sfx) {
+        v.push(session.sfx.clone());
+    }
+    v
+}
+
 fn level_packages(lv: &LevelSource) -> Vec<String> {
     let mut v: Vec<String> = ["POWERUPS", "WEAPONS", "STATIC"].iter().map(|s| s.to_string()).collect();
     v.extend(lv.items.iter().cloned());
@@ -4348,7 +4309,7 @@ fn advance_level(
             if let Ok(root) = root.single() {
                 let n = sim.game.items.records.len();
                 spawn_level(&mut commands, root, &session, n, &mut meshes, &mut images, &mut materials);
-                spawn_package_texmods(&mut commands, &libraries, &level_packages(&session.levels[session.current]));
+                spawn_package_texmods(&mut commands, &libraries, &texmod_packages(&session));
                 if new_body {
                     for b in &bodies {
                         commands.entity(b).despawn();

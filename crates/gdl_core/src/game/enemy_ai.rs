@@ -1307,6 +1307,10 @@ impl Game {
             rec.set_u32(0x364, 4);
         }
         if 0 <= self.globals.boss_type && self.boss_is_dying != 0 {
+            // AddEnemyHitCol(+0x250, +0x50, +0x10, 0, killed, type).
+            let r = &self.enemies[i];
+            let (scale, at, rows, t) = (r.f32_(e::HALF_HEIGHT), r.v3(0x50), [r.v3(0x10), r.v3(0x20), r.v3(0x30)], r.i32_(e::TYPE));
+            self.add_enemy_hit_col(scale, at, Some(rows), 0, true, t)?;
             self.kill_enemy(i)?;
             return Ok(true);
         }

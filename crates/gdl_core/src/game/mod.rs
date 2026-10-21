@@ -401,6 +401,8 @@ pub struct Game {
     pub lock_cam_req: i32,
     /// Enemy tree alpha (presentation; see enemy_mod_alpha).
     pub enemy_alpha: Vec<i32>,
+    /// sfx_ene_bloodidx 0x2407.. (AddEnemyHitCol's alternating blood).
+    pub sfx_ene_bloodidx: u32,
     /// Boss health meters (HealthMeterStart; HealthMeterInit per level).
     pub health_meters: healthmeter::HealthMeters,
     /// Enemy and player trees' skin state (MBTreeSetAltTex / AmbientAdd).

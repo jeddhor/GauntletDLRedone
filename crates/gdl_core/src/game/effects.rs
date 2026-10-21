@@ -603,7 +603,7 @@ impl Game {
             let (hit, _) = self.weapon_wall_collide(radius, back, start)?;
             if let Some(h) = hit {
                 if flags & 0x20_0000 == 0 {
-                    self.events.push(Event::Effect { header: self.wall_hit_effect(flags), position: h });
+                    self.start_hit_fx(self.wall_hit_effect(flags), h)?;
                     return Ok(-1);
                 }
                 start = back;
@@ -613,9 +613,9 @@ impl Game {
             let d = self.damage_item(damage, it, flags, player as i32)?;
             if 0.0 <= d {
                 self.player_damaged_item(player, it, d == 0.0)?;
-                self.events.push(Event::Effect { header: 2, position: h });
+                self.start_hit_fx(2, h)?;
             } else {
-                self.events.push(Event::Effect { header: self.wall_hit_effect(flags), position: h });
+                self.start_hit_fx(self.wall_hit_effect(flags), h)?;
             }
             if flags & 0x10_0000 == 0 {
                 return Ok(-1);
@@ -1368,7 +1368,7 @@ impl Game {
         }
         if shown {
             // AddItemHitCol: hit spark (presentation).
-            self.events.push(Event::Effect { header: if killed { 3 } else { 2 }, position: at });
+            self.start_hit_fx(if killed { 3 } else { 2 }, at)?;
         }
         Ok(result as f32)
     }
@@ -1633,6 +1633,64 @@ impl Game {
         Ok(Some(i))
     }
 
+    /// StartFXSub(0, header, position, 0, 0x880): the hit/wall effects the
+    /// damage code starts (node flags are presentation).
+    pub(crate) fn start_hit_fx(&mut self, header: usize, at: V3) -> R<i32> {
+        self.start_fx_sub(0.0, header, Some(at), 0)
+    }
+
+    /// AddEnemyHitCol 0x17db28(scale, position, matrix, flags, killed, type):
+    /// enemy types 0xb/0x15 the Damage/KillAltEffects at half scale; 0x1d,
+    /// 5 (or gore_level ≠ 0) the Hit tables at scale 1; otherwise the Blood
+    /// tables at half scale (headers 4 and 5 alternate 6/7 and 8/9 by
+    /// sfx_ene_bloodidx); ScaleFX and SfxSetMat (MBTreeSetZMod is
+    /// presentation). gore_level is 0 in the ELF.
+    pub(crate) fn add_enemy_hit_col(&mut self, scale: f32, at: V3, rows: Option<[V3; 3]>, flags: u32, killed: bool, ty: i32) -> R<i32> {
+        const DAMAGE_ALT: [usize; 5] = [84, 11, 14, 17, 20];
+        const KILL_ALT: [usize; 5] = [85, 12, 15, 18, 21];
+        const DAMAGE_HIT: [usize; 5] = [2, 11, 14, 17, 20];
+        const KILL_HIT: [usize; 5] = [3, 12, 15, 18, 21];
+        const DAMAGE_BLOOD: [usize; 5] = [4, 11, 14, 17, 20];
+        const KILL_BLOOD: [usize; 5] = [5, 12, 15, 18, 21];
+        let k = (flags & 0xf) as usize;
+        let (table, scale) = if ty == 0xb || ty == 0x15 {
+            (if killed { KILL_ALT } else { DAMAGE_ALT }, mul(scale, 0.5)?)
+        } else if ty == 0x1d || ty == 5 {
+            (if killed { KILL_HIT } else { DAMAGE_HIT }, 1.0)
+        } else {
+            (if killed { KILL_BLOOD } else { DAMAGE_BLOOD }, mul(scale, 0.5)?)
+        };
+        // Damage types past the tables read the following words (NATIVE:
+        // clamped to the last entry).
+        let mut h = table[k.min(4)];
+        if h == 4 {
+            h = (self.sfx_ene_bloodidx & 1) as usize + 6;
+            self.sfx_ene_bloodidx += 1;
+        } else if h == 5 {
+            h = (self.sfx_ene_bloodidx & 1) as usize + 8;
+            self.sfx_ene_bloodidx += 1;
+        }
+        let i = self.start_hit_fx(h, at)?;
+        if 0 <= i
+            && let Some(n) = self.effects.nodes[i as usize].as_mut()
+        {
+            if let Some(r) = rows {
+                n.matrix = r;
+            }
+            n.scale = scale;
+        }
+        Ok(i)
+    }
+
+    /// AddPlayerHitCol 0x17dd70(position, flags, killed): DamageBlood /
+    /// KillBloodEffects (gore_level 0).
+    pub(crate) fn add_player_hit_col(&mut self, at: V3, flags: u32, killed: bool) -> R<i32> {
+        const DAMAGE_BLOOD: [usize; 5] = [4, 11, 14, 17, 20];
+        const KILL_BLOOD: [usize; 5] = [5, 12, 15, 18, 21];
+        let k = ((flags & 0xf) as usize).min(4);
+        self.start_hit_fx(if killed { KILL_BLOOD[k] } else { DAMAGE_BLOOD[k] }, at)
+    }
+
     /// SfxSetLight 0x17f8b8(radius, effect, colour): +0x10 radius, +0..+8
     /// colour (ProcessEffects lights lit objects with it: presentation).
     pub(crate) fn sfx_set_light(&mut self, i: usize, radius: f32, colour: [f32; 3]) {
@@ -1856,7 +1914,7 @@ impl Game {
         }
         if stage == 0 {
             // StartFXNoLoop(0x1e): non-damaging effect (presentation).
-            self.events.push(Event::Effect { header: 0x1e, position: pos });
+            self.start_fx_no_loop(0x1e, pos)?;
         }
         Ok(())
     }
@@ -2214,7 +2272,7 @@ impl Game {
                         }
                         let hf = self.fx(i).i16_(fx::HIT_FX);
                         if 0 <= hf {
-                            self.events.push(Event::Effect { header: hf as usize, position: self.enemies[k].v3(e::ATTENTION) });
+                            self.start_hit_fx(hf as usize, self.enemies[k].v3(e::ATTENTION))?;
                         }
                     }
                 }
