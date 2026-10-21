@@ -2454,7 +2454,7 @@ fn select_columns(front: &Front, screen: Screen) -> Option<[gdl_core::game::sele
 
 /// The pause menu's Inventory page (draw_fullscreen_inventory).
 fn inventory_view(front: &Front, screen: Screen, ui: &Ui) -> bool {
-    screen == Screen::Playing && ui.paused && matches!(front.menu.page, gdl_client::menu::Page::Inventory)
+    screen == Screen::Playing && ui.paused && matches!(front.menu.page, gdl_client::menu::Page::Inventory | gdl_client::menu::Page::Shop { .. })
 }
 
 /// The page drawn with an original menu record (front end or pause).
@@ -2527,7 +2527,11 @@ fn present_hud(
     {
         let max = front.ui_hud.tables.as_ref().map(|t| t.max_crystals.clone()).unwrap_or_default();
         let rate = front.ui_hud.tables.as_ref().map_or(1, |t| t.swirl_rate);
-        front_list.extend(front.ui_hud.inventory_blits(&sim.game.players, &max, front.menu_clock.1 as i32 * rate));
+        if let gdl_client::menu::Page::Shop { at } = front.menu.page {
+            front_list.extend(front.ui_hud.shop_blits(&front.shop, &sim.game.players, 0, at, front.menu_clock.1 as i32));
+        } else {
+            front_list.extend(front.ui_hud.inventory_blits(&sim.game.players, &max, front.menu_clock.1 as i32 * rate));
+        }
     }
     if *screen == Screen::Front {
         front.title_clock += time.delta_secs() * 59.94;

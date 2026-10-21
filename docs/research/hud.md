@@ -191,6 +191,20 @@ crystals 1–8 (MAX_CRYSTALS); animate_panel_piece mode 0 swirls them in over
 steps, size ×(2 − f²), alpha); "Continue" glow text with the X button and
 "Inv". Tables are read from the ELF. Not ported: the exit swirl (mode 2).
 
+## Shop (shop_setup / write_shop_menu)
+
+Per column (shop_lx 0/128/256/384): S1/S2_PLYRn (z 64000), S1/S2_BORDER
+(z 63900, corner highlight), SHOP_TOP_<pcol> (z 63800); shop_misctab
+SHOP_SCROLL_1/2 (z 64000 − 20) for the shopping player. SHOP.WAD ITEM
+records (0x50: +0 icon, +0x20 description, +0x40 scale, +0x48 price):
+calc_shop_ypos stacks them (icon 0x18, description lines at scale × 0.5
++ 0x10) relative to the selection; write_shop_menu fades items within
+shop_dim_dy 64 of shop_topy 72 / shop_boty 224, prints prices at shop_rx −
+0x40 (font 6 × 0.5) and descriptions centred on shop_cx, the selection
+with DrawGlowText, MORE_UP/MORE_DOWN when cut off. NATIVE: items jump to
+their places (no scroll speed), no skip list / highlight timers, the
+stats/level panels (shop_show_*) are not drawn.
+
 ## Player select
 
 init_player_select 0x1851b0 creates 11 sel_bg blits per column (sel_xpos

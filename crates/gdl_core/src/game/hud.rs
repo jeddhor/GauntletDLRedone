@@ -195,6 +195,14 @@ pub struct HudTables {
     pub swirl_mult: i32,
     pub swirl_rate: i32,
     pub ifont_font: usize,
+    /// Shop layout: shop_lx/rx/cx (per column), shop_topy, shop_boty,
+    /// shop_dim_dy, pcol (colour suffixes), shop_misctab (name, x, y, z).
+    pub shop_lx: Vec<i32>,
+    pub shop_rx: Vec<i32>,
+    pub shop_cx: Vec<i32>,
+    pub shop_y: [i32; 3],
+    pub pcol: Vec<String>,
+    pub shop_misc: Vec<(String, i32, i32, i32)>,
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -266,6 +274,19 @@ impl HudTables {
             swirl_mult: ints("swirl_mult")?[0],
             swirl_rate: ints("SWIRL_RATE")?[0],
             ifont_font: ints("IFONT_FONT")?[0] as usize,
+            shop_lx: ints("shop_lx")?,
+            shop_rx: ints("shop_rx")?,
+            shop_cx: ints("shop_cx")?,
+            shop_y: [ints("shop_topy")?[0], ints("shop_boty")?[0], ints("shop_dim_dy")?[0]],
+            pcol: pointed("pcol")?,
+            shop_misc: {
+                let mut v = Vec::new();
+                for c in elf.object("shop_misctab")?.chunks_exact(16) {
+                    let w = |k: usize| i32::from_le_bytes(c[4 * k..4 * k + 4].try_into().unwrap());
+                    v.push((cstr(elf.read(w(0) as u32, 32)?), w(1), w(2), w(3)));
+                }
+                v
+            },
         })
     }
 }

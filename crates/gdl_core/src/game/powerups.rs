@@ -19,6 +19,10 @@ use crate::numeric::{add_guarded_rz as add, mul_rz as mul, sub_guarded_rz as sub
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShopItem {
     pub name: String,
+    /// +0 icon texture name (empty for EXIT) and +0x20 description
+    /// (newline-separated lines) as write_shop_menu draws them.
+    pub icon: String,
+    pub text: String,
     pub word_40: f32,
     pub kind: i32,
     pub price: i32,
@@ -47,6 +51,8 @@ pub fn shop_items(wad: &[u8]) -> Result<Vec<ShopItem>, String> {
                 let w = |o: usize| u32::from_le_bytes(r[o..o + 4].try_into().unwrap());
                 ShopItem {
                     name: String::from_utf8_lossy(&r[..r[..0x40].iter().position(|&c| c == 0).unwrap_or(0x40)]).into_owned(),
+                    icon: String::from_utf8_lossy(&r[..r[..0x20].iter().position(|&c| c == 0).unwrap_or(0x20)]).into_owned(),
+                    text: String::from_utf8_lossy(&r[0x20..0x20 + r[0x20..0x40].iter().position(|&c| c == 0).unwrap_or(0x20)]).into_owned(),
                     word_40: f32::from_bits(w(0x40)),
                     kind: w(0x44) as i32,
                     price: w(0x48) as i32,

@@ -226,3 +226,136 @@ impl Hud {
         out
     }
 }
+
+impl Hud {
+    /// shop_setup 0x18b648 / draw_shop_screen / write_shop_menu 0x189f80
+    /// for `player`'s column (the others show their frames): S1/S2_PLYRn
+    /// and borders (z 64000 / 63900), SHOP_TOP_<colour> (z 63800), the
+    /// scroll pieces of shop_misctab 3/4, then the item list placed by
+    /// calc_shop_ypos around the selection (icon +0x18, description lines
+    /// at item scale × 0.5 + 0x10), faded within shop_dim_dy of
+    /// shop_topy/shop_boty, prices at shop_rx − 0x40 (font 6 × 0.5),
+    /// descriptions centred on shop_cx, the selection drawn with
+    /// DrawGlowText, and MORE_UP/MORE_DOWN when items are cut off.
+    /// NATIVE: no scroll animation (items sit at their target y), no
+    /// highlight timers or class skip list.
+    pub fn shop_blits(&self, items: &[super::powerups::ShopItem], players: &[super::record::Record; 4], player: usize, selected: usize, frames: i32) -> Vec<Blit> {
+        let mut out = Vec::new();
+        let Some(t) = self.tables.as_ref() else { return out };
+        let font = 6;
+        for (p, r) in players.iter().enumerate() {
+            let lx = t.shop_lx.get(p).copied().unwrap_or(0);
+            for (name, y, z) in [(format!("S1_PLYR{}", p + 1), 0, 64000.0), (format!("S2_PLYR{}", p + 1), 0x100, 64000.0), ("S1_BORDER".into(), 0, 63900.0), ("S2_BORDER".into(), 0x100, 63900.0)] {
+                let mut b = self.make_pub(self.lookup(&name), lx, y, 0x80, -1);
+                b.z = z;
+                out.push(b);
+            }
+            if r.i32_(0xfc) != 0 {
+                let col = t.pcol.get(r.u32_(4) as usize).cloned().unwrap_or_default();
+                let mut b = self.make_pub(self.lookup(&format!("SHOP_TOP_{col}")), lx + 0x20, 0, -1, -1);
+                b.z = 63800.0;
+                out.push(b);
+            }
+        }
+        let p = player.min(3);
+        let lx = t.shop_lx.get(p).copied().unwrap_or(0);
+        let rx = t.shop_rx.get(p).copied().unwrap_or(0);
+        let cx = t.shop_cx.get(p).copied().unwrap_or(0);
+        let [top, bot, dim] = t.shop_y;
+        for k in [3usize, 4] {
+            if let Some((name, x, y, z)) = t.shop_misc.get(k) {
+                let mut b = self.make_pub(self.lookup(name), lx + x, *y, -1, -1);
+                b.z = 64000.0 + *z as f32;
+                out.push(b);
+            }
+        }
+        // calc_shop_ypos.
+        let heights: Vec<i32> = items
+            .iter()
+            .map(|it| {
+                let mut h = if self.lookup(&it.icon).is_some() && !it.icon.is_empty() { 0x18 } else { 0 };
+                if !it.text.is_empty() {
+                    let n = it.text.split('\n').count() as i32;
+                    h += n * self.font_height(font, it.word_40 * 0.5) + 0x10;
+                }
+                h
+            })
+            .collect();
+        let mut ypos = Vec::with_capacity(items.len());
+        let mut acc = 0;
+        for h in &heights {
+            ypos.push(acc);
+            acc += h;
+        }
+        let sel = selected.min(items.len().saturating_sub(1));
+        let base_sel = ypos.get(sel).copied().unwrap_or(0);
+        let ypos: Vec<i32> = ypos.iter().map(|y| (y - base_sel).min(0x400)).collect();
+        let mut base = (bot - top) / 2 + top;
+        if let Some(&first) = ypos.first()
+            && top < base + first
+        {
+            base = top - first;
+        }
+        if let Some(&last) = ypos.last()
+            && base + last < bot
+        {
+            base = bot - last;
+        }
+        let (mut above, mut below) = (false, false);
+        for (k, it) in items.iter().enumerate() {
+            let y0 = base + ypos[k];
+            let fade = if y0 < top - dim {
+                above = true;
+                0x100
+            } else if y0 < top {
+                above = true;
+                ((top - y0) * 0x1fe / dim.max(1)).min(0xff)
+            } else if bot + dim < y0 {
+                below = true;
+                0x100
+            } else if bot < y0 {
+                below = true;
+                ((y0 - bot) * 0x1fe / dim.max(1)).min(0xff)
+            } else {
+                0
+            };
+            if 0x100 <= fade {
+                continue;
+            }
+            let a = (0x80 - (fade as u32 >> 1)) as u8;
+            let icon = if it.icon.is_empty() { None } else { self.lookup(&it.icon) };
+            if icon.is_some() {
+                let mut b = self.make_pub(icon, lx + 0x14, y0, -1, -1);
+                b.rgba[3] = a;
+                out.push(b);
+            }
+            let chosen = k == sel;
+            if 0 < it.price {
+                let s = it.price.to_string();
+                if chosen {
+                    out.extend(self.glow_text(0.5, rx - 0x40, y0 + 0xc, &s, frames as u32));
+                } else if let Some(m) = self.message_pub(0.5, 0.5, rx - 0x40, y0 + 0xc, font, 0, a, 0.25, 0, &s) {
+                    out.extend(self.glyphs(&m));
+                }
+            }
+            let mut y = if icon.is_some() { y0 + 0x20 } else { y0 + 0xc };
+            let scale = it.word_40 * 0.5;
+            let fh = self.font_height(font, scale);
+            for line in it.text.split('\n').filter(|l| !l.is_empty()) {
+                if chosen {
+                    out.extend(self.glow_text(scale, -cx, y, line, frames as u32));
+                } else if let Some(m) = self.message_pub(scale, scale, -cx, y, font, 0, a, 0.25, 0, line) {
+                    out.extend(self.glyphs(&m));
+                }
+                y += fh;
+            }
+        }
+        if above {
+            out.push(self.make_pub(self.lookup("MORE_UP"), cx - 0x20, top - 0x28, -1, -1));
+        }
+        if below {
+            out.push(self.make_pub(self.lookup("MORE_DOWN"), cx - 0x20, bot + 0x38, -1, -1));
+        }
+        out
+    }
+}
