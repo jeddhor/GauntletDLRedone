@@ -321,6 +321,29 @@ impl Game {
         self.tower_check_messages(true)
     }
 
+    /// TowerSetStartPos / ClosestStartPos 0x150958: among the start
+    /// locators `starts` (id, position) of open realms (WorldOrder[id]),
+    /// the closest to the players' average position (GetPlayerAvgPos: the
+    /// players in state 1).
+    pub fn closest_start_pos(&self, starts: &[(i16, [f32; 3])], order: &[i32]) -> i16 {
+        let ps: Vec<[f32; 3]> = (0..4).filter(|&k| self.players[k].i32_(0xfc) == 1).map(|k| self.players[k].v3(0x50)).collect();
+        let n = ps.len().max(1) as f32;
+        let s = ps.iter().fold([0.0f32; 3], |a, p| [a[0] + p[0], a[1] + p[1], a[2] + p[2]]);
+        let avg = [s[0] / n, s[1] / n, s[2] / n];
+        let mut best = (-1.0f32, 0i16);
+        for id in 0..0xe {
+            let Some(&(_, p)) = starts.iter().find(|(i, _)| *i == id) else { continue };
+            if p[1] <= -100000.0 || !order.get(id as usize).is_some_and(|&w| self.world_open(w)) {
+                continue;
+            }
+            let d = (p[0] - avg[0]).powi(2) + (p[1] - avg[1]).powi(2) + (p[2] - avg[2]).powi(2);
+            if best.0 < 0.0 || d < best.0 {
+                best = (d, id);
+            }
+        }
+        best.1
+    }
+
     /// HideExits: exits to levels no present player has reached (level n
     /// needs bit n−1 of that world's wave byte) or to closed realms (Temple,
     /// Hell, Battle; Battle 3 also needs all runes) are disabled (+0xd8 =

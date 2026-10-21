@@ -233,8 +233,13 @@ natively (Shift+F9 debug exit from G1): piles, Level 10 panel, item scroll,
 inventory, Tower start at the realm's door. NATIVE/HYPOTHESES: the list
 does not scroll, the inventory panel closes as the reverse of its opening,
 the final stats' "%d Days" argument (missing in the decompile) is the
-whole days; the Tower menu's shop (init_shop(1)) still uses the interim
-menu page.
+whole days. The Tower menu's Shop runs init_shop(1): TowerSetStartPos
+(ClosestStartPos 0x150958: the nearest start locator 0..13 of an open
+realm to the players' average position), PlayersRestoreHealth, the shop
+from step 6 (no piles), stats, then init_next_level into the Tower at
+that start. DoOptions opens a menu only from PlayerControl's Start edge
+(so not while controls are disabled), after WelcomeFlag < 0 and outside
+the stage start; gdl_play's pause key follows the same gates.
 
 ## The realm map between levels (game mode 0x400f)
 

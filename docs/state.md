@@ -61,7 +61,7 @@ original (PCSX2 reference on Xvfb :191, private captures):
    2026-10-21: the return to the Tower through the shop (init_shop /
    do_shop: piles, level panel, shopping, inventory, final stats) and the
    realm map between levels (init_mapscreen / do_mapscreen).
-   Remaining: the Tower menu's shop as init_shop(1), init_player_select(2),
+   Remaining: init_player_select(2),
    select-screen memory-card/join flow and the Tower scene
    behind it, compass/controls/screen/game
    options effects, credits, movies, boss/timer meters,

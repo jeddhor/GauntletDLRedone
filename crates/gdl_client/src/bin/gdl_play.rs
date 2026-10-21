@@ -224,6 +224,9 @@ struct Session {
     title: String,
     /// CurWorld of the level played before this one (LastWorldPlayed).
     last_world: i32,
+    /// TowerStartPos (TowerSetStartPos before the Tower menu's shop): the
+    /// start locator of the next Tower entry, else the realm's wing.
+    tower_start: Option<i16>,
     current: usize,
     world: World,
     level: Package,
@@ -2105,6 +2108,9 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box
         {
             let order: Vec<i32> = order.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect();
             id = order.iter().position(|&w| w == session.last_world).unwrap_or(0) as i16;
+            if let Some(t) = session.tower_start {
+                id = t;
+            }
         }
         let loc = session
             .world
@@ -3388,6 +3394,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             world_number: first.world,
             title: first.title.clone(),
             last_world: 0,
+            tower_start: None,
             current: idx,
             action_map: front.tables.action_map(&clips),
             clip_timings: setup::clips_of(&clips, 0),
@@ -3645,10 +3652,24 @@ fn act(world: &mut EcsWorld, action: Action) {
                 front.menu.page = gdl_client::menu::Page::Inventory;
             }
             Action::OpenShop => {
-                refresh_shop(world)?;
-                let mut front = world.resource_mut::<Front>();
-                front.menu.status.clear();
-                front.menu.page = gdl_client::menu::Page::Shop { at: 0 };
+                // The Tower menu's shop: TowerSetStartPos, init_shop(1), and
+                // init_next_level (the Tower again) once do_shop is done.
+                let items = world.resource::<Front>().shop.clone();
+                let (starts, current) = {
+                    let session = world.resource::<Session>();
+                    let starts: Vec<(i16, [f32; 3])> = session.world.locators.iter().filter(|l| l.kind == 7).map(|l| (l.id, l.position)).collect();
+                    (starts, session.current)
+                };
+                let order: Vec<i32> = gdl_formats::elf::Elf::parse(&world.resource::<Session>().elf_bytes)
+                    .ok()
+                    .and_then(|e| e.object("WorldOrder").ok().map(|o| o.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()))
+                    .unwrap_or_default();
+                let id = world.resource::<Sim>().game.closest_start_pos(&starts, &order);
+                world.resource_mut::<Session>().tower_start = Some(id);
+                let flow = world.resource_mut::<Sim>().game.init_shop(1, &items).map_err(|e| e.0)?;
+                world.resource_mut::<Sim>().shop = Some((flow, current));
+                world.resource_mut::<Front>().menu.status.clear();
+                world.resource_mut::<Ui>().paused = false;
             }
             Action::Buy { idx } => {
                 let items = world.resource::<Front>().shop.clone();
@@ -3712,7 +3733,14 @@ fn front_system(world: &mut EcsWorld) {
             return;
         }
         let paused = world.resource::<Ui>().paused;
-        let blocked = world.get_resource::<Session>().is_some_and(|s| s.banner.is_some() || s.finished.is_some());
+        // DoOptions: no menu before WelcomeFlag < 0, during the stage start,
+        // or while player controls are disabled (PlayerControl's Start edge
+        // is zero then: trigger cameras, speeches); nor in the shop or map.
+        let blocked = world.get_resource::<Session>().is_some_and(|s| s.banner.is_some() || s.finished.is_some())
+            || world.get_resource::<Sim>().is_some_and(|s| {
+                let g = &s.game;
+                s.shop.is_some() || s.map.is_some() || 0 <= g.globals.welcome_flag || g.globals.start_of_stage != 0 || g.disable_player_controls != 0
+            });
         if !paused {
             if toggle && !blocked {
                 let tower = world.resource::<Session>().world_number == 0xd;
@@ -4150,7 +4178,12 @@ fn advance_level(
         }
         Ok(())
     });
-    match loaded.and_then(|_| build_game(&session, idx, &carry)) {
+    let built = loaded.and_then(|_| build_game(&session, idx, &carry));
+    // EnterTower: TowerStartPos = −1 once used.
+    if session.levels[idx].world == 0xd {
+        session.tower_start = None;
+    }
+    match built {
         Ok(mut game) => {
             // The controls state carries across levels; co-op players keep
             // their records and enter beside player 1.
