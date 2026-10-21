@@ -519,7 +519,7 @@ impl Hud {
 
     pub fn set_z(&mut self, id: usize, z: f32) {
         if let Some(b) = self.get(id) {
-            b.z = z;
+            b.z = blit_z(z);
         }
     }
 
@@ -679,6 +679,31 @@ impl Hud {
         }
     }
 
+    /// DrawGlowText 0x102ab0: glow_font (6) at `scale` twice — the
+    /// FONT32_GLOW layer (flag 0x4000, hilite_color 0x8200ea, alpha pulsing
+    /// over hilite_fade 40 / hold 5 by vb_counter), then white; font z 0.25.
+    pub fn glow_text(&self, scale: f32, x: i32, y: i32, text: &str, vb: u32) -> Vec<Blit> {
+        const GLOW_FONT: usize = 6;
+        let (fade, hold) = (40, 5);
+        let mut i = (vb % (fade * 2 + hold) as u32) as i32;
+        if fade * 2 < i {
+            i = 0;
+        } else if fade < i {
+            i = fade * 2 - i;
+        }
+        let a = 0x7f - ((i * 0xff + fade - 1) / fade) / 2;
+        let glow_alpha = (0x80 - (a as u32 >> 1)) as u8;
+        let mut out = Vec::new();
+        if let Some(mut m) = self.message(scale, scale, x, y, GLOW_FONT, pack_rgb(0x8200ea, glow_alpha), 0.25, 0x4000, text) {
+            m.tex = self.lookup("FONT32_GLOW");
+            out.extend(self.glyphs(&m));
+        }
+        if let Some(m) = self.message(scale, scale, x, y, GLOW_FONT, pack_rgb(0xffffff, 0x80), 0.25, 0, text) {
+            out.extend(self.glyphs(&m));
+        }
+        out
+    }
+
     /// The frame's blits in draw order: node blits, temp blits, then the font
     /// messages' glyphs (MBDrawBlits then MBRenderText in pbRenderNode).
     pub fn draw_list(&self) -> Vec<Blit> {
@@ -793,23 +818,7 @@ impl Hud {
                 out.extend(glyphs);
                 let tri = self.lookup("BUTTON_TRI");
                 out.push(self.make(tri, 0xdf, y + 8, 0x14, 0x14));
-                // DrawGlowText: the pulse over hilite_fade 40 + hold 5.
-                let (fade, hold) = (40, 5);
-                let mut i = (sb.vb_counter % (fade * 2 + hold) as u32) as i32;
-                if fade * 2 < i {
-                    i = 0;
-                } else if fade < i {
-                    i = fade * 2 - i;
-                }
-                let a = 0x7f - ((i * 0xff + fade - 1) / fade) / 2;
-                let glow_alpha = (0x80 - (a as u32 >> 1)) as u8;
-                if let Some(mut m) = self.message(DONE_SCALE, DONE_SCALE, -0x100, y + 8, GLOW_FONT, pack_rgb(0x8200ea, glow_alpha), TEXT_Z, 0x4000, DONE) {
-                    m.tex = self.lookup("FONT32_GLOW");
-                    out.extend(self.glyphs(&m));
-                }
-                if let Some(m) = self.message(DONE_SCALE, DONE_SCALE, -0x100, y + 8, GLOW_FONT, pack_rgb(0xffffff, 0x80), TEXT_Z, 0, DONE) {
-                    out.extend(self.glyphs(&m));
-                }
+                out.extend(self.glow_text(DONE_SCALE, -0x100, y + 8, DONE, sb.vb_counter));
             }
             Some(vb) => {
                 let frame = (vb >> 1).clamp(0, 0x14);
@@ -938,6 +947,12 @@ pub fn format_c(fmt: &str, args: &[Arg]) -> String {
         }
     }
     out
+}
+
+/// MBBlitSetZ: z ≥ 0 is stored × 32; a negative z is stored as raw GS
+/// units 0x1000000 + z (far behind everything), here in the same × 32 scale.
+pub fn blit_z(z: f32) -> f32 {
+    if 0.0 <= z { z } else { (0x100_0000 as f32 + z) / 32.0 }
 }
 
 /// MBBlitSetColor / MBSetFontColor packing of 0xRRGGBB.

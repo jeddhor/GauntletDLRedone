@@ -153,6 +153,18 @@ position_audioslider (empty_bar 264×32, pink_bar 264·v/255, marker_left
 −52, marker_right +264−24, the knob at fill − 0x14; unselected alpha
 100/150/160); Mono/Stereo is drawn but not selectable natively.
 
+## Title screen
+
+init_titlescreen 0x1841a0: TITLE00–03 blits at screenblitxy (0,0),
+(256,0), (0,256), (256,256) (256×256 over 256×128: the 512×384 screen),
+titleblit_z −1000 (MBBlitSetZ stores negative z as raw GS units 0x1000000 +
+z: far behind); titleglow = GLOWCROP_00 (TITLE OBJECTS name table; the
+GLOWCROP_ header record precedes the frames) at (0xc0, 0) 0x80 × 0x80,
+frame (titleglow_frame >> 2) % 10, fading in over 60 vblanks, shown while no
+menu or the title menu is up. do_titlescreen draws DrawGlowText(1.0,
+"Press Start") at y 0x140 until the title menu opens. Native: the
+attract-mode timeout and the flyby are not ported.
+
 ## Native presentation
 
 A HUD camera with a fixed 512×384 orthographic projection on its own render

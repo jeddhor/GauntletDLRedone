@@ -363,3 +363,31 @@ impl Hud {
         out
     }
 }
+
+impl Hud {
+    /// init_titlescreen / do_titlescreen: TITLE00–03 at screenblitxy (0,0),
+    /// (256,0), (0,256), (256,256) with titleblit_z −1000 (far back), the
+    /// titleglow (GLOWCROP_00 + (frame >> 2) % 10 at (0xc0, 0), 0x80 × 0x80,
+    /// fading in over 60 vblanks) while no menu or the title menu is up,
+    /// and DrawGlowText(1.0, "Press Start") at y 0x140 before the menu.
+    pub fn title_blits(&self, frame: i32, glow: bool, press_start: bool) -> Vec<Blit> {
+        let mut out = Vec::new();
+        for (k, (x, y)) in [(0, 0), (256, 0), (0, 256), (256, 256)].into_iter().enumerate() {
+            let mut b = self.make_pub(self.lookup(&format!("TITLE{k:02}")), x, y, -1, -1);
+            b.z = super::hud::blit_z(-1000.0);
+            out.push(b);
+        }
+        if glow && let Some(t) = self.lookup("GLOWCROP_00") {
+            let t = self.offset_pub(t, (frame >> 2) % 10).unwrap_or(t);
+            let mut b = self.make_pub(Some(t), 0xc0, 0, 0x80, 0x80);
+            if frame < 0x3c {
+                b.rgba[3] = (0x80 - ((0xff - frame * 0xff / 0x3c) as u32 >> 1)) as u8;
+            }
+            out.push(b);
+        }
+        if press_start {
+            out.extend(self.glow_text(1.0, -0x100, 0x140, "Press Start", frame as u32));
+        }
+        out
+    }
+}

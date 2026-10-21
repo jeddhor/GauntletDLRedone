@@ -287,6 +287,9 @@ struct Front {
     opt_style: Option<gdl_core::game::optmenu::OptStyle>,
     menus: HashMap<&'static str, gdl_core::game::optmenu::OptMenu>,
     static_pkg: Package,
+    /// TITLE (title blits, GLOWCROP) and the title screen's vblank count.
+    title_pkg: Package,
+    title_clock: f32,
     menu_clock: (Option<(&'static str, usize)>, f32),
     base: Base,
 }
@@ -303,38 +306,6 @@ struct FrontPanel;
 #[derive(Component)]
 struct FrontBackdrop;
 
-/// TITLE/TEXDEF + TEXTURES: TITLE00 | TITLE01 over TITLE02 | TITLE03 as one
-/// 512×384 RGBA picture (the assembly of research/textures.md). Alpha is
-/// forced opaque (PRESENTATION: the original's TEXA/blending is unresolved).
-fn title_picture(cat: &gdl_client::catalog::Catalog) -> Result<Image, Box<dyn Error>> {
-    let table = TextureTable::parse(&cat.read("TITLE/TEXDEF.PS2")?)?;
-    let textures = cat.read("TITLE/TEXTURES.PS2")?;
-    let (w, h) = (512usize, 384usize);
-    let mut rgba = vec![0u8; w * h * 4];
-    for (label, x0, y0) in [("TITLE00", 0, 0), ("TITLE01", 256, 0), ("TITLE02", 0, 256), ("TITLE03", 256, 256)] {
-        let b = table.bitmaps.iter().find(|b| b.label == label).ok_or_else(|| format!("{label} missing"))?;
-        let px = b.decode_base_rgba(&textures)?;
-        let (bw, bh) = (b.width as usize, b.height as usize);
-        for y in 0..bh.min(h - y0) {
-            for x in 0..bw.min(w - x0) {
-                let s = 4 * (y * bw + x);
-                let d = 4 * ((y0 + y) * w + x0 + x);
-                rgba[d..d + 3].copy_from_slice(&px[s..s + 3]);
-                rgba[d + 3] = 255;
-            }
-        }
-    }
-    let mut image = Image::new(
-        bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
-        bevy::render::render_resource::TextureDimension::D2,
-        rgba,
-        // Raw display values (the frame is decoded once by DisplayToLinear).
-        bevy::render::render_resource::TextureFormat::Rgba8Unorm,
-        bevy::asset::RenderAssetUsages::default(),
-    );
-    image.sampler = bevy::image::ImageSampler::nearest();
-    Ok(image)
-}
 
 /// A critter instance slot (CritterInsts index) and the type it shows.
 #[derive(Component)]
@@ -935,13 +906,7 @@ fn enemy_frames(pkg: &Package) -> HashMap<String, Vec<Vec<String>>> {
 }
 
 /// Cameras and text overlays (always present).
-fn setup_static(mut commands: Commands, presentation: Res<Presentation>, front: Res<Front>, mut images: ResMut<Assets<Image>>) {
-    match title_picture(&front.catalog) {
-        Ok(img) => {
-            commands.spawn((Sprite { image: images.add(img), custom_size: Some(Vec2::new(1194.0, 896.0)), ..default() }, Transform::from_xyz(0.0, 0.0, -2.0), FrontBackdrop));
-        }
-        Err(e) => eprintln!("title picture unavailable: {e}"),
-    }
+fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
     commands.spawn((Sprite { color: Color::linear_rgba(0.0, 0.0, 0.0, 0.6), custom_size: Some(Vec2::new(900.0, 290.0)), ..default() }, Transform::from_xyz(0.0, -300.0, -1.0), FrontBackdrop, FrontPanel));
     // Until a level's camera exists the session start camera's window
     // angle (MboxWinPtr +0x1c, horizontal) stands in; the 640×384 viewport
@@ -2503,10 +2468,30 @@ fn present_hud(
     }
     front.menu_clock.0 = view;
     front.menu_clock.1 += time.delta_secs() * 59.94;
+    // Front-end blits use the front Hud's sets (STATIC, TITLE) as 100 + i.
+    let mut front_list = Vec::new();
     if let (Some((key, at)), Some(style)) = (view, front.opt_style.as_ref()) {
         let sliders = if key == "audio_options" { vec![(0, front.menu.music), (1, front.menu.sfx)] } else { Vec::new() };
         let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0), sliders };
-        list.extend(front.ui_hud.optmenu_blits(style, &front.menus[key], &state));
+        front_list.extend(front.ui_hud.optmenu_blits(style, &front.menus[key], &state));
+    }
+    if *screen == Screen::Front {
+        front.title_clock += time.delta_secs() * 59.94;
+        let page = &front.menu.page;
+        let glow = matches!(page, gdl_client::menu::Page::PressStart | gdl_client::menu::Page::Title { .. });
+        let press = matches!(page, gdl_client::menu::Page::PressStart);
+        front_list.extend(front.ui_hud.title_blits(front.title_clock as i32, glow, press));
+    } else {
+        front.title_clock = 0.0;
+    }
+    for mut b in front_list {
+        if let Some(t) = b.tex.as_mut() {
+            t.set += 100;
+        }
+        if let Some((t, _)) = b.mask.as_mut() {
+            t.set += 100;
+        }
+        list.push(b);
     }
     list.retain(|b| b.tex.is_some() && 0.0 < b.w && 0.0 < b.h && 1 < b.rgba[3]);
     list.sort_by(|a, b| b.z.total_cmp(&a.z));
@@ -2518,7 +2503,9 @@ fn present_hud(
             let key = (t.set, t.index);
             if !sets.images.contains_key(&key) {
                 let key_name = sets.keys.get(t.set as usize).cloned().unwrap_or_else(|| "STATIC".into());
-            let pkg = if key_name == "STATIC" {
+            let pkg = if 100 <= t.set {
+                [&front.static_pkg, &front.title_pkg].get(t.set as usize - 100).copied()
+            } else if key_name == "STATIC" {
                 Some(&front.static_pkg)
             } else if key_name.is_empty() {
                 sources.as_ref().map(|s| &s.character)
@@ -3202,7 +3189,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let static_pkg = load_package(&package_entry(&catalog, "STATIC", true)?)?;
     let mut ui_hud = gdl_core::game::hud::HudTables::from_elf(&elf).map(gdl_core::game::hud::Hud::new).unwrap_or_default();
     let fonts = load_fonts(&catalog, ui_hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default());
-    ui_hud.set_resources(vec![gdl_client::hud_texture_set("STATIC", &static_pkg.objects)], fonts);
+    let title_pkg = load_package(&package_entry(&catalog, "TITLE", true)?)?;
+    ui_hud.set_resources(vec![gdl_client::hud_texture_set("STATIC", &static_pkg.objects), gdl_client::hud_texture_set("TITLE", &title_pkg.objects)], fonts);
     let opt_style = gdl_core::game::optmenu::OptStyle::from_elf(&elf).ok();
     let mut menus = HashMap::new();
     for n in ["title_menu", "title_options", "tower_menu", "game_menu", "tower_options", "game_options", "audio_options", "quitgame_question", "quitlevel_question", "hint_menu", "hint_general_menu"] {
@@ -3229,6 +3217,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         opt_style,
         menus,
         static_pkg,
+        title_pkg,
+        title_clock: 0.0,
         menu_clock: (None, 0.0),
         base: Base { package_cfg, start, levels, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
