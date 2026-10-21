@@ -2050,8 +2050,12 @@ fn present_world(
                 tf.scale *= node.scale;
                 match node.visual {
                     Visual::Missile { .. } => {
-                        let key = session.throw.1.clone();
-                        let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| missile_parts(&sources, &libs, &session.throw));
+                        let key = format!("{}:{}", session.throw.1, node.start.to_bits());
+                        let fresh = slot.key.as_deref() != Some(key.as_str());
+                        if fresh {
+                            label_effect_tree(&mut commands, entity, &sources, &session.throw.0, &session.throw.1, node.start);
+                        }
+                        let parts = fresh.then(|| missile_parts(&sources, &libs, &session.throw));
                         (Some(key), parts, tf)
                     }
                     // EffectHeaders[h]: a tree of WEAPONS (0), POWERUPS (1) or
@@ -2081,8 +2085,12 @@ fn present_world(
                     // (or WEAPONS' PHOENIX_FBALL for the phoenix).
                     Visual::Familiar { phoenix, .. } => {
                         let (pkg, label) = if phoenix { ("WEAPONS".to_string(), "PHOENIX_FBALL") } else { (session.sfx.clone(), "FAMILIAR_SPIT") };
-                        let key = format!("F{pkg}:{label}");
-                        let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_parts(&sources, &libs, &pkg, label));
+                        let key = format!("F{pkg}:{label}:{}", node.start.to_bits());
+                        let fresh = slot.key.as_deref() != Some(key.as_str());
+                        if fresh {
+                            label_effect_tree(&mut commands, entity, &sources, &pkg, label, node.start);
+                        }
+                        let parts = fresh.then(|| tree_parts(&sources, &libs, &pkg, label));
                         (Some(key), parts, tf)
                     }
                     Visual::EnemyMissile { t, kind } => {
@@ -2090,8 +2098,13 @@ fn present_world(
                             *vis = Visibility::Hidden;
                             continue;
                         };
-                        let key = format!("{pkg}_{}", g.effects.tables.enemy_missile_desc[kind as usize]);
-                        let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_parts(&sources, &libs, pkg, &key));
+                        let label = format!("{pkg}_{}", g.effects.tables.enemy_missile_desc[kind as usize]);
+                        let key = format!("{label}:{}", node.start.to_bits());
+                        let fresh = slot.key.as_deref() != Some(key.as_str());
+                        if fresh {
+                            label_effect_tree(&mut commands, entity, &sources, pkg, &label, node.start);
+                        }
+                        let parts = fresh.then(|| tree_parts(&sources, &libs, pkg, &label));
                         (Some(key), parts, tf)
                     }
                 }
@@ -2106,6 +2119,21 @@ fn present_world(
                 commands.entity(entity).despawn_related::<Children>();
             }
             slot.key = key;
+        }
+    }
+}
+
+/// Animate a slot's tree `label` of `pkg` from `start` (HYPOTHESIS: sequence
+/// 0 at the sequence's timing factor, as StartFXTree trees); without the
+/// tree the slot's previous EffectTree is removed.
+fn label_effect_tree(commands: &mut Commands, entity: Entity, sources: &Sources, pkg: &str, label: &str, start: f32) {
+    let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, a.trees[i].sequences.first().map_or(30, |q| q.timing_factor))));
+    match tree {
+        Some((tree, timing)) => {
+            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1) });
+        }
+        None => {
+            commands.entity(entity).remove::<EffectTree>();
         }
     }
 }
