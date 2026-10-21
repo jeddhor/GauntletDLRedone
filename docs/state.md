@@ -39,7 +39,7 @@ original (PCSX2 reference on Xvfb :191, private captures):
    nodes, MBTreeSetAlpha fades (recorded in Game::node_alpha), point lights,
    AmbientSpecial flashes, fog (D1/D3), splash shadow texture, critter
    shadows, item tree animation.
-5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20 —
+5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,
    letterbox over the panels) driven by WritePlayerInfo from do_players;
@@ -47,10 +47,17 @@ original (PCSX2 reference on Xvfb :191, private captures):
    font32 text, glow prompt, fire-scroll burn); NewHelp/DoHelp help boxes
    (with the help pause and displayed flags); pickup notices (do_got_it);
    option menus drawn from the ELF records (title, options, Tower/realm
-   pause, quit questions, hint menu, audio sliders); title screen;
-   player-select columns (art, names, menus, hints); display-space
-   blending for every draw (Hdr frame + DisplayToLinear). Remaining: select-screen memory-card/join flow, shop screen, inventory/map
-   panels, options, credits, movies, boss/timer meters.
+   pause, quit questions, hint menu + Sumner's hint pages, audio sliders);
+   title screen (TITLE blits, GLOWCROP, Press Start); player-select columns
+   (art, names, menus, hints) and Manage Character; fullscreen inventory;
+   shop; display-space blending for every draw (Hdr frame +
+   DisplayToLinear); OANIM enemy frames; item/missile trees animated.
+   Remaining: select-screen memory-card/join flow and the Tower scene
+   behind it, Sumner's speech captions/ghost/cameras (CaptionText decoded,
+   research/hud.md) and the shard/rune event machine (SumnerSpeechEnd,
+   TowerCheckMessages' sumner_event_flag), compass/controls/screen/game
+   options effects, map screen, credits, movies, boss/timer meters,
+   the ICON_ARROW menu selector, shop stats panels.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.
 
