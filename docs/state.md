@@ -71,8 +71,7 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Remaining: init_player_select(2),
    select-screen memory-card/join flow and the Tower scene
    behind it, control style/screen adjust
-   options effects, credits, movies,
-   the ICON_ARROW menu selector.
+   options effects, credits, movies. 2026-10-21: the ICON_ARROW selector.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.
 

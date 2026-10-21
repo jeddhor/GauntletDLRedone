@@ -324,6 +324,8 @@ struct Front {
     title_clock: f32,
     /// SELECT (player-select columns, class art).
     select_pkg: Package,
+    /// POWERUPS (powerup_anim: the option menus' ICON_ARROW tree).
+    powerups_pkg: Package,
     menu_clock: (Option<(&'static str, usize)>, f32),
     base: Base,
 }
@@ -3274,6 +3276,204 @@ fn inventory_view(front: &Front, screen: Screen, ui: &Ui) -> bool {
     screen == Screen::Playing && ui.paused && matches!(front.menu.page, gdl_client::menu::Page::Inventory | gdl_client::menu::Page::Shop { .. })
 }
 
+/// The option menus' ICON_ARROW selector (start_optmenu_nostack: an
+/// MBNewNode parent of POWERUPS' ICON_ARROW tree, scale +0x3c;
+/// show_optmenu: MBScreenToWorld(item x + icon x, selected entry y +
+/// FontHeight/2, optmenu_icon_z 1.1), the camera's inverse rotation, then
+/// PitchMat3(π for odd selections + π·t/OPTMENU_ICON_TIME while gliding to
+/// a new entry over OPTMENU_ICON_TIME vblanks), AnimateATree). Drawn by an
+/// offscreen camera in PS2 view space and composited as a HUD quad over the
+/// menu blits (the arrow's depth 1.1 is in front of every blit).
+#[derive(Resource, Default)]
+struct MenuIcon {
+    shown: bool,
+    key: &'static str,
+    /// Screen point of this frame (512 × 384 units).
+    x: i32,
+    y: i32,
+    /// +0xd4 settled y, +0xd8 glide vblanks (0: settled).
+    last_y: i32,
+    timer: i32,
+    vb: f32,
+    pitch: f32,
+    scale: f32,
+    z: f32,
+    /// AnimateATree's clock (seconds shown).
+    clock: f32,
+}
+
+impl MenuIcon {
+    fn update(&mut self, target: Option<(i32, i32)>, key: &'static str, selected: usize, style: &gdl_core::game::optmenu::OptStyle, scale: f32, dt: f32) {
+        let Some((x, ty)) = target else {
+            self.shown = false;
+            self.key = "";
+            return;
+        };
+        if self.key != key || !self.shown {
+            // start_optmenu_nostack: +0xd4 = 0, +0xd8 = OPTMENU_ICON_TIME.
+            self.key = key;
+            self.last_y = 0;
+            self.timer = style.icon_time;
+            self.clock = 0.0;
+            self.vb = 0.0;
+        }
+        self.shown = true;
+        self.clock += dt;
+        self.vb += dt * 59.94;
+        let vb = self.vb.floor() as i32;
+        self.vb -= vb as f32;
+        let n = style.icon_time.max(1);
+        let mut pitch = if selected & 1 != 0 { std::f32::consts::PI } else { 0.0 };
+        let mut y = ty;
+        if self.timer == 0 {
+            if ty != self.last_y {
+                self.timer = 1;
+                y = self.last_y;
+            }
+        } else if self.timer < n {
+            self.timer += vb;
+            y = (ty - self.last_y) * self.timer / n + self.last_y;
+            pitch += self.timer as f32 * std::f32::consts::PI / n as f32;
+        } else {
+            self.last_y = ty;
+            self.timer = 0;
+        }
+        self.x = x;
+        self.y = y;
+        self.pitch = pitch;
+        self.scale = scale;
+        self.z = style.icon_z;
+    }
+}
+
+/// The icon's offscreen view: render layer, target and parts.
+const ICON_LAYER: usize = 2;
+#[derive(Component)]
+struct MenuIconNode;
+#[derive(Component)]
+struct MenuIconQuad;
+#[derive(Resource)]
+struct MenuIconTree {
+    tree: usize,
+    timing: i16,
+}
+
+/// The PS2 window: focal length 554.27 (pb +0x90 × viewport scale). The
+/// icon is drawn over the whole 640 × 448 frame centred on row 224;
+/// MBScreenToWorld's in-game centre is row 192 (viewport 2016). Placement
+/// round-trips through either; only the arrow's slight perspective differs
+/// (front-end window values are not captured).
+const ICON_FOCAL: f32 = 554.2563;
+
+fn setup_menu_icon(
+    mut commands: Commands,
+    front: Res<Front>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut blits: ResMut<Assets<gdl_client::BlitMaterial>>,
+) {
+    let pkg = &front.powerups_pkg;
+    let Some((tree_index, tree)) = pkg.anim.as_ref().and_then(|a| a.trees.iter().enumerate().find(|(_, t)| t.label == "ICON_ARROW")) else { return };
+    let lib = build_library(pkg, &mut meshes, &mut images, &mut materials);
+    let mut model = Vec::new();
+    for node in &tree.nodes {
+        tree_node_model(pkg, &lib, tree, node, Vec3::from_array(node.initial_position), &mut model);
+    }
+    let target = images.add(Image::new_target_texture(640, 448, bevy::render::render_resource::TextureFormat::Rgba8Unorm, None));
+    let layer = bevy::camera::visibility::RenderLayers::layer(ICON_LAYER);
+    commands.spawn((
+        Camera3d::default(),
+        Camera { order: -1, clear_color: ClearColorConfig::Custom(Color::NONE), ..default() },
+        bevy::camera::RenderTarget::Image(target.clone().into()),
+        Tonemapping::None,
+        bevy::render::view::Hdr,
+        bevy::core_pipeline::tonemapping::DebandDither::Disabled,
+        Projection::custom(Ps2Projection { tan_h: 320.0 / ICON_FOCAL, tan_v: 224.0 / ICON_FOCAL, near: 0.05, far: 100.0 }),
+        Transform::default(),
+        layer.clone(),
+    ));
+    // Placed in MB view space (x right, y up, z forward) mirrored into Bevy's
+    // (−z forward) by present_menu_icon.
+    let root = commands.spawn((Transform::default(), Visibility::Hidden, MenuIconNode, layer.clone())).id();
+    for (at, parts, _, idx, extra) in model {
+        if matches!(extra, Some(NodeExtra::Psys(_))) {
+            continue;
+        }
+        let Some(idx) = idx else { continue };
+        let holder = commands.spawn((TreeNodeIdx(idx), Transform::from_translation(at), Visibility::Inherited, layer.clone())).id();
+        commands.entity(root).add_child(holder);
+        for (mesh, material) in parts {
+            let c = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::default(), layer.clone(), bevy::camera::visibility::NoFrustumCulling)).id();
+            commands.entity(holder).add_child(c);
+        }
+    }
+    // HYPOTHESIS (as effect trees): AnimateATree plays sequence 0 at its
+    // timing factor.
+    commands.insert_resource(MenuIconTree { tree: tree_index, timing: tree.sequences.first().map_or(30, |q| q.timing_factor) });
+    // The whole 640 × 448 frame (menu entries reach into the panels' 64-row
+    // inset) in the 512 × 384 HUD space.
+    let h = 384.0;
+    let mat = blits.add(gdl_client::BlitMaterial {
+        params: gdl_client::BlitParams { rgba: Vec4::new(1.0, 1.0, 1.0, 128.0 / 255.0), crop: Vec4::new(0.0, 1.0, 0.0, 1.0), mask_rect: Vec4::ZERO },
+        texture: Some(target),
+        mask: None,
+    });
+    let quad = meshes.add(Rectangle::new(1.0, 1.0));
+    commands.spawn((
+        Mesh2d(quad),
+        MeshMaterial2d(mat),
+        Transform::from_xyz(0.0, 192.0 - h * 0.5, 50.0).with_scale(Vec3::new(512.0, h, 1.0)),
+        Visibility::Hidden,
+        bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
+        MenuIconQuad,
+    ));
+}
+
+/// Place, turn and animate the icon (sequence 0 at the tree's timing).
+#[allow(clippy::type_complexity)]
+fn present_menu_icon(
+    icon: Res<MenuIcon>,
+    front: Res<Front>,
+    tree: Option<Res<MenuIconTree>>,
+    mut root: Query<(&mut Transform, &mut Visibility, &Children), (With<MenuIconNode>, Without<MenuIconQuad>, Without<TreeNodeIdx>)>,
+    mut parts: Query<(&TreeNodeIdx, &mut Transform), (Without<MenuIconNode>, Without<MenuIconQuad>)>,
+    mut quad: Query<&mut Visibility, (With<MenuIconQuad>, Without<MenuIconNode>)>,
+) {
+    let want = if icon.shown { Visibility::Inherited } else { Visibility::Hidden };
+    for mut v in &mut quad {
+        if *v != want {
+            *v = want;
+        }
+    }
+    let (Ok((mut tf, mut vis, kids)), Some(tree)) = (root.single_mut(), tree) else { return };
+    if *vis != want {
+        *vis = want;
+    }
+    if !icon.shown {
+        return;
+    }
+    // MBScreenToWorld into view space (window 640 × 448 over the 512 × 384
+    // screen; viewport centre 2048/2016 against the 2048 offsets).
+    let z = icon.z;
+    let xv = (1.25 * icon.x as f32 - 320.0) * z / ICON_FOCAL;
+    let yv = (224.0 - 448.0 / 384.0 * icon.y as f32) * z / ICON_FOCAL;
+    // PitchMat3 on the camera-aligned rows (local y → (0, c, −s): Rx(−θ) in
+    // MB view space); conjugated by the view mirror diag(1, 1, −1):
+    // T(x, y, −z) · Rx(θ) · diag(s, s, −s).
+    *tf = Transform::from_translation(Vec3::new(xv, yv, -z)).with_rotation(Quat::from_rotation_x(icon.pitch)).with_scale(Vec3::new(icon.scale, icon.scale, -icon.scale));
+    let Some(anim) = front.powerups_pkg.anim.as_ref() else { return };
+    let frame = icon.clock * 900.0 / f32::from(tree.timing.max(1));
+    let Ok(pose) = gdl_client::tree_pose(anim, tree.tree, &front.powerups_pkg.anim_bytes, 0, frame, true) else { return };
+    for k in kids.iter() {
+        if let Ok((idx, mut t)) = parts.get_mut(k)
+            && let Some(m) = pose.get(idx.0)
+        {
+            *t = Transform::from_matrix(*m);
+        }
+    }
+}
+
 /// The page drawn with an original menu record (front end or pause).
 fn menu_view(front: &Front, screen: Screen, ui: &Ui) -> Option<(&'static str, usize)> {
     if !(screen == Screen::Front || ui.paused) {
@@ -3298,6 +3498,7 @@ fn present_hud(
     mut meshes: ResMut<Assets<Mesh>>,
     mut pool: HudSpriteQuery,
     mut quad: Local<Option<Handle<Mesh>>>,
+    mut icon: ResMut<MenuIcon>,
 ) {
     let playing = *screen == Screen::Playing;
     let mut list = Vec::new();
@@ -3350,6 +3551,10 @@ fn present_hud(
             }
         }
         front_list.extend(front.ui_hud.optmenu_blits(style, &menu, &state));
+        icon.update(front.ui_hud.optmenu_icon_target(style, &menu, &state), key, at, style, menu.icon_scale, time.delta_secs());
+    } else {
+        icon.shown = false;
+        icon.key = "";
     }
     if let (Some(cols), Some(style), Some(def)) = (select_columns(&front, *screen), front.opt_style.as_ref(), front.menus.get("sel_def_menu")) {
         front_list.extend(front.ui_hud.select_blits(style, def, &cols, front.menu_clock.1 as i32));
@@ -4155,6 +4360,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let fonts = load_fonts(&catalog, ui_hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default());
     let title_pkg = load_package(&package_entry(&catalog, "TITLE", true)?)?;
     let select_pkg = load_package(&package_entry(&catalog, "SELECT", true)?)?;
+    let powerups_pkg = load_package(&package_entry(&catalog, "POWERUPS", true)?)?;
     ui_hud.set_resources(
         vec![gdl_client::hud_texture_set("STATIC", &static_pkg.objects), gdl_client::hud_texture_set("TITLE", &title_pkg.objects), gdl_client::hud_texture_set("SELECT", &select_pkg.objects)],
         fonts,
@@ -4215,6 +4421,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         title_pkg,
         title_clock: 0.0,
         select_pkg,
+        powerups_pkg,
         menu_clock: (None, 0.0),
         base: Base { package_cfg, start, levels, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
@@ -4253,7 +4460,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_plugins(gdl_client::GsMaterialPlugin)
         .init_resource::<Ui>()
         .init_resource::<HudSets>()
-        .add_systems(Startup, setup_static)
+        .init_resource::<MenuIcon>()
+        .add_systems(Startup, (setup_static, setup_menu_icon).chain())
         .add_systems(FixedUpdate, simulate.run_if(playing))
         .add_systems(
             Update,
@@ -4263,6 +4471,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
+                present_menu_icon,
             )
                 .chain(),
         )

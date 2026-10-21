@@ -146,9 +146,18 @@ FONT32_GLOW layer (flag 0x4000, highlight colour, alpha pulse over
 OPTMENU_FADE 40 / hold 5) then the "on" colour in plain font32;
 unselected PARCH items are white. Background z OPTMENU_SCROLLZ − 1
 (63899). gdl_core::game::optmenu draws them; the client maps its pages to
-the records (menu::page_record) and keeps its own input logic. Not drawn:
-the ICON_ARROW selector (an animated powerup tree placed with
-MBScreenToWorld at depth 1.1). audio_options' sliders follow
+the records (menu::page_record) and keeps its own input logic. The
+ICON_ARROW selector (start_optmenu_nostack: MBNewNode parent, POWERUPS
+tree via AtreeMatch(powerup_anim), scale +0x3c 0.05; show_optmenu: screen
+point (item x — centred: −width/2 − x — + icon x +0x40 −16, the selected
+entry's drawn y +0x14 + FontHeight/2), MBScreenToWorld at optmenu_icon_z
+1.1 (window 640×448 over the 512×384 screen, pb +0x90 × viewport scale),
+CopyMat3 of the camera inverse, PitchMat3(π for odd selections + π·t /
+OPTMENU_ICON_TIME 15 while +0xd8 glides from +0xd4 to the new entry),
+AnimateATree) is drawn by gdl_play with an offscreen camera over the whole
+frame and composited above the menu blits. HYPOTHESES: the front-end
+window values (only in-game ones are captured; placement round-trips
+either way) and AnimateATree's rate (sequence 0 at its timing factor). audio_options' sliders follow
 position_audioslider (empty_bar 264×32, pink_bar 264·v/255, marker_left
 −52, marker_right +264−24, the knob at fill − 0x14; unselected alpha
 100/150/160); Mono/Stereo is drawn but not selectable natively.

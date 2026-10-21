@@ -4,8 +4,8 @@
 //! drawn in font32 (OPTMENU_FONT) over the SCROLL_A background with the
 //! LOGO_BURN emblem, FONT32_PARCH glyphs, the glowing selection, the
 //! FONT32GAR intro burn and the button row. Menu logic stays with the
-//! caller; the ICON_ARROW selector (a powerup animation tree drawn in 3D)
-//! is not drawn here.
+//! caller; the ICON_ARROW selector is a powerup animation tree drawn in 3D
+//! by the client at [`Hud::optmenu_icon_target`].
 use super::hud::{Arg, Blit, Hud};
 use gdl_formats::elf::Elf;
 
@@ -48,6 +48,8 @@ pub struct OptMenu {
     /// icon x offset.
     pub scale: f32,
     pub icon: Option<String>,
+    pub icon_scale: f32,
+    pub icon_x: i32,
     /// +0x44 background texture and rectangle +0x48..+0x54 (< 0: derived).
     pub back: Option<String>,
     pub back_rect: [i32; 4],
@@ -72,6 +74,10 @@ pub struct OptStyle {
     pub msg_scale: f32,
     pub player_scale: f32,
     pub hilite_scale: f32,
+    /// OPTMENU_ICON_TIME (vblanks of the icon's glide and half turn) and
+    /// optmenu_icon_z (MBScreenToWorld depth).
+    pub icon_time: i32,
+    pub icon_z: f32,
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -100,6 +106,8 @@ impl OptStyle {
             msg_scale: f32::from_bits(w("msg_scale")?),
             player_scale: f32::from_bits(w("optplyr_scale")?),
             hilite_scale: f32::from_bits(w("hilite_scale")?),
+            icon_time: w("OPTMENU_ICON_TIME")? as i32,
+            icon_z: f32::from_bits(w("optmenu_icon_z")?),
         })
     }
 }
@@ -147,6 +155,8 @@ impl OptMenu {
             rgb: [triple(0x28), triple(0x2c), triple(0x30)],
             scale: f32::from_bits(w(0x34)),
             icon: s(0x38),
+            icon_scale: f32::from_bits(w(0x3c)),
+            icon_x: i(0x40),
             back: s(0x44),
             back_rect: [i(0x48), i(0x4c), i(0x50), i(0x54)],
             burn: s(0x58),
@@ -195,6 +205,26 @@ impl Hud {
             out.push(b);
         }
         out
+    }
+
+    /// show_optmenu's icon point: x = the item x (centred menus: −width/2 −
+    /// x) + the icon x offset (+0x40), y = the selected entry's drawn y
+    /// (entry +0x14) + FontHeight / 2; None without an icon tree (+0x38).
+    pub fn optmenu_icon_target(&self, style: &OptStyle, menu: &OptMenu, state: &MenuState) -> Option<(i32, i32)> {
+        menu.icon.as_ref()?;
+        let fh = self.font_height(style.font, menu.scale);
+        let height = if menu.height < 1 { menu.entries.iter().map(|e| fh + e.gap).sum() } else { menu.height };
+        let width = if menu.width < 1 { menu.entries.iter().map(|e| self.string_width(style.font, menu.scale, e.label.as_bytes())).max().unwrap_or(0) } else { menu.width };
+        let mut y = match menu.y {
+            -1 => 0xc0 - height / 2,
+            y if y < 0 => -(height / 2) - y,
+            y => y,
+        };
+        for e in menu.entries.iter().take(state.selected) {
+            y += fh + e.gap;
+        }
+        let x = if menu.x < 0 { -(width / 2) - menu.x } else { menu.x };
+        Some((x + menu.icon_x, y + fh / 2))
     }
 
     /// show_optmenu for `menu` in `state` (entries may be relabelled by the
