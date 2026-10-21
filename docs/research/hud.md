@@ -165,6 +165,23 @@ menu or the title menu is up. do_titlescreen draws DrawGlowText(1.0,
 "Press Start") at y 0x140 until the title menu opens. Native: the
 attract-mode timeout and the flyby are not ported.
 
+## Player select
+
+init_player_select 0x1851b0 creates 11 sel_bg blits per column (sel_xpos
+0/128/256/384, sel_bg_pos {x, y, z}): S1_plyrN/S2_plyrN (z 9), S12_WEAP
+(z 8, height 0x140, set_selected_blit), S12_<CLASS>_<COL> (z 7,
+update_class_spec), selscrn_questmark, <CLASS>_NAME (8, 272) and the
+S1/S2 borders (z 3). setup_sel_menu copies sel_def_menu (scale 0.667,
+title-menu colours) with entries New/Load (sel_new_entries),
+Save/Change/Load/Quit/Done, Yes/No, or the file list (case 8: x + 8, y
+0x46, scale 0.6). do_sel_menu draws the hint rows (L/R "Change"; name entry
+"Enter Your Name" with U/D Change, L/R Edit, X Accept, △ Cancel).
+gdl_core::game::select draws a column for the client's Select / Class /
+Colour / Name pages. NATIVE (labelled): the memory-card states and texts,
+the four-player join/ready flow, serve_blits' effects, the class stats
+icons and the Tower scene behind the columns (the title is shown instead);
+the save list shows each save's name.
+
 ## Native presentation
 
 A HUD camera with a fixed 512×384 orthographic projection on its own render

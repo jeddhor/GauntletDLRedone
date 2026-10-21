@@ -177,6 +177,11 @@ pub struct HudTables {
     pub border_names: Vec<String>,
     pub text_colors: Vec<u32>,
     pub announcer_interval: Vec<i32>,
+    /// Player select: sel_xpos (column x), sel_bg_pos ({x, y, z} per slot),
+    /// player_color_uc.
+    pub sel_xpos: Vec<i32>,
+    pub sel_bg_pos: Vec<[i32; 3]>,
+    pub player_color_uc: Vec<String>,
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -227,6 +232,9 @@ impl HudTables {
             border_names: pointed("border_names")?,
             text_colors: words("text_colors")?,
             announcer_interval: ints("announcer_interval_tab")?,
+            sel_xpos: ints("sel_xpos")?,
+            sel_bg_pos: ints("sel_bg_pos")?.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect(),
+            player_color_uc: pointed("player_color_uc")?,
         })
     }
 }

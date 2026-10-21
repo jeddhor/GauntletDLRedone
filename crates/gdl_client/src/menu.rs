@@ -162,6 +162,18 @@ impl Menu {
         Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new() }
     }
 
+    /// The Select page's entries (for the original-style column menu).
+    pub fn select_entries(&self) -> Vec<String> {
+        // Short labels for the 128-wide column: a save's name, New, Import.
+        let mut v: Vec<String> = self.saves.iter().map(|e| e.label.split_whitespace().next().unwrap_or("?").to_string()).collect();
+        v.push("New".into());
+        if self.import.is_some() {
+            v.push("Import".into());
+        }
+        v.push("Back".into());
+        v
+    }
+
     fn select_items(&self) -> Vec<String> {
         let mut v: Vec<String> = self.saves.iter().map(|e| e.label.clone()).collect();
         v.push("Create a new character".into());

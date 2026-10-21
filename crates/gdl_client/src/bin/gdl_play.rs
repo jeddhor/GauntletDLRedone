@@ -290,6 +290,8 @@ struct Front {
     /// TITLE (title blits, GLOWCROP) and the title screen's vblank count.
     title_pkg: Package,
     title_clock: f32,
+    /// SELECT (player-select columns, class art).
+    select_pkg: Package,
     menu_clock: (Option<(&'static str, usize)>, f32),
     base: Base,
 }
@@ -2428,6 +2430,24 @@ fn load_fonts(catalog: &gdl_client::catalog::Catalog, names: Vec<String>) -> Vec
         .collect()
 }
 
+/// The player-select columns for the front end's character pages (player
+/// 1's column follows the page; the others are empty frames).
+fn select_columns(front: &Front, screen: Screen) -> Option<[gdl_core::game::select::Column; 4]> {
+    use gdl_client::menu::Page;
+    use gdl_core::game::select::Column;
+    if screen != Screen::Front {
+        return None;
+    }
+    let first = match &front.menu.page {
+        Page::Select { at } => Column::Menu { title: Vec::new(), entries: front.menu.select_entries(), selected: *at },
+        Page::Class { at } => Column::Class { class: *at, colour: 0 },
+        Page::Colour { class, at } => Column::Class { class: *class as usize, colour: *at },
+        Page::Name { class, colour, name } => Column::Name { class: *class as usize, colour: *colour as usize, name: name.clone() },
+        _ => return None,
+    };
+    Some([first, Column::Empty, Column::Empty, Column::Empty])
+}
+
 /// The page drawn with an original menu record (front end or pause).
 fn menu_view(front: &Front, screen: Screen, ui: &Ui) -> Option<(&'static str, usize)> {
     if !(screen == Screen::Front || ui.paused) {
@@ -2475,6 +2495,9 @@ fn present_hud(
         let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0), sliders };
         front_list.extend(front.ui_hud.optmenu_blits(style, &front.menus[key], &state));
     }
+    if let (Some(cols), Some(style), Some(def)) = (select_columns(&front, *screen), front.opt_style.as_ref(), front.menus.get("sel_def_menu")) {
+        front_list.extend(front.ui_hud.select_blits(style, def, &cols, front.menu_clock.1 as i32));
+    }
     if *screen == Screen::Front {
         front.title_clock += time.delta_secs() * 59.94;
         let page = &front.menu.page;
@@ -2504,7 +2527,7 @@ fn present_hud(
             if !sets.images.contains_key(&key) {
                 let key_name = sets.keys.get(t.set as usize).cloned().unwrap_or_else(|| "STATIC".into());
             let pkg = if 100 <= t.set {
-                [&front.static_pkg, &front.title_pkg].get(t.set as usize - 100).copied()
+                [&front.static_pkg, &front.title_pkg, &front.select_pkg].get(t.set as usize - 100).copied()
             } else if key_name == "STATIC" {
                 Some(&front.static_pkg)
             } else if key_name.is_empty() {
@@ -3059,7 +3082,7 @@ fn front_text(
     mut text: Query<(&mut Text2d, &mut Transform), With<FrontText>>,
     mut backdrop: Query<(&mut Visibility, Has<FrontPanel>), With<FrontBackdrop>>,
 ) {
-    let original = menu_view(&front, *screen, &ui).is_some();
+    let original = menu_view(&front, *screen, &ui).is_some() || select_columns(&front, *screen).is_some();
     for (mut v, panel) in &mut backdrop {
         let want = if *screen == Screen::Front && !(panel && original) { Visibility::Inherited } else { Visibility::Hidden };
         if *v != want {
@@ -3069,7 +3092,7 @@ fn front_text(
     let Ok((mut t, mut tf)) = text.single_mut() else { return };
     // On the title the menu sits in the lower part, below the logo.
     tf.translation.y = if *screen == Screen::Front { -300.0 } else { 0.0 };
-    let show = (*screen == Screen::Front || ui.paused) && menu_view(&front, *screen, &ui).is_none();
+    let show = (*screen == Screen::Front || ui.paused) && menu_view(&front, *screen, &ui).is_none() && select_columns(&front, *screen).is_none();
     let want = if show { front.menu.text() } else { String::new() };
     if t.0 != want {
         t.0 = want;
@@ -3190,10 +3213,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut ui_hud = gdl_core::game::hud::HudTables::from_elf(&elf).map(gdl_core::game::hud::Hud::new).unwrap_or_default();
     let fonts = load_fonts(&catalog, ui_hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default());
     let title_pkg = load_package(&package_entry(&catalog, "TITLE", true)?)?;
-    ui_hud.set_resources(vec![gdl_client::hud_texture_set("STATIC", &static_pkg.objects), gdl_client::hud_texture_set("TITLE", &title_pkg.objects)], fonts);
+    let select_pkg = load_package(&package_entry(&catalog, "SELECT", true)?)?;
+    ui_hud.set_resources(
+        vec![gdl_client::hud_texture_set("STATIC", &static_pkg.objects), gdl_client::hud_texture_set("TITLE", &title_pkg.objects), gdl_client::hud_texture_set("SELECT", &select_pkg.objects)],
+        fonts,
+    );
     let opt_style = gdl_core::game::optmenu::OptStyle::from_elf(&elf).ok();
     let mut menus = HashMap::new();
-    for n in ["title_menu", "title_options", "tower_menu", "game_menu", "tower_options", "game_options", "audio_options", "quitgame_question", "quitlevel_question", "hint_menu", "hint_general_menu"] {
+    for n in ["title_menu", "title_options", "tower_menu", "game_menu", "tower_options", "game_options", "audio_options", "quitgame_question", "quitlevel_question", "hint_menu", "hint_general_menu", "sel_def_menu"] {
         if let Some(m) = elf.symbol(n).and_then(|sym| gdl_core::game::optmenu::OptMenu::from_elf(&elf, sym.address).ok()) {
             menus.insert(n, m);
         }
@@ -3219,6 +3246,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         static_pkg,
         title_pkg,
         title_clock: 0.0,
+        select_pkg,
         menu_clock: (None, 0.0),
         base: Base { package_cfg, start, levels, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };
