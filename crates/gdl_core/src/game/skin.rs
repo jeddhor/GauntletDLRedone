@@ -167,15 +167,92 @@ impl Game {
     }
 }
 
-/// Per-tree skin views of the enemies (25 slots) and players.
+/// Per-tree skin views of the enemies (25 slots), players and critters
+/// (the tree and each collision part's white flash).
 #[derive(Clone, Debug)]
 pub struct SkinViews {
     pub enemies: Vec<SkinView>,
     pub players: [SkinView; 4],
+    pub critters: std::collections::HashMap<usize, CritterSkin>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CritterSkin {
+    pub tree: SkinView,
+    pub parts: Vec<bool>,
 }
 
 impl Default for SkinViews {
     fn default() -> Self {
-        Self { enemies: vec![SkinView::default(); 25], players: [SkinView::default(); 4] }
+        Self { enemies: vec![SkinView::default(); 25], players: [SkinView::default(); 4], critters: Default::default() }
+    }
+}
+
+impl Game {
+    /// CritterUpdateSkinfx 0x192f18 (ProcessCritter, root and children):
+    /// ProcessSkinFX(+0xec); per collision part the +0x540 + 0x60k + 0x54
+    /// flash counter (white + ambient 0xff while > 0, then −1); +0xb44 the
+    /// whole tree's flash counter; +0xb4c the quest-item texture time
+    /// (−vb per call, blinking below 0xb4 on bit 8; the texture +0xb48 is a
+    /// handle, unresolved here); +0xb46 the ambient add (−0x10 per call).
+    pub(crate) fn critter_update_skinfx(&mut self, i: usize) -> R<()> {
+        let vb = self.globals.vb_elapsed;
+        let n = self.critter_type_i16(i, 0x118).max(0) as usize;
+        let mut v = self.skin_views.critters.remove(&i).unwrap_or_default();
+        v.parts.resize(n, false);
+        let white = SkinView { mode: -4, tex: SkinTex::White as i32, frame: 0, ambient: 0xff };
+        let r = &mut self.crit_mut(i).rec;
+        let mut t = v.tree;
+        process_skin_fx(r, 0xec, vb, &mut t)?;
+        for k in 0..n {
+            let o = 0x540 + 0x60 * k + 0x54;
+            let c = r.i32_(o);
+            if c < 1 {
+                if c == 0 {
+                    v.parts[k] = false;
+                    r.set_i32(o, -1);
+                }
+            } else {
+                v.parts[k] = true;
+                r.set_i32(o, c - 1);
+            }
+        }
+        let f = r.i16_(0xb44);
+        if f < 1 {
+            if f == 0 {
+                t = SkinView::default();
+                r.set_i16(0xb44, -1);
+            }
+        } else {
+            t = white;
+            r.set_i16(0xb44, f - 1);
+        }
+        if 0 < r.i16_(0xb4c) {
+            let left = (r.u16_(0xb4c).wrapping_sub(vb as u16)) as i16;
+            r.set_i16(0xb4c, left);
+            if left < 1 {
+                t.mode = -1;
+                r.set_i16(0xb4c, 0);
+            } else if left < 0xb4 && left & 8 != 0 {
+                t.mode = -1;
+            } else {
+                t.mode = -4;
+                t.tex = 0;
+            }
+        }
+        let a = r.i16_(0xb46);
+        if 0 < a {
+            let na = (a as u16).wrapping_sub(0x10) as i16;
+            r.set_i16(0xb46, na);
+            t.ambient = if na < 0 {
+                r.set_i16(0xb46, 0);
+                0
+            } else {
+                i32::from(a)
+            };
+        }
+        v.tree = t;
+        self.skin_views.critters.insert(i, v);
+        Ok(())
     }
 }

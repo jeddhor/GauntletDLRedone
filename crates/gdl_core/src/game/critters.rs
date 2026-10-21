@@ -624,6 +624,7 @@ impl Game {
             colnode_nodes: vec![(None, None); ncol],
         };
         self.critters[i] = Some(crit);
+        self.skin_views.critters.remove(&i);
         Ok(())
     }
 

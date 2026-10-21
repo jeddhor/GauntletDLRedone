@@ -744,6 +744,7 @@ fn present_skins(
     bodies: Query<(&CharacterRoot, &Children)>,
     children: Query<&Children>,
     mut req: ResMut<MatRequests>,
+    (critter_slots, critter_parts): (Query<(&CritterSlot, &Children)>, Query<(&CritterPart, &Children)>),
 ) {
     let g = &sim.game;
     let monsters = &session.levels[session.current].monsters;
@@ -774,6 +775,36 @@ fn present_skins(
     for (root, kids) in &bodies {
         if let Some(v) = g.skin_views.players.get(root.0) {
             apply(kids, v, &mut req);
+        }
+    }
+    // Critters: a node belongs to the child instance whose animation root is
+    // its ancestor, else to the root; a flashing collision part whitens its
+    // reference node's subtree.
+    let white = gdl_core::game::skin::SkinView { mode: -4, tex: gdl_core::game::skin::SkinTex::White as i32, frame: 0, ambient: 0xff };
+    for (slot, kids) in &critter_slots {
+        let Some(Some(cr)) = g.critters.get(slot.index) else { continue };
+        if cr.parent.is_some() {
+            continue;
+        }
+        let under = |mut n: i32, a: usize| -> bool {
+            let mut guard = 0;
+            while 0 <= n && guard < 512 {
+                if n as usize == a {
+                    return true;
+                }
+                n = cr.parents.get(n as usize).copied().unwrap_or(-1);
+                guard += 1;
+            }
+            false
+        };
+        let children: Vec<usize> = g.critters.iter().enumerate().filter(|(_, c)| c.as_ref().is_some_and(|c| c.parent == Some(slot.index))).map(|(k, _)| k).collect();
+        for holder in kids.iter() {
+            let Ok((part, meshes)) = critter_parts.get(holder) else { continue };
+            let owner = children.iter().copied().find(|&k| g.critters[k].as_ref().is_some_and(|c| c.anim_root != 0 && under(part.node as i32, c.anim_root))).unwrap_or(slot.index);
+            let Some(v) = g.skin_views.critters.get(&owner) else { continue };
+            let Some(Some(oc)) = g.critters.get(owner) else { continue };
+            let flash = v.parts.iter().enumerate().any(|(k, &on)| on && oc.colnode_nodes.get(k).and_then(|c| c.1).is_some_and(|r| under(part.node as i32, r)));
+            apply(meshes, if flash { &white } else { &v.tree }, &mut req);
         }
     }
 }

@@ -147,7 +147,12 @@ impl Game {
                 self.critter_floor(i)?;
             }
         }
-        // DoTexMods / skin FX / MBTree flags: presentation.
+        // CritterUpdateSkinfx for the root and its children (DoTexMods and
+        // the MBTree flags are presentation).
+        self.critter_update_skinfx(i)?;
+        for &k in &self.critter_children(i) {
+            self.critter_update_skinfx(k)?;
+        }
         self.critter_attention_pub(i)?;
         Ok(true)
     }

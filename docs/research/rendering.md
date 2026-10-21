@@ -249,8 +249,13 @@ they keep their vertex colours. The VU1 microcode was not read.
   last 3 s; PlayerProcessSkinFX's special flash (+0x7d4 × 255, × 0.9 per
   frame). The record's texture word holds a SkinTex code (pointer-class
   word). gdl_play replaces every part texture (−3 chrome drawn as a plain
-  replacement: HYPOTHESIS) and adds the ambient. Not ported:
-  CritterUpdateSkinfx (critter white flashes +0xb44/+0xb46/+0xb4c).
+  replacement: HYPOTHESIS) and adds the ambient. CritterUpdateSkinfx
+  0x192f18 (ProcessCritter, root and children): ProcessSkinFX(+0xec), the
+  collision parts' flash counters (+0x540 + 0x60k + 0x54), the tree flash
+  +0xb44, the quest-item texture time +0xb4c (−vb per call; it also gates
+  CritterAnimate, so the boss 0x22 freeze now ends after 1200 vblanks) and
+  the ambient add +0xb46 (−0x10 per call). The +0xb48 texture handle is
+  not resolved.
 - Point lights: SfxSetLight 0x17f8b8 (radius at slot +0x10, colour
   +0..+8; DeleteEffect clears the radius) from the player DAMG effects
   (2 × +0xc or +8, plight_color[class]), barrel explosions (2 × blast,
