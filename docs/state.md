@@ -63,7 +63,7 @@ original (PCSX2 reference on Xvfb :191, private captures):
    realm map between levels (init_mapscreen / do_mapscreen).
    Remaining: init_player_select(2),
    select-screen memory-card/join flow and the Tower scene
-   behind it, compass/controls/screen/game
+   behind it, control style/screen adjust
    options effects, credits, movies,
    the ICON_ARROW menu selector, shop stats panels.
 6. Audio completeness; secret characters; Sumner as a character;

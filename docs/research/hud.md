@@ -241,6 +241,24 @@ that start. DoOptions opens a menu only from PlayerControl's Start edge
 (so not while controls are disabled), after WelcomeFlag < 0 and outside
 the stage start; gdl_play's pause key follows the same gates.
 
+## Option submenus and their effects
+
+DoOptions 0x10d4e0 cases 0xa..0x11: the choice menus mark the current
+value (entry +0x1c = 1 → " ~", the font's check mark, after the label)
+and store the accepted entry: compass_options (Hide 0x20 / Show 0x1f) →
+GamePrefs +0x18; gameoption_options → difficulty_options (+0x14, the
+diff_mul_tab index ResolveWorldData uses) and multiplayer_options (+0x1c,
+pvp_mode); controls_options → control_rumble_options (PlayerControl
++0x30), control_autoaim_options (+0x34) and control_autoattack_options
+(+0x38; On = entry 0 → 1), saved with the character. gdl_play keeps
+GamePrefs in options.json and applies difficulty/multiplayer at the next
+level start. UpdateCompass: POWERUPS' COMPASS object (StartCompass under
+the world root, world-aligned) at MBWindowTo3D(CompassZ 10, CompassPos
+(64, 128)), scale 1.5, alpha 128, hidden in menus or with the option off
+(HYPOTHESIS: the window point over the 640 × 384 viewport). Not ported:
+Control Style (do_controlsmenu), Screen Adjust (pbScreenSetAdjust),
+vibration output.
+
 ## Boss health meters
 
 CritterNewInst calls CritterAddHealthMeter for the root and each child:

@@ -49,6 +49,8 @@ pub enum Action {
     Buy { idx: usize },
     /// Tower menu → Inventory: the host fills `inventory` and opens the page.
     OpenInventory,
+    /// A choice menu's entry `idx` accepted (DoOptions cases 0xa..0x11).
+    Choose { key: &'static str, idx: usize },
 }
 
 /// A save shown in the list.
@@ -78,6 +80,26 @@ pub enum Page {
     /// hints one at a time.
     Hints { at: usize },
     HintText { list: usize, at: usize },
+    /// A list of further option menus (gameoption_options,
+    /// controls_options) or a choice menu (compass_options,
+    /// difficulty_options, multiplayer_options, control_rumble_options,
+    /// control_autoaim_options, control_autoattack_options).
+    Submenu { key: &'static str, at: usize, back: Box<Page> },
+    Choice { key: &'static str, at: usize, back: Box<Page> },
+}
+
+/// The entries of the submenus and choice menus (ELF records).
+fn submenu_entries(key: &str) -> &'static [&'static str] {
+    match key {
+        "gameoption_options" => &["Difficulty", "Multiplayer Mode"],
+        "controls_options" => &["Style ", "Vibration ", "Auto Aim ", "Auto Attack "],
+        "compass_options" => &["Hide", "Show"],
+        "difficulty_options" => &["Easy", "Medium", "Hard"],
+        "multiplayer_options" => &["Normal", "Shots Stun Other Players", "Shots Hurt Other Players"],
+        "control_rumble_options" => &["None", "Light", "Medium ", "Maximum "],
+        "control_autoaim_options" | "control_autoattack_options" => &["On", "Off"],
+        _ => &[],
+    }
 }
 
 pub const CLASS_NAMES: [&str; 8] = ["WARRIOR", "VALKYRIE", "WIZARD", "ARCHER", "DWARF", "KNIGHT", "SORCERESS", "JESTER"];
@@ -115,12 +137,31 @@ pub fn page_record(page: &Page) -> Option<(&'static str, usize)> {
         Page::Hints { at } => ("hint_menu", *at),
         Page::Audio { at, .. } => ("audio_options", *at),
         Page::HintText { .. } => ("hint_general_menu", 0),
+        Page::Submenu { key, at, .. } | Page::Choice { key, at, .. } => (*key, *at),
         _ => return None,
     })
 }
 const TOWER_MENU: [&str; 5] = ["Settings", "Manage Character", "Shop", "Inventory", "Quit Game"];
 const GAME_MENU: [&str; 2] = ["Settings", "Quit Level"];
 const HINT_MENU: [&str; 4] = ["General Hints", "Guardians", "Items of Legend", "Runestones"];
+
+impl Menu {
+    /// The entry a choice menu marks and starts on (start_optmenu's +0x74):
+    /// the GamePrefs word or control option; auto aim/attack mark "Off"
+    /// (1) for 0.
+    pub fn choice_value(&self, key: &str) -> usize {
+        let v = match key {
+            "compass_options" => self.prefs[6] as i64,
+            "difficulty_options" => self.prefs[5] as i64,
+            "multiplayer_options" => self.prefs[7] as i64,
+            "control_rumble_options" => i64::from(self.controls[1]),
+            "control_autoaim_options" => i64::from(self.controls[3] == 0),
+            "control_autoattack_options" => i64::from(self.controls[2] == 0),
+            _ => 0,
+        };
+        usize::try_from(v).unwrap_or(0).min(submenu_entries(key).len().saturating_sub(1))
+    }
+}
 
 pub struct Menu {
     pub page: Page,
@@ -138,6 +179,11 @@ pub struct Menu {
     pub inventory: String,
     /// Hint categories (hint_menu order) with their hint texts.
     pub hints: Vec<Vec<String>>,
+    /// GamePrefs words (0 sfx, 1 music, … 5 difficulty +0x14, 6 compass
+    /// +0x18, 7 multiplayer +0x1c) and player 1's control options
+    /// (style +0x2c, vibration +0x30, auto attack +0x38, auto aim +0x34).
+    pub prefs: [i32; 8],
+    pub controls: [u32; 4],
 }
 
 fn wrap(at: usize, n: usize, up: bool) -> usize {
@@ -160,7 +206,7 @@ fn list(title: &str, items: &[String], at: usize) -> String {
 
 impl Menu {
     pub fn new(music: u8, sfx: u8) -> Self {
-        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new() }
+        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new(), prefs: [0; 8], controls: [0; 4] }
     }
 
     /// The Select page's entries (for the original-style column menu).
@@ -191,7 +237,7 @@ impl Menu {
     }
 
     pub fn is_paused(&self) -> bool {
-        matches!(self.page, Page::Paused { .. } | Page::Manage { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory | Page::Hints { .. } | Page::HintText { .. })
+        matches!(self.page, Page::Paused { .. } | Page::Manage { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory | Page::Hints { .. } | Page::HintText { .. } | Page::Submenu { .. } | Page::Choice { .. })
     }
 
     pub fn input(&mut self, key: Key) -> Option<Action> {
@@ -228,11 +274,64 @@ impl Menu {
                 match key {
                     Key::Up | Key::Down => self.page = Page::Options { at: wrap(at, n, key == Key::Up), back },
                     Key::Accept if names[at] == "Audio" => self.page = Page::Audio { at: 0, back: Box::new(Page::Options { at, back }) },
+                    // DoOptions 0x14: compass_options, selection = GamePrefs
+                    // +0x18; 0x10 / 0x15: the Game Options and Controls lists.
+                    Key::Accept if names[at] == "Compass" => {
+                        let cur = self.choice_value("compass_options");
+                        self.page = Page::Choice { key: "compass_options", at: cur, back: Box::new(Page::Options { at, back }) };
+                    }
+                    Key::Accept if names[at] == "Game Options" => self.page = Page::Submenu { key: "gameoption_options", at: 0, back: Box::new(Page::Options { at, back }) },
+                    Key::Accept if names[at] == "Controls" => self.page = Page::Submenu { key: "controls_options", at: 0, back: Box::new(Page::Options { at, back }) },
                     Key::Accept => self.page = Page::NotPorted { what: names[at].to_string(), back: Box::new(Page::Options { at, back }) },
                     Key::Back => self.page = *back,
                     _ => {}
                 }
                 None
+            }
+            Page::Submenu { key: k, at, back } => {
+                let names = submenu_entries(k);
+                match key {
+                    Key::Up | Key::Down => self.page = Page::Submenu { key: k, at: wrap(at, names.len(), key == Key::Up), back },
+                    Key::Back => self.page = *back,
+                    Key::Accept => {
+                        let choice = match (k, at) {
+                            ("gameoption_options", 0) => Some("difficulty_options"),
+                            ("gameoption_options", 1) => Some("multiplayer_options"),
+                            ("controls_options", 1) => Some("control_rumble_options"),
+                            ("controls_options", 2) => Some("control_autoaim_options"),
+                            ("controls_options", 3) => Some("control_autoattack_options"),
+                            _ => None,
+                        };
+                        let here = Page::Submenu { key: k, at, back };
+                        self.page = match choice {
+                            Some(c) => Page::Choice { key: c, at: self.choice_value(c), back: Box::new(here) },
+                            None => Page::NotPorted { what: names[at].trim().to_string(), back: Box::new(here) },
+                        };
+                    }
+                    _ => {}
+                }
+                None
+            }
+            Page::Choice { key: k, at, back } => {
+                let n = submenu_entries(k).len();
+                match key {
+                    Key::Up | Key::Down => {
+                        self.page = Page::Choice { key: k, at: wrap(at, n, key == Key::Up), back };
+                        None
+                    }
+                    Key::Back => {
+                        self.page = *back;
+                        None
+                    }
+                    Key::Accept => {
+                        self.page = *back;
+                        Some(Action::Choose { key: k, idx: at })
+                    }
+                    _ => {
+                        self.page = Page::Choice { key: k, at, back };
+                        None
+                    }
+                }
             }
             Page::Audio { at, back } => match key {
                 Key::Up | Key::Down => {
@@ -407,6 +506,7 @@ impl Menu {
             }
             Page::Audio { at, .. } => list("AUDIO\n(left/right to change)", &[format!("Music  {:>3}", self.music), format!("Sound  {:>3}", self.sfx)], *at),
             Page::NotPorted { what, .. } => format!("{what}\n\nnot ported yet\n\n(Enter / Esc to go back)"),
+            Page::Submenu { key, at, .. } | Page::Choice { key, at, .. } => list(key, &s(submenu_entries(key)), *at),
             Page::Select { at } => list("SELECT A CHARACTER", &self.select_items(), *at),
             Page::Class { at } => list("TO BUILD A CHARACTER", &s(&CLASS_NAMES), *at),
             Page::Colour { class, at } => list(&format!("{}\nchoose a colour", CLASS_NAMES[*class as usize]), &s(&COLOUR_NAMES), *at),

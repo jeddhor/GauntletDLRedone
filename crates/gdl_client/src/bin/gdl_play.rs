@@ -227,6 +227,9 @@ struct Session {
     /// TowerStartPos (TowerSetStartPos before the Tower menu's shop): the
     /// start locator of the next Tower entry, else the realm's wing.
     tower_start: Option<i16>,
+    /// GamePrefs words (difficulty +0x14 → ResolveWorldData's
+    /// diff_mul_tab index; multiplayer +0x1c → pvp_mode).
+    prefs: [i32; 8],
     current: usize,
     world: World,
     level: Package,
@@ -616,6 +619,60 @@ fn present_camera_face(sim: Res<Sim>, mut nodes: Query<(&CameraFace, &mut Transf
         let m = camera_face_rotation(face.mode, face.anchor, eye, rows);
         tf.translation = face.anchor + m * face.offset;
         tf.rotation = Quat::from_mat3(&m);
+    }
+}
+
+/// The compass (StartCompass: POWERUPS' COMPASS object under the world
+/// root; UpdateCompass: shown with GamePrefs +0x18 outside menus, at
+/// MBWindowTo3D(CompassZ 10, CompassPos (64, 128)), scale CompassScale 1.5,
+/// MBTreeSetAlpha(CompassAlpha 128)); its rotation stays world-aligned.
+/// HYPOTHESIS: the window point maps over the 640 × 384 viewport.
+#[derive(Component)]
+struct CompassObj;
+
+#[allow(clippy::too_many_arguments)]
+fn present_compass(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    session: Res<Session>,
+    ui: Res<Ui>,
+    presentation: Res<Presentation>,
+    libs: Res<Libraries>,
+    root: Query<Entity, With<MirrorRoot>>,
+    mut compass: Query<(Entity, &mut Transform, &mut Visibility, Option<&Children>), With<CompassObj>>,
+    mut req: ResMut<MatRequests>,
+) {
+    let show = session.prefs[6] != 0 && !ui.paused && sim.shop.is_none() && sim.map.is_none();
+    let Some(cam) = sim.game.std_camera.as_ref() else { return };
+    let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+    let rows = cam.pb.cam_rows.map(Vec3::from_array);
+    let tan_v = (presentation.fov * 0.5).tan() * 384.0 / 640.0;
+    let tan_h = tan_v * 640.0 / 384.0;
+    let (nx, ny) = (64.0 / 320.0 - 1.0, 1.0 - 128.0 / 192.0);
+    let z = 10.0;
+    let at = eye + rows[2] * z + rows[0] * (nx * z * tan_h) + rows[1] * (ny * z * tan_v);
+    match compass.single_mut() {
+        Ok((_, mut tf, mut vis, kids)) => {
+            *tf = Transform::from_translation(at).with_scale(Vec3::splat(1.5));
+            let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+            if *vis != want {
+                *vis = want;
+            }
+            if let Some(kids) = kids {
+                for k in kids.iter() {
+                    req.alpha(k, (255.0 - 128.0) / 255.0);
+                }
+            }
+        }
+        Err(_) => {
+            let (Ok(r), Some(parts)) = (root.single(), libs.0.get("POWERUPS").and_then(|l| l.by_label.get("COMPASS"))) else { return };
+            let e = commands.spawn((CompassObj, Transform::from_translation(at), Visibility::Hidden, LevelEntity)).id();
+            commands.entity(r).add_child(e);
+            for (mesh, material) in parts {
+                let c = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+                commands.entity(e).add_child(c);
+            }
+        }
     }
 }
 
@@ -2046,6 +2103,9 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box
     start["globals"]["last_world_played"] = Value::from(lwp);
     start["globals"]["last_level_played"] = Value::from(llp);
     start["globals"]["cur_level"] = Value::from(lv.index as i64);
+    // GamePrefs: the difficulty word 0x21edcc and multiplayer mode 0x21edd4.
+    start["extra"]["target_cone_mode"] = Value::from(session.prefs[5]);
+    start["globals"]["pvp_mode"] = Value::from(session.prefs[7]);
     let start: setup::StartState = serde_json::from_value(start)?;
     let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
     for (t, prefix, path) in session.monster_paths.iter().filter(|m| lv.monsters.contains(&m.1)) {
@@ -3145,6 +3205,13 @@ fn present_hud(
         let sliders = if key == "audio_options" { vec![(0, front.menu.music), (1, front.menu.sfx)] } else { Vec::new() };
         let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0), sliders };
         let mut menu = front.menus[key].clone();
+        // start_optmenu's marks: the current choice (DoOptions 0xa..0x11).
+        if let gdl_client::menu::Page::Choice { key: k, .. } = &front.menu.page {
+            let cur = front.menu.choice_value(k);
+            for (i, e) in menu.entries.iter_mut().enumerate() {
+                e.mark = i32::from(i == cur);
+            }
+        }
         if let gdl_client::menu::Page::HintText { list, at } = &front.menu.page {
             // DoOptions case 0x16: "A Hint for You" (general); the other
             // categories' titles (guardian/legend/rune names from
@@ -3394,6 +3461,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             title: first.title.clone(),
             last_world: 0,
             tower_start: None,
+            prefs: front.menu.prefs,
             current: idx,
             action_map: front.tables.action_map(&clips),
             clip_timings: setup::clips_of(&clips, 0),
@@ -3687,6 +3755,45 @@ fn act(world: &mut EcsWorld, action: Action) {
             Action::Exit => {
                 world.write_message(AppExit::Success);
             }
+            Action::Choose { key, idx } => {
+                // DoOptions' choice menus: GamePrefs +0x14 difficulty, +0x18
+                // compass, +0x1c multiplayer (saved with the options); the
+                // player's PlayerControl +0x30 vibration, +0x34 auto aim and
+                // +0x38 auto attack (On = entry 0 → 1), saved with the
+                // character (+0x190c..). AudioPlayerStart is a cue.
+                let pref = match key {
+                    "difficulty_options" => Some(5),
+                    "compass_options" => Some(6),
+                    "multiplayer_options" => Some(7),
+                    _ => None,
+                };
+                if let Some(w) = pref {
+                    let mut front = world.resource_mut::<Front>();
+                    front.menu.prefs[w] = idx as i32;
+                    front.game_opts[4 * w..4 * w + 4].copy_from_slice(&(idx as i32).to_le_bytes());
+                    let opts = front.game_opts.clone();
+                    front.store.store_options(&opts)?;
+                    let prefs = front.menu.prefs;
+                    if let Some(mut session) = world.get_resource_mut::<Session>() {
+                        session.prefs = prefs;
+                    }
+                }
+                let ctl = match key {
+                    "control_rumble_options" => Some((1, 0x30, idx as u32)),
+                    "control_autoattack_options" => Some((2, 0x38, u32::from(idx == 0))),
+                    "control_autoaim_options" => Some((3, 0x34, u32::from(idx == 0))),
+                    _ => None,
+                };
+                if let Some((i, off, v)) = ctl {
+                    world.resource_mut::<Front>().menu.controls[i] = v;
+                    if let Some(mut session) = world.get_resource_mut::<Session>() {
+                        session.controls[i] = v;
+                    }
+                    if let Some(mut sim) = world.get_resource_mut::<Sim>() {
+                        sim.game.controls.control[0].set_u32(off, v);
+                    }
+                }
+            }
             Action::Volumes { music, sfx } => {
                 if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
                     a.set_volumes(music, sfx);
@@ -3743,7 +3850,9 @@ fn front_system(world: &mut EcsWorld) {
         if !paused {
             if toggle && !blocked {
                 let tower = world.resource::<Session>().world_number == 0xd;
+                let controls = world.resource::<Session>().controls;
                 let mut front = world.resource_mut::<Front>();
+                front.menu.controls = controls;
                 front.menu.status.clear();
                 front.menu.pause(tower);
                 world.resource_mut::<Ui>().paused = true;
@@ -3921,13 +4030,40 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
     let opt_style = gdl_core::game::optmenu::OptStyle::from_elf(&elf).ok();
     let mut menus = HashMap::new();
-    for n in ["title_menu", "title_options", "tower_menu", "game_menu", "tower_options", "game_options", "audio_options", "quitgame_question", "quitlevel_question", "hint_menu", "hint_general_menu", "sel_def_menu"] {
+    for n in [
+        "title_menu",
+        "title_options",
+        "tower_menu",
+        "game_menu",
+        "tower_options",
+        "game_options",
+        "audio_options",
+        "quitgame_question",
+        "quitlevel_question",
+        "hint_menu",
+        "hint_general_menu",
+        "sel_def_menu",
+        "gameoption_options",
+        "controls_options",
+        "compass_options",
+        "difficulty_options",
+        "multiplayer_options",
+        "control_rumble_options",
+        "control_autoaim_options",
+        "control_autoattack_options",
+    ] {
         if let Some(m) = elf.symbol(n).and_then(|sym| gdl_core::game::optmenu::OptMenu::from_elf(&elf, sym.address).ok()) {
             menus.insert(n, m);
         }
     }
     let mut front = Front {
-        menu: Menu::new(music_v, sfx_v),
+        menu: {
+            let mut m = Menu::new(music_v, sfx_v);
+            for (k, p) in m.prefs.iter_mut().enumerate() {
+                *p = game_opts.get(4 * k..4 * k + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
+            }
+            m
+        },
         store,
         catalog,
         elf_bytes,
@@ -3993,7 +4129,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, present_skins, apply_material_requests).chain(), present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, present_skins, present_compass, apply_material_requests).chain(), present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
                 present_hud,
             )

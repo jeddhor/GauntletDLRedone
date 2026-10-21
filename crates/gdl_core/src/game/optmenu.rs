@@ -308,6 +308,14 @@ impl Hud {
                 };
                 push(self, &mut out, menu.scale, x, y, colour, alpha, 0, gar.or(parch_items), &e.label);
             }
+            if e.mark == 1 {
+                // show_optmenu: a marked entry (+0x1c = pass + 1) gets " ~"
+                // (the font's check mark) after its label.
+                let lx = if x < 0 { -x - self.string_width(font, menu.scale, e.label.as_bytes()) / 2 } else { x };
+                let mx = lx + self.string_width(font, menu.scale, e.label.as_bytes());
+                let c = if selected { rgb(menu.rgb[1]) } else if parch_items.is_none() || gar.is_some() { rgb(menu.rgb[0]) } else { 0xffffff };
+                push(self, &mut out, menu.scale, mx, y, c, alpha, 0, gar.or(parch_items), " ~");
+            }
             if let Some(v) = &e.value {
                 // The value column after " ~ ".
                 let lx = if x < 0 { -x - self.string_width(font, menu.scale, e.label.as_bytes()) / 2 } else { x };
