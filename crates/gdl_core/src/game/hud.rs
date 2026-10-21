@@ -1016,6 +1016,19 @@ impl Hud {
         }
     }
 
+    /// ResetModels' part for the HUD: every node blit, the help box and the
+    /// pickup notices go (the caller rebuilds the panels).
+    pub fn reset_models(&mut self) {
+        self.help = HelpState::default();
+        self.got_it.clear();
+        self.blits.clear();
+    }
+
+    /// Blits drawn this frame only (appended to the temp list).
+    pub fn push_temp(&mut self, blits: impl IntoIterator<Item = Blit>) {
+        self.temp.extend(blits);
+    }
+
     /// MBResetBlits at the frame boundary: temp blits and messages go.
     pub fn begin_frame(&mut self) {
         self.temp.clear();

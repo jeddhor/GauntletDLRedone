@@ -32,6 +32,7 @@ pub mod progress;
 pub mod psfx;
 pub mod record;
 pub mod setup;
+pub mod shopflow;
 pub mod skin;
 pub mod tower;
 pub mod world_anim;

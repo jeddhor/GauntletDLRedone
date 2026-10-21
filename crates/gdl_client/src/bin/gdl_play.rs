@@ -1100,6 +1100,10 @@ struct Sim {
     scroll_clock: f32,
     /// Sumner's hint pad asked for hint_menu.
     hint_menu: bool,
+    /// game mode 0x4012 between a realm and the Tower (init_shop/do_shop),
+    /// the Tower level it leads to, and do_shop's result once finished.
+    shop: Option<(gdl_core::game::shopflow::ShopFlow, usize)>,
+    shop_done: Option<usize>,
 }
 
 /// One port's joyGetStatus entries this update. HYPOTHESIS mapping (the
@@ -2165,6 +2169,18 @@ fn simulate(
         // Only ports with a device are connected (keyboard: ports 0 and 1).
         port.connected = k < 2 || pads.get(k).is_some();
     }
+    // game mode 0x4012: game_main runs do_shop (and WritePlayerInfo) only.
+    if let Some((mut flow, tower)) = sim.shop.take() {
+        let g = &mut sim.game;
+        g.hud.begin_frame();
+        let r = g.update_controls(&ports).and_then(|_| g.do_shop(&mut flow, &front.shop));
+        match r {
+            Ok(0) => sim.shop = Some((flow, tower)),
+            Ok(_) => sim.shop_done = Some(tower),
+            Err(e) => sim.error = Some(format!("do_shop: {}", e.0)),
+        }
+        return;
+    }
     for (k, port) in ports.iter().enumerate().take(4).skip(1) {
         let attack = port.entries[0xd][0] & 1 != 0;
         if !sim.coop[k - 1] && attack && port.connected && 0.0 < sim.game.players[0].f32_(0x1a10) {
@@ -2565,6 +2581,14 @@ fn present_world(
     }
 }
 
+/// init_shop(0) on the finished realm's game, leading to Tower level `k`.
+fn start_shop(sim: &mut Sim, front: &Front, k: usize) {
+    match sim.game.init_shop(0, &front.shop) {
+        Ok(flow) => sim.shop = Some((flow, k)),
+        Err(e) => sim.error = Some(format!("init_shop: {}", e.0)),
+    }
+}
+
 /// Animate a slot's tree `label` of `pkg` from `start` (HYPOTHESIS: sequence
 /// 0 at the sequence's timing factor, as StartFXTree trees); without the
 /// tree the slot's previous EffectTree is removed.
@@ -2951,10 +2975,19 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, front: &Front
     let mut keys = vec!["STATIC".to_string(), String::new()];
     keys.extend(level_packages(&session.levels[session.current]).into_iter().filter(|k| k != "STATIC"));
     keys.retain(|k| k.is_empty() || sources.packages.contains_key(k));
+    // init_shop's SelectLoadStart: the shop and select art (S1/S2_PLYRn,
+    // SHOP_TOP_*, SHP_*) last in the search order.
+    keys.push("SELECT".to_string());
     let tex: Vec<_> = keys
         .iter()
         .map(|k| {
-            let pkg = if k.is_empty() { &sources.character } else { &sources.packages[k] };
+            let pkg = if k.is_empty() {
+                &sources.character
+            } else if k == "SELECT" {
+                &front.select_pkg
+            } else {
+                &sources.packages[k]
+            };
             gdl_client::hud_texture_set(k, &pkg.objects)
         })
         .collect();
@@ -3130,6 +3163,8 @@ fn present_hud(
                 [&front.static_pkg, &front.title_pkg, &front.select_pkg].get(t.set as usize - 100).copied()
             } else if key_name == "STATIC" {
                 Some(&front.static_pkg)
+            } else if key_name == "SELECT" {
+                Some(&front.select_pkg)
             } else if key_name.is_empty() {
                 sources.as_ref().map(|s| &s.character)
             } else {
@@ -3353,7 +3388,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0 });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, shop_done: None });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -3946,18 +3981,32 @@ fn advance_level(
     // do_players state 8 plays the dying action (0x7e, +0x8f8) and calls
     // kill_player; in the Tower PlayerRestoreState puts the player back.
     // With nobody left playing (states 1/4/8), game_main goes to TowerWave.
+    // game_main: the level is over with every player dead (state 0/0xb) →
+    // TowerWave → init_shop(0), which skips without a player in state 1/5.
     if !ui.paused
         && session.banner.is_none()
+        && sim.shop.is_none()
+        && sim.shop_done.is_none()
         && sim.game.players[0].i32_(0xfc) == 0xb
         && !(0..4).any(|k| matches!(sim.game.players[k].i32_(0xfc), 1 | 4 | 8))
         && let Some(k) = session.levels.iter().position(|l| l.world == 0xd)
     {
+        start_shop(&mut sim, &front, k);
+    }
+    // do_shop finished: init_player_select(2) (not ported: straight on) and
+    // init_next_level into the Tower.
+    if let Some(k) = sim.shop_done.take() {
         session.next = Some(k);
-        session.banner = Some((3.0, "YOU DIED - back to the Tower (the level's gains are lost)".into()));
+        session.banner = Some((0.0, String::new()));
     }
     if !ui.paused && keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
-        // DEBUG: act as if the exit portal (destination: next level) was used.
-        let next = session.levels.get(session.current + 1).map_or(session.world_number << 8 | 0xff, |l| l.world << 8 | l.index as i32);
+        // DEBUG: act as if the exit portal (destination: next level; with
+        // Shift: the Tower) was used.
+        let next = if keys.pressed(KeyCode::ShiftLeft) {
+            gdl_core::game::boss::TOWER_WAVE
+        } else {
+            session.levels.get(session.current + 1).map_or(session.world_number << 8 | 0xff, |l| l.world << 8 | l.index as i32)
+        };
         sim.game.level_done = Some(next);
     }
     if session.banner.is_none()
@@ -3972,7 +4021,13 @@ fn advance_level(
         let (cw, cl) = (session.world_number, session.levels[session.current].index as i32);
         let (l90, l92) = (sim.game.level_i16(0x90), sim.game.level_i16(0x92));
         sim.game.players_set_wave_finished(cw, cl, l90, l92);
-        if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world) {
+        if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world)
+            && session.levels[k].world == 0xd
+            && session.world_number != 0xd
+        {
+            // game_main: an exit to TowerWave goes through init_shop(0).
+            start_shop(&mut sim, &front, k);
+        } else if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world) {
             session.next = Some(k);
             let to = if session.levels[k].world == session.world_number { session.levels[k].name.clone() } else { format!("{} {}", session.levels[k].title, session.levels[k].name) };
             session.banner = Some((3.0, format!("{name} COMPLETE - entering {to}")));

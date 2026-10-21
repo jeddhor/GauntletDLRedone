@@ -247,9 +247,16 @@ impl Hud {
     /// NATIVE: no scroll animation (items sit at their target y), no
     /// highlight timers or class skip list.
     pub fn shop_blits(&self, items: &[super::powerups::ShopItem], players: &[super::record::Record; 4], player: usize, selected: usize, frames: i32) -> Vec<Blit> {
+        let mut out = self.shop_panel_blits(players);
+        out.extend(self.shop_list_blits(items, player, selected, frames));
+        out
+    }
+
+    /// shop_setup's column frames: S1/S2_PLYRn, the borders and
+    /// SHOP_TOP_<colour> for present players.
+    pub fn shop_panel_blits(&self, players: &[super::record::Record; 4]) -> Vec<Blit> {
         let mut out = Vec::new();
         let Some(t) = self.tables.as_ref() else { return out };
-        let font = 6;
         for (p, r) in players.iter().enumerate() {
             let lx = t.shop_lx.get(p).copied().unwrap_or(0);
             for (name, y, z) in [(format!("S1_PLYR{}", p + 1), 0, 64000.0), (format!("S2_PLYR{}", p + 1), 0x100, 64000.0), ("S1_BORDER".into(), 0, 63900.0), ("S2_BORDER".into(), 0x100, 63900.0)] {
@@ -264,6 +271,14 @@ impl Hud {
                 out.push(b);
             }
         }
+        out
+    }
+
+    /// draw_shop_screen / write_shop_menu for `player`'s column.
+    pub fn shop_list_blits(&self, items: &[super::powerups::ShopItem], player: usize, selected: usize, frames: i32) -> Vec<Blit> {
+        let mut out = Vec::new();
+        let Some(t) = self.tables.as_ref() else { return out };
+        let font = 6;
         let p = player.min(3);
         let lx = t.shop_lx.get(p).copied().unwrap_or(0);
         let rx = t.shop_rx.get(p).copied().unwrap_or(0);

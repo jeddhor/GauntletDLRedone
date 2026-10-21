@@ -58,7 +58,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    2026-10-21: Sumner's shard/rune speeches, captions (CaptionText over
    SCROLL_E), SumnerSpeechEnd effects and cameras, the sumner_event_flag
    machine, EnterTower's delivered shard/rune display, the ghost (WIZARD).
-   Remaining: select-screen memory-card/join flow and the Tower scene
+   2026-10-21: the return to the Tower through the shop (init_shop /
+   do_shop: piles, level panel, shopping, inventory, final stats).
+   Remaining: the Tower menu's shop as init_shop(1), init_player_select(2),
+   select-screen memory-card/join flow and the Tower scene
    behind it, compass/controls/screen/game
    options effects, map screen, credits, movies, boss/timer meters,
    the ICON_ARROW menu selector, shop stats panels.

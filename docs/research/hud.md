@@ -205,6 +205,37 @@ with DrawGlowText, MORE_UP/MORE_DOWN when cut off. NATIVE: items jump to
 their places (no scroll speed), no skip list / highlight timers, the
 stats/level panels (shop_show_*) are not drawn.
 
+## Returning to the Tower: the shop (game mode 0x4012)
+
+game_main sends every exit to TowerWave (0xd00) and the all-dead end of a
+level (players in state 0/0xb) through init_shop(0); do_shop's result 2
+leads to init_player_select(2) (NATIVE: straight into the Tower) and the
+Tower's init_next_level. init_shop skips the shop for skip_wave > 1 (not
+0xc) or without a player in state 1/5, otherwise ResetModels,
+setup_player_display and shop_setup (S1/S2_PLYRn, borders, SHOP_TOP_<col>
+from SELECT). Per player (+0x980): 0 init_piles — gold (+0x1a20 − class
+backup +0x30), kills (+0xb2c/+0xb3c − backup) and experience (+0x1a1c −
+backup) scaled against LEVL +0xe0/+0xe4/+0xe8 + 1 into 0x40..0xd0 and
+ordered; 1..3 show_piles (SHP_GOLD/BONES/EXP growing 1.5 × vb per frame,
+"Gold/Kills/Exp.: n" at pile_ypos, Continue on X); 4 shop_show_lv (only
+after a level-up: Level n, rank, the four attributes and max health at the
+old level with lines highlighted every 0x3c frames from 0x5a; levels
+25/50 GameText 0xb8/0xb9); 5 init_show_gold; 6/7 the shop (show_gold
+shrinks the gold pile, do_shopping: up/down over affordable unskipped
+items with wrap at the afford count, X buys, back (turbo) returns to EXIT);
+8 the stats after shopping (0x1e); 9..11 the inventory panel; 0x14 the
+final stats after Battle 3 (LastWorldPlayed 8 / LastLevelPlayed 3); 100
+done (player state 5). Input: PlayerControl +8 edges (X 0x2000000 = attack
+entry 0xd, back 0x8000000, up 0x30, down 0xc0). gdl_play draws the shop
+over the realm's scene (the panels cover the screen) and adds the SELECT
+package last to the HUD's texture search (SelectLoadStart). Verified
+natively (Shift+F9 debug exit from G1): piles, Level 10 panel, item scroll,
+inventory, Tower start at the realm's door. NATIVE/HYPOTHESES: the list
+does not scroll, the inventory panel closes as the reverse of its opening,
+the final stats' "%d Days" argument (missing in the decompile) is the
+whole days; the Tower menu's shop (init_shop(1)) still uses the interim
+menu page.
+
 ## Sumner's speeches and captions
 
 SumnerLevelSpeechStart queues a speech for players with a new level tier
