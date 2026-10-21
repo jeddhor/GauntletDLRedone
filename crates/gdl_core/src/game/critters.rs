@@ -546,6 +546,7 @@ impl Game {
         self.critter_init_inst(i, t)?;
         self.critter_init_geo(i, m)?;
         self.critter_init_colnodes(i);
+        self.critter_add_health_meter(i);
         self.crm(i).set_u8(c::NCHILDREN, 0);
         let mut child_ty = CritterFile::i16_(self.ctype(t), 0x11c);
         let mut prev = i;
@@ -559,6 +560,7 @@ impl Game {
             self.critter_init_inst(k, ct)?;
             self.critter_init_child(k, i)?;
             self.critter_init_colnodes(k);
+            self.critter_add_health_meter(k);
             self.crit_mut(prev).child = Some(k);
             self.crit_mut(k).parent = Some(i);
             child_ty = CritterFile::i16_(self.ctype(ct), 0x11c);

@@ -12,6 +12,7 @@ pub mod critters;
 pub mod doplayers;
 pub mod damage;
 pub mod effects;
+pub mod healthmeter;
 pub mod hud;
 pub mod optmenu;
 pub mod select;
@@ -395,6 +396,8 @@ pub struct Game {
     pub lock_cam_req: i32,
     /// Enemy tree alpha (presentation; see enemy_mod_alpha).
     pub enemy_alpha: Vec<i32>,
+    /// Boss health meters (HealthMeterStart; HealthMeterInit per level).
+    pub health_meters: healthmeter::HealthMeters,
     /// Enemy and player trees' skin state (MBTreeSetAltTex / AmbientAdd).
     pub skin_views: skin::SkinViews,
     /// Labels of the loaded MBOX object tables (MBOX_FindObject_Sub).

@@ -1141,6 +1141,9 @@ pub fn blit_z(z: f32) -> f32 {
 }
 
 /// MBBlitSetColor / MBSetFontColor packing of 0xRRGGBB.
+pub(crate) fn pack_rgb_pub(c: u32, a: u8) -> [u8; 4] {
+    pack_rgb(c, a)
+}
 fn pack_rgb(c: u32, a: u8) -> [u8; 4] {
     let ch = |s: u32| (((c >> s) & 0xff) >> 1) as u8 + 1;
     [ch(16), ch(8), ch(0), a]

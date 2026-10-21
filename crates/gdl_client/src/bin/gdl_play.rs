@@ -2991,11 +2991,6 @@ fn present_player(
         if !ui.details {
             t.clear();
         }
-        if let Some(boss) = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|k| g.critters.get(k)).and_then(Option::as_ref) {
-            // Boss health (the original's health meter blits are presentation).
-            let max = g.critter_type_rec_pub(boss.ty).map_or(0.0, |v| v);
-            t.push_str(&format!("\nBOSS {:>6.0} / {:.0}", boss.rec.f32_(0x4f4).max(0.0), max));
-        }
         if ui.details {
             t.push_str(&format!(
                 "\n\nINTERIM PLAYTEST (not the M12 slice). player updates {}\n\
@@ -3125,6 +3120,9 @@ fn present_hud(
     let mut list = Vec::new();
     if let Some(sim) = sim.as_ref().filter(|_| playing) {
         list = sim.game.hud.draw_list();
+        if sim.shop.is_none() && sim.map.is_none() {
+            list.extend(sim.game.health_meter_blits());
+        }
         // ScrollMessageBox runs (modal) before the trigger camera it precedes.
         if sim.game.trigger_view_active() && sim.message_box.is_none() {
             list.extend(sim.game.hud.letterbox_blits());

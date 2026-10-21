@@ -106,10 +106,12 @@ impl Game {
         self.critter_update_colnodes_pub(i)?;
         self.critter_do_knockback(i)?;
         self.critter_update_counters(i)?;
+        self.critter_update_health_meter(i);
         for &k in &kids {
             self.critter_update_child(i, k)?;
             self.critter_update_colnodes_pub(k)?;
             self.critter_update_counters(k)?;
+            self.critter_update_health_meter(k);
         }
         if self.crit(i).rec.i32_(c::STATE) == 3 {
             // A root with children dies once every child's health is gone.

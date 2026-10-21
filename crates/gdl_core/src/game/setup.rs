@@ -414,6 +414,7 @@ impl Game {
             active_player_mask: 0,
             enemy_alpha: vec![0xff; 25],
             skin_views: Default::default(),
+            health_meters: Default::default(),
             lock_cam_req: 0,
             critters: Vec::new(),
             critter_data: super::critters::CritterData {

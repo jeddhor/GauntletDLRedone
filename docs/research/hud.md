@@ -241,6 +241,20 @@ that start. DoOptions opens a menu only from PlayerControl's Start edge
 (so not while controls are disabled), after WelcomeFlag < 0 and outside
 the stage start; gdl_play's pause key follows the same gates.
 
+## Boss health meters
+
+CritterNewInst calls CritterAddHealthMeter for the root and each child:
+a type with +0x5c bit 4 gets HealthMeterStart(health, type, +0xf8 pieces,
++0xfa width, +0xfc/+0xfe insets, +0x5c bit 8) (at most 3 meters; the index
+at critter +0x484): "<TYPE>_METER_BG<n>" (with bit 8; advancing
+HealthMeterX by the width) and "_FG<n>" blits at (x + 256·(n − 1), 0),
+alpha 0x70. ProcessCritter's CritterUpdateHealthMeter moves the shown value
+towards the health by 3 × vb_elapsed and sizes/crops the foreground
+(value/max × (256 − insets); two-piece meters fill the first then the
+second); the backgrounds are tinted 0x8080ff while the boss's +0xb4c
+quest-item time runs. Verified natively in G5 (the lich's bar). Not drawn:
+the in-world meter tree (+0x5c bit 0x800).
+
 ## The realm map between levels (game mode 0x400f)
 
 game_main sends a normal exit to init_mapscreen(0x78, skip) (skip_wave in
