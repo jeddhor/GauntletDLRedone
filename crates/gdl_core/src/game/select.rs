@@ -121,3 +121,108 @@ impl Hud {
         out
     }
 }
+
+impl Hud {
+    /// draw_fullscreen_inventory / draw_inventory_panel 0x129668 for the
+    /// four columns (x = 0x80·p): Panel_Pieces (s1/s2_plyrN, borders), the
+    /// player's I_Pieces (window, garg items, crystals) with print_n_of_m
+    /// counts, Quest_Pieces (legend items, "_empty" when not held) and the
+    /// shards held, swirling in over 120 timer units (SWIRL_RATE per vblank;
+    /// animate_panel_piece mode 0), then "Continue" (X) and "Inv".
+    /// `timer` is panel_fx_timer; players in state 0 show the panel only.
+    pub fn inventory_blits(&self, players: &[super::record::Record; 4], max_crystals: &[i32], timer: i32) -> Vec<Blit> {
+        let mut out = Vec::new();
+        let Some(t) = self.tables.as_ref() else { return out };
+        let (fx, f) = if timer < 120 { (0, timer as f32 / 120.0) } else { (1, 1.0) };
+        let piece = |hud: &Hud, out: &mut Vec<Blit>, name: &str, base: &[i32; 8], x0: i32| {
+            let Some(tex) = hud.lookup(name) else { return };
+            let (w, h) = hud.tex_info(tex).map_or((0, 0), |i| (i32::from(i.width), i32::from(i.height)));
+            let (bx, by) = (x0 + base[0], base[1]);
+            let mut b = hud.make_pub(Some(tex), bx, by, w, h);
+            b.z = 3.0;
+            if fx == 0 {
+                // animate_panel_piece mode 0: swirl, grow, fade.
+                let f2 = f * f;
+                let k = ((base[0] + base[1] + (f2 * f * 3.0 * 60.0) as i32).rem_euclid(60)) as usize;
+                let m = t.swirl_mult as f32 * (1.0 - f);
+                b.x = bx as f32 + m * t.cos_table.get(k).copied().unwrap_or(1.0);
+                b.y = by as f32 + m * t.sin_table.get(k).copied().unwrap_or(0.0);
+                let g = 1.0 - f2;
+                b.w = (w as f32 + w as f32 * g) as i32 as f32;
+                b.h = (h as f32 + h as f32 * g) as i32 as f32;
+                b.rgba[3] = (0x80 - (((g * 255.0) as i32).clamp(0, 255) as u32 >> 1)) as u8;
+            }
+            out.push(b);
+        };
+        for (p, r) in players.iter().enumerate() {
+            let x0 = 0x80 * p as i32;
+            // init_panel_blits: entries 0/1 get the player number appended.
+            for (k, (name, base)) in t.panel_pieces.iter().enumerate() {
+                let Some(name) = name else { continue };
+                let name = if k < 2 { format!("{name}{}", p + 1) } else { name.clone() };
+                let mut b = self.make_pub(self.lookup(&name), x0 + base[0], base[1], -1, -1);
+                b.z = 3.0;
+                out.push(b);
+            }
+            if r.i32_(0xfc) == 0 {
+                continue;
+            }
+            let cls = 0xb4 * r.u32_(0xc) as usize;
+            for (name, base) in &t.i_pieces {
+                if let Some(n) = name {
+                    piece(self, &mut out, n, base, x0);
+                }
+            }
+            let legend = r.u16_(0xcf4 + cls);
+            for (k, (name, base)) in t.quest_pieces.iter().enumerate() {
+                if let Some(n) = name {
+                    let n = if legend >> k & 1 == 0 { format!("{n}_empty") } else { n.clone() };
+                    piece(self, &mut out, &n, base, x0);
+                }
+            }
+            let shards = r.u16_(0xcf0 + cls) | r.u16_(0x1a24);
+            for (k, (name, base)) in t.shard_pieces.iter().enumerate() {
+                if let Some(n) = name
+                    && shards >> k & 1 != 0
+                {
+                    piece(self, &mut out, n, base, x0);
+                }
+            }
+            let alpha = if fx == 0 { ((1.0 - f) * 255.0) as i32 } else { 0 };
+            let font = t.ifont_font;
+            let n_of_m = |hud: &Hud, out: &mut Vec<Blit>, i: usize, n: i32, m: i32| {
+                let Some((_, b)) = t.i_pieces.get(i) else { return };
+                let scale = f32::from_bits(b[3] as u32);
+                if scale <= 0.0 {
+                    return;
+                }
+                let n = if n < 0 || m < n { m } else { n };
+                let x = x0 + b[0] + b[4];
+                let y = b[1] + b[5];
+                let a = (0x80 - (alpha.clamp(0, 255) as u32 >> 1)) as u8;
+                let s = n.to_string();
+                let w = hud.string_width(font, scale, s.as_bytes());
+                for (tx, txt) in [(x - w, s), (x, format!("/{m}"))] {
+                    if let Some(msg) = hud.message_pub(scale, scale, tx, y, font, 0xffffff, a, 0.25, 0, &txt) {
+                        out.extend(hud.glyphs(&msg));
+                    }
+                }
+            };
+            let c16 = |o: usize| i32::from(r.i16_(o + cls));
+            n_of_m(self, &mut out, 1, c16(0xd04), 0xc);
+            n_of_m(self, &mut out, 2, c16(0xd06), 0x14);
+            n_of_m(self, &mut out, 3, c16(0xd08), 0x1c);
+            for i in 1..9 {
+                n_of_m(self, &mut out, i + 3, c16(0xd0a + 2 * i), max_crystals.get(i).copied().unwrap_or(0));
+            }
+            let mut b = self.make_pub(self.lookup("BUTTON_X"), x0 + 0x10, 0x118, 0x10, 0x10);
+            b.z = 1.0;
+            out.push(b);
+            out.extend(self.glow_text(0.5, x0 + 0x28, 0x118, "Continue", timer as u32));
+            if let Some(msg) = self.message_pub(f32::from_bits(0x3ee6_6666), f32::from_bits(0x3ee6_6666), -(x0 + 0x40), 8, 6, 0, 0x80, 0.25, 0, "Inv") {
+                out.extend(self.glyphs(&msg));
+            }
+        }
+        out
+    }
+}

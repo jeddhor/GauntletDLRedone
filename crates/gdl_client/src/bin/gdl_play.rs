@@ -2452,6 +2452,11 @@ fn select_columns(front: &Front, screen: Screen) -> Option<[gdl_core::game::sele
     Some([first, Column::Empty, Column::Empty, Column::Empty])
 }
 
+/// The pause menu's Inventory page (draw_fullscreen_inventory).
+fn inventory_view(front: &Front, screen: Screen, ui: &Ui) -> bool {
+    screen == Screen::Playing && ui.paused && matches!(front.menu.page, gdl_client::menu::Page::Inventory)
+}
+
 /// The page drawn with an original menu record (front end or pause).
 fn menu_view(front: &Front, screen: Screen, ui: &Ui) -> Option<(&'static str, usize)> {
     if !(screen == Screen::Front || ui.paused) {
@@ -2516,6 +2521,13 @@ fn present_hud(
     }
     if let (Some(cols), Some(style), Some(def)) = (select_columns(&front, *screen), front.opt_style.as_ref(), front.menus.get("sel_def_menu")) {
         front_list.extend(front.ui_hud.select_blits(style, def, &cols, front.menu_clock.1 as i32));
+    }
+    if inventory_view(&front, *screen, &ui)
+        && let Some(sim) = sim.as_ref()
+    {
+        let max = front.ui_hud.tables.as_ref().map(|t| t.max_crystals.clone()).unwrap_or_default();
+        let rate = front.ui_hud.tables.as_ref().map_or(1, |t| t.swirl_rate);
+        front_list.extend(front.ui_hud.inventory_blits(&sim.game.players, &max, front.menu_clock.1 as i32 * rate));
     }
     if *screen == Screen::Front {
         front.title_clock += time.delta_secs() * 59.94;
@@ -3111,7 +3123,7 @@ fn front_text(
     let Ok((mut t, mut tf)) = text.single_mut() else { return };
     // On the title the menu sits in the lower part, below the logo.
     tf.translation.y = if *screen == Screen::Front { -300.0 } else { 0.0 };
-    let show = (*screen == Screen::Front || ui.paused) && menu_view(&front, *screen, &ui).is_none() && select_columns(&front, *screen).is_none();
+    let show = (*screen == Screen::Front || ui.paused) && menu_view(&front, *screen, &ui).is_none() && select_columns(&front, *screen).is_none() && !inventory_view(&front, *screen, &ui);
     let want = if show { front.menu.text() } else { String::new() };
     if t.0 != want {
         t.0 = want;

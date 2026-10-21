@@ -178,6 +178,19 @@ shows the hint_menu label as the title of the non-general categories;
 next_*_hint's progress-based choice is not ported. GDL_DEBUG_HINTS opens
 the menu for presentation checks.
 
+## Inventory (draw_fullscreen_inventory)
+
+draw_inventory_panel 0x129668 per column (x 0x80·p): Panel_Pieces
+(s1_plyr/s2_plyr + player number, S1/S2_border), I_Pieces (window_empty,
+fangs/feather/claw, eight crystals; +0x10 text scale, +0x14/+0x18 text
+offset), Quest_Pieces (legend bits class +0xcf4; "_empty" when not held),
+Shard_Pieces (class +0xcf0 | player +0x1a24), all at z 3; print_n_of_m
+(IFONT_FONT 6) for garg items (class +0xd04/+0xd06/+0xd08 of 12/20/28) and
+crystals 1–8 (MAX_CRYSTALS); animate_panel_piece mode 0 swirls them in over
+120 units (SWIRL_RATE 1 per vblank, swirl_mult 60, cos/sin_table 60
+steps, size ×(2 − f²), alpha); "Continue" glow text with the X button and
+"Inv". Tables are read from the ELF. Not ported: the exit swirl (mode 2).
+
 ## Player select
 
 init_player_select 0x1851b0 creates 11 sel_bg blits per column (sel_xpos

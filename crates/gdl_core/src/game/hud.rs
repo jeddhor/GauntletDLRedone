@@ -182,6 +182,19 @@ pub struct HudTables {
     pub sel_xpos: Vec<i32>,
     pub sel_bg_pos: Vec<[i32; 3]>,
     pub player_color_uc: Vec<String>,
+    /// Inventory panel pieces (0x24 each: name, x, y, kind, text scale
+    /// (f32 bits), text dx, text dy, …): Panel_Pieces, I_Pieces,
+    /// Quest_Pieces, Shard_Pieces; cos_table/sin_table (60 steps),
+    /// swirl_mult, SWIRL_RATE, IFONT_FONT.
+    pub panel_pieces: Vec<(Option<String>, [i32; 8])>,
+    pub i_pieces: Vec<(Option<String>, [i32; 8])>,
+    pub quest_pieces: Vec<(Option<String>, [i32; 8])>,
+    pub shard_pieces: Vec<(Option<String>, [i32; 8])>,
+    pub cos_table: Vec<f32>,
+    pub sin_table: Vec<f32>,
+    pub swirl_mult: i32,
+    pub swirl_rate: i32,
+    pub ifont_font: usize,
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -203,6 +216,15 @@ impl HudTables {
         };
         let pointed = |n: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
             words(n)?.into_iter().map(|p| Ok(cstr(elf.read(p, 32)?))).collect()
+        };
+        let pieces = |n: &str| -> Result<Vec<(Option<String>, [i32; 8])>, Box<dyn std::error::Error>> {
+            let mut v = Vec::new();
+            for c in elf.object(n)?.chunks_exact(0x24) {
+                let w = |k: usize| i32::from_le_bytes(c[4 * k..4 * k + 4].try_into().unwrap());
+                let name = if w(0) == 0 { None } else { Some(cstr(elf.read(w(0) as u32, 32)?)) };
+                v.push((name, [w(1), w(2), w(3), w(4), w(5), w(6), w(7), w(8)]));
+            }
+            Ok(v)
         };
         let tb = elf.object("tb_info")?;
         let mut tb_info = Vec::new();
@@ -235,6 +257,15 @@ impl HudTables {
             sel_xpos: ints("sel_xpos")?,
             sel_bg_pos: ints("sel_bg_pos")?.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect(),
             player_color_uc: pointed("player_color_uc")?,
+            panel_pieces: pieces("Panel_Pieces")?,
+            i_pieces: pieces("I_Pieces")?,
+            quest_pieces: pieces("Quest_Pieces")?,
+            shard_pieces: pieces("Shard_Pieces")?,
+            cos_table: words("cos_table")?.into_iter().map(f32::from_bits).collect(),
+            sin_table: words("sin_table")?.into_iter().map(f32::from_bits).collect(),
+            swirl_mult: ints("swirl_mult")?[0],
+            swirl_rate: ints("SWIRL_RATE")?[0],
+            ifont_font: ints("IFONT_FONT")?[0] as usize,
         })
     }
 }
