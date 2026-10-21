@@ -20,8 +20,12 @@ struct GsParams {
     // Point lights: position + radius, colour + attenuation.
     plight_pos: array<vec4<f32>, 8>,
     plight_col: array<vec4<f32>, 8>,
-    // x: keep-A overlay bound (MBTreeSetAltTex −4).
+    // x: keep-A overlay bound (MBTreeSetAltTex −4), y: chrome (−3).
     extra: vec4<f32>,
+    // setChrome's axes (xyz) and offsets (w). HYPOTHESIS (VU1 unread):
+    // uv = (n·u + u.w, n·v + v.w).
+    chrome_u: vec4<f32>,
+    chrome_v: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: GsParams;
@@ -64,7 +68,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let cf = rgb;
     let af = alpha;
 #ifdef VERTEX_UVS_A
-    let t = textureSample(base_texture, base_sampler, in.uv + params.options.zw);
+    var uv = in.uv + params.options.zw;
+    if params.extra.y > 0.5 {
+        let n = normalize(in.world_normal);
+        uv = vec2(dot(n, params.chrome_u.xyz) + params.chrome_u.w, dot(n, params.chrome_v.xyz) + params.chrome_v.w);
+    }
+    let t = textureSample(base_texture, base_sampler, uv);
     if params.options.x > 0.5 {
         rgb = rgb * t.rgb;
         alpha = alpha * t.a * (255.0 / 128.0);

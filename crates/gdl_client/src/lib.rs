@@ -224,8 +224,14 @@ pub struct GsParams {
     /// position, w radius; colour rgb, a attenuation (w = 0: unused).
     pub plight_pos: [Vec4; 8],
     pub plight_col: [Vec4; 8],
-    /// x: the keep-A overlay bound.
+    /// x: the keep-A overlay bound, y: chrome (MBTreeSetAltTex −3).
     pub extra: Vec4,
+    /// setChrome 0x1bef68's texture axes in render space (xyz) with the
+    /// view direction's azimuth / 2π and elevation / π (w): the chrome UV is
+    /// (n·u + u.w, n·v + v.w). HYPOTHESIS: the VU1 microcode's use of the
+    /// axes and of the camera block's +0x50/+0x54 angles is unread.
+    pub chrome_u: Vec4,
+    pub chrome_v: Vec4,
 }
 
 /// The observed G1 world material state folded into one pass (gs.wgsl):

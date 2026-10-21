@@ -265,7 +265,16 @@ they keep their vertex colours. The VU1 microcode was not read.
   last 3 s; PlayerProcessSkinFX's special flash (+0x7d4 × 255, × 0.9 per
   frame). The record's texture word holds a SkinTex code (pointer-class
   word). gdl_play draws −4 as the keep-A overlay and −3 as a replacement
-  (setChrome's environment mapping not ported) and adds the ambient. CritterUpdateSkinfx
+  with setChrome's environment mapping, and adds the ambient. setChrome
+  0x1bef68 under pb_debug_chrome's defaults (struct 0x2721f0: +0x18, +0x1c,
+  +0x20 set, +0x24 clear): e = camera position (camera block +0x20) −
+  object matrix +0x30; u = e × up (block +0x40, (0, 1, 0) from
+  pbInitCamera; pbCameraUpdate never writes it); v = u × e; both taken
+  through the inverse object matrix, normalised, × 0.13333334 and sent to
+  VU1; the block gets atan(e.y / |e.xz|) / π (+0x50) and atan2(e.x, e.z)
+  / 2π (+0x54). HYPOTHESIS (VU1 unread): uv = (n·u + az, n·v + el).
+  Verified natively only as drawing (GDL_DEBUG_SHIELD=110000:60 in G1:
+  a gold, normal-shaded body). CritterUpdateSkinfx
   0x192f18 (ProcessCritter, root and children): ProcessSkinFX(+0xec), the
   collision parts' flash counters (+0x540 + 0x60k + 0x54), the tree flash
   +0xb44, the quest-item texture time +0xb4c (−vb per call; it also gates

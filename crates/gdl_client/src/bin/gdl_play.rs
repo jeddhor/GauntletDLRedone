@@ -763,6 +763,9 @@ struct MatReq {
     /// MBTreeSetAltTex −4: the own textures plus the alternate one in the
     /// keep-A pass (GsMaterial::overlay).
     overlay: Option<Handle<Image>>,
+    /// MBTreeSetAltTex −3: the replacement drawn with setChrome's
+    /// environment mapping (draw flag 0x80000).
+    chrome: bool,
     alpha: Option<f32>,
     /// MBTreeSetAmbientAdd / 255.
     ambient: f32,
@@ -844,8 +847,8 @@ fn skin_image(libs: &Libraries, monsters: &[String], v: &gdl_core::game::skin::S
 
 /// Enemy and player trees' skins (MBTreeSetAltTex −4 → the skin image in
 /// the keep-A pass over the own textures, −3 → the skin image replacing
-/// them; HYPOTHESIS: −3 chrome draws without setChrome's environment
-/// mapping) and ambient adds (MBTreeSetAmbientAdd / 255).
+/// them with setChrome's environment mapping) and ambient adds
+/// (MBTreeSetAmbientAdd / 255).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_skins(
     sim: Res<Sim>,
@@ -874,6 +877,7 @@ fn present_skins(
                     r.overlay = Some(i.clone());
                 } else {
                     r.replace = Some(i.clone());
+                    r.chrome = v.mode == -3;
                 }
             }
             r.ambient += v.ambient as f32 / 255.0;
@@ -926,15 +930,35 @@ fn present_skins(
     }
 }
 
+/// setChrome 0x1bef68 under pb_debug_chrome's defaults (0x2721f0: +0x18,
+/// +0x1c, +0x20 set, +0x24 clear): e = camera − object (camera block +0x20,
+/// object matrix +0x30), u = e × up (camera block +0x40, (0, 1, 0) from
+/// pbInitCamera), v = u × e, taken into the object's frame, normalised and
+/// scaled by 0.13333334; the camera block gets atan(e.y / |e.xz|) / π
+/// (+0x50) and atan2(e.x, e.z) / 2π (+0x54). Computed in MB space (the
+/// render root mirrors x) and returned in render space; the dot product
+/// with a world normal equals the object-frame one for rotations.
+/// HYPOTHESIS: the offsets pair as (+0x54 → u, +0x50 → v).
+fn chrome_axes(eye: Vec3, object: Vec3) -> (Vec4, Vec4) {
+    let e = (eye - object) * MIRROR;
+    let u = e.cross(Vec3::Y).normalize_or_zero() * f32::from_bits(0x3e08_8889);
+    let v = e.cross(Vec3::Y).cross(e).normalize_or_zero() * f32::from_bits(0x3e08_8889);
+    let el = (e.y / (e.x * e.x + e.z * e.z).sqrt()).atan() * std::f32::consts::FRAC_1_PI;
+    let az = e.x.atan2(e.z) * (0.5 * std::f32::consts::FRAC_1_PI);
+    ((u * MIRROR).extend(az), (v * MIRROR).extend(el))
+}
+
 /// Realise this frame's material requests (clone on first use, restore the
 /// shared material when nothing is requested).
 fn apply_material_requests(
     mut commands: Commands,
     mut req: ResMut<MatRequests>,
-    mut meshes: Query<(Entity, &mut MeshMaterial3d<gdl_client::GsMaterial>, Option<&MatOverride>)>,
+    mut meshes: Query<(Entity, &mut MeshMaterial3d<gdl_client::GsMaterial>, Option<&MatOverride>, &GlobalTransform)>,
     mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
-    for (e, mut m, ov) in &mut meshes {
+    let eye = camera.iter().next().map(GlobalTransform::translation);
+    for (e, mut m, ov, at) in &mut meshes {
         let r = req.0.remove(&e);
         let base = ov.map_or_else(|| m.0.clone(), |o| o.base.clone());
         let Some(b) = materials.get(&base).cloned() else { continue };
@@ -975,13 +999,18 @@ fn apply_material_requests(
                 p.options.x = 1.0;
             }
             p.extra.x = if overlay.is_some() { 1.0 } else { 0.0 };
+            p.extra.y = 0.0;
+            if let (Some(eye), true) = (eye, r.as_ref().is_some_and(|r| r.chrome)) {
+                (p.chrome_u, p.chrome_v) = chrome_axes(eye, at.translation());
+                p.extra.y = 1.0;
+            }
             p.tint.w = b.params.tint.w * alpha;
             if b.lit {
                 p.scale.y += ambient;
             } else {
                 p.scale.x += ambient;
             }
-            if own.params.tint != p.tint || own.params.scale != p.scale || own.params.light != p.light || own.params.light_dir != p.light_dir || own.params.options != p.options || own.params.extra != p.extra {
+            if own.params.tint != p.tint || own.params.scale != p.scale || own.params.light != p.light || own.params.light_dir != p.light_dir || own.params.options != p.options || own.params.extra != p.extra || own.params.chrome_u != p.chrome_u || own.params.chrome_v != p.chrome_v {
                 own.params = p;
             }
         }
@@ -2372,6 +2401,19 @@ fn simulate(
         && let Some((k, a)) = std::env::var("GDL_DEBUG_GOTIT").ok().and_then(|v| v.split_once(':').and_then(|(k, a)| Some((k.parse().ok()?, a.parse().ok()?))))
     {
         sim.game.got_it(0, k, a);
+    }
+    // DEBUG: GDL_DEBUG_SHIELD=<flags hex>:<seconds> puts a kind-6 (shield)
+    // timer with those flags in player 1's first powerup slot (+0x144) once
+    // (update 600, after the level start), e.g. 110000:30 for gold chrome
+    // (PlayerProcessPowerups shows gold only with a 0x10000 timer too).
+    if sim.updates == 600
+        && let Some((f, t)) = std::env::var("GDL_DEBUG_SHIELD").ok().and_then(|v| v.split_once(':').and_then(|(f, t)| Some((u32::from_str_radix(f, 16).ok()?, t.parse::<f32>().ok()?))))
+    {
+        let r = &mut sim.game.players[0];
+        r.set_f32(0x144, t);
+        r.set_i32(0x148, 6);
+        r.set_f32(0x14c, 0.0);
+        r.set_u32(0x150, f);
     }
     let new: Vec<Event> = sim.game.events.drain(before..).collect();
     sim.game.events.clear();

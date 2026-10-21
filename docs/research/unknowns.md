@@ -63,6 +63,6 @@ are in [state.md](../state.md); movement evidence is in [movement.md](movement.m
 | Sumner's ghost placement | WIZARD tree at the nearest waypoint's matrix; not seen in the native Sumner camera view | Capture a shard/rune speech in the reference |
 | Tree texmod frame | DoTexModNode's frame argument taken as (int)(frame + 0.5) (HYPOTHESIS) | Read AnimateNode's frame argument |
 | setPrimColor +0x48 ambient term | Lightmap/no-shade add and per-tree ambient add (0..999) feed +0x48; drawn as colour × (1 + add) / lit ambient + add/255 (HYPOTHESIS) | Read the VU1 microcode's use of +0x48 or capture a flash (lightning in A5/F2, an enemy death) |
-| Skin chrome (alt tex −3) | CHROMESILVER/CHROMEGOLD replace the textures; setChrome's environment mapping (flag 0x80000) is not ported | Export setChrome's matrix math; capture a gold/silver powerup |
+| Skin chrome (alt tex −3) | setChrome's axes ported; the VU1 UV formula (n·u + azimuth/2π, n·v + elevation/π) is a HYPOTHESIS | Read the VU1 chrome path or capture a gold/silver shield |
 | Keep-A pass UVs (alt tex −4) | The alternate texture's second pass uses the base UVs (HYPOTHESIS) | Read the VU1 microcode's keep-A path or capture an enemy death dissolve |
 | Player shadow splash | UpdatePlayerShadow's −2 TextureSplash drawn natively; never observed (no water entry in checks) | Walk into water in a level with flag-0x200 collision (A4, C4, I4) |
