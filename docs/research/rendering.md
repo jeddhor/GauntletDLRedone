@@ -251,6 +251,16 @@ they keep their vertex colours. The VU1 microcode was not read.
   word). gdl_play replaces every part texture (−3 chrome drawn as a plain
   replacement: HYPOTHESIS) and adds the ambient. Not ported:
   CritterUpdateSkinfx (critter white flashes +0xb44/+0xb46/+0xb4c).
+- Point lights: SfxSetLight 0x17f8b8 (radius at slot +0x10, colour
+  +0..+8; DeleteEffect clears the radius) from the player DAMG effects
+  (2 × +0xc or +8, plight_color[class]), barrel explosions (2 × blast,
+  red) and suicide explosions (20, red); ProcessEffects lights every live
+  effect with MBPosLightNew(radius × sfx_lightradmul 1.0 × fade,
+  sfx_lightattn 2.0, position + 1 up, colour); pbSetupPosLights picks up to
+  12 lights within reach of each lit object. gdl_play passes the nearest 8
+  to lit materials. HYPOTHESES: falloff (1 − d/r)^attenuation × N·L, no life
+  fade. Not set yet: StartMagicFX, StartComboFX, StartFamiliarFireBall and
+  EnemyStartMissile lights; the dark-level player light.
 - Package tree nodes: the named object only without +0x2e bit 0 (an OANIM
   node draws its frame object instead), e.g. barrels' BAROBJ/BAREXP/BARPOI
   break animations.
@@ -260,8 +270,7 @@ MBTreeSetAlpha on items (Game::item_alpha) and world nodes
 (HYPOTHESIS: the +0x53 byte's use in the draw path is not traced).
 
 Texture scrolls and per-node shifts, character texmods (SetupPlayerTexMods),
-enemy MBTreeSetAlpha fades, chrome (0x8000/0xa0000, setChrome), effect point
-lights (SfxSetLight → ProcessEffects' MBPosLightNew on lit objects), the colour
+enemy MBTreeSetAlpha fades, chrome (0x8000/0xa0000, setChrome), the colour
 scale of setPrimColor and DoLighting, VU1 vertex lighting of characters
 (point lights MBPosLight*, setPrimColor scales, AmbientSpecial flashes), fog (InitFog/FogFadeIn; FGE was 0 in the
 G1 frame), Z modifiers, sorted transparency order.

@@ -959,6 +959,47 @@ fn present_scene_light(sim: Res<Sim>, mut last: Local<Option<([f32; 8], usize)>>
     }
 }
 
+/// ProcessEffects' MBPosLightNew for effects with an SfxSetLight radius
+/// (slot +0x10 × sfx_lightradmul 1.0, attenuation sfx_lightattn 2.0, at the
+/// effect + 1 up, colour slot +0..+8), nearest 8 to the camera, on lit
+/// materials. HYPOTHESIS: the life fade of the radius is not applied.
+fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+    let g = &sim.game;
+    let mut lights: Vec<[f32; 8]> = Vec::new();
+    for (i, n) in g.effects.nodes.iter().enumerate() {
+        let Some(n) = n else { continue };
+        let r = &g.effects.slots[i];
+        let radius = r.f32_(0x10);
+        if radius <= 0.0 || r.f32_(0x68) <= 0.0 {
+            continue;
+        }
+        let p = Vec3::new(n.position[0], n.position[1] + 1.0, n.position[2]) * MIRROR;
+        let c = r.v3(0);
+        lights.push([p.x, p.y, p.z, radius, c[0], c[1], c[2], 2.0]);
+    }
+    if let Some(cam) = &g.std_camera {
+        let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE)) * MIRROR;
+        lights.sort_by(|a, b| (Vec3::new(a[0], a[1], a[2]) - eye).length_squared().total_cmp(&(Vec3::new(b[0], b[1], b[2]) - eye).length_squared()));
+    }
+    lights.truncate(8);
+    if *last == lights {
+        return;
+    }
+    *last = lights.clone();
+    let mut pos = [Vec4::ZERO; 8];
+    let mut col = [Vec4::ZERO; 8];
+    for (k, l) in lights.iter().enumerate() {
+        pos[k] = Vec4::new(l[0], l[1], l[2], l[3]);
+        col[k] = Vec4::new(l[4], l[5], l[6], l[7]);
+    }
+    for (_, m) in materials.iter_mut() {
+        if m.lit {
+            m.params.plight_pos = pos;
+            m.params.plight_col = col;
+        }
+    }
+}
+
 /// pbTraverseDrawObjects: MB flag 2 skips a node and its subtree, flag 1
 /// only the node; `set`/`clear` are the game's per-node overrides.
 fn node_hidden(chain: &[(usize, u32)], set: &[u32], clear: &[u32]) -> bool {
@@ -3820,7 +3861,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, present_skins, apply_material_requests).chain(), present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, present_skins, apply_material_requests).chain(), present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
                 present_hud,
             )

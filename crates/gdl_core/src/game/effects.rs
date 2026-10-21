@@ -374,6 +374,8 @@ impl Game {
         r.set_u32(fx::KIND, 0);
         r.set_i16(fx::HITS, 0);
         r.set_u32(0x14, 0);
+        // +0x10: SfxSetLight's radius.
+        r.set_f32(0x10, 0.0);
         r.set_i16(fx::LINK, -1);
         for o in [fx::END, fx::FADE_IN, fx::NEXT_TIME, fx::HOLD, fx::DURATION, fx::DAMAGE, fx::BLAST] {
             r.set_f32(o, 0.0);
@@ -1586,6 +1588,8 @@ impl Game {
             self.fx_mut(i).set_u32(fx::HIT_SOUND, 4);
             self.sfx_set_damage(i, damage, 6.0, 0.0, 0x421, 0);
             self.start_fx_missile(0.0, 0x1c, position, [0.0; 3], 0, 0, 0, 0)?;
+            // SfxSetLight(2 × 10, light_color[0] red).
+            self.sfx_set_light(i, 20.0, [2.0, 0.0, 0.0]);
         }
         if let Some(k) = self.start_fx_missile(0.0, 0x50, position, [0.0; 3], 0, 0, 0, 0)? {
             self.fx_mut(k).set_f32(fx::FADE_IN, 0.5);
@@ -1629,6 +1633,14 @@ impl Game {
         Ok(Some(i))
     }
 
+    /// SfxSetLight 0x17f8b8(radius, effect, colour): +0x10 radius, +0..+8
+    /// colour (ProcessEffects lights lit objects with it: presentation).
+    pub(crate) fn sfx_set_light(&mut self, i: usize, radius: f32, colour: [f32; 3]) {
+        let r = self.fx_mut(i);
+        r.set_f32(0x10, radius);
+        r.set_v3(0, colour);
+    }
+
     /// SfxSetDamage 0x17dfb0(damage, blast, fade, effect, flags, owner).
     pub(crate) fn sfx_set_damage(&mut self, i: usize, damage: f32, blast: f32, fade: f32, flags: u32, owner: i16) {
         let flags = if 4 < flags & 0xf { flags & 0xffff_fff3 } else { flags };
@@ -1667,6 +1679,10 @@ impl Game {
         r.set_i16(fx::OWNER, 0);
         if let Some(n) = self.effects.nodes[i].as_mut() {
             n.position[1] = add(n.position[1], lift)?;
+        }
+        if flags & 1 != 0 {
+            // SfxSetLight(2 × blast, light_color[0] red).
+            self.sfx_set_light(i, blast + blast, [2.0, 0.0, 0.0]);
         }
         if self.globals.cur_world == 10 && kind == 0x18 {
             // Three fireworks (0x17e810): size 0.6 + Random(0.5), speed 6 +

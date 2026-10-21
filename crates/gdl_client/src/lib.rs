@@ -220,6 +220,10 @@ pub struct GsParams {
     /// colour × (1 + x)), y: ambient add of lit draws (MBTreeSetAmbientAdd
     /// / 255). HYPOTHESIS: setPrimColor's +0x48 term scales the colour.
     pub scale: Vec4,
+    /// Point lights (MBPosLightNew from ProcessEffects): xyz render-space
+    /// position, w radius; colour rgb, a attenuation (w = 0: unused).
+    pub plight_pos: [Vec4; 8],
+    pub plight_col: [Vec4; 8],
 }
 
 /// The observed G1 world material state folded into one pass (gs.wgsl):

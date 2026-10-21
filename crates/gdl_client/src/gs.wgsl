@@ -17,6 +17,9 @@ struct GsParams {
     light: vec4<f32>,
     // x: unlit colour add (× (1 + x)), y: lit ambient add.
     scale: vec4<f32>,
+    // Point lights: position + radius, colour + attenuation.
+    plight_pos: array<vec4<f32>, 8>,
+    plight_col: array<vec4<f32>, 8>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: GsParams;
@@ -36,7 +39,21 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if params.light_dir.w > 0.5 {
         let n = normalize(in.world_normal);
         let d = max(dot(n, params.light_dir.xyz), 0.0);
-        rgb = rgb * min(vec3(1.0), vec3(params.light.a + params.scale.y) + d * params.light.rgb);
+        // Point lights. HYPOTHESIS (VU1 microcode unread): colour ×
+        // (1 − distance / radius)^attenuation × N·L, added to the light sum.
+        var pl = vec3(0.0);
+        for (var i = 0u; i < 8u; i = i + 1u) {
+            let lp = params.plight_pos[i];
+            if lp.w > 0.0 {
+                let v = lp.xyz - in.world_position.xyz;
+                let dist = length(v);
+                if dist < lp.w {
+                    let f = pow(1.0 - dist / lp.w, max(params.plight_col[i].a, 1.0));
+                    pl = pl + params.plight_col[i].rgb * f * max(dot(n, v / max(dist, 0.001)), 0.0);
+                }
+            }
+        }
+        rgb = rgb * min(vec3(1.0), vec3(params.light.a + params.scale.y) + d * params.light.rgb + pl);
     } else {
         rgb = rgb * max(1.0 + params.scale.x, 0.0);
     }

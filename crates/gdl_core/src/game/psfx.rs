@@ -23,6 +23,9 @@ use super::effects::{fx, EffectParent, Visual};
 use super::{Event, Game, Unsupported, R};
 use crate::libm::{cosf, sinf};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
+/// plight_color 0x2341f8: per class base the player effects' light colour.
+const PLIGHT_COLOR: [[f32; 3]; 8] = [[2.0, 0.0, 0.0], [0.0, 0.0, 2.0], [0.0, 2.0, 2.0], [0.0, 2.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 2.0], [0.0, 2.0, 2.0], [0.0, 2.0, 0.0]];
+
 
 type V3 = [f32; 3];
 
@@ -311,7 +314,12 @@ impl Game {
                     self.fx_mut(k).or_u32(fx::FLAGS, 0x8000);
                 }
             }
-            // SfxSetLight (+0xc / +8 radius ×2, plight_color): presentation.
+            // SfxSetLight(2 × (+0xc, else +8), plight_color 0x2341f8[class]).
+            let lr = if f32_at(rec, 0xc) != 0.0 { f32_at(rec, 0xc) } else { f32_at(rec, 8) };
+            if lr != 0.0 {
+                let c = PLIGHT_COLOR.get(self.players[p].u32_(8) as usize).copied().unwrap_or([0.0; 3]);
+                self.sfx_set_light(k, lr + lr, c);
+            }
             let speed = f32_at(rec, 0x3c);
             let (gravity, radius) = (f32_at(rec, 0x44), f32_at(rec, 8));
             if 0.0 < speed {
