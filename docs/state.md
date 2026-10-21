@@ -64,7 +64,7 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Remaining: init_player_select(2),
    select-screen memory-card/join flow and the Tower scene
    behind it, compass/controls/screen/game
-   options effects, credits, movies, timer meters,
+   options effects, credits, movies,
    the ICON_ARROW menu selector, shop stats panels.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.

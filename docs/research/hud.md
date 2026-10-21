@@ -255,6 +255,20 @@ second); the backgrounds are tinted 0x8080ff while the boss's +0xb4c
 quest-item time runs. Verified natively in G5 (the lich's bar). Not drawn:
 the in-world meter tree (+0x5c bit 0x800).
 
+## Rune thermometer and wave timer
+
+init_thermometer 0x1244b8 (init_next_level) shows THERMBASE at (0x188,
+−1) and THERMCOL (z 63912/63911) in a level with a rune item when a
+present player holds shard GetWorldOrder(5) = bit 9 (world 8: the class
+record +0xcf8 bit 0x1000) and no present player holds the rune;
+modify_thermometer 0x124760 every frame: f = clamp((|RunePos − Cam[0]
+attention| − 8) × therm_const, 0, 1) with therm_const = 1 / (|world
+extent| × 0.7), f = 1 − (1 − f)², column height round((1 − f) × 73) +
+0x1b at y 0x66 − that, crop v0 (101 − h)/128; AudioRuneGetCloser below
+0.25 and AudioRuneIsNear below 0.025, once each. Verified natively in G1
+(GDL_DEBUG_ANY_LEVEL=1 GDL_DEBUG_OLD_SHARDS=3fe). init_wave_timer /
+do_wave_timer need LEVL flag 4, which no shipped level sets.
+
 ## The realm map between levels (game mode 0x400f)
 
 game_main sends a normal exit to init_mapscreen(0x78, skip) (skip_wave in

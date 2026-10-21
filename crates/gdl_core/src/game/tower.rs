@@ -144,6 +144,17 @@ impl Game {
         }
     }
 
+    /// PlayerHasShard(p, n) for one present player (class +0xcf0 | +0x1a24;
+    /// n < 0xf is one bit).
+    pub(crate) fn player_has_shard(&self, k: usize, n: u32) -> bool {
+        if self.players[k].i32_(0xfc) == 0 {
+            return false;
+        }
+        let bits = u32::from(self.players[k].u16_(self.class_at(k, 0xcf0)) | self.players[k].u16_(0x1a24));
+        let want = if n < 0xf { 1 << n } else { n };
+        bits & want & 0xffff == want & 0xffff
+    }
+
     /// PlayerWaves(player, world): the completed-level bits of that world.
     fn player_waves(&self, k: usize, world: usize) -> u32 {
         u32::from(self.players[k].u8_(0x182c + 0xe * self.players[k].u32_(p::CHARACTER) as usize + world))

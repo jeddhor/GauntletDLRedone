@@ -343,6 +343,8 @@ impl Game {
                 Some(a) => super::world_anim::WorldAnimSet::new(inp.world.bytes.clone(), a),
                 None => Default::default(),
             },
+            world_order: inp.elf.object("WorldOrder").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
+            thermometer: Default::default(),
             world_crystal: inp.elf.object("WorldCrystal").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
             old_enemy_shrink: 1.0,
             boss_is_dying: s.extra.boss_is_dying,
@@ -580,6 +582,8 @@ impl Game {
             // init_next_level → EnterTower after the items are placed.
             game.enter_tower().map_err(|e| format!("EnterTower: {}", e.0))?;
         }
+        // init_next_level: init_thermometer.
+        game.init_thermometer(inp.world.min, inp.world.max);
         Ok(game)
     }
 
@@ -698,6 +702,8 @@ impl Game {
         if let Err(e) = self.camera_step() {
             self.log.note("camera", &e);
         }
+        // game_main: modify_thermometer before world_update (drawn here).
+        self.modify_thermometer();
         // main: DoLighting once per frame.
         self.do_lighting();
     }

@@ -2022,7 +2022,7 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box
     // GDL_DEBUG_RUNES=<hex> add live shard/rune bits (+0x1a24 / +0x1a26)
     // before a Tower entry; GDL_DEBUG_OLD_SHARDS / GDL_DEBUG_OLD_RUNES add
     // delivered ones (class record +0xcf0/+0xcf2 and backup +0x1d7c/+0x1d7e).
-    if lv.world == 0xd {
+    if lv.world == 0xd || std::env::var("GDL_DEBUG_ANY_LEVEL").is_ok() {
         let c = 0xb4 * record.u32_(0xc) as usize;
         for (var, offsets) in [("GDL_DEBUG_SHARDS", vec![0x1a24]), ("GDL_DEBUG_RUNES", vec![0x1a26]), ("GDL_DEBUG_OLD_SHARDS", vec![c + 0xcf0, c + 0x1d7c]), ("GDL_DEBUG_OLD_RUNES", vec![c + 0xcf2, c + 0x1d7e])] {
             if let Some(bits) = std::env::var(var).ok().and_then(|v| u16::from_str_radix(v.trim_start_matches("0x"), 16).ok()) {
@@ -3122,6 +3122,7 @@ fn present_hud(
         list = sim.game.hud.draw_list();
         if sim.shop.is_none() && sim.map.is_none() {
             list.extend(sim.game.health_meter_blits());
+            list.extend(sim.game.thermometer_blits());
         }
         // ScrollMessageBox runs (modal) before the trigger camera it precedes.
         if sim.game.trigger_view_active() && sim.message_box.is_none() {

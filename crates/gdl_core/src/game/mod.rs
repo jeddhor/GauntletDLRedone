@@ -36,6 +36,7 @@ pub mod record;
 pub mod setup;
 pub mod shopflow;
 pub mod skin;
+pub mod thermometer;
 pub mod tower;
 pub mod world_anim;
 pub mod sound;
@@ -258,6 +259,10 @@ pub struct Game {
     pub max_stop_time: f32,
     /// WorldCrystal 0x23f500: the crystal index each realm's door needs.
     pub world_crystal: Vec<i32>,
+    /// WorldOrder 0x23f4c8 (GetWorldOrder: a world's index).
+    pub world_order: Vec<i32>,
+    /// The rune thermometer (init_thermometer / modify_thermometer).
+    pub thermometer: thermometer::Thermometer,
     /// WorldNumLevels(CurWorld): HYPOTHESIS = the world's LEVL record count
     /// (the worlddatas field is filled at run time).
     pub world_num_levels: i32,
