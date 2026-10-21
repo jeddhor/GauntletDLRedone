@@ -42,9 +42,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Later 2026-10-21: effect point lights, hit effects (AddEnemyHitCol),
    boss meters, rune thermometer, compass.
    Fog: MBFogInit is empty in this build (nothing to draw).
-   Critter shadows (CritterAddShadow).
-   Remaining: chrome env mapping, texture scrolls/per-node shifts, splash
-   shadow texture.
+   Critter shadows (CritterAddShadow). Alternate-texture modes per
+   pbObjTexSub: −4 skins as a keep-A overlay pass (was a replacement), −2
+   replacement (player shadow splash).
+   Remaining: chrome env mapping, texture scrolls/per-node shifts.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

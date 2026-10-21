@@ -758,8 +758,11 @@ struct MatRequests(HashMap<Entity, MatReq>);
 #[derive(Default)]
 struct MatReq {
     swap: Vec<(AssetId<Image>, Handle<Image>)>,
-    /// MBTreeSetAltTex −4/−3: every texture replaced.
+    /// MBTreeSetAltTex −2/−3: every texture replaced (pbObjTexSub).
     replace: Option<Handle<Image>>,
+    /// MBTreeSetAltTex −4: the own textures plus the alternate one in the
+    /// keep-A pass (GsMaterial::overlay).
+    overlay: Option<Handle<Image>>,
     alpha: Option<f32>,
     /// MBTreeSetAmbientAdd / 255.
     ambient: f32,
@@ -839,9 +842,10 @@ fn skin_image(libs: &Libraries, monsters: &[String], v: &gdl_core::game::skin::S
     }
 }
 
-/// Enemy and player trees' skins (MBTreeSetAltTex −4/−3 → the skin image on
-/// every part; HYPOTHESIS: −3 chrome draws as a plain replacement) and
-/// ambient adds (MBTreeSetAmbientAdd / 255).
+/// Enemy and player trees' skins (MBTreeSetAltTex −4 → the skin image in
+/// the keep-A pass over the own textures, −3 → the skin image replacing
+/// them; HYPOTHESIS: −3 chrome draws without setChrome's environment
+/// mapping) and ambient adds (MBTreeSetAmbientAdd / 255).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_skins(
     sim: Res<Sim>,
@@ -864,7 +868,13 @@ fn present_skins(
         while let Some(e) = stack.pop() {
             let r = req.get(e);
             if let Some(i) = &image {
-                r.replace = Some(i.clone());
+                // pbObjTexSub: −4 keeps the own textures and adds the keep-A
+                // pass; −3 (chrome) and −2 replace every texture.
+                if v.mode == -4 {
+                    r.overlay = Some(i.clone());
+                } else {
+                    r.replace = Some(i.clone());
+                }
             }
             r.ambient += v.ambient as f32 / 255.0;
             if let Ok(c) = children.get(e) {
@@ -928,14 +938,14 @@ fn apply_material_requests(
         let r = req.0.remove(&e);
         let base = ov.map_or_else(|| m.0.clone(), |o| o.base.clone());
         let Some(b) = materials.get(&base).cloned() else { continue };
-        let (image, alpha, ambient) = match &r {
+        let (image, overlay, alpha, ambient) = match &r {
             Some(r) => {
                 let image = r.replace.clone().or_else(|| b.base.as_ref().and_then(|img| r.swap.iter().find(|(t, _)| *t == img.id()).map(|(_, alt)| alt.clone())));
-                (image, r.alpha.unwrap_or(1.0), r.ambient)
+                (image, r.overlay.clone(), r.alpha.unwrap_or(1.0), r.ambient)
             }
-            None => (None, 1.0, 0.0),
+            None => (None, None, 1.0, 0.0),
         };
-        if image.is_none() && 0.999 <= alpha && ambient == 0.0 {
+        if image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 {
             if ov.is_some() {
                 m.0 = base;
                 commands.entity(e).remove::<MatOverride>();
@@ -956,18 +966,22 @@ fn apply_material_requests(
             if own.base != img {
                 own.base = img;
             }
+            if own.overlay != overlay {
+                own.overlay = overlay.clone();
+            }
             // The shared material's scene state, then this tree's.
             let mut p = b.params;
             if replaced {
                 p.options.x = 1.0;
             }
+            p.extra.x = if overlay.is_some() { 1.0 } else { 0.0 };
             p.tint.w = b.params.tint.w * alpha;
             if b.lit {
                 p.scale.y += ambient;
             } else {
                 p.scale.x += ambient;
             }
-            if own.params.tint != p.tint || own.params.scale != p.scale || own.params.light != p.light || own.params.light_dir != p.light_dir || own.params.options != p.options {
+            if own.params.tint != p.tint || own.params.scale != p.scale || own.params.light != p.light || own.params.light_dir != p.light_dir || own.params.options != p.options || own.params.extra != p.extra {
                 own.params = p;
             }
         }
@@ -1545,11 +1559,13 @@ fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, sessio
 }
 
 /// UpdatePlayerShadow 0x147fa0: the shadow at the player's x/z and the
-/// higher of floor (+0x88c) and water (+0x8a4) heights + 0.1 (the water
-/// case's splash alternate texture is not ported).
-fn present_player_shadow(sim: Res<Sim>, mut q: Query<(&PlayerShadow, &mut Transform, &mut Visibility)>) {
+/// higher of floor (+0x88c) and water (+0x8a4) heights + 0.1; above water
+/// MBTreeSetAltTex(−2, TextureSplash = POWERUPS "SPLASH", InitEffects)
+/// replaces its texture.
+fn present_player_shadow(sim: Res<Sim>, libs: Res<Libraries>, mut req: ResMut<MatRequests>, mut q: Query<(&PlayerShadow, &mut Transform, &mut Visibility, &Children)>) {
     let active: [bool; 4] = [true, sim.coop[0], sim.coop[1], sim.coop[2]];
-    for (s, mut tf, mut vis) in &mut q {
+    let splash = libs.0.get("POWERUPS").and_then(|l| l.textures.get("SPLASH")).cloned();
+    for (s, mut tf, mut vis, kids) in &mut q {
         let r = &sim.game.players[s.0];
         if !active[s.0] || matches!(r.i32_(0xfc), 0 | 5 | 0xb) {
             *vis = Visibility::Hidden;
@@ -1559,6 +1575,13 @@ fn present_player_shadow(sim: Res<Sim>, mut q: Query<(&PlayerShadow, &mut Transf
         let (floor, water) = (r.f32_(0x88c), r.f32_(0x8a4));
         let y = if water <= floor { floor } else { water } + 0.1;
         tf.translation = Vec3::new(p[0], y, p[2]);
+        if floor < water
+            && let Some(img) = &splash
+        {
+            for e in kids.iter() {
+                req.get(e).replace = Some(img.clone());
+            }
+        }
         *vis = Visibility::Inherited;
     }
 }
@@ -2043,6 +2066,7 @@ fn present_particles(
                 lit: false,
                 base: named,
                 lightmap: None,
+                overlay: None,
                 alpha_mode: if blend == gdl_core::psys::Blend::Additive { AlphaMode::Add } else { AlphaMode::Blend },
                 draw: gdl_client::GsDraw {
                     additive: blend == gdl_core::psys::Blend::Additive,
@@ -3443,6 +3467,9 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             .or_else(|| b.levels.iter().position(|l| l.world == 0xd))
             .unwrap_or(0);
         let first = &b.levels[idx];
+        if let Ok(n) = std::env::var("GDL_DEBUG_LEVEL") {
+            eprintln!("DEBUG level {n}: starting in {} (index {idx})", first.name);
+        }
         let mut packages = HashMap::new();
         let first_labels = load_level_packages(&mut packages, &b.package_cfg, first)?;
         let sfx_pkg = load_package(&ch.sfx)?;
@@ -4134,7 +4161,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_tree_alpha, present_skins, present_compass, apply_material_requests).chain(), present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
             )

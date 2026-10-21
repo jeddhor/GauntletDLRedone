@@ -20,6 +20,8 @@ struct GsParams {
     // Point lights: position + radius, colour + attenuation.
     plight_pos: array<vec4<f32>, 8>,
     plight_col: array<vec4<f32>, 8>,
+    // x: keep-A overlay bound (MBTreeSetAltTex −4).
+    extra: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: GsParams;
@@ -27,6 +29,8 @@ struct GsParams {
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var base_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var lightmap_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var lightmap_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(5) var overlay_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(6) var overlay_sampler: sampler;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -57,6 +61,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         rgb = rgb * max(1.0 + params.scale.x, 0.0);
     }
+    let cf = rgb;
+    let af = alpha;
 #ifdef VERTEX_UVS_A
     let t = textureSample(base_texture, base_sampler, in.uv + params.options.zw);
     if params.options.x > 0.5 {
@@ -65,6 +71,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 #endif
     rgb = min(rgb, vec3(1.0));
+#ifdef VERTEX_UVS_A
+    // Keep-A pass (setupKeepA): the same geometry with the alternate
+    // texture, TFX MODULATE, ALPHA_1 0x44 and TEST_1 0x5c000 (DATE/DATM:
+    // only where the base pass wrote alpha bit 7, Av >= 0x80).
+    // HYPOTHESIS: it uses the base UVs (the VU1 microcode is unread).
+    let o = textureSample(overlay_texture, overlay_sampler, in.uv + params.options.zw);
+    if params.extra.x > 0.5 && alpha >= 0.999 {
+        let os = min(cf * o.rgb, vec3(1.0));
+        let oa = af * o.a * (255.0 / 128.0);
+        rgb = min(max((os - rgb) * oa + rgb, vec3(0.0)), vec3(1.0));
+    }
+#endif
 #ifdef VERTEX_UVS_B
     let l = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r * (255.0 / 128.0);
     if params.options.y > 0.5 {

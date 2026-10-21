@@ -224,6 +224,8 @@ pub struct GsParams {
     /// position, w radius; colour rgb, a attenuation (w = 0: unused).
     pub plight_pos: [Vec4; 8],
     pub plight_col: [Vec4; 8],
+    /// x: the keep-A overlay bound.
+    pub extra: Vec4,
 }
 
 /// The observed G1 world material state folded into one pass (gs.wgsl):
@@ -244,6 +246,12 @@ pub struct GsMaterial {
     #[texture(3)]
     #[sampler(4)]
     pub lightmap: Option<Handle<Image>>,
+    /// MBTreeSetAltTex −4: the alternate texture of the keep-A pass
+    /// (pbObjTexSub flag 0x8000000 → pbSetDORegs setupKeepA in place of
+    /// the lightmap pass), folded into the fragment (gs.wgsl).
+    #[texture(5)]
+    #[sampler(6)]
+    pub overlay: Option<Handle<Image>>,
     pub alpha_mode: AlphaMode,
     pub draw: GsDraw,
 }
@@ -294,6 +302,7 @@ impl GsMaterial {
             lit: false,
             base: None,
             lightmap: None,
+            overlay: None,
             alpha_mode,
             draw: GsDraw::default(),
         }
@@ -470,6 +479,7 @@ pub fn materials_for(
                     lit: false,
                     base: Some(image),
                     lightmap: None,
+                overlay: None,
                     alpha_mode: AlphaMode::Blend,
                     draw: GsDraw::default(),
                 }),
@@ -502,6 +512,7 @@ pub fn materials_for(
                 lit: false,
                 base: Some(image),
                 lightmap: None,
+                overlay: None,
                 alpha_mode,
                 draw: GsDraw::default(),
             }),

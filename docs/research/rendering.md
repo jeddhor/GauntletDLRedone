@@ -182,8 +182,24 @@ they keep their vertex colours. The VU1 microcode was not read.
 - load_player: the held weapon is the model package's WEAP_HOLD (base
   classes; WEAP_<COL>_HD<n> for single-model classes) under the right hand
   node player_rhand[class] (ELF table); SHADOWL1 (MB flags 0x880, z mod −36)
-  follows UpdatePlayerShadow (player x/z, max(floor, water) + 0.1; the splash
-  alternate texture is not ported).
+  follows UpdatePlayerShadow (player x/z, max(floor, water) + 0.1; while the
+  water +0x8a4 is above the floor +0x88c, MBTreeSetAltTex(−2, TextureSplash
+  = POWERUPS "SPLASH" from InitEffects), else (−1)). The splash is drawn
+  natively but not seen yet: the scripted and teleported game-run checks
+  of A4/C2/C4/G3/I3/I4/D1 never put the player in water.
+- Alternate textures (MBTreeSetAltTex 0x1cff48 writes node +0x5c mode and
+  +0x58 texture over the subtree): pbSendObjTextures 0x1bd828 loads only
+  the alternate texture for −2/−3, both for −4 and other modes; pbObjTexSub
+  0x1bd980 picks each subobject's texture: −1 own; −2 the alternate (plain
+  replacement); −3 the alternate with draw flag 0x80000 (pbSetDORegs →
+  setChrome 0x1bef68, environment mapping); −4 the own texture with flag
+  0x8000000 (pbSetDORegs: +0xdc = the alternate, setupKeepA 0x1bf6f8 in
+  place of the lightmap pass: TEST 0x5c000 DATE/DATM, ALPHA 0x44, TFX
+  MODULATE — a second pass of the alternate texture blended by its alpha
+  where the base wrote alpha bit 7); ≥ 0: the alternate for subobjects
+  whose texture equals the mode (texmod swaps). gdl_play folds the keep-A
+  pass into the fragment (GsMaterial::overlay). HYPOTHESIS: it uses the
+  base UVs (the VU1 microcode is unread).
 - Effect slots draw EffectHeaders' trees (WEAPONS, POWERUPS or the critter
   file's model) and FamiliarSpit trees with their node flags, posed each
   frame by tree_pose at (ATime − start) × 900 / timing (sequence 0).
@@ -248,8 +264,8 @@ they keep their vertex colours. The VU1 microcode was not read.
   (DEATHLIGHT, 0.4 / 0.5 rate); gold/silver powerup chrome blinking in its
   last 3 s; PlayerProcessSkinFX's special flash (+0x7d4 × 255, × 0.9 per
   frame). The record's texture word holds a SkinTex code (pointer-class
-  word). gdl_play replaces every part texture (−3 chrome drawn as a plain
-  replacement: HYPOTHESIS) and adds the ambient. CritterUpdateSkinfx
+  word). gdl_play draws −4 as the keep-A overlay and −3 as a replacement
+  (setChrome's environment mapping not ported) and adds the ambient. CritterUpdateSkinfx
   0x192f18 (ProcessCritter, root and children): ProcessSkinFX(+0xec), the
   collision parts' flash counters (+0x540 + 0x60k + 0x54), the tree flash
   +0xb44, the quest-item texture time +0xb4c (−vb per call; it also gates
@@ -271,9 +287,7 @@ they keep their vertex colours. The VU1 microcode was not read.
   of the critter's model, MBNewObject flags 0x880, z mod −32, at the
   critter position; ProcessCritter (kinds 0/1/2/5/6) keeps it at x/z and
   the floor + 0.1 with an identity rotation. Not verified visually (no
-  shadowed critter met in the checks). UpdatePlayerShadow's splash
-  (TextureSplash while the water +0x8a4 is above the floor +0x88c) is not
-  drawn yet.
+  shadowed critter met in the checks).
 - Fog: InitFog 0x162d40 / FogFadeIn 0x162de0 pass LEVL +0x70..+0x88 to
   MBFogInit 0x1cfa30, which (like MBFogSet) is an empty function in this
   build — there is no fog to draw (consistent with FGE 0 in the G1 dump).
