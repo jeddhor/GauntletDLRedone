@@ -46,7 +46,9 @@ original (PCSX2 reference on Xvfb :191, private captures):
    pbObjTexSub: −4 skins as a keep-A overlay pass (was a replacement), −2
    replacement (player shadow splash).
    Chrome (−3) environment mapping from setChrome (VU1 UV use HYPOTHESIS).
-   Remaining: texture scrolls/per-node shifts.
+   Tree-node texture scrolls (CalcTexScroll / MBTreeSetUVScaleAdd).
+   Step 4 rendering items from the plan are ported; open hypotheses are
+   listed in research/unknowns.md (VU1 microcode unread).
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

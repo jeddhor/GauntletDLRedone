@@ -766,6 +766,9 @@ struct MatReq {
     /// MBTreeSetAltTex −3: the replacement drawn with setChrome's
     /// environment mapping (draw flag 0x80000).
     chrome: bool,
+    /// MBTreeSetUVScaleAdd(U scale, U add, V scale, V add); each axis
+    /// overrides only its own pair (the other stays identity).
+    uv: Option<Vec4>,
     alpha: Option<f32>,
     /// MBTreeSetAmbientAdd / 255.
     ambient: f32,
@@ -969,7 +972,7 @@ fn apply_material_requests(
             }
             None => (None, None, 1.0, 0.0),
         };
-        if image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 {
+        if image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 && r.as_ref().is_none_or(|r| r.uv.is_none()) {
             if ov.is_some() {
                 m.0 = base;
                 commands.entity(e).remove::<MatOverride>();
@@ -1000,6 +1003,11 @@ fn apply_material_requests(
             }
             p.extra.x = if overlay.is_some() { 1.0 } else { 0.0 };
             p.extra.y = 0.0;
+            p.extra.z = 0.0;
+            if let Some(x) = r.as_ref().and_then(|r| r.uv) {
+                p.uv_xform = x;
+                p.extra.z = 1.0;
+            }
             if let (Some(eye), true) = (eye, r.as_ref().is_some_and(|r| r.chrome)) {
                 (p.chrome_u, p.chrome_v) = chrome_axes(eye, at.translation());
                 p.extra.y = 1.0;
@@ -1010,7 +1018,7 @@ fn apply_material_requests(
             } else {
                 p.scale.x += ambient;
             }
-            if own.params.tint != p.tint || own.params.scale != p.scale || own.params.light != p.light || own.params.light_dir != p.light_dir || own.params.options != p.options || own.params.extra != p.extra || own.params.chrome_u != p.chrome_u || own.params.chrome_v != p.chrome_v {
+            if own.params.tint != p.tint || own.params.scale != p.scale || own.params.light != p.light || own.params.light_dir != p.light_dir || own.params.options != p.options || own.params.extra != p.extra || own.params.chrome_u != p.chrome_u || own.params.chrome_v != p.chrome_v || own.params.uv_xform != p.uv_xform {
                 own.params = p;
             }
         }
@@ -1064,6 +1072,44 @@ fn tree_texmods(p: &Package, tree: &gdl_formats::animation::Tree) -> Vec<NodeTex
 }
 
 /// DoTexModNode for the meshes of one tree at `frame`.
+/// CalcTexScroll 0x110988(t, divisor, count, frame) → (add, scale): with
+/// min(count, divisor) = 0 the add is (frame mod count) / count and the
+/// scale 0 (f0 stays cleared, as the instructions show); otherwise a wipe
+/// over the divisor's frames around `count`.
+fn calc_tex_scroll(t: f32, p2: f32, p3: f32, frame: i32) -> (f32, f32) {
+    let m = if p3 >= p2 { p2 } else { p3 };
+    if m == 0.0 {
+        let n = p3 as i32;
+        if n == 0 {
+            return (0.0, 0.0);
+        }
+        return ((frame % n) as f32 / p3, 0.0);
+    }
+    let (add, scale);
+    if t <= 0.0 {
+        add = 0.0;
+        scale = 0.0;
+    } else if t < m {
+        let q = p3 * (1.0 / m);
+        let a = -q;
+        let a = a + a;
+        add = a + (t - 0.0) * (1.0 / m) * ((1.0 - q) - a);
+        scale = 1.0;
+    } else if p3 < p2 {
+        return (0.0, 1.0);
+    } else if t < p3 {
+        let q = p3 * (1.0 / m);
+        let g = (t - m) / (p3 - m);
+        let a = 1.0 - q;
+        add = a + g * (0.0 - a);
+        scale = g * (q - 1.0) + 1.0;
+    } else {
+        add = if t < p3 + m { (t - p3) * (1.0 / m) + 0.0 } else { 1.0 };
+        scale = p3 * (1.0 / m);
+    }
+    (add, scale - add)
+}
+
 fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, frame: f32, meshes: &[(Entity, usize)], req: &mut MatRequests) {
     let f = (frame + 0.5) as i32;
     for m in mods {
@@ -1080,6 +1126,17 @@ fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, frame: f32, meshes: 
                 for &(e, n) in meshes {
                     if m.subtree.contains(&n) {
                         req.alpha(e, opacity);
+                    }
+                }
+            }
+            -2 | -3 => {
+                // DoTexScrollSub: CalcTexScroll(frame − start, divisor,
+                // count, frame) → MBTreeSetUVScaleAdd on U (−2) or V (−3).
+                let (add, scale) = calc_tex_scroll(d as f32, m.divisor as f32, f32::from(m.count), f);
+                let x = if m.frame_base == -2 { Vec4::new(scale, add, 1.0, 0.0) } else { Vec4::new(1.0, 0.0, scale, add) };
+                for &(e, n) in meshes {
+                    if m.subtree.contains(&n) {
+                        req.get(e).uv = Some(x);
                     }
                 }
             }

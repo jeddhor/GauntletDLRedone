@@ -130,7 +130,9 @@ record (+0x48 + counter) into the target (MBSetRomTexture keeps the target's
 flags), −1 resolves the frame base by name (MBCopyTexture); −2/−3 set the
 MB_tex_shift_tex U/V add = sign·(counter mod |count|)/|count| (setTexShift).
 gdl_play swaps image data per AFrame (30 Hz) and passes the shift in the
-material. Fades (−4/−5) and per-node shift (0x10000000) are not ported.
+material. Tree-node fades (−4/−5) and scrolls (−2/−3, per-node shift
+0x10000000) are drawn through per-mesh material requests (see Bodies and
+effect trees).
 
 ## Render verification (2026-10-20)
 
@@ -209,7 +211,18 @@ they keep their vertex colours. The VU1 microcode was not read.
   DoTexModNode applies it to the node's subtree each frame — frame base ≥ 0:
   MBTreeSetAltTex(target record +0x44 → frame base + clamp((frame − start)
   / divisor, 0, count − 1)); −4/−5: DoTexFadeSub MBTreeSetAlpha over count
-  frames from start (−4 fades in, −5 out); −2/−3 scroll (not ported).
+  frames from start (−4 fades in, −5 out); −2/−3: DoTexScrollSub →
+  CalcTexScroll 0x110988(frame − start, divisor, count, frame) →
+  MBTreeSetUVScaleAdd 0x1d0300 on the subtree (U for −2, V for −3; a slot
+  of MB_tex_shift_node 0x2a0a40 indexed by node +0x5e, flag 0x10000000;
+  u' = u · scale + add). CalcTexScroll with min(count, divisor) > 0 wipes:
+  t ≤ 0 → (add 0, scale 0); t < m → add = −2q + t/m · (1 − q + 2q), scale
+  1 − add (q = count/m); count < divisor → (0, 1); t < count → add 1 − q →
+  0, scale g(q − 1) + 1 − add; else add (t − count)/m (≤ 1), scale q − add.
+  With min = 0 the add is (frame mod count)/count and the scale stays 0
+  (f0 cleared at 0x1109a0; instruction-checked). Used by 178 nodes of
+  monster attack trees (LICH EXECAUSTI, DJINN, WRAITH, PBOSS); seen
+  natively as the Lich's spreading caustic in G5.
   gdl_play applies swaps and fades on per-mesh materials for effect and
   item trees (e.g. RUNE1's GARDUST dust frames 24.. from frame 38 and its
   TEXFADEIN). HYPOTHESIS: the frame passed is (int)(frame + 0.5).

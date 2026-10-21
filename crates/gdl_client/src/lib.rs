@@ -224,8 +224,12 @@ pub struct GsParams {
     /// position, w radius; colour rgb, a attenuation (w = 0: unused).
     pub plight_pos: [Vec4; 8],
     pub plight_col: [Vec4; 8],
-    /// x: the keep-A overlay bound, y: chrome (MBTreeSetAltTex −3).
+    /// x: the keep-A overlay bound, y: chrome (MBTreeSetAltTex −3), z:
+    /// `uv_xform` applies.
     pub extra: Vec4,
+    /// MBTreeSetUVScaleAdd (MB_tex_shift_node, node flag 0x10000000): U
+    /// scale, U add, V scale, V add.
+    pub uv_xform: Vec4,
     /// setChrome 0x1bef68's texture axes in render space (xyz) with the
     /// view direction's azimuth / 2π and elevation / π (w): the chrome UV is
     /// (n·u + u.w, n·v + v.w). HYPOTHESIS: the VU1 microcode's use of the
