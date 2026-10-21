@@ -91,7 +91,27 @@ type Parts = Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>;
 type SparkAssets = (Handle<Mesh>, Handle<StandardMaterial>, Handle<StandardMaterial>);
 /// Model parts with node offsets and the tree node's MB flags (+0x30,
 /// AtreeNodeInit's MBTreeSetFlags; 1 for DUMMY nodes).
-type Model = Vec<(Vec3, Parts, u32, Option<usize>, Option<TreePsys>)>;
+type Model = Vec<(Vec3, Parts, u32, Option<usize>, Option<NodeExtra>)>;
+
+/// What a tree node draws besides its object: a particle system (type 4) or
+/// one frame object of an OANIM node (type 2, DoObjAnimation).
+#[derive(Clone)]
+enum NodeExtra {
+    Psys(TreePsys),
+    Frame(OFrame),
+}
+
+/// One object of a type-2 node's OANIM entry for `seq` (AtreeNodeInit:
+/// tree header +8 base + node +0x34): DoObjAnimation shows object k when
+/// (int)(frame + 0.5) − start == k inside [start, start + count − 1]; a
+/// one-frame entry always shows it.
+#[derive(Component, Clone, Copy)]
+struct OFrame {
+    seq: u16,
+    start: i16,
+    k: i16,
+    single: bool,
+}
 
 /// A type-4 tree node's particle system (AtreeNodeInit → InitPsysData): the
 /// 0x138-byte record at the tree's header[0] base + node +0x34, the
@@ -115,10 +135,12 @@ fn tree_node_psys(anim_bytes: &[u8], tree: &gdl_formats::animation::Tree, node: 
     Some(TreePsys { record, dir: [f(0x14), f(0x18), f(0x1c)] })
 }
 
-/// The MB flags of a package tree node (AtreeNodeInit / AtreeInitSub).
+/// The MB flags of a package tree node (AtreeNodeInit / AtreeInitSub): a
+/// node without its object (+0x2e bit 0, DUMMY) is hidden unless it is an
+/// OANIM node (type 2), whose object DoObjAnimation sets.
 fn tree_node_flags(node: &gdl_formats::animation::Node) -> u32 {
     let mut f = node.model_flags;
-    if node.label == "DUMMY" || node.flags & 1 != 0 {
+    if node.node_type != 2 && (node.label == "DUMMY" || node.flags & 1 != 0) {
         f |= 1;
     }
     f
@@ -144,6 +166,10 @@ struct Library {
     label_index: HashMap<String, u16>,
     /// The package's texture modifiers (ANIM.PS2 header +8/+0xc).
     texmods: Vec<gdl_formats::animation::TexMod>,
+    /// Object parts by object index and object indices by upper-case
+    /// definition label (OANIM frames are consecutive object indices).
+    by_index: HashMap<u32, Parts>,
+    index_of: HashMap<String, u32>,
 }
 
 #[derive(Resource)]
@@ -229,8 +255,9 @@ struct Session {
     class: u32,
     colour: usize,
     /// Session globals carried from level to level: TowerCounter,
-    /// LastFinishedWorld, LastFinishedLevel.
-    carried: [i32; 5],
+    /// LastFinishedWorld, LastFinishedLevel, Cur3DTransmitter,
+    /// CurTransmitter, LastWorldPlayed, LastLevelPlayed.
+    carried: [i32; 7],
 }
 
 #[derive(Component)]
@@ -393,15 +420,17 @@ fn present_critters(
     }
 }
 
-/// Sumner (SumnerInit's GWIZ tree) and one of his tree nodes.
+/// Sumner (SumnerInit's GWIZ tree, 0) or his ghost (SumnerGhostStart's
+/// WIZARD tree, 1) and one of their tree nodes.
 #[derive(Component)]
-struct SumnerRoot;
+struct SumnerRoot(u8);
 #[derive(Component)]
-struct SumnerPart(usize);
+struct SumnerPart(u8, usize);
 
 /// Sumner drawn from the GWIZ tree of the level's item package at his
-/// lookout matrix, posed by his animation clock (presentation of
-/// game::tower::SumnerState).
+/// lookout matrix, and while he speaks his ghost from the WIZARD tree at the
+/// waypoint, each posed by its animation clock (presentation of
+/// game::tower::SumnerState / GhostState).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_sumner(
     mut commands: Commands,
@@ -410,46 +439,65 @@ fn present_sumner(
     sources: Res<Sources>,
     libs: Res<Libraries>,
     root: Query<Entity, With<MirrorRoot>>,
-    mut body: Query<(Entity, &mut Transform), (With<SumnerRoot>, Without<SumnerPart>)>,
+    mut body: Query<(&SumnerRoot, &mut Transform, &mut Visibility), Without<SumnerPart>>,
     mut parts: Query<(&SumnerPart, &mut Transform), Without<SumnerRoot>>,
 ) {
-    let Some(s) = sim.game.tower.sumner.as_ref() else { return };
+    let t = &sim.game.tower;
+    let shown = [t.sumner.as_ref().map(|s| (s.matrix, s.current, s.clock.frame)), t.ghost.as_ref().map(|g| (g.matrix, g.current, g.clock.frame))];
     let items = &session.levels[session.current].items;
-    let Some((pkg_name, pkg, ti)) = items.iter().find_map(|n| {
-        let p = sources.packages.get(n)?;
-        let ti = p.anim.as_ref()?.trees.iter().position(|t| t.label == "GWIZ")?;
-        Some((n.clone(), p, ti))
-    }) else {
-        return;
-    };
-    let anim = pkg.anim.as_ref().unwrap();
-    let tree = &anim.trees[ti];
-    let m = s.matrix;
-    let tf = record_transform([Vec3::new(m[0][0], m[0][1], m[0][2]), Vec3::new(m[1][0], m[1][1], m[1][2]), Vec3::new(m[2][0], m[2][1], m[2][2])], Vec3::new(m[3][0], m[3][1], m[3][2]));
-    if body.is_empty() {
-        let (Ok(root), Some(lib)) = (root.single(), libs.0.get(&pkg_name)) else { return };
-        let b = commands.spawn((SumnerRoot, tf, Visibility::default(), LevelEntity)).id();
-        commands.entity(root).add_child(b);
-        for node in &tree.nodes {
-            let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
-            if let Some(list) = lib.by_label.get(&label) {
-                let holder = commands.spawn((SumnerPart(node.index as usize), Transform::default(), Visibility::default())).id();
-                for (mesh, material) in list {
-                    let c = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
-                    commands.entity(holder).add_child(c);
+    for (which, label) in [(0u8, "GWIZ"), (1, "WIZARD")] {
+        let Some((pkg_name, pkg, ti)) = items.iter().find_map(|n| {
+            let p = sources.packages.get(n)?;
+            let ti = p.anim.as_ref()?.trees.iter().position(|t| t.label == label)?;
+            Some((n.clone(), p, ti))
+        }) else {
+            continue;
+        };
+        let state = shown[which as usize];
+        let anim = pkg.anim.as_ref().unwrap();
+        let tree = &anim.trees[ti];
+        let spawned = body.iter().any(|(r, _, _)| r.0 == which);
+        let Some((m, current, frame)) = state else {
+            for (r, _, mut vis) in &mut body {
+                if r.0 == which && *vis != Visibility::Hidden {
+                    *vis = Visibility::Hidden;
                 }
-                commands.entity(b).add_child(holder);
+            }
+            continue;
+        };
+        let tf = record_transform([Vec3::new(m[0][0], m[0][1], m[0][2]), Vec3::new(m[1][0], m[1][1], m[1][2]), Vec3::new(m[2][0], m[2][1], m[2][2])], Vec3::new(m[3][0], m[3][1], m[3][2]));
+        if !spawned {
+            let (Ok(root), Some(lib)) = (root.single(), libs.0.get(&pkg_name)) else { continue };
+            let b = commands.spawn((SumnerRoot(which), tf, Visibility::default(), LevelEntity)).id();
+            commands.entity(root).add_child(b);
+            for node in &tree.nodes {
+                let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
+                if let Some(list) = lib.by_label.get(&label) {
+                    let holder = commands.spawn((SumnerPart(which, node.index as usize), Transform::default(), Visibility::default())).id();
+                    for (mesh, material) in list {
+                        let c = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+                        commands.entity(holder).add_child(c);
+                    }
+                    commands.entity(b).add_child(holder);
+                }
+            }
+            continue;
+        }
+        for (r, mut t, mut vis) in &mut body {
+            if r.0 == which {
+                *t = tf;
+                if *vis == Visibility::Hidden {
+                    *vis = Visibility::Inherited;
+                }
             }
         }
-        return;
-    }
-    for (_, mut t) in &mut body {
-        *t = tf;
-    }
-    if let Ok(pose) = gdl_client::tree_pose(anim, ti, &pkg.anim_bytes, s.current as usize, s.clock.frame.max(0.0), true) {
-        for (part, mut t) in &mut parts {
-            if let Some(mat) = pose.get(part.0) {
-                *t = Transform::from_matrix(*mat);
+        if let Ok(pose) = gdl_client::tree_pose(anim, ti, &pkg.anim_bytes, current as usize, frame.max(0.0), true) {
+            for (part, mut t) in &mut parts {
+                if part.0 == which
+                    && let Some(mat) = pose.get(part.1)
+                {
+                    *t = Transform::from_matrix(*mat);
+                }
             }
         }
     }
@@ -587,6 +635,205 @@ fn present_distance_fade(sim: Res<Sim>, q: Query<(&DistanceFade, &MeshMaterial3d
             && (mat.params.tint.w - a).abs() > 1e-4
         {
             mat.params.tint.w = a;
+        }
+    }
+}
+
+/// Per-mesh material requests for this frame: texture swaps (target image →
+/// alternate image: MBTreeSetAltTex) and an opacity factor (MBTreeSetAlpha
+/// and texture fades); apply_material_requests realises them on a material
+/// of the mesh's own.
+#[derive(Resource, Default)]
+struct MatRequests(HashMap<Entity, MatReq>);
+
+struct MatReq {
+    swap: Vec<(AssetId<Image>, Handle<Image>)>,
+    alpha: f32,
+}
+
+impl MatRequests {
+    fn alpha(&mut self, e: Entity, f: f32) {
+        self.0.entry(e).or_insert(MatReq { swap: Vec::new(), alpha: 1.0 }).alpha *= f;
+    }
+    fn swap(&mut self, e: Entity, target: AssetId<Image>, alt: Handle<Image>) {
+        self.0.entry(e).or_insert(MatReq { swap: Vec::new(), alpha: 1.0 }).swap.push((target, alt));
+    }
+}
+
+/// A mesh drawn through a material of its own; `base` is restored when no
+/// request remains.
+#[derive(Component)]
+struct MatOverride {
+    base: Handle<gdl_client::GsMaterial>,
+}
+
+/// MBTreeSetAlpha on item trees (Game::item_alpha) and world nodes with
+/// their subtrees (Game::node_alpha): node +0x53 = ~alpha with the
+/// translucent flag 0x200. HYPOTHESIS: the drawn alpha is the material's
+/// times (255 − alpha) / 255 (the +0x53 byte's use in the draw path is not
+/// traced).
+fn present_tree_alpha(sim: Res<Sim>, slots: Query<(&Slot, &Children)>, children: Query<&Children>, world: Query<(Entity, &NodeChain), With<WorldNode>>, mut req: ResMut<MatRequests>) {
+    let g = &sim.game;
+    for (slot, kids) in &slots {
+        if slot.kind != SlotKind::Item {
+            continue;
+        }
+        let a = g.item_alpha.get(&slot.index).copied().unwrap_or(0);
+        if a <= 0 {
+            continue;
+        }
+        let f = (255 - a.min(255)) as f32 / 255.0;
+        let mut stack: Vec<Entity> = kids.iter().collect();
+        while let Some(e) = stack.pop() {
+            req.alpha(e, f);
+            if let Ok(c) = children.get(e) {
+                stack.extend(c.iter());
+            }
+        }
+    }
+    if g.node_alpha.iter().any(Option::is_some) {
+        for (e, chain) in &world {
+            if let Some(a) = chain.0.iter().find_map(|&(n, _)| g.node_alpha.get(n).copied().flatten())
+                && 0 < a
+            {
+                req.alpha(e, (255 - u32::from(a)) as f32 / 255.0);
+            }
+        }
+    }
+}
+
+/// Realise this frame's material requests (clone on first use, restore the
+/// shared material when nothing is requested).
+fn apply_material_requests(
+    mut commands: Commands,
+    mut req: ResMut<MatRequests>,
+    mut meshes: Query<(Entity, &mut MeshMaterial3d<gdl_client::GsMaterial>, Option<&MatOverride>)>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+) {
+    for (e, mut m, ov) in &mut meshes {
+        let r = req.0.remove(&e);
+        let base = ov.map_or_else(|| m.0.clone(), |o| o.base.clone());
+        let Some(b) = materials.get(&base).cloned() else { continue };
+        let (image, alpha) = match &r {
+            Some(r) => {
+                let image = b.base.as_ref().and_then(|img| r.swap.iter().find(|(t, _)| *t == img.id()).map(|(_, alt)| alt.clone()));
+                (image, r.alpha)
+            }
+            None => (None, 1.0),
+        };
+        if image.is_none() && 0.999 <= alpha {
+            if ov.is_some() {
+                m.0 = base;
+                commands.entity(e).remove::<MatOverride>();
+            }
+            continue;
+        }
+        if ov.is_none() {
+            let mut own = b.clone();
+            if own.alpha_mode == AlphaMode::Opaque || matches!(own.alpha_mode, AlphaMode::Mask(_)) {
+                own.alpha_mode = AlphaMode::Blend;
+            }
+            m.0 = materials.add(own);
+            commands.entity(e).insert(MatOverride { base: base.clone() });
+        }
+        if let Some(own) = materials.get_mut(&m.0) {
+            let img = image.or_else(|| b.base.clone());
+            if own.base != img {
+                own.base = img;
+            }
+            let w = b.params.tint.w * alpha;
+            if (own.params.tint.w - w).abs() > 1e-4 {
+                own.params.tint.w = w;
+            }
+        }
+    }
+    req.0.clear();
+}
+
+/// A type-3 tree node's texture modifier (AtreeNodeInit: the 0x58-byte
+/// record at the tree's header[0] base + node +0x34), applied to the node's
+/// subtree each frame by DoTexModNode: frame-base ≥ 0 swaps texture record
+/// `target` for frame base + clamp((frame − start) / divisor, 0, count − 1)
+/// (MBTreeSetAltTex); −4 fades in and −5 out over `count` frames from
+/// `start` (DoTexFadeSub → MBTreeSetAlpha). Scrolls (−2/−3) are not ported.
+#[derive(Clone)]
+struct NodeTexMod {
+    subtree: Vec<usize>,
+    target: i32,
+    frame_base: i32,
+    count: i16,
+    start: i16,
+    divisor: i32,
+}
+
+fn tree_texmods(p: &Package, tree: &gdl_formats::animation::Tree) -> Vec<NodeTexMod> {
+    let base = tree.file_offset as usize;
+    let Some(h0) = p.anim_bytes.get(base..base + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) else { return Vec::new() };
+    let mut out = Vec::new();
+    for node in tree.nodes.iter().filter(|n| n.node_type == 3) {
+        let at = base + h0 + node.sequence_info_offset as usize;
+        let Ok(t) = gdl_formats::animation::texmod_at(&p.anim_bytes, at) else { continue };
+        let subtree = tree
+            .nodes
+            .iter()
+            .filter(|n| {
+                let mut k = n.index as i32;
+                let mut guard = 0;
+                while 0 <= k && guard < 256 {
+                    if k == node.index as i32 {
+                        return true;
+                    }
+                    k = tree.nodes.get(k as usize).map_or(-1, |m| m.parent);
+                    guard += 1;
+                }
+                false
+            })
+            .map(|n| n.index as usize)
+            .collect();
+        out.push(NodeTexMod { subtree, target: t.target, frame_base: t.frame_base, count: t.count, start: t.start, divisor: t.divisor });
+    }
+    out
+}
+
+/// DoTexModNode for the meshes of one tree at `frame`.
+fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, frame: f32, meshes: &[(Entity, usize)], req: &mut MatRequests) {
+    let f = (frame + 0.5) as i32;
+    for m in mods {
+        let d = f - i32::from(m.start);
+        match m.frame_base {
+            -4 | -5 => {
+                let (t, c) = (d as f32, f32::from(m.count));
+                let mut v = 0.0;
+                if 0.0 < t && 0.0 < c {
+                    v = if t < c { t / c } else { 1.0 };
+                }
+                // MBTreeSetAlpha(255 · v) for −5, 255 · (1 − v) for −4.
+                let opacity = if m.frame_base == -4 { v } else { 1.0 - v };
+                for &(e, n) in meshes {
+                    if m.subtree.contains(&n) {
+                        req.alpha(e, opacity);
+                    }
+                }
+            }
+            b if 0 <= b => {
+                let mut k = d.max(0);
+                if 0 <= d {
+                    if 0 < m.divisor {
+                        k = d / m.divisor;
+                    }
+                    if i32::from(m.count) <= k {
+                        k = i32::from(m.count) - 1;
+                    }
+                }
+                let (Ok(t), Ok(a)) = (u16::try_from(m.target), u16::try_from(b + k)) else { continue };
+                let (Some(target), Some(alt)) = (lib.record_images.get(&t), lib.record_images.get(&a)) else { continue };
+                for &(e, n) in meshes {
+                    if m.subtree.contains(&n) {
+                        req.swap(e, target.id(), alt.clone());
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -850,13 +1097,15 @@ fn build_library(
     let set = gdl_client::materials_for(&pkg.objects, &pkg.table, &pkg.textures, images, materials);
     let (parts, _) = gdl_client::object_meshes(&pkg.objects, &set, materials, meshes);
     let mut by_label = HashMap::new();
+    let mut index_of = HashMap::new();
     for d in &pkg.objects.definitions {
+        index_of.entry(d.label.to_uppercase()).or_insert(d.object_index as u32);
         if let Some(list) = parts.get(&(d.object_index as u32)) {
             by_label.entry(d.label.clone()).or_insert_with(|| list.clone());
         }
     }
     let texmods = gdl_formats::animation::texmods(&pkg.anim_bytes).unwrap_or_default();
-    Library { by_label, textures: set.labels, record_images: set.record_images, label_index: set.label_index, texmods }
+    Library { by_label, textures: set.labels, record_images: set.record_images, label_index: set.label_index, texmods, by_index: parts, index_of }
 }
 
 /// The OANIM frames of a package's trees (InitOAnimList / DoObjAnimation):
@@ -1592,6 +1841,20 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box
     if lv.world != 0xc {
         profile::player_save_state(&mut record, lv.world != 0xd, lv.world, lv.index as i32, &session.controls);
     }
+    // DEBUG (Sumner shard/rune speech checks): GDL_DEBUG_SHARDS=<hex> /
+    // GDL_DEBUG_RUNES=<hex> add live shard/rune bits (+0x1a24 / +0x1a26)
+    // before a Tower entry; GDL_DEBUG_OLD_SHARDS / GDL_DEBUG_OLD_RUNES add
+    // delivered ones (class record +0xcf0/+0xcf2 and backup +0x1d7c/+0x1d7e).
+    if lv.world == 0xd {
+        let c = 0xb4 * record.u32_(0xc) as usize;
+        for (var, offsets) in [("GDL_DEBUG_SHARDS", vec![0x1a24]), ("GDL_DEBUG_RUNES", vec![0x1a26]), ("GDL_DEBUG_OLD_SHARDS", vec![c + 0xcf0, c + 0x1d7c]), ("GDL_DEBUG_OLD_RUNES", vec![c + 0xcf2, c + 0x1d7e])] {
+            if let Some(bits) = std::env::var(var).ok().and_then(|v| u16::from_str_radix(v.trim_start_matches("0x"), 16).ok()) {
+                for o in offsets {
+                    record.set_u16(o, record.u16_(o) | bits);
+                }
+            }
+        }
+    }
     start["players"][0] = Value::String(record.0.iter().map(|b| format!("{b:02x}")).collect());
     start["classes"][0] = serde_json::to_value(&session.class_data)?;
     start["globals"]["cur_world"] = Value::from(lv.world);
@@ -1600,6 +1863,11 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box
     start["globals"]["last_finished_level"] = Value::from(session.carried[2]);
     start["globals"]["cur3d_transmitter"] = Value::from(session.carried[3]);
     start["globals"]["cur_transmitter"] = Value::from(session.carried[4]);
+    // LoadGauntWorldStart: LastWorldPlayed / LastLevelPlayed follow every
+    // non-Tower level.
+    let (lwp, llp) = if lv.world != 0xd { (lv.world, lv.index as i32) } else { (session.carried[5], session.carried[6]) };
+    start["globals"]["last_world_played"] = Value::from(lwp);
+    start["globals"]["last_level_played"] = Value::from(llp);
     start["globals"]["cur_level"] = Value::from(lv.index as i64);
     let start: setup::StartState = serde_json::from_value(start)?;
     let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
@@ -1612,15 +1880,20 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box
         Ok(Animations::parse(&gdl_client::bounded_read(Path::new(path))?)?)
     };
     let mut item_anims = HashMap::new();
+    let mut item_pkgs = Vec::new();
     for pkg in &lv.items {
         let items_anim = anim(pkg)?;
         for (k, t) in items_anim.trees.iter().enumerate() {
             item_anims.entry(t.label.clone()).or_insert_with(|| setup::clips_of(&items_anim, k));
         }
+        item_pkgs.push(items_anim);
     }
     let weapons = anim("WEAPONS")?;
     let powerups = anim("POWERUPS")?;
-    let effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &weapons, &powerups)?;
+    let mut effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &weapons, &powerups)?;
+    for (n, a) in item_pkgs.iter().enumerate().take(2) {
+        effect_tables.add_item_package(n as u8, a);
+    }
     let mut game = Game::new_level(setup::LevelInputs {
         world: &session.world,
         wdata: &wdata,
@@ -1857,12 +2130,7 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
                 let parent = usize::try_from(node.parent).ok().and_then(|i| sums.get(i).copied()).unwrap_or(Vec3::ZERO);
                 let at = parent + Vec3::from_array(node.initial_position);
                 sums.push(at);
-                let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
-                if let Some(parts) = lib.by_label.get(&label) {
-                    out.push((at, parts.clone(), tree_node_flags(node), Some(node.index as usize), None));
-                } else if let Some(ps) = tree_node_psys(&p.anim_bytes, tree, node) {
-                    out.push((at, Vec::new(), 0, Some(node.index as usize), Some(ps)));
-                }
+                tree_node_model(p, lib, tree, node, at, &mut out);
             }
             if !out.is_empty() {
                 return out;
@@ -1881,8 +2149,12 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
 /// flags select a GsMaterial variant (cached), face flags add CameraFaceLocal.
 fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: &mut Assets<gdl_client::GsMaterial>, cache: &mut PartVariants, pending: &mut PendingTreePsys) {
     commands.entity(parent).despawn_related::<Children>();
-    for (offset, parts, flags, node, psys) in list {
-        if let Some(ps) = psys {
+    for (offset, parts, flags, node, extra) in list {
+        let frame = match extra {
+            Some(NodeExtra::Frame(f)) => Some(f),
+            _ => None,
+        };
+        if let Some(NodeExtra::Psys(ps)) = extra {
             // An anchor in the slot's hierarchy; the sprites draw in render
             // space from a root-level emitter that follows it.
             let mut anchor = commands.spawn((Transform::from_translation(offset), Visibility::Inherited));
@@ -1916,6 +2188,9 @@ fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: 
             let mut child = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_translation(offset)));
             if let Some(i) = node {
                 child.insert(TreeNodeIdx(i));
+            }
+            if let Some(f) = frame {
+                child.insert((f, Visibility::Hidden));
             }
             if flags & 0xf000000 != 0 {
                 child.insert(CameraFaceLocal { mode: flags & 0xf000000 });
@@ -2067,6 +2342,7 @@ fn present_world(
                         let pkg = match head.source {
                             0 => Some("WEAPONS".to_string()),
                             1 => Some("POWERUPS".to_string()),
+                            n if 0x80 <= n => items.get(usize::from(n - 0x80)).cloned(),
                             n => session.levels[session.current].critters.get(n as usize - 2).and_then(|c| c.2.clone()),
                         };
                         let Some(pkg) = pkg else {
@@ -2160,7 +2436,16 @@ struct EffectTree {
 /// Pose effect trees' nodes (sequence 0) at the effect's current frame;
 /// camera-facing nodes keep their translation and take CameraFaceLocal's
 /// rotation afterwards.
-fn present_effect_trees(sim: Res<Sim>, sources: Res<Sources>, slots: Query<(&EffectTree, &Children, &Visibility)>, mut parts: Query<(&TreeNodeIdx, &mut Transform)>) {
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn present_effect_trees(
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    libs: Res<Libraries>,
+    slots: Query<(&EffectTree, &Children, &Visibility)>,
+    mut parts: Query<(Entity, &TreeNodeIdx, &mut Transform, Option<&OFrame>, &mut Visibility), Without<EffectTree>>,
+    mut req: ResMut<MatRequests>,
+    mut texmods: Local<HashMap<(String, usize), Vec<NodeTexMod>>>,
+) {
     let atime = sim.game.globals.atime;
     for (fx, children, vis) in &slots {
         if *vis == Visibility::Hidden {
@@ -2170,13 +2455,34 @@ fn present_effect_trees(sim: Res<Sim>, sources: Res<Sources>, slots: Query<(&Eff
         let Some(anim) = pkg.anim.as_ref() else { continue };
         let frame = ((atime - fx.start) * 900.0 / f32::from(fx.timing.max(1))).max(0.0);
         let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, 0, frame, true) else { continue };
+        let mut meshes = Vec::new();
         for child in children.iter() {
-            if let Ok((idx, mut tf)) = parts.get_mut(child)
-                && let Some(m) = pose.get(idx.0)
-            {
-                *tf = Transform::from_matrix(*m);
+            if let Ok((e, idx, mut tf, of, mut v)) = parts.get_mut(child) {
+                if let Some(m) = pose.get(idx.0) {
+                    *tf = Transform::from_matrix(*m);
+                }
+                if let Some(f) = of {
+                    show_oframe(f, 0, frame, &mut v);
+                }
+                meshes.push((e, idx.0));
             }
         }
+        let mods = texmods.entry((fx.pkg.clone(), fx.tree)).or_insert_with(|| anim.trees.get(fx.tree).map(|t| tree_texmods(pkg, t)).unwrap_or_default());
+        if let Some(lib) = libs.0.get(&fx.pkg)
+            && !mods.is_empty()
+        {
+            request_tree_texmods(mods, lib, frame, &meshes, &mut req);
+        }
+    }
+}
+
+/// DoObjAnimation for one OANIM frame object of sequence `seq` at `frame`.
+fn show_oframe(f: &OFrame, seq: u16, frame: f32, v: &mut Visibility) {
+    let at = (frame + 0.5) as i32 - i32::from(f.start);
+    let on = f.seq == seq && (f.single || at == i32::from(f.k));
+    let want = if on { Visibility::Inherited } else { Visibility::Hidden };
+    if *v != want {
+        *v = want;
     }
 }
 
@@ -2188,8 +2494,9 @@ fn present_item_trees(
     sources: Res<Sources>,
     session: Res<Session>,
     slots: Query<(&Slot, &Children, &Visibility)>,
-    mut parts: Query<(&TreeNodeIdx, &mut Transform)>,
+    mut parts: Query<(Entity, &TreeNodeIdx, &mut Transform, Option<&OFrame>, &mut Visibility), Without<Slot>>,
     mut trees: Local<HashMap<String, Option<(String, usize)>>>,
+    (libs, mut req, mut texmods): (Res<Libraries>, ResMut<MatRequests>, Local<HashMap<(String, usize), Vec<NodeTexMod>>>),
 ) {
     let items = &session.levels[session.current].items;
     for (slot, children, vis) in &slots {
@@ -2210,13 +2517,25 @@ fn present_item_trees(
         let Some((pkg, tree)) = found else { continue };
         let Some(p) = sources.packages.get(&pkg) else { continue };
         let Some(a) = p.anim.as_ref() else { continue };
-        let Ok(pose) = gdl_client::tree_pose(a, tree, &p.anim_bytes, anim.current as usize, anim.clock.frame.max(0.0), true) else { continue };
+        let frame = anim.clock.frame.max(0.0);
+        let Ok(pose) = gdl_client::tree_pose(a, tree, &p.anim_bytes, anim.current as usize, frame, true) else { continue };
+        let mut meshes = Vec::new();
         for child in children.iter() {
-            if let Ok((idx, mut tf)) = parts.get_mut(child)
-                && let Some(m) = pose.get(idx.0)
-            {
-                *tf = Transform::from_matrix(*m);
+            if let Ok((e, idx, mut tf, of, mut v)) = parts.get_mut(child) {
+                if let Some(m) = pose.get(idx.0) {
+                    *tf = Transform::from_matrix(*m);
+                }
+                if let Some(f) = of {
+                    show_oframe(f, anim.current, frame, &mut v);
+                }
+                meshes.push((e, idx.0));
             }
+        }
+        let mods = texmods.entry((pkg.clone(), tree)).or_insert_with(|| a.trees.get(tree).map(|t| tree_texmods(p, t)).unwrap_or_default());
+        if let Some(lib) = libs.0.get(&pkg)
+            && !mods.is_empty()
+        {
+            request_tree_texmods(mods, lib, frame, &meshes, &mut req);
         }
     }
 }
@@ -2227,15 +2546,32 @@ fn tree_parts(sources: &Sources, libs: &Libraries, pkg: &str, label: &str) -> Mo
     let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == label)) else { return Vec::new() };
     let mut out = Vec::new();
     for node in &tree.nodes {
-        let l: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
-        if let Some(parts) = lib.by_label.get(&l) {
-            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node), Some(node.index as usize), None));
-        } else if let Some(ps) = tree_node_psys(&p.anim_bytes, tree, node) {
-            out.push((Vec3::from_array(node.initial_position), Vec::new(), 0, Some(node.index as usize), Some(ps)));
-        }
+        tree_node_model(p, lib, tree, node, Vec3::from_array(node.initial_position), &mut out);
     }
     out
 }
+
+/// A package tree node's drawables at `at`: its object, its particle system
+/// (type 4) or its OANIM frame objects (type 2, every sequence's entry).
+fn tree_node_model(p: &Package, lib: &Library, tree: &gdl_formats::animation::Tree, node: &gdl_formats::animation::Node, at: Vec3, out: &mut Model) {
+    let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
+    if let Some(parts) = lib.by_label.get(&label) {
+        out.push((at, parts.clone(), tree_node_flags(node), Some(node.index as usize), None));
+    } else if let Some(ps) = tree_node_psys(&p.anim_bytes, tree, node) {
+        out.push((at, Vec::new(), 0, Some(node.index as usize), Some(NodeExtra::Psys(ps))));
+    } else if node.node_type == 2 {
+        for (seq, e) in node.oanim.iter().enumerate() {
+            let Some(&base) = lib.index_of.get(&e.name.to_uppercase()) else { continue };
+            for k in 0..e.count.max(1) {
+                if let Some(parts) = lib.by_index.get(&(base + k as u32)) {
+                    let f = OFrame { seq: seq as u16, start: e.start, k, single: e.count <= 1 };
+                    out.push((at, parts.clone(), tree_node_flags(node), Some(node.index as usize), Some(NodeExtra::Frame(f))));
+                }
+            }
+        }
+    }
+}
+
 
 /// The character's thrown missile tree (InitPlayerMissiles: the
 /// "<PlayerMissileDesc>_THROW<n>" tree of the SFX or model package) at rest
@@ -2245,12 +2581,7 @@ fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) 
     let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == throw.1)) else { return Vec::new() };
     let mut out = Vec::new();
     for node in &tree.nodes {
-        let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
-        if let Some(parts) = lib.by_label.get(&label) {
-            out.push((Vec3::from_array(node.initial_position), parts.clone(), tree_node_flags(node), Some(node.index as usize), None));
-        } else if let Some(ps) = tree_node_psys(&p.anim_bytes, tree, node) {
-            out.push((Vec3::from_array(node.initial_position), Vec::new(), 0, Some(node.index as usize), Some(ps)));
-        }
+        tree_node_model(p, lib, tree, node, Vec3::from_array(node.initial_position), &mut out);
     }
     out
 }
@@ -2445,7 +2776,8 @@ fn present_player(
 /// then the level's packages: a presentation choice — the panel labels are
 /// unique across them) and the FONTS/*.FNT files of font_desc, then the
 /// panels' reset/level-start setup.
-fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl_client::catalog::Catalog, english: &gdl_formats::textrom::TextRom, sets: &mut HudSets) {
+fn init_hud(game: &mut Game, sources: &Sources, session: &Session, front: &Front, sets: &mut HudSets) {
+    let (catalog, english) = (&front.catalog, &front.english);
     let mut keys = vec!["STATIC".to_string(), String::new()];
     keys.extend(level_packages(&session.levels[session.current]).into_iter().filter(|k| k != "STATIC"));
     keys.retain(|k| k.is_empty() || sources.packages.contains_key(k));
@@ -2458,6 +2790,7 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, catalog: &gdl
         .collect();
     let fonts = load_fonts(catalog, game.hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default());
     game.hud_init(tex, fonts, Some(english.clone()));
+    game.hud.scrolls = Some(front.scrolls.clone());
     if !game.hud.missing.is_empty() {
         eprintln!("panel textures not found: {:?}", game.hud.missing);
     }
@@ -2837,11 +3170,11 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             tier,
             class,
             colour,
-            carried: [0, -1, -1, -1, -1],
+            carried: [0, -1, -1, -1, -1, 0xd, 0],
         };
         let mut game = build_game(&session, idx, &record)?;
         let sources = Sources { character, clips, clip_bytes, rig, packages, monsters: b.monsters.clone() };
-        init_hud(&mut game, &sources, &session, &front.catalog, &front.english, &mut hud_sets);
+        init_hud(&mut game, &sources, &session, front, &mut hud_sets);
         (session, sources, game, loaded.recovered)
     };
     let attention = Vec3::from_array(game.players[0].v3(0x810));
@@ -3365,6 +3698,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(presentation)
         .init_resource::<Libraries>()
         .init_resource::<PartVariants>()
+        .init_resource::<MatRequests>()
         .init_resource::<PendingTreePsys>()
         .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
         .init_resource::<EnemyFrames>()
@@ -3388,7 +3722,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_sumner, present_sparks, present_player, present_player_shadow).chain().run_if(playing),
+                (advance_level, present_world, present_world_nodes, present_node_flags, present_scene_light, present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_sumner, present_tree_alpha, apply_material_requests).chain(), present_sparks, present_player, present_player_shadow).chain().run_if(playing),
                 front_text,
                 present_hud,
             )
@@ -3520,7 +3854,7 @@ fn advance_level(
         sim.game.end_tower();
     }
     let g = &sim.game.globals;
-    session.carried = [g.tower_counter, g.last_finished_world, g.last_finished_level, g.cur3d_transmitter, g.cur_transmitter];
+    session.carried = [g.tower_counter, g.last_finished_world, g.last_finished_level, g.cur3d_transmitter, g.cur_transmitter, g.last_world_played, g.last_level_played];
     let carry = sim.game.players[0].clone();
     let coop_carry: Vec<Option<gdl_core::game::record::Record>> = (1..4).map(|k| sim.coop[k - 1].then(|| sim.game.players[k].clone())).collect();
     let controls = sim.game.controls.clone();
@@ -3564,7 +3898,7 @@ fn advance_level(
                 }
             }
             session.current = idx;
-            init_hud(&mut game, &sources, &session, &front.catalog, &front.english, &mut hud_sets);
+            init_hud(&mut game, &sources, &session, &front, &mut hud_sets);
             sim.game = game;
             for e in &old {
                 commands.entity(e).despawn();

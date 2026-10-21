@@ -73,6 +73,9 @@ pub type R<T> = Result<T, Unsupported>;
 fn minus_one() -> i32 {
     -1
 }
+fn tower_world() -> i32 {
+    0xd
+}
 pub fn unsupported<T>(s: impl Into<String>) -> R<T> {
     Err(Unsupported(s.into()))
 }
@@ -127,6 +130,13 @@ pub struct Globals {
     pub last_finished_world: i32,
     #[serde(default)]
     pub last_finished_level: i32,
+    /// LastWorldPlayed 0x23e190 / LastLevelPlayed 0x23e194: the last
+    /// non-Tower level loaded (LoadGauntWorldStart); init_titlescreen sets
+    /// 0xd / 0.
+    #[serde(default = "tower_world")]
+    pub last_world_played: i32,
+    #[serde(default)]
+    pub last_level_played: i32,
     pub num_virtual_players: i32,
     pub num_visible_enemies: i32,
     /// 0x20f958: forced player count for show_item.

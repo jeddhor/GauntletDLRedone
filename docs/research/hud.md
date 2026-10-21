@@ -220,11 +220,52 @@ GameText's FONT '8Hi_fonts5' matches no font_desc name, so StringInitSub
 leaves font 0 (font8x8). The text (font z 0.25) draws over the letterbox
 (z 0.5), which is now a z-sorted blit pair (AAAWHITE, colour 0).
 HYPOTHESIS: a player's speech ends once the caption is revealed and 0x168
-frames passed (AudioSoundPlaying of the speech is not modelled). Not
-ported: the shard/rune captions and SumnerSpeechEnd's events
-(sumner_event_flag machine), StartLevelUpFX/StartGemFX during the speech,
-the ghost's tree. GDL_DEBUG_EXP=<exp>:<update> sets player 1's experience
-for checks.
+frames passed (AudioSoundPlaying of the speech is not modelled). During it
+StartLevelUpFX (LevelUpEffects 0x2407e8: headers 0x39 + colour) after 0xf0
+frames and StartGemFX (gem_color.39 0x23f588 = 6, 4, 2, 5) after 0x10e,
+both parented to the player. GDL_DEBUG_EXP=<exp>:<update> sets player 1's
+experience for checks.
+
+Shards and runes (TowerCheckMessages 0x175e88 with param 1 from
+EnterTower): per present player the live bits (+0x1a24 shards, +0x1a26
+runes) are ORed into the class record (+0xcf0/+0xcf2) and its backup
+(+0x1d7c/+0x1d7e); the lowest shard bit 1..8 not yet in the backup starts
+SumnerShardSpeechStart(n) (3 s, speech index n), the lowest new rune bit
+0..12 SumnerRuneSpeechStart(n) (index 100 + n); without a new rune, the
+last played level being Battle 2 (LastWorldPlayed 8, LastLevelPlayed 2,
+set by LoadGauntWorldStart for every non-Tower level; title: 0xd/0) without
+rune 13 gives 0xd (Rune13No), and twelve runes plus a new shard 9 gives 0xe
+(SumnerSpeechEnd at once). Captions are CaptionText 0x165568 over
+ScrollText[0] (SCROLL_E): NewShards line n, MoreShards, AllShards,
+NewRunes line 0, Rune13No, All12RunesNo, All12RunesYes, Rune13Yes; −1
+lines page with caption_delay 0x3c once revealed (scale = the entry's
+× 0.667, font = the entry's). Speech sounds: AudioShardSpeech (shard_sidx,
+0xe00ac, 0x3000b) and AudioRuneSpeech (0xe00a4/a8/a5/a6/a7), queued.
+After the caption the speech time runs out and SumnerSpeechEnd 0x174cc8:
+ghost removed, TriggerCameraEnd, controls back, then by index — SHARD<n>
+custom effect (InitCustomEffect over weapon/powerup/item packages; flag
+0x80000 keeps it after its end) at L1WINDOWFRAME, WindowCamActivate(0),
+L1XPLIGHTRAY01 hidden, all eight shards → the Temple exit (FindExit
+0x500) transparent and event 10, else event 0xe; RUNE<n+1> at L1RUNEPLACE
+with RuneCamActivate(0); the Hell exit 0x600 transparent; event 0x14/0x15
+(nine shards and twelve runes), 0x18 (twelve runes) or 0x16; index 0x70
+(rune 13) RUNE13 at L1RUNE13, rune camera 1, Battle 3 exit 0x803, event
+0x1e/0x20. sumner_event_flag steps (each waits for the trigger camera's
+delay and hold below 5, or plays AudioTowerFX when the hold drops below
+0xfa/0xdc): 10→0xb (window camera 1, the exit and the light ray fade in
+over 0xb4 vblanks: flag 0x74 counts down by 100 → 0x10 → AllShards);
+0xe→0xf (MoreShards); 0x15 (rune camera 0, Hell exit fade 0x7e → 0x1a →
+All12RunesYes); 0x18→0x19 (All12RunesNo); 0x1e→0x1f (rune camera 2,
+ActivateSpecialTrigger(0xff), Battle 3 exit fade 0x88 → 0x24 → Rune13Yes);
+0x16/0x20 → 0x17/0x21 → 0. Follow-up speeches last 2 s. EnterTower shows
+every delivered shard/rune effect at its last frame (start ATime −
+frames/30). Verified natively (GDL_DEBUG_SHARDS=2, GDL_DEBUG_RUNES=1,
+GDL_DEBUG_OLD_SHARDS=1fe GDL_DEBUG_OLD_RUNES=fff): NewShards/MoreShards
+captions with paging, the window and rune cameras (rune camera 5.67 s =
+40 + 300 vblanks), the twelve runes in the rune circle and the light ray.
+Not verified against the reference: the ghost (WIZARD tree, presented at
+the waypoint; not seen in the Sumner camera's view) and the window
+camera's SHARD effect.
 
 ## Player select
 

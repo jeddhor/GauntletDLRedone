@@ -8,9 +8,9 @@
 //! Player progress lives in the class record (+0xcf0 + class × 0xb4) and the
 //! wave bytes (+0x182c + class × 0xe + world). Not modelled: the secret
 //! Sumner character (player_sumner_desc 0x220ed0 is a runtime pointer; every
-//! player is treated as not Sumner), DemoMode, the shard/rune display
-//! effects, exit model swaps and TowerCheckMessages (Sumner's speeches and
-//! window cameras).
+//! player is treated as not Sumner), DemoMode and exit model swaps.
+//! TowerCheckMessages 0x175e88 drives Sumner's level/shard/rune speeches
+//! (SumnerDoSpeech, SumnerSpeechEnd, the sumner_event_flag steps).
 use super::pickups::p;
 use super::{Event, Game, R};
 use crate::numeric::{add_guarded_rz as add, mul_rz as mul, sub_guarded_rz as sub};
@@ -46,8 +46,35 @@ pub struct TowerState {
     pub cam_active: bool,
     pub plyr_sidx: i32,
     pub caption: (i32, i32, i32),
-    pub ghost: Option<[[f32; 4]; 4]>,
+    /// sumner_plyr_fxidx / fxidx2: the level-up and gem effects started.
+    pub plyr_fxidx: i32,
+    pub plyr_fxidx2: i32,
+    /// SumnerGhostNode (the WIZARD tree; SumnerGhostDanim stays 0) and the
+    /// tree's sequences (None: item_anim has no WIZARD tree).
+    pub ghost: Option<GhostState>,
+    pub ghost_clips: Option<Vec<crate::animation_clock::ClipTiming>>,
+    /// sumner_event_flag / sumner_event_timer / sumner_event_shownode (a
+    /// world node) / sumner_event_showitem (an item slot): TowerCheckMessages'
+    /// steps after a shard or rune speech.
+    pub event_flag: i32,
+    pub event_timer: i32,
+    pub event_shownode: Option<usize>,
+    pub event_showitem: Option<usize>,
 }
+
+/// Sumner's ghost (SumnerGhostStart): its matrix and tree clock.
+#[derive(Clone, Debug)]
+pub struct GhostState {
+    pub matrix: [[f32; 4]; 4],
+    pub clock: crate::animation_clock::ClockState,
+    pub current: u16,
+}
+
+const IDENTITY: [[f32; 4]; 4] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+/// LevelUpEffects 0x2407e8 (effect headers per player colour).
+const LEVEL_UP_EFFECTS: [i32; 4] = [0x39, 0x3a, 0x3b, 0x3c];
+/// gem_color.39 0x23f588 (StartGemFX argument per player colour).
+const GEM_COLOR: [i32; 4] = [6, 4, 2, 5];
 
 /// Sumner (the GWIZ tree of the level's item animations at lookout param 0):
 /// SumnerDanim / SumnerAnimNow and his tree clock.
@@ -244,26 +271,51 @@ impl Game {
                 self.activate_special_trigger(n as u8, true)?;
             }
         }
-        let mut runes = 0u16;
-        for k in 0..4 {
-            if self.players[k].i32_(0xfc) != 0 {
-                runes |= self.players[k].u16_(self.class_at(k, 0x1d7e));
-            }
-        }
-        if runes & 0x1000 != 0 {
-            self.activate_special_trigger(0xff, true)?;
-        }
-        // Without all eight shards (class +0x1d7c) the light ray is hidden:
-        // MBTreeSetFlags(L1XPLIGHTRAY01, 2, 0). The SHARD/RUNE display
-        // effects are not ported.
+        // The delivered shards (class backup +0x1d7c, bits 1..=8) stand in
+        // the window (SHARD<n> at L1WINDOWFRAME); without all eight the
+        // light ray is hidden: MBTreeSetFlags(L1XPLIGHTRAY01, 2, 0).
         let mut shards = 0u16;
         for k in 0..4 {
             if self.players[k].i32_(0xfc) != 0 {
                 shards |= self.players[k].u16_(self.class_at(k, 0x1d7c));
             }
         }
+        if shards != 0
+            && let Some(o) = self.find_world_object("L1WINDOWFRAME")
+        {
+            for n in 1..9 {
+                if (shards >> n) & 1 != 0 {
+                    self.tower_display_fx(&format!("SHARD{n}"), o)?;
+                }
+            }
+        }
         if shards & 0x1fe != 0x1fe {
             self.world_node_set_flags("L1XPLIGHTRAY01", 2);
+        }
+        // Runes (class backup +0x1d7e): the all-runes door (0xff) with rune
+        // 13, runes 1..=12 at L1RUNEPLACE, rune 13 at L1RUNE13.
+        let mut runes = 0u16;
+        for k in 0..4 {
+            if self.players[k].i32_(0xfc) != 0 {
+                runes |= self.players[k].u16_(self.class_at(k, 0x1d7e));
+            }
+        }
+        if runes != 0 {
+            if runes & 0x1000 != 0 {
+                self.activate_special_trigger(0xff, true)?;
+            }
+            if let Some(o) = self.find_world_object("L1RUNEPLACE") {
+                for n in 0..0xc {
+                    if (runes >> n) & 1 != 0 {
+                        self.tower_display_fx(&format!("RUNE{}", n + 1), o)?;
+                    }
+                }
+            }
+            if runes & 0x1000 != 0
+                && let Some(o) = self.find_world_object("L1RUNE13")
+            {
+                self.tower_display_fx("RUNE13", o)?;
+            }
         }
         self.hide_exits();
         self.tower_check_messages(true)
@@ -342,20 +394,52 @@ impl Game {
 
     /// SumnerInit: the GWIZ tree at lookout param 0's matrix (supplied by the
     /// caller from the level's item animations).
-    pub fn sumner_init(&mut self, clips: Vec<crate::animation_clock::ClipTiming>) -> R<()> {
-        let Some(l) = self.lookouts.iter().find(|l| l.param == 0) else { return Ok(()) };
-        let matrix = super::lookouts::lookout_matrix(l)?;
+    pub fn sumner_init(&mut self, clips: Vec<crate::animation_clock::ClipTiming>, ghost_clips: Option<Vec<crate::animation_clock::ClipTiming>>) -> R<()> {
+        // Without lookout param 0 Sumner's node stays at identity.
+        let matrix = match self.lookouts.iter().find(|l| l.param == 0) {
+            Some(l) => super::lookouts::lookout_matrix(l)?,
+            None => IDENTITY,
+        };
         self.tower.sumner = Some(SumnerState { matrix, danim: 0, anim_now: false, clock: super::setup::fresh_clock(), clips, current: 0 });
+        self.tower.ghost_clips = ghost_clips;
+        // SumnerInit's globals (CaptionText's state is CaptionTextReset's).
+        self.tower.ghost = None;
+        self.tower.cam_active = false;
         self.tower.sumner_pidx = 0;
-        self.tower.speech_idx = -1;
+        self.tower.plyr_fxidx = -1;
+        self.tower.plyr_fxidx2 = -1;
         self.tower.plyr_sidx = -1;
+        self.tower.delay = 0x3c;
+        self.tower.speech_idx = -1;
+        self.tower.event_flag = 0;
         self.tower.caption = (0, 0, 0x3c);
+        Ok(())
+    }
+
+    fn ghost_animate(&mut self) -> R<()> {
+        let (atime, scale) = (self.globals.atime, self.globals.anim_time_scale);
+        // AnimateATree(SumnerGhostAtree, SumnerGhostDanim 0, 0).
+        if let (Some(g), Some(clips)) = (self.tower.ghost.as_mut(), self.tower.ghost_clips.as_ref())
+            && let Some(&clip) = clips.first()
+        {
+            let out = crate::animation_clock::select(
+                g.clock,
+                clips.get(g.current as usize).copied().unwrap_or(clip),
+                clip,
+                crate::animation_clock::SelectionInput { sequence: 0, mode: 0, start_frame: 0, blend_duration: 0.0, playback_scale: 1.0, now: atime, anim_time_scale: scale },
+            )?;
+            g.clock = out.state;
+            if out.return_flags & 1 != 0 {
+                g.current = 0;
+            }
+        }
         Ok(())
     }
 
     /// SumnerAnimate: AnimateATree(SumnerAtree, SumnerDanim, SumnerAnimNow ?
     /// 2 : 0); a finished sequence advances SumnerDanim through 0..=2.
     fn sumner_animate(&mut self) -> R<()> {
+        self.ghost_animate()?;
         let (atime, scale) = (self.globals.atime, self.globals.anim_time_scale);
         let Some(s) = self.tower.sumner.as_mut() else { return Ok(()) };
         let (Some(&current), Some(&requested)) = (s.clips.get(s.current as usize), s.clips.get(s.danim as usize)) else { return Ok(()) };
@@ -482,14 +566,17 @@ impl Game {
         Ok(())
     }
 
-    /// SumnerDoSpeech 0x1750a0 (level-up speeches; the shard/rune captions
-    /// follow, their SumnerSpeechEnd events are not ported): after 120
-    /// vblanks the caption of each player with a new level tier
-    /// (GameText 0x18 formatted with the colour 0x16 and class 0x17 names,
-    /// the level and the rank list text) at y 0x138; Sumner's camera at the
-    /// nearest waypoint while it speaks. HYPOTHESIS: a player's speech ends
-    /// when the caption is revealed and 0x168 frames passed (the speech
-    /// sound's end is not observable here).
+    /// SumnerDoSpeech 0x1750a0: after sumner_delay and 120 vblanks, either
+    /// the caption of each player with a new level tier (GameText 0x18
+    /// formatted with the colour 0x16 and class 0x17 names, the level and
+    /// the rank list text; StartLevelUpFX after 0xf0 frames, StartGemFX
+    /// after 0x10e) or the shard/rune caption (SCROLL_E NewShards line n,
+    /// MoreShards, AllShards, NewRunes line 0, Rune13No, All12RunesNo,
+    /// All12RunesYes, Rune13Yes) at y 0x138; once the caption is shown the
+    /// speech time runs out and SumnerSpeechEnd follows. Sumner's camera
+    /// at the nearest waypoint while he speaks. HYPOTHESIS: a player's level
+    /// speech ends when the caption is revealed and 0x168 frames passed
+    /// (AudioSoundPlaying of the speech is not observable here).
     fn sumner_do_speech(&mut self) -> R<()> {
         let t = &mut self.tower;
         if t.sumner_speech_time <= 0.0 || self.globals.cam_wait != 0 || self.globals.start_of_stage != 0 {
@@ -501,6 +588,7 @@ impl Game {
         }
         let level_up = 0 <= t.sumner_pidx && t.plyr_newlevel.iter().any(|&n| 0 < n);
         if !t.cam_active {
+            self.sumner_ghost_start();
             let avg = {
                 let ps: Vec<[f32; 3]> = (0..4).filter(|&k| self.players[k].i32_(0xfc) == 1).map(|k| self.players[k].v3(0x50)).collect();
                 let n = ps.len().max(1) as f32;
@@ -509,7 +597,10 @@ impl Game {
             };
             if let Some(k) = self.find_closest_waypoint(100_000.0, avg, true)? {
                 let l = self.lookouts[k];
-                self.tower.ghost = Some(super::lookouts::lookout_matrix(&l)?);
+                let m = super::lookouts::lookout_matrix(&l)?;
+                if let Some(g) = self.tower.ghost.as_mut() {
+                    g.matrix = m;
+                }
                 let idx = self.tower.speech_idx;
                 let table = if level_up {
                     0
@@ -549,16 +640,32 @@ impl Game {
                     use super::hud::Arg;
                     let text = super::hud::format_c(&fmt, &[Arg::S(h.string_text(0x16, colour).unwrap_or_default()), Arg::S(h.string_text(0x17, class).unwrap_or_default()), Arg::D(lv), Arg::S(rank)]);
                     let font = h.text.as_ref().and_then(|r| r.entries.get(0x18)).and_then(|e| r_font(h, r_fonts(h), e.font)).unwrap_or(0);
-                    let done = self.hud.caption(f32::from_bits(0x3f2a_c083), &text, font, frame >> 1, 0x138);
+                    let done = self.hud.caption(f32::from_bits(0x3f2a_c083), &text, font, (frame >> 1) - self.tower.caption.1, 0x138);
                     if self.tower.plyr_sidx < 0 {
                         self.audio("AudioExp", Some(p), lv);
                         self.tower.plyr_sidx = 1;
+                    }
+                    if self.tower.plyr_fxidx < 0 && 0xef < frame {
+                        // StartLevelUpFX(0, colour): LevelUpEffects[colour]
+                        // (0x39 + colour), parented to the player's node.
+                        self.tower.plyr_fxidx = self.sumner_player_fx(p, LEVEL_UP_EFFECTS.get(colour as usize).copied())?;
+                    }
+                    if self.tower.plyr_fxidx2 < 0 && 0x10d < frame {
+                        // StartGemFX(0, gem_color[colour]): 0x45 + n.
+                        let h = GEM_COLOR.get(colour as usize).map(|&n| match n {
+                            0x400 => 0x4f,
+                            0x100 => 0x4e,
+                            n => 0x45 + n,
+                        });
+                        self.tower.plyr_fxidx2 = self.sumner_player_fx(p, h)?;
                     }
                     if !done || frame < 0x168 {
                         break;
                     }
                     self.tower.caption = (0, 0, 0x3c);
                     self.tower.speech_frame = 0x78;
+                    self.tower.plyr_fxidx = -1;
+                    self.tower.plyr_fxidx2 = -1;
                     self.tower.plyr_sidx = -1;
                 }
                 self.tower.sumner_pidx += 1;
@@ -568,30 +675,409 @@ impl Game {
             }
             return Ok(());
         }
-        // Shard/rune speeches: their captions and SumnerSpeechEnd events are
-        // not ported; the speech runs out.
-        self.tower.sumner_speech_time = sub(self.tower.sumner_speech_time, self.globals.spf)?;
+        let idx = self.tower.speech_idx;
+        // (message, line: −1 pages through the message's lines).
+        let mut msg: Option<(&str, i32)> = None;
+        if idx < 100 {
+            if (0..9).contains(&idx) {
+                msg = Some(("NewShards", idx));
+                if self.tower.plyr_sidx < 1 {
+                    self.audio_shard_speech(idx);
+                    self.tower.plyr_sidx = 1;
+                }
+            } else if idx == 0xf || idx == 0x10 {
+                msg = Some((if idx == 0xf { "MoreShards" } else { "AllShards" }, -1));
+                if self.tower.plyr_sidx < 2 {
+                    self.audio_shard_speech(idx);
+                    self.tower.plyr_sidx = 2;
+                }
+            }
+        } else {
+            let r = idx - 100;
+            if r < 0xd {
+                msg = Some(("NewRunes", 0));
+                if self.tower.plyr_sidx < 1 {
+                    self.audio_rune_speech(0);
+                    self.tower.plyr_sidx = 1;
+                }
+            } else {
+                let name = match r {
+                    0xd => Some("Rune13No"),
+                    0x19 => Some("All12RunesNo"),
+                    0x1a => Some("All12RunesYes"),
+                    0x24 => Some("Rune13Yes"),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    msg = Some((name, -1));
+                    if self.tower.plyr_sidx < 2 {
+                        self.audio_rune_speech(r);
+                        self.tower.plyr_sidx = 2;
+                    }
+                }
+            }
+        }
+        let shown = match msg {
+            Some((name, line)) => self.caption_text(name, line, frame >> 1, 0x138).unwrap_or(true),
+            None => true,
+        };
+        if shown {
+            self.tower.sumner_speech_time = sub(self.tower.sumner_speech_time, self.globals.spf)?;
+        }
         if self.tower.sumner_speech_time <= 0.0 {
-            self.sumner_speech_end();
+            self.sumner_speech_end()?;
         }
         Ok(())
     }
 
-    /// SumnerSpeechEnd 0x174cc8 (common part): the ghost goes, the trigger
-    /// camera ends, controls return. The shard/rune effects and
-    /// sumner_event_flag are not ported.
-    fn sumner_speech_end(&mut self) {
+    /// CaptionText 0x165568(0, message, line, frame, y) over the scroll
+    /// text (SCROLL_E): line ≥ 0 shows that line from its start; −1 shows
+    /// caption_msgidx and, once it is revealed, waits caption_delay (0x3c
+    /// vblanks) before the next line. None: no such message
+    /// (FindScrollMessage −1).
+    fn caption_text(&mut self, name: &str, line: i32, frame: i32, y: i32) -> Option<bool> {
+        let rom = self.hud.scrolls.as_ref()?;
+        let e = rom.entry(&name.to_uppercase())?;
+        if 0 <= line {
+            self.tower.caption.0 = line;
+            self.tower.caption.1 = 0;
+        }
+        let (idx, start, _) = self.tower.caption;
+        let text = e.lines.get(usize::try_from(idx).ok()?).cloned();
+        let count = e.lines.len() as i32;
+        let scale = mul(e.scale, f32::from_bits(0x3f2a_c083)).ok()?;
+        let font = rom.fonts.get(e.font as usize).and_then(|n| self.hud.tables.as_ref()?.font_desc.iter().position(|f| f == n)).unwrap_or(0);
+        // CaptionTextSub of a missing line reports −1 (true).
+        let Some(text) = text else { return Some(true) };
+        let mut done = self.hud.caption(scale, &text, font, frame - start, y);
+        if done && line < 0 && idx + 1 < count {
+            // vb_elapsed_ctl: the unclamped vblank delta (ClockOncePerFrame),
+            // vb_elapsed outside pauses and menus.
+            self.tower.caption.2 -= self.globals.vb_elapsed;
+            if self.tower.caption.2 < 1 {
+                self.tower.caption = (idx + 1, frame, 0x3c);
+            }
+            done = false;
+        }
+        Some(done)
+    }
+
+    /// StartFXSub(0, header, 0, 0, …) then SfxSetParent to player `p`'s
+    /// node: the effect slot or −1.
+    fn sumner_player_fx(&mut self, p: usize, header: Option<i32>) -> R<i32> {
+        let Some(h) = header.and_then(|h| usize::try_from(h).ok()) else { return Ok(-1) };
+        let k = self.start_fx_sub(0.0, h, None, 0)?;
+        if 0 <= k
+            && let Some(n) = self.effects.nodes[k as usize].as_mut()
+        {
+            n.parent = Some(super::effects::EffectParent { player: p, local: [0.0; 3], local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] });
+        }
+        Ok(k)
+    }
+
+    /// AudioShardSpeech 0x161220: shard_sidx[n] (n < 9), 0xe00ac (0xf),
+    /// 0x3000b (0x10); AudioAnyQueAdd4(−1, 10, 1, id, 0xe0, 0x7f, 2).
+    fn audio_shard_speech(&mut self, n: i32) {
+        let id = match n {
+            n if n < 9 => usize::try_from(n).ok().map_or(-1, |n| self.speech_sidx("shard_sidx", n)),
+            0xf => 0xe00ac,
+            0x10 => 0x3000b,
+            _ => -1,
+        };
+        self.queue(id, 0xe0, 2);
+    }
+
+    /// AudioRuneSpeech 0x161358.
+    fn audio_rune_speech(&mut self, n: i32) {
+        let id = match n {
+            0 => 0xe00a4,
+            0xd => 0xe00a8,
+            0x19 => 0xe00a5,
+            0x1a => 0xe00a6,
+            0x24 => 0xe00a7,
+            _ => -1,
+        };
+        self.queue(id, 0xe0, 2);
+    }
+
+    /// AudioTowerFX 0x161408: AudioSFX(id, 0, 0xff, 10).
+    fn audio_tower_fx(&mut self, n: i32) {
+        let id = match n {
+            1 => 0xe00a3,
+            2 => 0x16,
+            10 => 0xe00aa,
+            0xe => 0xe00ab,
+            0x15 => 0xe00a9,
+            _ => -1,
+        };
+        self.sfx(id, None, 0xff, 10);
+    }
+
+    /// SumnerGhostStart 0x174998: the WIZARD tree of item_anim (AtreeInit
+    /// flags 0xc00880) under the world root, at identity until
+    /// SumnerDoSpeech copies the waypoint's matrix.
+    fn sumner_ghost_start(&mut self) {
+        if self.tower.ghost.is_none() && self.tower.ghost_clips.is_some() {
+            self.tower.ghost = Some(GhostState { matrix: IDENTITY, clock: super::setup::fresh_clock(), current: 0 });
+        }
+    }
+
+    /// SumnerShardSpeechStart 0x174a38(n).
+    fn sumner_shard_speech_start(&mut self, n: i32) {
+        self.sumner_ghost_start();
+        let t = &mut self.tower;
+        t.sumner_speech_time = 3.0;
+        t.speech_frame = 0;
+        t.speech_idx = n;
+        t.caption = (0, 0, 0x3c);
+        self.disable_player_controls = 1;
+    }
+
+    /// SumnerRuneSpeechStart 0x174a88(n): runes 0..=0xd speak (index 100 +
+    /// n); 0xe (all twelve runes and shard 9) goes straight to
+    /// SumnerSpeechEnd.
+    fn sumner_rune_speech_start(&mut self, n: i32) -> R<()> {
+        self.sumner_ghost_start();
+        self.tower.speech_idx = n + 100;
+        if n < 0xe {
+            self.tower.sumner_speech_time = 3.0;
+            self.tower.speech_frame = 0;
+        } else {
+            self.tower.sumner_speech_time = 0.0;
+            self.sumner_speech_end()?;
+        }
+        self.disable_player_controls = 1;
+        self.tower.caption = (0, 0, 0x3c);
+        Ok(())
+    }
+
+    /// FindExit 0x15b968(id): the first active kind-9 item whose +0xf0 is
+    /// `id` (world << 8 | level).
+    pub(crate) fn find_exit(&self, id: i16) -> Option<usize> {
+        (0..self.items.records.len()).find(|&s| {
+            let r = &self.items.records[s];
+            r.i16_(0xd8) != -1 && self.items.definitions[r.definition()].kind() == 9 && r.i16_(0xf0) == id
+        })
+    }
+
+    /// MBTreeSetAlpha(item tree, a, 1): 0 opaque … 0xff transparent.
+    fn item_set_alpha(&mut self, slot: Option<usize>, a: i32) {
+        if let Some(s) = slot {
+            self.item_alpha.insert(s, a);
+        }
+    }
+
+    /// MBTreeSetAlpha(world node, a, 1).
+    fn world_node_set_alpha(&mut self, node: Option<usize>, a: i32) {
+        if let Some(n) = node
+            && let Some(v) = self.node_alpha.get_mut(n)
+        {
+            *v = Some(a.clamp(0, 0xff) as u8);
+            self.node_state_version = self.node_state_version.wrapping_add(1);
+        }
+    }
+
+    /// InitCustomEffect(0, name, 0, 0) and StartFXSub(0, header, the world
+    /// object's translation, 0x80000, 0x800); SfxSetParent to the world root
+    /// is the default.
+    fn sumner_world_fx(&mut self, name: &str, object: usize) -> R<Option<usize>> {
+        let m = self.collision.object_matrix(object)?;
+        let h = self.init_custom_effect(None, name, 0, 0);
+        if h < 0 {
+            return Ok(None);
+        }
+        let k = self.start_fx_sub(0.0, h as usize, Some([m[3][0], m[3][1], m[3][2]]), 0x80000)?;
+        Ok(usize::try_from(k).ok())
+    }
+
+    /// EnterTower's display of a delivered shard or rune: the effect as
+    /// SumnerSpeechEnd starts it, its tree clock set to its last frame
+    /// (start ATime − frames / 30). AtreeKillPsys (shards) is presentation.
+    fn tower_display_fx(&mut self, name: &str, object: usize) -> R<()> {
+        let Some(k) = self.sumner_world_fx(name, object)? else { return Ok(()) };
+        let h = self.fx(k).u32_(super::effects::fx::KIND) as usize;
+        let frames = self.effects.tables.headers.get(h).copied().flatten().map_or(0, |h| h.frames);
+        let start = sub(self.globals.atime, mul(f32::from(frames), f32::from_bits(0x3d08_8889))?)?;
+        if let Some(n) = self.effects.nodes[k].as_mut() {
+            n.start = start;
+        }
+        Ok(())
+    }
+
+    /// SumnerSpeechEnd 0x174cc8: the ghost goes, the trigger camera ends,
+    /// controls return; then the speech's event: RUNE13 at L1RUNE13 (rune
+    /// camera 1, the Battle 3 exit 0x803 hidden for its fade, event 0x1e
+    /// with all 13 runes else 0x20); SHARD<n> at L1WINDOWFRAME (window
+    /// camera 0, the light ray hidden; event 10 with all eight shards, the
+    /// Temple exit 0x500 hidden for its fade, else 0xe); RUNE<n+1> at
+    /// L1RUNEPLACE (rune camera 0; the Hell exit 0x600 hidden; events
+    /// 0x14/0x15 with nine shards and twelve runes, else 0x18 with twelve
+    /// runes, else 0x16). A missing object only logs (Errorf).
+    fn sumner_speech_end(&mut self) -> R<()> {
         self.tower.ghost = None;
         self.trigger_camera_end();
         self.tower.cam_active = false;
         self.disable_player_controls = 0;
+        let idx = self.tower.speech_idx;
+        if idx == 0x70 {
+            let Some(o) = self.find_world_object("L1RUNE13") else { return Ok(()) };
+            self.sumner_world_fx("RUNE13", o)?;
+            self.rune_cam_activate(1)?;
+            let e = self.find_exit(0x803);
+            self.item_set_alpha(e, 0xff);
+            self.tower.event_flag = if self.player_has_rune(-1, 0x1fff) { 0x1e } else { 0x20 };
+        } else if idx < 100 {
+            if (0..9).contains(&idx) {
+                let Some(o) = self.find_world_object("L1WINDOWFRAME") else { return Ok(()) };
+                self.sumner_world_fx(&format!("SHARD{idx}"), o)?;
+                self.window_cam_activate(0)?;
+                self.world_node_set_flags("L1XPLIGHTRAY01", 2);
+                if !self.players_have_shards(0x1fe) {
+                    self.tower.event_flag = 0xe;
+                    self.audio_tower_fx(0xe);
+                } else {
+                    let e = self.find_exit(0x500);
+                    self.item_set_alpha(e, 0xff);
+                    self.tower.event_flag = 10;
+                    self.audio_tower_fx(10);
+                }
+            }
+        } else {
+            let r = idx - 100;
+            if r < 0xf
+                && let Some(o) = self.find_world_object("L1RUNEPLACE")
+            {
+                if r < 0xd {
+                    self.sumner_world_fx(&format!("RUNE{}", idx - 99), o)?;
+                    self.rune_cam_activate(0)?;
+                    self.audio_tower_fx(0x15);
+                }
+                let e = self.find_exit(0x600);
+                self.item_set_alpha(e, 0xff);
+                let runes = self.player_has_rune(-1, 0xfff);
+                self.tower.event_flag = if self.players_have_shards(0x3fe) && runes {
+                    if r < 0xd { 0x14 } else { 0x15 }
+                } else if runes {
+                    0x18
+                } else {
+                    0x16
+                };
+            }
+        }
+        Ok(())
     }
 
-    /// TowerCheckMessages(param) (Tower only): SumnerDoSpeech, SumnerAnimate;
-    /// with `param` the newly collected shards and runes are merged into the
-    /// class record and its backup; after 3 s, complete gargoyle-item and
-    /// crystal sets are announced (UnlockSection / UnlockLevel with Sumner's
-    /// speech) and marked delivered (−1, also in the backup).
+    /// TowerCheckMessages' sumner_event_flag switch: the steps after a
+    /// shard/rune speech (sounds once the camera has held 5 vblanks, the
+    /// next camera, an exit or the light ray fading in over 0xb4 vblanks as
+    /// flag + 100 counts down, then the follow-up speech of index flag or
+    /// flag + 100).
+    fn sumner_event(&mut self) -> R<()> {
+        let flag = self.tower.event_flag;
+        let (delay, hold) = (self.globals.trig_cam_delay, self.trig_cam.hold);
+        let done = delay < 5 && hold < 5;
+        let speech = |g: &mut Self, idx: i32| {
+            g.tower.sumner_speech_time = 2.0;
+            g.tower.speech_frame = 0;
+            g.tower.event_flag = 0;
+            g.tower.speech_idx = idx;
+            g.tower.caption = (0, 0, 0x3c);
+        };
+        let step = |g: &mut Self, gate: bool, fx: i32| {
+            if gate {
+                g.audio_tower_fx(fx);
+                g.tower.event_flag += 1;
+            }
+        };
+        match flag {
+            0 => {}
+            10 => step(self, hold <= 0xf9, 2),
+            0xb => {
+                if done {
+                    self.window_cam_activate(1)?;
+                    let e = self.find_exit(0x500);
+                    self.tower.event_showitem = e;
+                    self.item_set_alpha(e, 0xff);
+                    let ray = self.find_world_object("L1XPLIGHTRAY01");
+                    if ray.is_some() {
+                        self.world_node_clear_flags("L1XPLIGHTRAY01", 2);
+                    }
+                    self.tower.event_shownode = ray;
+                    self.world_node_set_alpha(ray, 0xff);
+                    self.tower.event_timer = 0xb4;
+                    self.tower.event_flag = 0x74;
+                    self.audio_tower_fx(0xb);
+                }
+            }
+            0xe => {
+                if hold < 0xfa {
+                    step(self, true, 2);
+                } else if done {
+                    speech(self, flag);
+                }
+            }
+            0xf | 0x10 => {
+                if done {
+                    speech(self, flag);
+                }
+            }
+            0x14 | 0x16 | 0x18 => step(self, hold < 0xfa, 1),
+            0x15 => {
+                let e = self.find_exit(0x600);
+                self.tower.event_showitem = e;
+                self.item_set_alpha(e, 0xff);
+                if done {
+                    self.rune_cam_activate(0)?;
+                    self.tower.event_shownode = None;
+                    self.tower.event_timer = 0xb4;
+                    self.tower.event_flag = 0x7e;
+                }
+            }
+            0x17 | 0x21 => self.tower.event_flag = 0,
+            0x19 | 0x1a | 0x24 => {
+                if done {
+                    speech(self, flag + 100);
+                }
+            }
+            0x1e | 0x20 => step(self, hold < 0xdc, 1),
+            0x1f => {
+                if done {
+                    self.rune_cam_activate(2)?;
+                    self.activate_special_trigger(0xff, false)?;
+                    let e = self.find_exit(0x803);
+                    self.tower.event_showitem = e;
+                    self.item_set_alpha(e, 0xff);
+                    self.tower.event_shownode = None;
+                    self.tower.event_timer = 0xb4;
+                    self.tower.event_flag = 0x88;
+                }
+            }
+            f if f < 0 => self.tower.event_flag = 0,
+            _ => {
+                self.tower.event_timer -= self.globals.vb_elapsed;
+                if self.tower.event_timer < 1 {
+                    self.tower.event_flag -= 100;
+                    self.tower.event_timer = 0;
+                }
+                let a = self.tower.event_timer * 0xff / 0xb4;
+                let (node, item) = (self.tower.event_shownode, self.tower.event_showitem);
+                self.world_node_set_alpha(node, a);
+                self.item_set_alpha(item, a);
+            }
+        }
+        Ok(())
+    }
+
+    /// TowerCheckMessages(param) (Tower only): SumnerDoSpeech, SumnerAnimate
+    /// and the sumner_event_flag steps; outside trigger cameras, pauses and
+    /// menus, SumnerLevelSpeechStart, and with `param` the newly collected
+    /// shards and runes (+0x1a24 / +0x1a26 against the class backup) are
+    /// merged into the class record and its backup and the lowest new one
+    /// starts Sumner's speech (also Rune13No after Battle 2 without rune 13,
+    /// and index 0xe with all twelve runes and shard 9); after 3 s, complete
+    /// gargoyle-item and crystal sets are announced (UnlockSection /
+    /// UnlockLevel with Sumner's speech) and marked delivered (−1, also in
+    /// the backup).
     pub fn tower_check_messages(&mut self, param: bool) -> R<()> {
         if self.globals.cur_world != 0xd {
             return Ok(());
@@ -600,22 +1086,51 @@ impl Game {
             self.sumner_do_speech()?;
             self.sumner_animate()?;
         }
-        if self.globals.cam_wait != 0 || self.globals.start_of_stage != 0 || self.globals.trig_cam_active != 0 || self.globals.paused != 0 {
+        if self.globals.cam_wait != 0 || self.globals.start_of_stage != 0 {
+            return Ok(());
+        }
+        self.sumner_event()?;
+        if self.globals.trig_cam_active != 0 || self.globals.paused != 0 || self.hud.menu_on != 0 {
             return Ok(());
         }
         self.sumner_level_speech_start();
         if param {
-            for k in 0..4 {
-                if self.players[k].i32_(0xfc) == 0 {
-                    continue;
-                }
-                let c = self.class_at(k, 0);
-                for (live, rec, backup) in [(0x1a24, 0xcf0, 0x1d7c), (0x1a26, 0xcf2, 0x1d7e)] {
+            let mut news = [0u32; 2];
+            let mut olds = [0u32; 2];
+            for (j, (live, rec, backup)) in [(0x1a24, 0xcf0, 0x1d7c), (0x1a26, 0xcf2, 0x1d7e)].into_iter().enumerate() {
+                for k in 0..4 {
+                    if self.players[k].i32_(0xfc) == 0 {
+                        continue;
+                    }
+                    let c = self.class_at(k, 0);
                     let v = self.players[k].u16_(live);
+                    olds[j] |= u32::from(self.players[k].u16_(c + backup));
+                    news[j] |= u32::from(v);
                     let a = self.players[k].u16_(c + rec) | v;
                     self.players[k].set_u16(c + rec, a);
                     let b = self.players[k].u16_(c + backup) | v;
                     self.players[k].set_u16(c + backup, b);
+                }
+                if j == 0 {
+                    let fresh = news[0] & (news[0] ^ olds[0]);
+                    if let Some(n) = (1..9).find(|n| (fresh >> n) & 1 != 0) {
+                        self.sumner_shard_speech_start(n);
+                    }
+                }
+            }
+            let fresh = news[1] & (news[1] ^ olds[1]);
+            match (0..0xd).find(|n| (fresh >> n) & 1 != 0) {
+                Some(n) => self.sumner_rune_speech_start(n)?,
+                None => {
+                    let g = &self.globals;
+                    if g.last_world_played == 8 && g.last_level_played == 2 && olds[1] & 0x1000 == 0 {
+                        self.sumner_rune_speech_start(0xd)?;
+                    }
+                    // Shard bit 0x200 of the newly collected shards.
+                    let fresh_shards = news[0] & (news[0] ^ olds[0]);
+                    if olds[1] & 0xfff == 0xfff && fresh_shards & 0x200 != 0 {
+                        self.sumner_rune_speech_start(0xe)?;
+                    }
                 }
             }
         }

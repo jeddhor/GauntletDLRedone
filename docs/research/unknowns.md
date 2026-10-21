@@ -59,3 +59,6 @@ are in [state.md](../state.md); movement evidence is in [movement.md](movement.m
 | Player node under PlayerRootNode | 150 traced updates consistent with GetWorldMat = local matrix; −0.0 → +0.0 | Trace a moving floor (node parent ≠ root) and a grabbed player |
 | Milestones table | update_player_milestone reads Milestones (0x70 each) / NumMilestones; kind-5 locators are the likely source | Export the Milestones builder and compare with a capture; port get_player_pos respawn |
 | Panel inputs | button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, menu_on/optmenu/full-screen inventory flags from the front end, MBOX texture search order across packages | Export ResetModels; front-end port |
+| MBTreeSetAlpha draw use | Node +0x53 = ~alpha and flag 0x200; drawn as material alpha × (255 − alpha)/255 (HYPOTHESIS) | Trace the +0x53 byte through the draw path or compare a fading exit/crystal in a capture |
+| Sumner's ghost placement | WIZARD tree at the nearest waypoint's matrix; not seen in the native Sumner camera view | Capture a shard/rune speech in the reference |
+| Tree texmod frame | DoTexModNode's frame argument taken as (int)(frame + 0.5) (HYPOTHESIS) | Read AnimateNode's frame argument |

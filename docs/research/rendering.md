@@ -187,8 +187,19 @@ they keep their vertex colours. The VU1 microcode was not read.
 - Effect slots draw EffectHeaders' trees (WEAPONS, POWERUPS or the critter
   file's model) and FamiliarSpit trees with their node flags, posed each
   frame by tree_pose at (ATime − start) × 900 / timing (sequence 0).
-  HYPOTHESES: sequence 0 and the frame rate from StartFXTree's end time;
-  texture-mod (type 3) tree nodes are not ported. OANIM (type 2) nodes:
+  HYPOTHESES: sequence 0 and the frame rate from StartFXTree's end time.
+  Texture-mod (type 3) tree nodes: AtreeNodeInit points the node at the
+  0x58-byte texmod record at the tree's header[0] base + node +0x34;
+  DoTexModNode applies it to the node's subtree each frame — frame base ≥ 0:
+  MBTreeSetAltTex(target record +0x44 → frame base + clamp((frame − start)
+  / divisor, 0, count − 1)); −4/−5: DoTexFadeSub MBTreeSetAlpha over count
+  frames from start (−4 fades in, −5 out); −2/−3 scroll (not ported).
+  gdl_play applies swaps and fades on per-mesh materials for effect and
+  item trees (e.g. RUNE1's GARDUST dust frames 24.. from frame 38 and its
+  TEXFADEIN). HYPOTHESIS: the frame passed is (int)(frame + 0.5).
+  OANIM (type 2) nodes are not hidden without an object (AtreeNodeInit
+  hides only other types) and show DoObjAnimation's frame object in
+  effect and item trees too. OANIM (type 2) nodes:
   the node's list at tree header +8 + node +0x34 holds one 0x28-byte entry per
   sequence (first object name, +0x24 count, +0x26 start); DoObjAnimation
   shows object base + (int)(frame + 0.5) − start inside the range (one-frame
@@ -203,10 +214,12 @@ they keep their vertex colours. The VU1 microcode was not read.
 
 ## Not yet implemented
 
-Texture fades and per-node shifts, character texmods (SetupPlayerTexMods),
-alpha fades driven by MBTreeSetAlpha callers (node_alpha is recorded, not
-yet drawn), tree psys nodes (type 4, InitPsysData), chrome (0x8000/0xa0000, setChrome),
-distance alpha fade, MBTreeSetAlpha consumers (item/enemy fades), the colour
+MBTreeSetAlpha on items (Game::item_alpha) and world nodes
+(Game::node_alpha) is drawn as material alpha × (255 − alpha)/255
+(HYPOTHESIS: the +0x53 byte's use in the draw path is not traced).
+
+Texture scrolls and per-node shifts, character texmods (SetupPlayerTexMods),
+enemy MBTreeSetAlpha fades, chrome (0x8000/0xa0000, setChrome), the colour
 scale of setPrimColor and DoLighting, VU1 vertex lighting of characters
 (point lights MBPosLight*, setPrimColor scales, AmbientSpecial flashes), fog (InitFog/FogFadeIn; FGE was 0 in the
 G1 frame), Z modifiers, sorted transparency order.

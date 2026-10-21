@@ -335,7 +335,7 @@ impl Game {
                 }
             },
             item_alpha: std::collections::HashMap::new(),
-            speech_tables: ["crystal_sidx", "garg_sidx"]
+            speech_tables: ["crystal_sidx", "garg_sidx", "shard_sidx"]
                 .into_iter()
                 .map(|n| (n, inp.elf.object(n).map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default()))
                 .collect(),
@@ -505,7 +505,7 @@ impl Game {
         if game.globals.cur_world == 0xd
             && let Some(clips) = inp.item_anims.get("GWIZ")
         {
-            game.sumner_init(clips.clone()).map_err(|e| format!("SumnerInit: {}", e.0))?;
+            game.sumner_init(clips.clone(), inp.item_anims.get("WIZARD").cloned()).map_err(|e| format!("SumnerInit: {}", e.0))?;
         }
         // SetItem's opened Tower triggers: their world animation at the end.
         for o in std::mem::take(&mut game.items.wanim_to_end) {

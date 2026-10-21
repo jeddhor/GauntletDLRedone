@@ -355,6 +355,8 @@ pub struct Hud {
     pub missing: BTreeSet<String>,
     /// GameText (TEXT/ENGLISH.ROM) for help messages.
     pub text: Option<gdl_formats::textrom::TextRom>,
+    /// ScrollText[0] (SCROLL_E.ROM) for CaptionText.
+    pub scrolls: Option<gdl_formats::textrom::TextRom>,
     pub help: HelpState,
     /// got_it 0x22c500: 0x18 pickup notices (state, player, kind, amount,
     /// timer, bar blit, picture blit).

@@ -35,8 +35,9 @@ original (PCSX2 reference on Xvfb :191, private captures):
    flags, VU-fitted lighting of colourless parts, held weapon and shadow,
    effect header/familiar trees posed per frame; tools: reference_camera.py,
    GDL_DEBUG_CAMERA, render_pixel_check.py, reference_screenshot.py --slot.
-   Remaining: chrome, texture fades/per-node shifts, OANIM and texmod tree
-   nodes, MBTreeSetAlpha fades (recorded in Game::node_alpha), point lights,
+   2026-10-21: OANIM and texmod (alt texture, fade) tree nodes in effect
+   and item trees, MBTreeSetAlpha fades of items and world nodes.
+   Remaining: chrome, texture scrolls/per-node shifts, point lights,
    AmbientSpecial flashes, fog (D1/D3), splash shadow texture, critter
    shadows, item tree animation.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
@@ -52,10 +53,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (art, names, menus, hints) and Manage Character; fullscreen inventory;
    shop; display-space blending for every draw (Hdr frame +
    DisplayToLinear); OANIM enemy frames; item/missile trees animated.
+   2026-10-21: Sumner's shard/rune speeches, captions (CaptionText over
+   SCROLL_E), SumnerSpeechEnd effects and cameras, the sumner_event_flag
+   machine, EnterTower's delivered shard/rune display, the ghost (WIZARD).
    Remaining: select-screen memory-card/join flow and the Tower scene
-   behind it, Sumner's speech captions/ghost/cameras (CaptionText decoded,
-   research/hud.md) and the shard/rune event machine (SumnerSpeechEnd,
-   TowerCheckMessages' sumner_event_flag), compass/controls/screen/game
+   behind it, compass/controls/screen/game
    options effects, map screen, credits, movies, boss/timer meters,
    the ICON_ARROW menu selector, shop stats panels.
 6. Audio completeness; secret characters; Sumner as a character;

@@ -454,7 +454,7 @@ impl Game {
         let flags = CritterFile::i32_(&rec, 0) as u32;
         if CritterFile::i32_(&rec, 8) < 0 {
             let v = if flags & 0x0f00_0100 == 0 {
-                self.init_custom_effect(f, &label(&rec, 0x10, 16), CritterFile::i16_(&rec, 0x44), CritterFile::i16_(&rec, 0x46))
+                self.init_custom_effect(Some(f), &label(&rec, 0x10, 16), CritterFile::i16_(&rec, 0x44), CritterFile::i16_(&rec, 0x46))
             } else {
                 // Texture mods / particles: presentation (FindTexMod/MBOX_FindTexture).
                 -1
@@ -478,14 +478,14 @@ impl Game {
         self.critter_init_sfx(f, CritterFile::i32_(&rec, 4), depth + 1)
     }
 
-    /// InitCustomEffectSub 0x179aa8 (critter model, then weapons/powerups):
-    /// EffectHeaders[0x61 + n]. Item packages are not searched (HYPOTHESIS:
-    /// critter effect trees live in the critter model or the shared packages).
-    fn init_custom_effect(&mut self, f: usize, name: &str, _zmod: i16, _alpha: i16) -> i32 {
+    /// InitCustomEffectSub 0x179aa8 (critter file f's model when given, then
+    /// weapon_anim, powerup_anim, item_anim and item_anim2):
+    /// EffectHeaders[0x61 + n].
+    pub(crate) fn init_custom_effect(&mut self, f: Option<usize>, name: &str, _zmod: i16, _alpha: i16) -> i32 {
         if name.is_empty() {
             return -1;
         }
-        let found = self.critter_data.files[f].model.as_ref().and_then(|m| {
+        let found = f.and_then(|f| self.critter_data.files[f].model.as_ref().map(|m| (f, m))).and_then(|(f, m)| {
             m.0.trees.iter().position(|t| t.label == name).map(|k| {
                 let s = m.0.trees[k].sequences.first();
                 EffectHeader { source: 2 + f as u8, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor) }

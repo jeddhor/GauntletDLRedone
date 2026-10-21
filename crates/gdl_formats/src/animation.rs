@@ -580,20 +580,25 @@ pub fn texmods(bytes: &[u8]) -> Result<Vec<TexMod>, ParseError> {
         return Err(r.error(8, "texmod count policy exceeded"));
     }
     let table = r.table(r.u32(12), count, 0x58, 16)?;
+    (table.start..table.end).step_by(0x58).map(|p| texmod_at(bytes, p)).collect()
+}
+
+/// One 0x58-byte texture modifier record at `p` (the header table's, or a
+/// type-3 tree node's at the tree's header[0] base + node +0x34).
+pub fn texmod_at(bytes: &[u8], p: usize) -> Result<TexMod, ParseError> {
+    let r = Reader { bytes, family: "ANIM" };
+    r.range(p, 0x58)?;
     let name = |p: usize| -> String { bytes[p..p + 32].iter().take_while(|b| **b != 0).map(|b| char::from(*b)).collect() };
-    Ok((table.start..table.end)
-        .step_by(0x58)
-        .map(|p| TexMod {
-            owner: r.i16(p),
-            target_name: name(p + 4),
-            frame_name: name(p + 0x24),
-            target: r.i32(p + 0x44),
-            frame_base: r.i32(p + 0x48),
-            count: r.i16(p + 0x4c),
-            start: r.i16(p + 0x4e),
-            divisor: r.i32(p + 0x50),
-            counter: r.i32(p + 0x54),
-            raw: bytes[p..p + 0x58].to_vec(),
-        })
-        .collect())
+    Ok(TexMod {
+        owner: r.i16(p),
+        target_name: name(p + 4),
+        frame_name: name(p + 0x24),
+        target: r.i32(p + 0x44),
+        frame_base: r.i32(p + 0x48),
+        count: r.i16(p + 0x4c),
+        start: r.i16(p + 0x4e),
+        divisor: r.i32(p + 0x50),
+        counter: r.i32(p + 0x54),
+        raw: bytes[p..p + 0x58].to_vec(),
+    })
 }

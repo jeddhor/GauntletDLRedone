@@ -72,7 +72,8 @@ pub mod fx {
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct EffectHeader {
     /// 0 = WEAPONS/ANIM.PS2 (weapon_anim), 1 = POWERUPS/ANIM.PS2 (powerup_anim),
-    /// 2 + n = the model of critter file n (InitCustomEffect).
+    /// 2 + n = the model of critter file n (InitCustomEffect), 0x80 + n =
+    /// the level's n-th item package (item_anim, item_anim2).
     pub source: u8,
     pub tree: usize,
     pub frames: i16,
@@ -203,7 +204,20 @@ impl EffectTables {
         Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects, enemy_missile_info, enemy_missile_desc, shared })
     }
 
-    /// AtreeMatch over weapon_anim then powerup_anim (strcmp).
+    /// The level's item packages (item_anim, item_anim2), searched after
+    /// weapon_anim and powerup_anim (InitCustomEffectSub 0x179aa8).
+    pub fn add_item_package(&mut self, n: u8, anim: &Animations) {
+        for (k, t) in anim.trees.iter().enumerate() {
+            let s = t.sequences.first();
+            self.shared.push(EffectHeaderLabel {
+                label: t.label.clone(),
+                header: EffectHeader { source: 0x80 + n, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor) },
+            });
+        }
+    }
+
+    /// AtreeMatch over weapon_anim, powerup_anim, then the item packages
+    /// (strcmp).
     pub fn shared_header(&self, name: &str) -> Option<EffectHeader> {
         self.shared.iter().find(|h| h.label == name).map(|h| h.header)
     }
