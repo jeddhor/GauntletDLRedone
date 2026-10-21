@@ -3491,6 +3491,11 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             carried: [0, -1, -1, -1, -1, 0xd, 0],
         };
         let mut game = build_game(&session, idx, &record)?;
+        // player_get_from_save: the saved control options into PlayerControl
+        // (+0x2c style, +0x30 vibration, +0x38 auto attack, +0x34 auto aim).
+        for (o, v) in [0x2c, 0x30, 0x38, 0x34].into_iter().zip(session.controls) {
+            game.controls.control[0].set_u32(o, v);
+        }
         let sources = Sources { character, clips, clip_bytes, rig, packages, monsters: b.monsters.clone() };
         init_hud(&mut game, &sources, &session, front, &mut hud_sets);
         (session, sources, game, loaded.recovered)
