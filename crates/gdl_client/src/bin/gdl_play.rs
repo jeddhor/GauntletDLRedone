@@ -14,11 +14,11 @@
 //! the record-based players (PlayerControls → do_players → PlayerMotion →
 //! DoPlayerAction; research/player.md). Host keys and gamepads fill the
 //! joyGetStatus entries of ports 0–3 (HYPOTHESIS mapping, below).
-//! Presentation only (labelled on screen): unlit diagnostic materials, alpha
-//! cutout, rest-state follow camera, item models at their tree rest pose,
-//! enemy per-frame objects chosen by a frame-count match of object stems to
-//! sequences (the OANIM channel is not decoded), missiles drawn with the
-//! SFXYEL WEAP_TW_Y rest pose, hit sparks as short glows. Audio: original
+//! Presentation: GS-equivalent materials and display-space blending
+//! (gs.wgsl, blit.wgsl), the StdCam camera, original HUD/menus/front end
+//! (game::hud, optmenu, select); enemy frame objects from OANIM entries.
+//! Still interim: item models at their tree rest pose, missiles drawn with
+//! the SFXYEL WEAP_TW_Y rest pose, hit sparks as short glows. Audio: original
 //! banks and music through gdl_client::audio (approximate mixing).
 use bevy::{core_pipeline::tonemapping::Tonemapping, ecs::system::RunSystemOnce, ecs::world::World as EcsWorld, prelude::*, sprite::Anchor};
 use gdl_client::menu::{Action, Entry, Key, Menu};
@@ -666,7 +666,7 @@ fn hide_exploded_nodes(sim: Res<Sim>, mut nodes: Query<(Entity, &WorldNode, &Nod
 
 /// Per monster package: tree label → sequence index → frame object labels.
 #[derive(Resource, Default)]
-struct EnemyFrames(HashMap<String, HashMap<String, Vec<Vec<String>>>>);
+struct EnemyFrames(HashMap<String, HashMap<String, Vec<(i16, Vec<String>)>>>);
 
 #[derive(Resource)]
 struct Sim {
@@ -857,51 +857,29 @@ fn build_library(
     Library { by_label, textures: set.labels, record_images: set.record_images, label_index: set.label_index, texmods }
 }
 
-/// Presentation heuristic: frame objects "<TREE>…<stem>F<nn>" grouped by stem,
-/// stems ordered by their trailing number, matched to sequences in order by
-/// equal frame count.
-fn enemy_frames(pkg: &Package) -> HashMap<String, Vec<Vec<String>>> {
+/// The OANIM frames of a package's trees (InitOAnimList / DoObjAnimation):
+/// per sequence the start frame and the object labels of the consecutive
+/// object indices from the entry's named object (first type-2 node).
+fn enemy_frames(pkg: &Package) -> HashMap<String, Vec<(i16, Vec<String>)>> {
     let mut out = HashMap::new();
     let Some(anim) = &pkg.anim else { return out };
+    let mut by_index: HashMap<i16, String> = HashMap::new();
+    let mut index_of: HashMap<String, i16> = HashMap::new();
+    for d in &pkg.objects.definitions {
+        by_index.entry(d.object_index).or_insert_with(|| d.label.clone());
+        index_of.entry(d.label.to_uppercase()).or_insert(d.object_index);
+    }
     for tree in &anim.trees {
-        if !tree.nodes.iter().any(|n| n.node_type == 2) {
-            continue;
-        }
-        let mut stems: Vec<(String, Vec<(u32, String)>)> = Vec::new();
-        for d in &pkg.objects.definitions {
-            let Some(rest) = d.label.strip_prefix(&tree.label) else { continue };
-            if rest.starts_with(|c: char| c.is_ascii_digit()) {
-                continue;
-            }
-            let Some(fpos) = d.label.rfind('F') else { continue };
-            let (stem, frame) = d.label.split_at(fpos);
-            let Ok(n) = frame[1..].parse::<u32>() else { continue };
-            match stems.iter_mut().find(|(s, _)| s == stem) {
-                Some((_, v)) => v.push((n, d.label.clone())),
-                None => stems.push((stem.to_string(), vec![(n, d.label.clone())])),
-            }
-        }
-        let number = |s: &str| -> u32 {
-            let digits: String = s.chars().rev().take_while(|c| c.is_ascii_digit()).collect();
-            digits.chars().rev().collect::<String>().parse().unwrap_or(u32::MAX)
-        };
-        stems.sort_by_key(|(s, _)| number(s));
-        let mut used = vec![false; stems.len()];
-        let mut seqs = Vec::new();
-        for seq in &tree.sequences {
-            let want = seq.frames.max(0) as usize;
-            let pick = stems.iter().enumerate().position(|(k, (_, v))| !used[k] && v.len() == want);
-            let frames = match pick {
-                Some(k) => {
-                    used[k] = true;
-                    let mut v = stems[k].1.clone();
-                    v.sort_by_key(|(n, _)| *n);
-                    v.into_iter().map(|(_, l)| l).collect()
-                }
-                None => Vec::new(),
-            };
-            seqs.push(frames);
-        }
+        let Some(node) = tree.nodes.iter().find(|n| n.node_type == 2) else { continue };
+        let seqs = node
+            .oanim
+            .iter()
+            .map(|e| {
+                let base = index_of.get(&e.name.to_uppercase()).copied();
+                let labels = base.map_or(Vec::new(), |b| (0..e.count.max(1)).filter_map(|f| by_index.get(&(b + f)).cloned()).collect());
+                (e.start, labels)
+            })
+            .collect();
         out.insert(tree.label.clone(), seqs);
     }
     out
@@ -2004,15 +1982,22 @@ fn present_world(
                 };
                 let tree = setup::enemy_desc(pkg, level);
                 let seq = anim.clock.sequence as usize;
+                // DoObjAnimation: frame (int)(f + 0.5) inside [start, start
+                // + count − 1] → base + frame − start; a one-frame entry
+                // always shows its object. (Reverse-order sequences, flag
+                // +0x2a bit 0, are not modelled here.)
                 let list = frames.0.get(pkg).and_then(|m| m.get(&tree)).and_then(|s| s.get(seq));
-                let label = list.and_then(|l| {
+                let label = list.and_then(|(start, l)| {
+                    let f = (anim.clock.frame + 0.5) as i32 - i32::from(*start);
                     if l.is_empty() {
                         None
+                    } else if 0 <= f && (f as usize) < l.len() {
+                        Some(l[f as usize].clone())
                     } else {
-                        Some(l[(anim.clock.frame.max(0.0) as usize).min(l.len() - 1)].clone())
+                        Some(l[0].clone())
                     }
                 });
-                let label = label.or_else(|| frames.0.get(pkg).and_then(|m| m.get(&tree)).and_then(|s| s.first()).and_then(|l| l.first().cloned()));
+                let label = label.or_else(|| frames.0.get(pkg).and_then(|m| m.get(&tree)).and_then(|s| s.first()).and_then(|(_, l)| l.first().cloned()));
                 match label {
                     Some(l) => {
                         let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&l)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None, None)]);

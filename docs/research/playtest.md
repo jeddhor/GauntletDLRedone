@@ -75,7 +75,7 @@ comparison yet.
 Presentation only (labelled on screen): unlit materials with alpha cutout,
 item models at tree rest pose (camera-facing "CF"
 nodes omitted), enemy per-frame objects chosen by matching object stems to
-sequences by frame count (the OANIM channel is not decoded), missiles drawn
+sequences through their OANIM entries, missiles drawn
 with the character's `<desc>_THROW<n>` tree at rest pose (textures that live
 in another package show magenta, e.g. the Sorceress's WND_THROW1), hit sparks
 and magic blasts as spheres,

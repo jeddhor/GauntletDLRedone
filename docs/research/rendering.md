@@ -188,7 +188,12 @@ they keep their vertex colours. The VU1 microcode was not read.
   file's model) and FamiliarSpit trees with their node flags, posed each
   frame by tree_pose at (ATime − start) × 900 / timing (sequence 0).
   HYPOTHESES: sequence 0 and the frame rate from StartFXTree's end time;
-  texture-mod (type 3) and OANIM (type 2) tree nodes are not ported.
+  texture-mod (type 3) tree nodes are not ported. OANIM (type 2) nodes:
+  the node's list at tree header +8 + node +0x34 holds one 0x28-byte entry per
+  sequence (first object name, +0x24 count, +0x26 start); DoObjAnimation
+  shows object base + (int)(frame + 0.5) − start inside the range (one-frame
+  entries always their object). gdl_formats parses them (2,279 entries in
+  651 ANIM files); enemy bodies use them.
 - Type-4 tree nodes are particle systems (AtreeNodeInit → InitPsysData →
   MBNewWorldPsys with a3 = 1, no name): the record at the tree's header[0]
   base + node +0x34 (e.g. SFXRED's POOLFIRE weapon flames, SFXYEL's

@@ -23,7 +23,18 @@ pub struct Node {
     pub model_flags: u32,
     pub parent: i32,
     pub sequence_info_offset: i32,
+    /// Type-2 (OANIM) nodes: one entry per sequence (AtreeNodeInit: tree
+    /// header +8 base + node +0x34; DoObjAnimation).
+    pub oanim: Vec<OAnimEntry>,
     pub raw: Vec<u8>,
+}
+/// An OANIM entry (0x28 bytes): the first frame's object name, +0x24 frame
+/// count, +0x26 start frame; frames are consecutive object indices.
+#[derive(Debug, Clone, Serialize)]
+pub struct OAnimEntry {
+    pub name: String,
+    pub count: i16,
+    pub start: i16,
 }
 #[derive(Debug, Serialize)]
 pub struct SequenceInfo {
@@ -197,8 +208,20 @@ impl Animations {
                         });
                     }
                 }
+                let mut oanim = Vec::new();
+                if node_type == 2 && 0 <= info_offset {
+                    let list = base
+                        .checked_add(r.u32(base + 8) as usize)
+                        .and_then(|b| b.checked_add(info_offset as usize))
+                        .ok_or_else(|| r.error(p + 52, "OANIM list overflow"))?;
+                    let range = r.range(list, sequence_count as usize * 0x28)?;
+                    for q in (range.start..range.end).step_by(0x28) {
+                        oanim.push(OAnimEntry { name: r.label(q, 32), count: r.i16(q + 0x24), start: r.i16(q + 0x26) });
+                    }
+                }
                 nodes.push(Node {
                     index: index as u32,
+                    oanim,
                     label: r.label(p, 32),
                     initial_position: r.xyz(p + 32)?,
                     node_type,
