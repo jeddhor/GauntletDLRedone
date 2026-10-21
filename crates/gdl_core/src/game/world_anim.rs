@@ -289,7 +289,7 @@ mod tests {
         for m in [create_ryp_matrix([0.0; 3]).unwrap(), create_pyr_matrix([0.0; 3]).unwrap()] {
             for r in 0..3 {
                 for k in 0..3 {
-                    let want = if r == k { if r == 0 { c * c } else if r == 1 && m[1][1] == c * c { c * c } else { m[r][k] } } else { 0.0 };
+                    let want = if r == k { if r == 0 || (r == 1 && m[1][1] == c * c) { c * c } else { m[r][k] } } else { 0.0 };
                     assert!((m[r][k] - want).abs() < 1e-5, "{m:?}");
                 }
             }
