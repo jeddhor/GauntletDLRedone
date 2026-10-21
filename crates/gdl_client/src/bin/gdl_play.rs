@@ -735,7 +735,7 @@ fn skin_image(libs: &Libraries, monsters: &[String], v: &gdl_core::game::skin::S
 /// Enemy and player trees' skins (MBTreeSetAltTex −4/−3 → the skin image on
 /// every part; HYPOTHESIS: −3 chrome draws as a plain replacement) and
 /// ambient adds (MBTreeSetAmbientAdd / 255).
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_skins(
     sim: Res<Sim>,
     session: Res<Session>,
