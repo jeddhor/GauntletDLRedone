@@ -1542,7 +1542,7 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
         bevy::render::view::Hdr,
         bevy::core_pipeline::tonemapping::DebandDither::Disabled,
         // The last camera: decode the frame's display values once.
-        gdl_client::DisplayToLinear { enabled: 1.0 },
+        gdl_client::DisplayToLinear { enabled: 1.0, offset_x: 0.0, offset_y: 0.0 },
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: bevy::camera::ScalingMode::Fixed { width: 512.0, height: 384.0 },
             ..OrthographicProjection::default_2d()
@@ -3476,6 +3476,18 @@ fn present_menu_icon(
     }
 }
 
+/// pbScreenSetAdjust(screen_dx, screen_dy) as the final pass's shift.
+fn present_screen_adjust(front: Res<Front>, mut q: Query<&mut gdl_client::DisplayToLinear>) {
+    let (dx, dy) = front.menu.screen;
+    let (x, y) = (dx as f32 / 4.0 / 640.0, dy as f32 * 2.0 / 448.0);
+    for mut d in &mut q {
+        if d.offset_x != x || d.offset_y != y {
+            d.offset_x = x;
+            d.offset_y = y;
+        }
+    }
+}
+
 /// The page drawn with an original menu record (front end or pause).
 fn menu_view(front: &Front, screen: Screen, ui: &Ui) -> Option<(&'static str, usize)> {
     if !(screen == Screen::Front || ui.paused) {
@@ -3546,6 +3558,9 @@ fn present_hud(
                 e.label = name.clone();
             }
             front_list.extend(front.ui_hud.controls_blits(ctl, *style));
+        }
+        if let gdl_client::menu::Page::Screen { .. } = &front.menu.page {
+            front_list.extend(front.ui_hud.screen_adjust_blits());
         }
         if let gdl_client::menu::Page::HintText { list, at } = &front.menu.page {
             // DoOptions case 0x16: "A Hint for You" (general); the other
@@ -3919,6 +3934,8 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
             (&[KeyCode::ArrowRight, KeyCode::KeyD][..], Key::Right),
             (&[KeyCode::Enter, KeyCode::Space][..], Key::Accept),
             (&[KeyCode::Escape, KeyCode::Backspace][..], Key::Back),
+            // NATIVE: the circle button's Center (gamepad East is Back here).
+            (&[KeyCode::KeyC][..], Key::Center),
         ] {
             if ks.iter().any(|&k| pressed(k)) {
                 out.push(key);
@@ -4140,6 +4157,16 @@ fn act(world: &mut EcsWorld, action: Action) {
                     if let Some(mut sim) = world.get_resource_mut::<Sim>() {
                         sim.game.controls.control[0].set_u32(off, v);
                     }
+                }
+            }
+            Action::Screen { dx, dy, keep } => {
+                // pbScreenSetAdjust; Accept stores GamePrefs words 3/4.
+                if keep {
+                    let mut front = world.resource_mut::<Front>();
+                    front.game_opts[12..16].copy_from_slice(&dx.to_le_bytes());
+                    front.game_opts[16..20].copy_from_slice(&dy.to_le_bytes());
+                    let opts = front.game_opts.clone();
+                    front.store.store_options(&opts)?;
                 }
             }
             Action::Volumes { music, sfx } => {
@@ -4403,6 +4430,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "control_autoaim_options",
         "control_autoattack_options",
         "controlstyle_options",
+        "screen_options",
     ] {
         if let Some(m) = elf.symbol(n).and_then(|sym| gdl_core::game::optmenu::OptMenu::from_elf(&elf, sym.address).ok()) {
             menus.insert(n, m);
@@ -4415,6 +4443,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             for (k, p) in m.prefs.iter_mut().enumerate() {
                 *p = game_opts.get(4 * k..4 * k + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
             }
+            // The saved screen adjust (GamePrefs words 3/4) applies at boot.
+            m.screen = (m.prefs[3].clamp(-0x80, 0x80), m.prefs[4].clamp(-0x28, 0x28));
             m
         },
         store,
@@ -4489,6 +4519,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 front_text,
                 present_hud,
                 present_menu_icon,
+                present_screen_adjust,
             )
                 .chain(),
         )

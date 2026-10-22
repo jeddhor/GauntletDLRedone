@@ -176,6 +176,26 @@ impl Hud {
     }
 }
 
+impl Hud {
+    /// do_screenmenu: NewTempBlitZ(1.0, …) AAAWHITE corner and
+    /// centre marks and the d-pad icons (button_u/l/r/d_tex).
+    pub fn screen_adjust_blits(&self) -> Vec<Blit> {
+        let white = self.lookup("AAAWHITE");
+        let mut out = Vec::new();
+        for (x, y, w, h) in [(1, 1, 0x10, 2), (1, 1, 2, 0x10), (0x1ef, 1, 0x10, 2), (0x1fd, 1, 2, 0x10), (1, 0x17d, 0x10, 2), (1, 0x16f, 2, 0x10), (0x1ef, 0x17d, 0x10, 2), (0x1fd, 0x16f, 2, 0x10), (0xf0, 0xbf, 0x20, 2), (0xff, 0xb0, 2, 0x20)] {
+            let mut b = self.make_pub(white, x, y, w, h);
+            b.z = 1.0;
+            out.push(b);
+        }
+        for (name, x, y) in [("BUTTON_U", 0xf0, 0x90), ("BUTTON_L", 0xd0, 0xb0), ("BUTTON_R", 0x110, 0xb0), ("BUTTON_D", 0xf0, 0xd0)] {
+            let mut b = self.make_pub(self.lookup(name), x, y, 0x20, 0x20);
+            b.z = 1.0;
+            out.push(b);
+        }
+        out
+    }
+}
+
 impl OptMenu {
     /// The menu record at a symbol (title_menu, tower_menu, …) or address.
     pub fn from_elf(elf: &Elf, at: u32) -> Result<Self, Box<dyn std::error::Error>> {
@@ -276,6 +296,9 @@ impl Hud {
     /// (entry +0x14) + FontHeight / 2; None without an icon tree (+0x38).
     pub fn optmenu_icon_target(&self, style: &OptStyle, menu: &OptMenu, state: &MenuState) -> Option<(i32, i32)> {
         menu.icon.as_ref()?;
+        if menu.entries.is_empty() {
+            return None;
+        }
         let fh = self.font_height(style.font, menu.scale);
         let height = if menu.height < 1 { menu.entries.iter().map(|e| fh + e.gap).sum() } else { menu.height };
         let width = if menu.width < 1 { menu.entries.iter().map(|e| self.string_width(style.font, menu.scale, e.label.as_bytes())).max().unwrap_or(0) } else { menu.width };

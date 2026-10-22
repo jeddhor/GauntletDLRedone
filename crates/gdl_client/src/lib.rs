@@ -111,6 +111,11 @@ impl Plugin for GsMaterialPlugin {
 #[derive(Component, bevy::render::extract_component::ExtractComponent, Clone, Copy, Default, ShaderType)]
 pub struct DisplayToLinear {
     pub enabled: f32,
+    /// pbScreenSetAdjust's picture shift as a fraction of the frame
+    /// (screen_adjust_dx / 4 pixels of 640, dy × 2 rows of 448: HYPOTHESIS
+    /// MAGH 3 and frame-mode raster lines).
+    pub offset_x: f32,
+    pub offset_y: f32,
 }
 
 impl bevy::core_pipeline::fullscreen_material::FullscreenMaterial for DisplayToLinear {

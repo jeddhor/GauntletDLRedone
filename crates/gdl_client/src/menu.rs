@@ -24,6 +24,8 @@ pub enum Key {
     Right,
     Accept,
     Back,
+    /// The circle button's "Center" (screen_options' button row).
+    Center,
     Char(char),
     Erase,
 }
@@ -51,6 +53,9 @@ pub enum Action {
     OpenInventory,
     /// A choice menu's entry `idx` accepted (DoOptions cases 0xa..0x11).
     Choose { key: &'static str, idx: usize },
+    /// Screen Adjust (DoOptions 0x12): pbScreenSetAdjust(dx, dy); `keep`
+    /// stores them in GamePrefs words 3/4 (Accept).
+    Screen { dx: i32, dy: i32, keep: bool },
 }
 
 /// A save shown in the list.
@@ -90,6 +95,10 @@ pub enum Page {
     /// Left/Right cycle the four styles; Select or Back stores the style
     /// in PlayerControl +0x2c.
     ControlStyle { style: usize, back: Box<Page> },
+    /// Screen Adjust (screen_options, DoOptions 0x12): the d-pad moves the
+    /// picture (dx ±4 to ±0x80, dy ±1 to ±0x28), Center resets, Accept
+    /// keeps, Back restores `saved`.
+    Screen { saved: (i32, i32), back: Box<Page> },
 }
 
 /// The entries of the submenus and choice menus (ELF records).
@@ -143,6 +152,7 @@ pub fn page_record(page: &Page) -> Option<(&'static str, usize)> {
         Page::HintText { .. } => ("hint_general_menu", 0),
         Page::Submenu { key, at, .. } | Page::Choice { key, at, .. } => (*key, *at),
         Page::ControlStyle { .. } => ("controlstyle_options", 0),
+        Page::Screen { .. } => ("screen_options", 0),
         _ => return None,
     })
 }
@@ -188,6 +198,8 @@ pub struct Menu {
     /// +0x18, 7 multiplayer +0x1c) and player 1's control options
     /// (style +0x2c, vibration +0x30, auto attack +0x38, auto aim +0x34).
     pub prefs: [i32; 8],
+    /// pbScreenSetAdjust's current dx/dy (screen_dx/screen_dy).
+    pub screen: (i32, i32),
     pub controls: [u32; 4],
 }
 
@@ -211,7 +223,7 @@ fn list(title: &str, items: &[String], at: usize) -> String {
 
 impl Menu {
     pub fn new(music: u8, sfx: u8) -> Self {
-        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new(), prefs: [0; 8], controls: [0; 4] }
+        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new(), prefs: [0; 8], screen: (0, 0), controls: [0; 4] }
     }
 
     /// The Select page's entries (for the original-style column menu).
@@ -287,6 +299,7 @@ impl Menu {
                     }
                     Key::Accept if names[at] == "Game Options" => self.page = Page::Submenu { key: "gameoption_options", at: 0, back: Box::new(Page::Options { at, back }) },
                     Key::Accept if names[at] == "Controls" => self.page = Page::Submenu { key: "controls_options", at: 0, back: Box::new(Page::Options { at, back }) },
+                    Key::Accept if names[at] == "Screen" => self.page = Page::Screen { saved: (self.prefs[3], self.prefs[4]), back: Box::new(Page::Options { at, back }) },
                     Key::Accept => self.page = Page::NotPorted { what: names[at].to_string(), back: Box::new(Page::Options { at, back }) },
                     Key::Back => self.page = *back,
                     _ => {}
@@ -320,6 +333,27 @@ impl Menu {
                     _ => {}
                 }
                 None
+            }
+            Page::Screen { saved, back } => {
+                let (mut dx, mut dy) = (self.screen.0, self.screen.1);
+                let mut keep = false;
+                match key {
+                    Key::Left => dx = (dx - 4).clamp(-0x80, 0x80),
+                    Key::Right => dx = (dx + 4).clamp(-0x80, 0x80),
+                    Key::Up => dy = (dy - 1).clamp(-0x28, 0x28),
+                    Key::Down => dy = (dy + 1).clamp(-0x28, 0x28),
+                    Key::Center => (dx, dy) = (0, 0),
+                    Key::Accept => {
+                        keep = true;
+                        self.prefs[3] = dx;
+                        self.prefs[4] = dy;
+                    }
+                    Key::Back => (dx, dy) = saved,
+                    _ => {}
+                }
+                self.screen = (dx, dy);
+                self.page = if matches!(key, Key::Accept | Key::Back) { *back } else { Page::Screen { saved, back } };
+                Some(Action::Screen { dx, dy, keep })
             }
             Page::ControlStyle { style, back } => match key {
                 Key::Left | Key::Right => {
@@ -532,6 +566,7 @@ impl Menu {
             Page::Audio { at, .. } => list("AUDIO\n(left/right to change)", &[format!("Music  {:>3}", self.music), format!("Sound  {:>3}", self.sfx)], *at),
             Page::NotPorted { what, .. } => format!("{what}\n\nnot ported yet\n\n(Enter / Esc to go back)"),
             Page::Submenu { key, at, .. } | Page::Choice { key, at, .. } => list(key, &s(submenu_entries(key)), *at),
+            Page::Screen { .. } => format!("Screen Adjust\n\nd-pad: move the picture ({}, {})\nC: center   Enter: accept   Esc: back", self.screen.0, self.screen.1),
             Page::ControlStyle { style, .. } => list("Control Style", &s(&["Default", "Arcade", "One Handed", "Robotron"][*style..=*style]), 0),
             Page::Select { at } => list("SELECT A CHARACTER", &self.select_items(), *at),
             Page::Class { at } => list("TO BUILD A CHARACTER", &s(&CLASS_NAMES), *at),

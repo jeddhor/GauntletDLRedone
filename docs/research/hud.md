@@ -431,3 +431,19 @@ style mod 4; Select (0x21) or Back stores it in +0x2c and
 end_controlsmenu. Native (gdl_core::game::optmenu::ControlsMenu,
 menu::Page::ControlStyle) and seen in gdl_play; the remap itself is
 update_controls' +0x2c set (game/pad.rs).
+
+## Screen Adjust (DoOptions 0x12, options entry "Screen")
+
+DoOptions case 0x16 loads screen_dx/dy from GamePrefs words 3/4
+(0x21edc4/0x21edc8) and starts screen_options (no entries; flags 0x17b:
+Back, Select→Accept, Center). do_screenmenu draws NewTempBlitZ(1.0)
+AAAWHITE corner marks (16×2 and 2×16 at the four corners of the 512×384
+screen), a centre cross ((0xf0, 0xbf) 32×2, (0xff, 0xb0) 2×32) and the
+d-pad icons BUTTON_U/L/R/D around it. Left/Right: dx ∓/± 4 clamped to
+±0x80; Up/Down: dy ∓/± 1 clamped to ±0x28; Center (2): 0, 0; each change
+calls pbScreenSetAdjust(dx, dy) (pbFrameMode adds them to the GS DISPLAY
+DX/DY fields); Accept stores them in GamePrefs, Back restores the saved
+values. Native: menu::Page::Screen; gdl_play shifts the final
+DisplayToLinear pass by dx/4 of 640 columns and 2·dy of 448 rows
+(HYPOTHESIS: MAGH 3 VCK units and frame-mode raster lines) and applies
+the saved values at boot; keyboard C is Center (NATIVE).
