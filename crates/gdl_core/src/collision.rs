@@ -41,6 +41,9 @@ pub struct CollisionObject {
     pub parent: Option<usize>,
     /// Position after the loader's parent-chain sum (runtime +0x1c).
     pub position: V3,
+    /// The file position: CreateWorldNode's node translation (+0x30), copied
+    /// before the sum.
+    pub local: V3,
     pub radius: f32,
     pub exclusion: i8,
     pub first_triangle: i32,
@@ -136,6 +139,25 @@ pub struct QueryState {
     pub check_num: u8,
 }
 
+/// An object's +0x10 after NewWorldObject 0x11bd08 (the WORLDS records are
+/// used in place): objects with a model (+0x28 == 1) or bit 31 get bit 31
+/// (outside 0x800 particle objects), and objects with 0x100 lose
+/// 0x2/0x8/0x10/0x20 (`& 0xffffffc5`; A1, K2, the Tower and the boss levels:
+/// every 0x102 object holds 0x100 in the captures). WorldPsysActivate's
+/// 0x800000 on 0x800 objects is not applied (it depends on the level's psys
+/// table; no collision test reads it).
+pub fn new_world_object_flags(raw: &[u8]) -> u32 {
+    let word = |o: usize| u32::from_le_bytes(raw[o..o + 4].try_into().unwrap());
+    let mut f = word(0x10);
+    if f & 0x800 == 0 && (word(0x28) == 1 || f & 0x8000_0000 != 0) {
+        f |= 0x8000_0000;
+    }
+    if f & 0x100 != 0 {
+        f &= 0xffff_ffc5;
+    }
+    f
+}
+
 impl CollisionWorld {
     /// The loader stores each static object's parent-chain position sum,
     /// formed top-down with scalar EE adds (parent sum + own position); all
@@ -187,9 +209,10 @@ impl CollisionWorld {
         for (i, node) in world.nodes.iter().enumerate() {
             let raw = &node.raw;
             objects.push(CollisionObject {
-                flags: node.flags,
+                flags: new_world_object_flags(&node.raw),
                 parent: parent[i],
                 position: sum(i, world, &parent, &mut position, 0)?,
+                local: node.position,
                 radius: node.radius,
                 exclusion: raw[0x35] as i8,
                 first_triangle: i32::from_le_bytes(raw[0x38..0x3c].try_into().unwrap()),
@@ -451,8 +474,8 @@ impl CollisionWorld {
     }
 
     /// GetWorldMat 0x1d06b8 of an object's node: its local matrix
-    /// (node_matrix), times each ancestor's local (object parents while the
-    /// object has flag 0x1000000) with MulMat4 0x1d55a0 in order, then the
+    /// (node_matrix), times each object ancestor's local with MulMat4
+    /// 0x1d55a0 in order (immediate parent first), then the
     /// world root nodes every object node hangs from: an identity under
     /// MulMat4 (+0x60 0x1000; it turns −0.0 into +0.0) and a translation-only
     /// identity (+0x60 4: add.s of a zero translation). Read from the G1 and
@@ -461,23 +484,27 @@ impl CollisionWorld {
         self.chain_world(self.node_matrix(o), self.node_parent(o))
     }
 
-    /// The object's node parent: its object parent when flag 0x1000000 is
-    /// set (static objects hold the parent-chain sum and hang from the root).
+    /// The object's node parent: CreateWorldNode 0x11b9a0 makes every
+    /// object's node under its parent object's node (roots under
+    /// CurWorldRoot), whatever the flags (w1l5-boss-v1: A5ELEVATOR, flag
+    /// 0x1000, under the static A5UNNAMED#0 and A5GEOMETRY, whose node holds
+    /// y −0.0703).
     pub fn node_parent(&self, o: usize) -> Option<usize> {
-        if self.objects[o].flags & 0x100_0000 != 0 { self.objects[o].parent } else { None }
+        self.objects[o].parent
     }
 
     /// The object node's local matrix: a world animation's, else the run-time
-    /// rotation rows (identity) with the node translation (root offset
-    /// objects take the item-driven y).
+    /// rotation rows (identity) with the node translation — the file
+    /// position (CreateWorldNode copies it before the static sum), its y the
+    /// item-driven one for wobjs (ProcessItemWobjs writes node +0x34).
     pub fn node_matrix(&self, o: usize) -> [[f32; 4]; 4] {
         if let Some(m) = self.node_local[o] {
             return m;
         }
         let ob = &self.objects[o];
-        let t = match (ob.parent, self.node_y[o]) {
-            (None, Some(y)) => [ob.position[0], y, ob.position[2]],
-            _ => ob.position,
+        let t = match self.node_y[o] {
+            Some(y) => [ob.local[0], y, ob.local[2]],
+            None => ob.local,
         };
         let r = self.node_rot[o].unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
         [[r[0][0], r[0][1], r[0][2], 0.0], [r[1][0], r[1][1], r[1][2], 0.0], [r[2][0], r[2][1], r[2][2], 0.0], [t[0], t[1], t[2], 1.0]]
@@ -539,11 +566,11 @@ impl CollisionWorld {
     pub fn object_rest_matrix(&self, o: usize) -> R<[[f32; 4]; 4]> {
         let ob = &self.objects[o];
         let t = match ob.parent {
-            Some(p) if ob.flags & 0x100_0000 != 0 => {
+            Some(p) => {
                 let pm = self.object_rest_matrix(p)?;
-                [add_rz(ob.position[0], pm[3][0])?, add_rz(ob.position[1], pm[3][1])?, add_rz(ob.position[2], pm[3][2])?]
+                [add_rz(ob.local[0], pm[3][0])?, add_rz(ob.local[1], pm[3][1])?, add_rz(ob.local[2], pm[3][2])?]
             }
-            _ => ob.position,
+            None => ob.local,
         };
         Ok([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [t[0], t[1], t[2], 1.0]])
     }
@@ -672,7 +699,10 @@ impl CollisionWorld {
         if let Some(p) = object.parent {
             exclusion |= self.objects[p].exclusion;
         }
-        if c.q.object_mask & object.flags == 0
+        // The live +0x10 word (the original has one; items and
+        // NewWorldObject rewrite it).
+        let live = self.runtime_flags.get(index).copied().unwrap_or(object.flags);
+        if c.q.object_mask & live == 0
             || i32::from(exclusion) & c.q.exclusion_mask != 0
             || object.first_triangle < 0
         {
@@ -699,10 +729,10 @@ impl CollisionWorld {
         let ymin = trunc(mul(c.min_y, 64.0)?);
         let ymax = trunc(mul(c.max_y, 64.0)?);
         let (distance, hit) =
-            self.tri_list_collide(c, object.first_triangle, list, ymin, ymax, object.flags & 0x40 != 0)?;
+            self.tri_list_collide(c, object.first_triangle, list, ymin, ymax, live & 0x40 != 0)?;
         if 0.0 <= distance {
             let (triangle, position) = hit.ok_or(UnsupportedCollision("hit without triangle"))?;
-            let slot = if object.flags & 0x200 != 0 { &mut found.water } else { &mut found.solid };
+            let slot = if live & 0x200 != 0 { &mut found.water } else { &mut found.solid };
             // Both start at 1e21 (col_dist and water_col +0x40 initialisation).
             if distance < slot.map_or(w(0x6258d727), |h| h.distance) {
                 *slot = Some(Hit { object: index, triangle, distance, position, matrix: None });

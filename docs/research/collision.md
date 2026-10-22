@@ -11,8 +11,15 @@ Native code: gdl_core/collision.rs; data: gdl_formats/world.rs; CLI
 WorldInfo (0x21f358) points into the WORLDS file loaded in place (fixture base
 0x11e4c40). Triangle records, grid rows, grid cells and cell contents are
 byte-identical to archive entry 2194. Only 60-byte object records change at load:
-runtime flag bits outside every collision test, pointers (+0x18 parent, +0x28
-matrix) and positions. Static objects store the top-down parent-chain sum formed
+flag bits, pointers (+0x18 parent, +0x28 matrix) and positions. NewWorldObject
+0x11bd08 sets bit 31 on objects with a model (+0x28 == 1), WorldPsysActivate
+sets 0x800000 on particle objects (0x800), and objects with 0x100 lose
+0x2/0x8/0x10/0x20 (`& 0xffffffc5`) — collision bits: every 0x102 object of A1,
+K2, the Tower, A5, G5 and I5 holds 0x100 in the captures (corrected 2026-10-22;
+the earlier claim that no tested bit changes missed 0x100 objects, which none
+of the fixture's G1 objects are). There is one +0x10 word, so the static grid
+test reads the live value as the dynamic one does (trace-I5-boss-v2 step 229:
+a thrown weapon passed through I5#35, 0x102 in the file). Static objects store the top-down parent-chain sum formed
 with scalar EE adds; all 1,319 match the fixture bit for bit. The 41 objects with
 flag 0x1000000 (all of them dynamic-grid objects) keep their local file position.
 Together, **1,360/1,360 runtime positions are reproduced exactly**. The load-time
@@ -113,13 +120,20 @@ it is exactly native's flag-selected set (0x1000 or 0x1000000 with triangles),
 in the same order, and no grid row uses cell 0.
 
 object_matrix is GetWorldMat 0x1d06b8: the node's local times each object
-ancestor's local (while the object has 0x1000000) with MulMat4, then the world
+ancestor's local with MulMat4, then the world
 root nodes — an identity under MulMat4 (+0x60 0x1000) and a translation-only
 identity (+0x60 4). Read from the G1 and Tower savestates (0x1693be0 under
 0x16935e0; 0x1dee0a0 under 0x1dedaa0; every object node hangs from the first
 through its parents). The earlier port multiplied by the parent's composed
 world with scalar sums, which reassociates the products and kept −0.0 where the
-root's MulMat4 gives +0.0.
+root's MulMat4 gives +0.0. CreateWorldNode 0x11b9a0 makes every node under its
+parent object's node (roots under CurWorldRoot) with the file position as its
+translation, copied before the static sum, so each ancestor contributes its
+file-local translation whatever its flags; ProcessItemWobjs writes a wobj's
+node y (+0x34 = inity + y) whether or not it has a parent. The port stopped at
+the first ancestor without 0x1000000 and took the summed position (corrected
+2026-10-22, w1l5-boss-v1: A5ELEVATOR, flag 0x1000, under A5UNNAMED#0 and
+A5GEOMETRY, whose node holds y −0.0703; the chimera's floor was 9/128 high).
 
 ## Not yet native
 

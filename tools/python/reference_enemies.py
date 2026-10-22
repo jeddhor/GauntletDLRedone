@@ -137,9 +137,10 @@ def enemy_probe(memory):
                 raw = read(node, 0x80)
                 nodes[str(k)] = {'node': raw[:0x40].hex(), 'parent': raw[0x74:0x78].hex()}
                 # CritterGetNode's table: +0xc0 → +0xbc entries of 0x28
-                # bytes, the tree node's MB node pointer first.
+                # bytes, the tree node's MB node pointer first (the
+                # chimera's tree has 176 nodes; its heads share the table).
                 count, table = struct.unpack_from('<II', r, 0xbc)
-                if 0 < count <= 128 and table and table % 4 == 0 and table + 0x28 * count <= 32 * 1024 * 1024:
+                if 0 < count <= 256 and table and table % 4 == 0 and table + 0x28 * count <= 32 * 1024 * 1024:
                     t = chunks(read, table, 0x28 * count)
                     nodes[str(k)]['tree_nodes'] = b''.join(t[0x28 * n:0x28 * n + 4] for n in range(count)).hex()
         out['critter_nodes'] = nodes

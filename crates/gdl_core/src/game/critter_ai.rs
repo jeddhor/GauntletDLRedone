@@ -1361,7 +1361,11 @@ impl Game {
             }
             cr.clock.frame = f;
             cr.clock.blend_end_time = 0.0;
-            cr.clock.reset_byte = 1;
+            // AnimateTreeFrameInterp sets the reset byte; AnimateATreeFrame's
+            // AnimateNode then runs DoAnimation on the subtree's type-1
+            // nodes, whose handshake makes it 2 (trace-A5-boss-v2 step 1,
+            // the chimera's heads).
+            cr.clock.reset_byte = 2;
             cr.clip = seq;
             cr.rec.set_u16(c::ANIM_SEQ, seq);
             cr.rec.set_i16(c::ANIM_FRAMES, frames);
@@ -1750,10 +1754,11 @@ impl Game {
     /// Replay seeding: the previous update's look-at rotation of the
     /// +0xd4/+0xd8 nodes, rebuilt on the freshly evaluated pose from the
     /// record's accumulated angles (CritterLookAtPlayer skips move types
-    /// 0x10 and 0).
+    /// 0x10 and 0; without a move — a head after CritterCopyAnim — it gets a
+    /// null move and still turns the nodes).
     pub(crate) fn critter_seed_look_at(&mut self, i: usize) -> R<()> {
         let mv = self.ci16(i, c::MOVE);
-        if mv < 0 || matches!(self.critter_move_i32(i, mv as usize, 0), 0x10 | 0) {
+        if 0 <= mv && matches!(self.critter_move_i32(i, mv as usize, 0), 0x10 | 0) {
             return Ok(());
         }
         if let Some(n) = self.crit(i).node_d4 {

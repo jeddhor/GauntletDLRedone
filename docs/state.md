@@ -114,9 +114,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    249/250, an audio handle): PlayerCollideItems' aliased to/out, the rock
    UpdateObjWorldMat lag, DoRockFly seeding, and parented effect nodes'
    local yaw and UnparentMatrix write-back fixed (gameplay.md "The other
-   boss levels"). Next: A5 (0x105, the chimera's children), D5/I5 traced
-   past activation, statue activations (golem/gargoyle), a boss fight to
-   its death.
+   boss levels"). A5's chimera with its three heads, D5 and I5 through
+   activation: 250/250 in every part (object nodes compose through every
+   ancestor; NewWorldObject's 0x100 flag rule; head reset byte and
+   look-at). Next: statue activations (golem/gargoyle), a boss fight to its
+   death.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

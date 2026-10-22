@@ -86,6 +86,8 @@ warp-*.json and screenshots in private/reports):
 | 7 | w11l1-newgame-v2.p2s | world 11, 1800 vblanks | K2, the moving ship (SKY's LEVL record 0), after its start |
 | 8 | w2l6-boss-v1.p2s | from slot 3: player 0 written onto B1's exit (−8.578, 139.0, −68.06) and skip_wave = 0x10205 (do_exit's wave skip to MOUNT record 5), 1400 vblanks | B6, the dragon's arena, in play (exit → map 0x400f → load 0x400c → 0x4010 by ~1400) |
 | 9 (staging) | w7l5-boss-v1.p2s | from slot 6: player 0 onto G1's exit (118.28, 86.8, −472.5), skip_wave 0x10704, 1000 vblanks | G5, the lich's crypt, in play |
+| 9 (staging) | w<world>l<level>-boss-v1.p2s (C5 w3l5, D5 w4l5, E2 w5l2, F2 w6l2, H4 w8l4, I5 w9l5, J5 w10l5, K5 w11l5, A5 w1l5) | from slot 3: player 0 onto B1's exit, skip_wave 0x10000 + the boss wave, `--until-wave` (1000..1400 vblanks) | the boss level in play, boss not yet active (reports warp-<level>-boss-v1.json) |
+| 9 (staging) | w9l5-boss-v2.p2s (sha256 793dedef…) | from w9l5-boss-v1: player 0 written to (9.6, −4.047, −5.2), 62 units from the yeti (a floor point by collision-query), 4 vblanks | I5, WARPED position (guest write); for the yeti's activation |
 
 Slot 9 is a staging slot (tools/python/reference_slots.py): `--stage NAME`
 copies a preserved capture into it for reference_trace.py / reference_warp.py,

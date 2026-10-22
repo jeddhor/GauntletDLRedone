@@ -653,7 +653,13 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   In D5 (drider, 0x25) and I5 (yeti, 0x27) BossActive stays 0 for the whole
   trace, so only the boss before activation is compared: D5 250/250, I5
   250/250 apart from items 249/250 (S_LWATERFALY's +0xfe audio handle, as
-  in the Tower and K2). Fixed on the way:
+  in the Tower and K2). Activation traces: trace-D5-boss-v2 (Up+Right
+  toward the drider, active from step 145) and trace-I5-boss-v2 (from the
+  warped w9l5-boss-v2, 62 units from the yeti, active from step 83): both
+  250/250 in every part (replay-frame-<level>-r31.json). A5 (the chimera,
+  0x23, three heads as child instances; trace-A5-boss-v2, active from step
+  281): 250/250 in every part, critters and camera included. Fixed on the
+  way:
   - PlayerMotion passes one vector as both `to` and `out` to its first
     PlayerCollideItems (0x148924..0x148930), so each push-out moves the point
     the following items are tested at (E2: Skorne's rocks under the +50 grid
@@ -667,3 +673,16 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
     node back with CopyMat4 + UnparentMatrix(node, node +0x74) (H4 step
     484: Garm's header 102 flies along its local z under Garm's tree root;
     critters.md).
+  - Object nodes compose through every ancestor's node (CreateWorldNode
+    parents each node under its parent object's, with the file position),
+    and a parented wobj's node takes its item-driven y (A5: the elevator
+    under A5GEOMETRY's y −0.0703; the chimera's floor was 9/128 high).
+  - NewWorldObject clears 0x2/0x8/0x10/0x20 on objects with 0x100, and the
+    static grid test reads the live +0x10 (I5: a thrown weapon passed
+    through I5#35; collision.md).
+  - The heads: CritterCopyAnim's AnimateATreeFrame runs AnimateNode, whose
+    DoAnimation handshake leaves the reset byte 2; CritterLookAtPlayer turns
+    a head's nodes with a null move (the replay's look-at seed skipped
+    heads, which CritterCopyAnim leaves at move −1).
+  - reference_enemies.py reads node tables of up to 256 entries (the
+    chimera's tree has 176; its heads share the root's table).

@@ -325,7 +325,7 @@ impl ItemWorld {
             .nodes
             .iter()
             .map(|n| ObjectWords {
-                flags_10: u32::from_le_bytes(n.raw[0x10..0x14].try_into().unwrap()),
+                flags_10: crate::collision::new_world_object_flags(&n.raw),
                 word_14: u16::from_le_bytes([n.raw[0x14], n.raw[0x15]]),
                 byte_16: n.raw[0x16],
                 byte_17: n.raw[0x17],

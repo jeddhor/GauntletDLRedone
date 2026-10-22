@@ -5,10 +5,9 @@ data-driven engine separate from the ordinary enemy AI. Sources: SLUS_200.47
 critter/boss family 0x191850–0x1a1fa8 (exports in private/reports/ghidra-critter,
 -atree, -lgws, -lookat1). Status: transcription in progress; K2's General (a
 golem-type kind 8, 210 updates) and B6's dragon (a boss, CritterBossAI, 250
-updates) match the reference ("Reference comparison" below), as do the
-bosses of B6, C5, E2, F2, G5, H4, J5 and K5 (D5 and I5 before activation);
-golems, gargoyles and critters with children (the chimera) are not compared
-yet. Native port: gdl_core game/critters.rs (types,
+updates) match the reference ("Reference comparison" below), as do all
+eleven bosses through their activation, the chimera (A5) with its three
+child heads included; golem and gargoyle statues are not compared yet. Native port: gdl_core game/critters.rs (types,
 loading, instances, pose), critter_ai.rs (per-frame AI), critter_hits.rs
 (attacks, damage, hit tests); tree_pose.rs evaluates the skeleton.
 
@@ -138,7 +137,23 @@ The remaining boss levels (gameplay.md "The other boss levels"; staged
 captures w<world>l<level>-boss-v1): the djinn (C5), wraith (J5), pboss (K5),
 Skorne 1 (E2), Skorne 2 (F2) and Garm (H4) from their activation through
 their first attacks, critters 250/250 with every other part; the drider (D5)
-and yeti (I5) do not activate within the traces (250/250 inactive).
+and yeti (I5) likewise in traces that walk (D5) or warp (I5) the player into
+their activation range (TYPE +0xec: 55 and 60).
+
+trace-A5-boss-v2 (the chimera, BossType 0x23): the root and its three heads
+(instances 1..3, +0xb64 the root, +0xb60 the chain; TYPE = the root's file at
+the pointer's 0x140-byte offset; the heads animate subtrees rooted at nodes 74,
+167 and 89 of the root's 176-node tree and share its CritterGetNode table).
+The replay seeds each head from its record and the root's table; 250/250 in
+every part through the activation at step 281 after:
+- CritterCopyAnim: AnimateATreeFrame(…, 1) runs AnimateNode after
+  AnimateTreeFrameInterp, so DoAnimation's handshake leaves the head's reset
+  byte at 2 (the port left 1).
+- CritterLookAtPlayer with no move (a head after CritterCopyAnim sets +0x124
+  to −1) passes a null move and still turns the +0xd4/+0xd8 nodes; the
+  replay's look-at seed had skipped such instances.
+- The chimera's floor (A5FLOOR#00 under A5ELEVATOR) composes through its
+  static ancestors (collision.md).
 
 Found by the comparison:
 - ProcessCritter starts with GetWorldMat(+0x70 node → +0x10) and ends (every
