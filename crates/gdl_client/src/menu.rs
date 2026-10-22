@@ -87,6 +87,8 @@ pub enum Page {
     ConfirmQuit { at: usize },
     Shop { at: usize },
     Inventory,
+    /// end_fullscreen_inventory: the exit swirl, then the Tower menu.
+    InventoryClose,
     /// hint_menu 0x21ea28 (Sumner's pad): category list, then a category's
     /// hints one at a time.
     Hints { at: usize },
@@ -264,7 +266,7 @@ impl Menu {
     }
 
     pub fn is_paused(&self) -> bool {
-        matches!(self.page, Page::Paused { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory | Page::Hints { .. } | Page::HintText { .. } | Page::Submenu { .. } | Page::Choice { .. })
+        matches!(self.page, Page::Paused { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory | Page::InventoryClose | Page::Hints { .. } | Page::HintText { .. } | Page::Submenu { .. } | Page::Choice { .. })
     }
 
     pub fn input(&mut self, key: Key) -> Option<Action> {
@@ -543,10 +545,11 @@ impl Menu {
             }
             Page::Inventory => {
                 if matches!(key, Key::Back | Key::Accept) {
-                    self.page = Page::Paused { tower: true, at: 3 };
+                    self.page = Page::InventoryClose;
                 }
                 None
             }
+            Page::InventoryClose => None,
             Page::ConfirmQuit { at } => match key {
                 Key::Up | Key::Down => {
                     self.page = Page::ConfirmQuit { at: wrap(at, 2, key == Key::Up) };
@@ -602,7 +605,7 @@ impl Menu {
                     v.and_then(|v| v.get(*at)).map_or("", String::as_str)
                 )
             }
-            Page::Inventory => format!("INVENTORY\n\n{}\n\n(Enter / Esc to go back)", self.inventory),
+            Page::Inventory | Page::InventoryClose => format!("INVENTORY\n\n{}\n\n(Enter / Esc to go back)", self.inventory),
             Page::ConfirmQuit { at } => list("QUIT GAME?\nprogress since your last save is lost", &s(&["No", "Yes"]), *at),
         };
         if self.status.is_empty() { body } else { format!("{body}\n\n{}", self.status) }

@@ -198,7 +198,17 @@ Shard_Pieces (class +0xcf0 | player +0x1a24), all at z 3; print_n_of_m
 crystals 1–8 (MAX_CRYSTALS); animate_panel_piece mode 0 swirls them in over
 120 units (SWIRL_RATE 1 per vblank, swirl_mult 60, cos/sin_table 60
 steps, size ×(2 − f²), alpha); "Continue" glow text with the X button and
-"Inv". Tables are read from the ELF. Not ported: the exit swirl (mode 2).
+"Inv". Tables are read from the ELF. Leaving (2026-10-22):
+end_fullscreen_inventory 0x129f50 / end_inventory_panel 0x129d78 set
+panel_fx 2 with timer 0 and draw until draw_inventory_panel reports done
+(timer > 14; the timer advances by SWIRL_RATE (1) × vb_elapsed_ctl after
+each draw): animate_panel_piece mode 2 moves each piece out from (0x40,
+0xb4) by (base − that) × 10f, scales it by 1 + 5f and fades it (f = timer /
+15), the counts fade by f × 255, no "Continue". The Tower menu's inventory
+(InventoryClose) and do_shop's (case 10 → end_inventory_panel → case 11
+until done → remove_inventory_panel) both play it; the shop's panel also
+opened at twice SWIRL_RATE before (fixed). GUI: x11grab frames of the
+Tower inventory closing.
 
 ## Shop (shop_setup / write_shop_menu)
 

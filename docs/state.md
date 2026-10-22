@@ -118,8 +118,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    the old Cam[0] transmitter path, do_flyby, NextAttractWave; the window
    without the 64-row inset) — reference cycle captured; headless flybys of
    all eleven attract levels; GUI checked. The select screen's "scene" is
-   its column art (already drawn; hud.md). Remaining in this plan: team
-   moves, the inventory exit swirl, vibration (gameplay.md "Not ported").
+   its column art (already drawn; hud.md). The inventory exit swirl
+   (end_fullscreen_inventory, animate_panel_piece mode 2) for the Tower menu
+   and the shop. Remaining in this plan: team moves, vibration
+   (gameplay.md "Not ported").
 
 ---
 

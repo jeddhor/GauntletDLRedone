@@ -383,6 +383,8 @@ struct Front {
     hints: gdl_core::game::hints::Hints,
     /// init_flyby: the attract level to build (front_system has the world).
     flyby_request: Option<usize>,
+    /// end_fullscreen_inventory's vblank clock while the exit swirl runs.
+    inventory_close: Option<f32>,
 }
 
 /// The running attract entry (game modes 0x8000..0x8008; the title screen
@@ -4184,7 +4186,7 @@ fn select_columns(front: &Front, screen: Screen) -> Option<[gdl_core::game::sele
 
 /// The pause menu's Inventory page (draw_fullscreen_inventory).
 fn inventory_view(front: &Front, screen: Screen, ui: &Ui) -> bool {
-    screen == Screen::Playing && ui.paused && matches!(front.menu.page, gdl_client::menu::Page::Inventory | gdl_client::menu::Page::Shop { .. })
+    screen == Screen::Playing && ui.paused && matches!(front.menu.page, gdl_client::menu::Page::Inventory | gdl_client::menu::Page::InventoryClose | gdl_client::menu::Page::Shop { .. })
 }
 
 /// The option menus' ICON_ARROW selector (start_optmenu_nostack: an
@@ -4503,7 +4505,23 @@ fn present_hud(
         if let gdl_client::menu::Page::Shop { at } = front.menu.page {
             front_list.extend(front.ui_hud.shop_blits(&front.shop, &sim.game.players, 0, at, front.menu_clock.1 as i32));
         } else {
-            front_list.extend(front.ui_hud.inventory_blits(&sim.game.players, &max, front.menu_clock.1 as i32 * rate));
+            // end_fullscreen_inventory: panel_fx 2 for 15 SWIRL_RATE units,
+            // then the Tower menu.
+            let closing = matches!(front.menu.page, gdl_client::menu::Page::InventoryClose);
+            let t = front.menu_clock.1 as i32 * rate;
+            let exit = if closing {
+                let c = front.inventory_close.get_or_insert(0.0);
+                let e = *c as i32 * rate;
+                *c += time.delta_secs() * 59.94;
+                Some(e)
+            } else {
+                front.inventory_close = None;
+                None
+            };
+            front_list.extend(front.ui_hud.inventory_blits(&sim.game.players, &max, t, exit));
+            if exit.is_some_and(|e| 0xe < e) {
+                front.menu.page = gdl_client::menu::Page::Paused { tower: true, at: 3 };
+            }
         }
     }
     if *screen == Screen::Front && front.attract_run.is_some() {
@@ -5701,6 +5719,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         hints_rom: gdl_formats::textrom::TextRom::parse(&catalog_hints)?,
         hints: Default::default(),
         flyby_request: None,
+        inventory_close: None,
         base: Base {
             package_cfg,
             start,

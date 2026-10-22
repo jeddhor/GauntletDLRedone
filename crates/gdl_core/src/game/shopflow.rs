@@ -206,8 +206,10 @@ impl Game {
                         if self.draw_inventory_panel(flow, k) && step == 11 {
                             self.players[k].set_i32(0x980, 12);
                         } else if step == 10 && start {
+                            // end_inventory_panel: panel_fx 2, timer 0.
                             self.audio_cursor_select();
                             flow.players[k].inv_closing = true;
+                            flow.players[k].inv_timer = 0;
                             self.players[k].set_i32(0x980, 11);
                         }
                     }
@@ -570,19 +572,19 @@ impl Game {
         Ok(dismissed)
     }
 
-    /// draw_inventory_panel in the shop: the panel swirls in over 120 timer
-    /// units (SWIRL_RATE as the fullscreen inventory) and, once closing, out
-    /// again (HYPOTHESIS: the reverse of the opening). True when closed.
+    /// draw_inventory_panel 0x129668 in the shop: the panel swirls in over
+    /// 120 timer units (panel_fx 0) and, after end_inventory_panel, out over
+    /// 15 (panel_fx 2, animate_panel_piece mode 2); the timer advances by
+    /// SWIRL_RATE × vb_elapsed_ctl after the draw. True once closed (timer
+    /// > 14).
     fn draw_inventory_panel(&mut self, flow: &mut ShopFlow, p: usize) -> bool {
-        let f = &mut flow.players[p];
+        let rate = self.hud.tables.as_ref().map_or(1, |t| t.swirl_rate);
         let vb = self.globals.vb_elapsed;
-        if f.inv_closing {
-            f.inv_timer = (f.inv_timer - 2 * vb).max(0);
-        } else {
-            f.inv_timer = (f.inv_timer + 2 * vb).min(120);
-        }
+        let f = &mut flow.players[p];
         let timer = f.inv_timer;
-        let closed = f.inv_closing && timer == 0;
+        let closing = f.inv_closing;
+        f.inv_timer = (f.inv_timer + rate * vb).min(if closing { i32::MAX } else { 120 });
+        let closed = closing && 0xe < f.inv_timer;
         let max_crystals = self.items.tables.max_crystals.clone();
         let mut players: [super::record::Record; 4] = std::array::from_fn(|k| self.players[k].clone());
         for (k, r) in players.iter_mut().enumerate() {
@@ -590,7 +592,7 @@ impl Game {
                 r.set_i32(0xfc, 0);
             }
         }
-        let list = self.hud.inventory_blits(&players, &max_crystals, timer);
+        let list = self.hud.inventory_blits(&players, &max_crystals, timer, closing.then_some(timer));
         self.hud.push_temp(list);
         closed
     }

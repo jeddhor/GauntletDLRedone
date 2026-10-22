@@ -137,10 +137,15 @@ impl Hud {
     /// shards held, swirling in over 120 timer units (SWIRL_RATE per vblank;
     /// animate_panel_piece mode 0), then "Continue" (X) and "Inv".
     /// `timer` is panel_fx_timer; players in state 0 show the panel only.
-    pub fn inventory_blits(&self, players: &[super::record::Record; 4], max_crystals: &[i32], timer: i32) -> Vec<Blit> {
+    /// `exit`: end_fullscreen_inventory's panel_fx 2 timer (the exit swirl).
+    pub fn inventory_blits(&self, players: &[super::record::Record; 4], max_crystals: &[i32], timer: i32, exit: Option<i32>) -> Vec<Blit> {
         let mut out = Vec::new();
         let Some(t) = self.tables.as_ref() else { return out };
-        let (fx, f) = if timer < 120 { (0, timer as f32 / 120.0) } else { (1, 1.0) };
+        let (fx, f) = match exit {
+            Some(e) => (2, e as f32 / 15.0),
+            None if timer < 120 => (0, timer as f32 / 120.0),
+            None => (1, 1.0),
+        };
         let piece = |hud: &Hud, out: &mut Vec<Blit>, name: &str, base: &[i32; 8], x0: i32| {
             let Some(tex) = hud.lookup(name) else { return };
             let (w, h) = hud.tex_info(tex).map_or((0, 0), |i| (i32::from(i.width), i32::from(i.height)));
@@ -158,6 +163,14 @@ impl Hud {
                 b.w = (w as f32 + w as f32 * g) as i32 as f32;
                 b.h = (h as f32 + h as f32 * g) as i32 as f32;
                 b.rgba[3] = (0x80 - (((g * 255.0) as i32).clamp(0, 255) as u32 >> 1)) as u8;
+            } else if fx == 2 {
+                // animate_panel_piece mode 2: out from (0x40, 0xb4), ×(1 +
+                // 5f) larger, fading.
+                b.x = (bx as f32 + (base[0] - 0x40) as f32 * f * 10.0) as i32 as f32;
+                b.y = (by as f32 + (base[1] - 0xb4) as f32 * f * 10.0) as i32 as f32;
+                b.w = (w as f32 + w as f32 * f * 5.0) as i32 as f32;
+                b.h = (h as f32 + h as f32 * f * 5.0) as i32 as f32;
+                b.rgba[3] = (0x80 - (((f * 255.0) as i32).clamp(0, 255) as u32 >> 1)) as u8;
             }
             out.push(b);
         };
@@ -195,7 +208,11 @@ impl Hud {
                     piece(self, &mut out, n, base, x0);
                 }
             }
-            let alpha = if fx == 0 { ((1.0 - f) * 255.0) as i32 } else { 0 };
+            let alpha = match fx {
+                0 => ((1.0 - f) * 255.0) as i32,
+                2 => (f * 255.0) as i32,
+                _ => 0,
+            };
             let font = t.ifont_font;
             let n_of_m = |hud: &Hud, out: &mut Vec<Blit>, i: usize, n: i32, m: i32| {
                 let Some((_, b)) = t.i_pieces.get(i) else { return };
@@ -222,10 +239,12 @@ impl Hud {
             for i in 1..9 {
                 n_of_m(self, &mut out, i + 3, c16(0xd0a + 2 * i), max_crystals.get(i).copied().unwrap_or(0));
             }
-            let mut b = self.make_pub(self.lookup("BUTTON_X"), x0 + 0x10, 0x118, 0x10, 0x10);
-            b.z = 1.0;
-            out.push(b);
-            out.extend(self.glow_text(0.5, x0 + 0x28, 0x118, "Continue", timer as u32));
+            if fx != 2 {
+                let mut b = self.make_pub(self.lookup("BUTTON_X"), x0 + 0x10, 0x118, 0x10, 0x10);
+                b.z = 1.0;
+                out.push(b);
+                out.extend(self.glow_text(0.5, x0 + 0x28, 0x118, "Continue", timer as u32));
+            }
             if let Some(msg) = self.message_pub(f32::from_bits(0x3ee6_6666), f32::from_bits(0x3ee6_6666), -(x0 + 0x40), 8, 6, 0, 0x80, 0.25, 0, "Inv") {
                 out.extend(self.glyphs(&msg));
             }
