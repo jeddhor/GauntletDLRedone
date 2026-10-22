@@ -322,3 +322,12 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   (the floor-slope pitch) at step 194 and +0x197c at step 496 (written in
   the update a generator spawned; likely do_items). The 150-update walking
   trace still replays 150/150.
+- Enemy replay on the combat-approach trace with the +0x2a0 item link
+  mapped: 225/270 updates equal (replay-enemies-combat-g1-v2.json); most of
+  the rest are generator spawns (do_items). Open, minimized: step 352,
+  enemy 6 (type 12, logic 07) — native check_vacancy's ItemCollide returns
+  generator 127 (GRU, +0xd8 0x4005 in both; ItemCollSub, StartItemGrid
+  with MaxItemRad 15, EnemyItemCollision and the approach test read the
+  same as the port), so native counts the heading stuck (+0x37a) where the
+  reference walks on. Also open: ±0.0 signs in the yaw matrices of a few
+  enemies and the AnimInfo +0x94 mirror after a sequence change.
