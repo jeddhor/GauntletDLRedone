@@ -213,7 +213,7 @@ impl Game {
                 self.players[p].set_u32(0x884, 0);
                 let mut hit_item = None;
                 let mut out = to;
-                let blocking = self.player_collide_items(radius, height, p, pos, to, Some(&mut out), false, Some(&mut hit_item))?;
+                let blocking = self.player_collide_items(radius, height, p, pos, to, Some(&mut out), false, Some(&mut hit_item), true)?;
                 if blocking != 0
                     && let Some(it) = hit_item {
                         let r = &self.items.records[it];
@@ -364,7 +364,7 @@ impl Game {
                     let to = vadd(pos, d)?;
                     let mut out2 = to;
                     let mut it2 = None;
-                    let n = self.player_collide_items(mul(radius, f32::from_bits(0x3f66_6666))?, height, p, pos, to, Some(&mut out2), true, Some(&mut it2))?;
+                    let n = self.player_collide_items(mul(radius, f32::from_bits(0x3f66_6666))?, height, p, pos, to, Some(&mut out2), true, Some(&mut it2), false)?;
                     if n != 0
                         && let Some(it) = it2
                         && self.verify_item_col(it, pos, request)?
@@ -1457,7 +1457,7 @@ impl Game {
                 if self.players[p].u32_(0x880) == 0 && self.controls.control[p].f32_(0x20) == 0.0 {
                     let k = add(radius, radius)?;
                     let probe = [add(mul(k, f1f0[0])?, pos[0])?, add(mul(k, f1f0[1])?, pos[1])?, add(mul(k, f1f0[2])?, pos[2])?];
-                    self.player_collide_items(radius, height, p, pos, probe, None, false, None)?;
+                    self.player_collide_items(radius, height, p, pos, probe, None, false, None, false)?;
                 }
                 // uStack_118/piStack_114 (sp+0x128/+0x12c) carry over from
                 // the targeting stage: the given target and item (the

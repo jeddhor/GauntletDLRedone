@@ -639,3 +639,31 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   SFX attached to a critter node keep their offset as a local translation
   and follow the node (critters.md); the port had spawned them at the world
   position.
+- The other boss levels (2026-10-22, actual disc). Each was reached from slot
+  3 (B1's new game) by writing player 0 onto B1's exit and skip_wave =
+  0x10000 + the boss wave (C5 0x304, D5 0x404, I5 0x904, J5 0xa05, K5 0xb04,
+  E2 0x501, F2 0x601, H4 0x803; reference_warp.py --until-wave stops when
+  that wave is in play) and saved through the staging slot 9 as
+  w<world>l<level>-boss-v1.p2s. trace-<level>-boss-v1 (E2: v2, which adds
+  DoRockFly/DidRockFly): 500 vblanks, idle, Up, two throws, Up, Left, idle.
+  Whole-update replays (replay-frame-<level>-r29.json) are 250/250 in every
+  part, camera included, for the djinn (C5, 0x24, active from step 170), the
+  wraith (J5, 0x28, from 162), the pboss (K5, 0x26, from 93), Skorne 1 (E2,
+  0x2a, from 75), Skorne 2 (F2, 0x2b, from 39) and Garm (H4, 0x2c, from 64).
+  In D5 (drider, 0x25) and I5 (yeti, 0x27) BossActive stays 0 for the whole
+  trace, so only the boss before activation is compared: D5 250/250, I5
+  250/250 apart from items 249/250 (S_LWATERFALY's +0xfe audio handle, as
+  in the Tower and K2). Fixed on the way:
+  - PlayerMotion passes one vector as both `to` and `out` to its first
+    PlayerCollideItems (0x148924..0x148930), so each push-out moves the point
+    the following items are tested at (E2: Skorne's rocks under the +50 grid
+    radius of BossType 0x2a/0x2b).
+  - Falling rocks (kind 10, subtypes 0x28/0x31/0x33/0x34/0x35) call
+    UpdateObjWorldMat only: the node takes the record matrix and +0x50/+0x60
+    follow at the next update's GetObjWorldMat, an update behind the rock.
+  - E2's rock fall is gated by DoRockFly/DidRockFly, now probed and seeded.
+  - SfxSetPhysics' YawMat3 turns an effect node's local matrix; under a
+    critter node that is the local rows, and ProcessEffects writes a moved
+    node back with CopyMat4 + UnparentMatrix(node, node +0x74) (H4 step
+    484: Garm's header 102 flies along its local z under Garm's tree root;
+    critters.md).

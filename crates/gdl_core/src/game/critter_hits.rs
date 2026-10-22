@@ -745,8 +745,17 @@ impl Game {
             && let Ok(a) = crate::libm::atan2f(v[0], v[2])
             && let Some(n) = self.effects.nodes[k].as_mut()
         {
-            // YawMat3(atan2f(vx, vz), node): the node faces its velocity.
-            let _ = crate::collision::yaw_mat3(&mut n.matrix, a);
+            // YawMat3(atan2f(vx, vz), node): the node's local faces its
+            // velocity; under a parent that is the local rows
+            // (trace-H4-boss-v1 step 484: Garm's yaw in the effect's local).
+            match n.parent.as_mut() {
+                Some(p) => {
+                    let _ = crate::collision::yaw_mat3(&mut p.local_matrix, a);
+                }
+                None => {
+                    let _ = crate::collision::yaw_mat3(&mut n.matrix, a);
+                }
+            }
         }
         let r = self.fx_mut(k);
         if let Some(v) = vel {

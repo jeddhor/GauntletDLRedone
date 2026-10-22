@@ -2415,18 +2415,55 @@ impl Game {
         Ok(())
     }
 
-    fn process_effect(&mut self, i: usize) -> R<()> {
-        if let Some(Some(par)) = self.effects.nodes[i].map(|n| n.parent) {
-            // The parent node's world transform this update (psfx.rs HYPOTHESIS
-            // for players; a critter's node by GetWorldMat).
-            let parent = match par.critter {
-                Some((c, node)) if self.critters.get(c).is_some_and(Option::is_some) => {
-                    let w = match node {
-                        Some(n) => self.critter_node_world(c, n, None)?,
-                        None => self.critter_self_world(c)?,
-                    };
-                    Some(([[w[0], w[1], w[2]], [w[4], w[5], w[6]], [w[8], w[9], w[10]]], [w[12], w[13], w[14]]))
+    /// The live critter node an effect node hangs under, if any.
+    fn effect_critter_parent(&self, i: usize) -> Option<(usize, Option<usize>)> {
+        let (c, n) = self.effects.nodes[i]?.parent?.critter?;
+        self.critters.get(c).is_some_and(Option::is_some).then_some((c, n))
+    }
+
+    /// UnparentMatrix(node, parent) 0x1d0620 under critter `c`'s node `n`:
+    /// recursive, so the outermost ancestor goes first; a translation-only
+    /// level subtracts its offset, the others MulMat4(InvertMat4(local), m)
+    /// (collision::unparent_chain's order).
+    fn effect_unparent_from_critter(&self, c: usize, n: Option<usize>, mut m: [[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
+        let chain = self.critter_parent_chain(c, n)?;
+        let rows = |b: &[f32; 16]| -> [[f32; 4]; 4] { std::array::from_fn(|r| std::array::from_fn(|k| b[4 * r + k])) };
+        let fail = |e: crate::collision::UnsupportedCollision| Unsupported(format!("UnparentMatrix: {e:?}"));
+        for b in chain.iter().rev() {
+            if b.flags & 4 != 0 {
+                for (j, v) in m[3].iter_mut().take(3).enumerate() {
+                    *v = sub(*v, b.matrix[12 + j])?;
                 }
+            } else {
+                let inv = crate::collision::invert_mat4(&rows(&b.matrix)).map_err(fail)?;
+                m = crate::collision::mul_mat4(&inv, &m).map_err(fail)?;
+            }
+        }
+        Ok(m)
+    }
+
+    fn process_effect(&mut self, i: usize) -> R<()> {
+        if let Some((c, node)) = self.effect_critter_parent(i) {
+            // GetWorldMat of a node under a critter node (SfxSetParent): its
+            // local (rows and translation) times each ancestor in turn.
+            let par = self.effects.nodes[i].and_then(|n| n.parent).ok_or_else(|| Unsupported("effect parent".into()))?;
+            let mut leaf = crate::tree_pose::IDENTITY;
+            for r in 0..3 {
+                leaf[4 * r..4 * r + 3].copy_from_slice(&par.local_matrix[r]);
+            }
+            leaf[12..15].copy_from_slice(&par.local);
+            let mut chain = self.critter_parent_chain(c, node)?;
+            let w = crate::world_transform::compose(crate::world_transform::MatrixBox { matrix: leaf, flags: 0 }, &mut chain, None)
+                .map_err(|_| Unsupported("effect GetWorldMat".into()))?
+                .matrix;
+            if let Some(n) = self.effects.nodes[i].as_mut() {
+                n.position = [w[12], w[13], w[14]];
+                n.matrix = [[w[0], w[1], w[2]], [w[4], w[5], w[6]], [w[8], w[9], w[10]]];
+            }
+        } else if let Some(Some(par)) = self.effects.nodes[i].map(|n| n.parent) {
+            // The parent node's world transform this update (psfx.rs HYPOTHESIS
+            // for players).
+            let parent = match par.critter {
                 // The critter instance is gone: the node keeps its last transform.
                 Some(_) => None,
                 None => {
@@ -3136,9 +3173,28 @@ impl Game {
                 r.set_u16(0x50, 1);
             }
         }
-        if moved && let Some(n) = self.effects.nodes[i].as_mut() {
-            n.matrix = m;
-            n.position = to;
+        if moved {
+            // CopyMat4(world, node) + UnparentMatrix(node, node +0x74): a
+            // parented node keeps the moved transform as its local
+            // (trace-H4-boss-v1 step 484, Garm's header 102 under its tree).
+            let world = [[m[0][0], m[0][1], m[0][2], 0.0], [m[1][0], m[1][1], m[1][2], 0.0], [m[2][0], m[2][1], m[2][2], 0.0], [to[0], to[1], to[2], 1.0]];
+            let local = match (self.effect_critter_parent(i), self.effects.nodes[i].and_then(|n| n.parent)) {
+                (Some((c, n)), _) => Some(self.effect_unparent_from_critter(c, n, world)?),
+                // HYPOTHESIS (psfx.rs): the player's record matrix stands for its node chain.
+                (None, Some(EffectParent { critter: None, player, .. })) => {
+                    let pm = super::doplayers::record_matrix_of(&self.players[player]);
+                    Some(super::doplayers::unparent_matrix(world, Some(&pm))?)
+                }
+                _ => None,
+            };
+            if let Some(n) = self.effects.nodes[i].as_mut() {
+                n.matrix = m;
+                n.position = to;
+                if let (Some(l), Some(par)) = (local, n.parent.as_mut()) {
+                    par.local = [l[3][0], l[3][1], l[3][2]];
+                    par.local_matrix = [[l[0][0], l[0][1], l[0][2]], [l[1][0], l[1][1], l[1][2]], [l[2][0], l[2][1], l[2][2]]];
+                }
+            }
         }
         Ok(())
     }

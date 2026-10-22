@@ -262,8 +262,13 @@ impl Game {
     /// PlayerCollideItems 0x146348(radius, height, player, from, to, out,
     /// blocking, item): the number of blocking items touched; +0x884 takes
     /// exit/transporter items, +0x880 the nearest item unless `blocking`.
+    /// `alias`: the caller passed the same vector as `to` and `out`
+    /// (PlayerMotion 0x148924..0x148930), so each push-out also moves the
+    /// point the following items are tested at (trace-E2-boss-v2: Skorne's
+    /// rocks with the +50 grid radius).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn player_collide_items(&mut self, radius: f32, height: f32, p: usize, from: V3, to: V3, mut out: Option<&mut V3>, blocking: bool, item_out: Option<&mut Option<usize>>) -> R<i32> {
+    pub(crate) fn player_collide_items(&mut self, radius: f32, height: f32, p: usize, from: V3, to: V3, mut out: Option<&mut V3>, blocking: bool, item_out: Option<&mut Option<usize>>, alias: bool) -> R<i32> {
+        let mut to = to;
         let grid_r = if (self.globals.boss_type as u32).wrapping_sub(0x2a) < 2 { add(radius, 50.0)? } else { radius };
         let near = self.grid.items_near(&self.items, grid_r, to)?;
         let env = self.collide_env();
@@ -293,6 +298,9 @@ impl Game {
             }
             if let Some(o) = out.as_deref_mut() {
                 *o = tmp;
+                if alias {
+                    to = tmp;
+                }
             }
             best = Some((slot, d));
             if blocking && count != 0 {

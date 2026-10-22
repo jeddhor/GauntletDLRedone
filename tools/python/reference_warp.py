@@ -37,6 +37,9 @@ def main():
     parser.add_argument('--stage', help='a preserved capture name to start from through the staging slot 9')
     parser.add_argument('--pos', type=float, nargs=3, help='player 0 position written after the reload (guest write)')
     parser.add_argument('--skip-wave', type=lambda v: int(v, 0), help="skip_wave written after the reload: 0x10000 + world << 8 | record (do_exit's wave skip; guest write)")
+    parser.add_argument('--until-wave', type=lambda v: int(v, 0),
+                        help='stop after the first segment that ends with this wave (world << 8 | record) in play '
+                             '(game_mode 0x4010, player 0 state 1)')
     parser.add_argument('--schedule', type=pathlib.Path, required=True, help='JSON list of {steps, keys} segments')
     parser.add_argument('--save-slot', type=int, help='PCSX2 slot (3..9) for the state at the end; must not exist')
     parser.add_argument('--capture', help='new file name under private/reference/captures for the saved state')
@@ -154,7 +157,11 @@ def main():
                         if time.monotonic() >= deadline:
                             raise ValueError(f'frame step {step} did not settle')
                         time.sleep(0.01)
-                log.append(observe(step))
+                obs = observe(step)
+                log.append(obs)
+                if args.until_wave is not None and (obs['cur_world'] << 8 | obs['cur_level'] & 0xff) == args.until_wave \
+                        and obs['game_mode'] == 0x4010 and obs['state'] == 1:
+                    break
         finally:
             for key in held:
                 xdo('keyup', key)

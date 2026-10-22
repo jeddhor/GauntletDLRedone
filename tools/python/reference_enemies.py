@@ -19,7 +19,7 @@ from reference_player import elf_symbols
 
 ENEMY_GLOBALS = ['BossIndex', 'SuicideBomberIndex', 'CurWorld', 'level_data', 'Items', 'WorldBase', 'frame_main',
                  'sfx_ene_bloodidx', 'help_flag', 'help_num', 'help_player', 'help_time', 'help_interval',
-                 'help_interval_idx', 'help_lv', 'help_testflag', 'RuneDispTimer']
+                 'help_interval_idx', 'help_lv', 'help_testflag', 'RuneDispTimer', 'DoRockFly', 'DidRockFly']
 # Critter globals (name: bytes): CritterETypes[9][6] TYPE pointers, the id
 # and frame counters, the target bookkeeping and the boss state.
 CRITTER_GLOBALS = {'CritterETypes': 9 * 6 * 4, 'CritterNewID': 4, 'CritterCounter': 4, 'CritterNActivePlayers': 4,

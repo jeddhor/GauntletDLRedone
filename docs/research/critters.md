@@ -5,9 +5,10 @@ data-driven engine separate from the ordinary enemy AI. Sources: SLUS_200.47
 critter/boss family 0x191850–0x1a1fa8 (exports in private/reports/ghidra-critter,
 -atree, -lgws, -lookat1). Status: transcription in progress; K2's General (a
 golem-type kind 8, 210 updates) and B6's dragon (a boss, CritterBossAI, 250
-updates) match the reference ("Reference comparison" below); golems,
-gargoyles, the other bosses and critters with children (the chimera) are not
-compared yet. Native port: gdl_core game/critters.rs (types,
+updates) match the reference ("Reference comparison" below), as do the
+bosses of B6, C5, E2, F2, G5, H4, J5 and K5 (D5 and I5 before activation);
+golems, gargoyles and critters with children (the chimera) are not compared
+yet. Native port: gdl_core game/critters.rs (types,
 loading, instances, pose), critter_ai.rs (per-frame AI), critter_hits.rs
 (attacks, damage, hit tests); tree_pose.rs evaluates the skeleton.
 
@@ -133,6 +134,12 @@ trace-g5-boss-v1 (G5 reached from slot 6 through G1's exit and skip_wave
 its activation through its first attacks: critters, camera and every other
 part 250/250 once its attack effects followed their critter node (above).
 
+The remaining boss levels (gameplay.md "The other boss levels"; staged
+captures w<world>l<level>-boss-v1): the djinn (C5), wraith (J5), pboss (K5),
+Skorne 1 (E2), Skorne 2 (F2) and Garm (H4) from their activation through
+their first attacks, critters 250/250 with every other part; the drider (D5)
+and yeti (I5) do not activate within the traces (250/250 inactive).
+
 Found by the comparison:
 - ProcessCritter starts with GetWorldMat(+0x70 node → +0x10) and ends (every
   surviving path, LAB_00198ef0) with CopyMat4(+0x10 → node) and
@@ -177,7 +184,13 @@ Found by the comparison:
   keep the SFX offset as their local translation and follow the node:
   ProcessEffects recomputes their world transform from it every update
   (since 2026-10-22, trace-g5-boss-v1; previously spawned at the world
-  position and left there). Visual-only SFXX (particles, texture mods) are not simulated;
+  position and left there) with GetWorldMat's order (the local times each
+  ancestor: the tree nodes, the +0x70 node, the floor chain, the roots).
+  SfxSetPhysics' YawMat3(atan2f(vx, vz)) turns the node's local, so the
+  local rows hold the critter's facing; a moved node is written back by
+  CopyMat4(world, node) + UnparentMatrix(node, node +0x74), outermost
+  ancestor first (trace-H4-boss-v1 step 484: the local translation advances
+  along z and the rows carry InvertMat4's rounding, row 1 1.0000148). Visual-only SFXX (particles, texture mods) are not simulated;
   every SFXX with a custom effect header gets a real effect slot as in the
   original (owner = critter ID | 0x1000).
 - Custom effects (InitCustomEffectSub 0x179aa8) take EffectHeaders 0x61 + n,

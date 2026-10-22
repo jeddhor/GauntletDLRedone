@@ -770,27 +770,53 @@ impl Game {
     pub(crate) fn critter_node_world(&self, i: usize, n: usize, offset: Option<V3>) -> R<Mat> {
         let o = self.critter_pose_owner(i);
         let cr = self.crit(o);
-        let flat = |m: [[f32; 4]; 4]| -> Mat { std::array::from_fn(|k| m[k / 4][k % 4]) };
         let w = match cr.node {
-            Some(local) => {
-                let mut roots = vec![MatrixBox { matrix: flat(local), flags: 0 }];
-                let mut k = cr.floor;
-                while let Some(p) = k {
-                    if 128 < roots.len() {
-                        return unsupported("critter floor chain");
-                    }
-                    roots.push(MatrixBox { matrix: flat(self.collision.node_matrix(p)), flags: 0 });
-                    k = self.collision.node_parent(p);
-                }
-                roots.push(MatrixBox { matrix: IDENTITY, flags: 0 });
-                let mut zero = IDENTITY;
-                zero[12..15].fill(0.0);
-                roots.push(MatrixBox { matrix: zero, flags: 4 });
-                node_world_chain(&cr.parents, &cr.locals, &roots, n, offset)
-            }
+            Some(_) => node_world_chain(&cr.parents, &cr.locals, &self.critter_roots(o)?, n, offset),
             None => node_world(&cr.parents, &cr.locals, self.critter_root(o), n, offset),
         };
         w.map_err(|e| Unsupported(format!("critter pose: {}", e.0)))
+    }
+
+    /// The MB chain above instance `i`'s tree: the stored +0x70 node, the
+    /// floor object chain, the identity root and the translation-only root
+    /// (immediate first); without a stored node, the instance matrix.
+    fn critter_roots(&self, i: usize) -> R<Vec<MatrixBox>> {
+        let cr = self.crit(i);
+        let flat = |m: [[f32; 4]; 4]| -> Mat { std::array::from_fn(|k| m[k / 4][k % 4]) };
+        let Some(local) = cr.node else { return Ok(vec![MatrixBox { matrix: self.critter_root(i), flags: 0 }]) };
+        let mut roots = vec![MatrixBox { matrix: flat(local), flags: 0 }];
+        let mut k = cr.floor;
+        while let Some(p) = k {
+            if 128 < roots.len() {
+                return unsupported("critter floor chain");
+            }
+            roots.push(MatrixBox { matrix: flat(self.collision.node_matrix(p)), flags: 0 });
+            k = self.collision.node_parent(p);
+        }
+        roots.push(MatrixBox { matrix: IDENTITY, flags: 0 });
+        let mut zero = IDENTITY;
+        zero[12..15].fill(0.0);
+        roots.push(MatrixBox { matrix: zero, flags: 4 });
+        Ok(roots)
+    }
+
+    /// The MB chain above a node parented to instance `i`'s tree node `n`
+    /// (`None`: its +0x70 node), immediate first: `n` and its tree
+    /// ancestors (the pose owner's), then [`Self::critter_roots`].
+    pub(crate) fn critter_parent_chain(&self, i: usize, n: Option<usize>) -> R<Vec<MatrixBox>> {
+        let o = if n.is_some() { self.critter_pose_owner(i) } else { i };
+        let cr = self.crit(o);
+        let mut chain = Vec::new();
+        let mut k = n;
+        while let Some(p) = k {
+            if 128 < chain.len() || cr.locals.len() <= p {
+                return unsupported("critter tree chain");
+            }
+            chain.push(MatrixBox { matrix: cr.locals[p], flags: 0 });
+            k = usize::try_from(cr.parents[p]).ok();
+        }
+        chain.extend(self.critter_roots(o)?);
+        Ok(chain)
     }
 
     /// CritterGetNode: tree node `idx` or the default.
@@ -868,12 +894,11 @@ impl Game {
     /// evaluated at it (the previous update's CritterAnimate). The health
     /// meter (+0x484) and children are not seeded.
     #[allow(clippy::too_many_arguments)]
+    /// Children follow with [`Game::seed_critter_child`]; the poses are
+    /// evaluated by [`Game::seed_critter_pose`] once every instance is in.
     pub fn seed_critter(&mut self, i: usize, t: TypeRef, slot: usize, rec: &[u8], node_dc: Option<usize>, node: Option<[[f32; 4]; 4]>, floor: Option<usize>) -> R<()> {
         if rec.len() != INST_SIZE || MAX_INSTS <= i {
             return unsupported("critter seed record");
-        }
-        if 0 <= CritterFile::i16_(self.ctype(t), 0x11c) {
-            return unsupported("critter seed with children");
         }
         while self.critters.len() <= i {
             self.critters.push(None);
@@ -894,6 +919,39 @@ impl Game {
         cr.shadow = shadow;
         cr.node = node;
         cr.floor = floor;
+        Ok(())
+    }
+
+    /// Replay seeding of child instance `k` of TYPE `t` in `root`'s chain
+    /// after `prev` (CritterNewInst's CritterInitInst + CritterInitChild +
+    /// CritterInitColnodes, then the traced record and its +0x84 clock).
+    pub fn seed_critter_child(&mut self, k: usize, root: usize, prev: usize, t: TypeRef, rec: &[u8], node_dc: Option<usize>) -> R<()> {
+        if rec.len() != INST_SIZE || MAX_INSTS <= k || self.critter_data.files.get(t.0).is_none_or(|f| f.wad.types.get(t.1).is_none()) {
+            return unsupported("critter child seed");
+        }
+        while self.critters.len() <= k {
+            self.critters.push(None);
+        }
+        let id = self.critter_new_id;
+        self.critter_init_inst(k, t)?;
+        self.critter_new_id = id;
+        self.critter_init_child(k, root)?;
+        self.critter_init_colnodes(k);
+        let rec = Record(rec.to_vec());
+        let clock = anim_info_clock(&rec);
+        let cr = self.crit_mut(k);
+        cr.clock = clock;
+        cr.clip = clock.sequence;
+        cr.rec = rec;
+        cr.node_dc = node_dc;
+        cr.parent = Some(root);
+        self.crit_mut(prev).child = Some(k);
+        Ok(())
+    }
+
+    /// Replay seeding: the instance's part of the pose at its clock and the
+    /// previous update's look-at rotation.
+    pub fn seed_critter_pose(&mut self, i: usize) -> R<()> {
         self.critter_update_pose(i)?;
         self.critter_seed_look_at(i)
     }

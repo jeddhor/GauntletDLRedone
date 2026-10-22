@@ -109,9 +109,14 @@ original (PCSX2 reference on Xvfb :191, private captures):
    loop word fixed); the frame replay's camera stage checks the boss camera
    (B6 250/250, CameraLimitPlayerDpos's boss branch ported) and the StdCam
    stage-start zoom (G1 250/250); G5's lich 250/250 once critter SFX follow
-   their node. Next: more bosses (--skip-wave, staging slot 9: A5 0x105 with
-   the chimera's children, K5 0xb04, D5, C5, I5, J5, E2/F2 Skorne, H4
-   Garm), statue activations (golem/gargoyle), a boss fight to its death.
+   their node. C5, E2, F2, H4, J5 and K5 250/250 in every part from boss
+   activation (D5 and I5 250/250 but the boss stays inactive; I5 items
+   249/250, an audio handle): PlayerCollideItems' aliased to/out, the rock
+   UpdateObjWorldMat lag, DoRockFly seeding, and parented effect nodes'
+   local yaw and UnparentMatrix write-back fixed (gameplay.md "The other
+   boss levels"). Next: A5 (0x105, the chimera's children), D5/I5 traced
+   past activation, statue activations (golem/gargoyle), a boss fight to
+   its death.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

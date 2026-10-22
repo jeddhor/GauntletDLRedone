@@ -1258,7 +1258,15 @@ impl Game {
                 for (c, v) in p.iter().enumerate() {
                     rr.set_f32(0x40 + 4 * c, *v);
                 }
-                crate::items::ItemWorld::update_offsets(rr)?;
+                // UpdateObjWorldMat only: the node takes the record matrix;
+                // +0x50/+0x60 follow at the next update's GetObjWorldMat
+                // (trace-I5-boss-v1: they lag the falling rock by an update).
+                if let Some(Some((o, _))) = self.items.floor_parent.get(slot).copied() {
+                    let r = &self.items.records[slot];
+                    let m: [[f32; 4]; 4] = std::array::from_fn(|a| std::array::from_fn(|b| r.f32_(0x10 + 0x10 * a + 4 * b)));
+                    let local = self.collision.unparent_chain(m, Some(o)).map_err(|e| super::Unsupported(format!("rock node: {e:?}")))?;
+                    self.items.floor_parent[slot] = Some((o, local));
+                }
                 if p[1] < sub(self.globals.world_bottom, 200.0)? {
                     self.delete_item(slot, false);
                 }

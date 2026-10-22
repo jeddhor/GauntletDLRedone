@@ -601,9 +601,11 @@ impl ReferenceCritters {
         let etypes = self.global("CritterETypes")?;
         let enemy_root = self.global("EnemyRootNode").ok().map(|b| Self::word(&b, 0));
         game.critters.clear();
+        let mut roots = Vec::new();
         for k in 0..self.num.min(16) {
             game.critters.push(None);
-            if !self.live(k) {
+            // Children (+0xb64 set) follow their root's chain below.
+            if !self.live(k) || Self::word(&self.slots[k], 0xb64) != 0 {
                 continue;
             }
             let raw = &self.slots[k];
@@ -637,6 +639,7 @@ impl ReferenceCritters {
                 None => (None, None),
             };
             game.seed_critter(k, t, slot, &Self::native(raw, ncol, items_base)?, node_dc, node, floor).map_err(|e| e.0)?;
+            roots.push((k, t, ty));
             // The traced node pointers against the native look-at and
             // collision nodes (a reference node outside the tree is noted).
             let cr = game.critters[k].as_ref().ok_or("seeded critter")?;
@@ -650,6 +653,40 @@ impl ReferenceCritters {
                 if index(p) != n {
                     game.log.note("critter seed", &gdl_core::game::Unsupported(format!("critter {k} +{o:#x} {p:#x} ≠ native node {n:?}")));
                 }
+            }
+        }
+        // Each root's child chain (+0xb60): the child's TYPE is the root's
+        // file at the TYPE pointer's offset (0x140-byte records), its +0xdc
+        // a node of the root's tree.
+        for (root, t, root_ty) in roots {
+            let table = self.nodes.get(&root).map(|n| n.2.clone()).unwrap_or_default();
+            let (mut prev, mut p) = (root, Self::word(&self.slots[root], 0xb60));
+            let mut guard = 0;
+            while p != 0 {
+                guard += 1;
+                if 16 < guard || p < Self::BASE || !(p - Self::BASE).is_multiple_of(0xb70) || 16 <= (p - Self::BASE) / 0xb70 {
+                    return Err(format!("critter {root} child chain pointer {p:#x}").into());
+                }
+                let k = ((p - Self::BASE) / 0xb70) as usize;
+                let raw = &self.slots[k];
+                let d = Self::word(raw, 4).wrapping_sub(root_ty) as i32;
+                if d % 0x140 != 0 || (t.1 as i32 + d / 0x140) < 0 {
+                    return Err(format!("critter {k} TYPE is not in its root's file").into());
+                }
+                let ct = (t.0, (t.1 as i32 + d / 0x140) as usize);
+                let own = self.nodes.get(&k).map(|n| n.2.clone()).unwrap_or_default();
+                let tab = if own.is_empty() { &table } else { &own };
+                let dc = Self::word(raw, 0xdc);
+                let node_dc = if dc == 0 { None } else { Some(tab.iter().position(|&q| q == dc).ok_or_else(|| format!("critter {k} +0xdc {dc:#x} is not in its node table"))?) };
+                let ncol = Self::ncol(game, ct);
+                game.seed_critter_child(k, root, prev, ct, &Self::native(raw, ncol, items_base)?, node_dc).map_err(|e| e.0)?;
+                prev = k;
+                p = Self::word(raw, 0xb60);
+            }
+        }
+        for k in 0..game.critters.len() {
+            if game.critters[k].is_some() {
+                game.seed_critter_pose(k).map_err(|e| e.0)?;
             }
         }
         let g = |n: &str| -> Result<u32, Box<dyn Error>> { Ok(Self::word(&self.global(n)?, 0)) };
@@ -2111,6 +2148,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                         if let Some(v) = b["enemies"].get("RuneDispTimer") {
                             game.globals.rune_disp_timer = word(&hexb(v)?) as i32;
                         }
+                        // DoRockFly / DidRockFly (DoWorldEffects' Skorne rocks;
+                        // traces from trace-E2-boss-v2).
+                        if let (Some(d), Some(e)) = (b["enemies"].get("DoRockFly"), b["enemies"].get("DidRockFly")) {
+                            game.do_rock_fly = word(&hexb(d)?) as i32;
+                            game.did_rock_fly = word(&hexb(e)?) as i32;
+                        }
                         // world_update's DoWorldAnimation from the traced
                         // entries (+6 flags, +8 frame) and object words (traces
                         // from trace-fight-g1-v6): the moving floors' matrices.
@@ -2404,7 +2447,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let report = serde_json::json!({"scope":"per-update replay of a reference enemies trace through the native do_enemies (all 25 records, every u32 except presentation pointers 0x70 0x80 0x84 0x88 0x8c 0xc0 0xc4 0x1f0; generator/floor links mapped)",
                 "items_mode":items_mode,"item_scope":"items_replay: ProcessItems then do_enemies; Items array words except +0x70..+0xc7 and the +0xe6 link, export_live_items convention",
                 "item_updates_equal":item_updates_equal,"differing_item_offsets":by_item_offset,"differing_item_slots":by_item_slot,
-                "differing_item_names":by_item_slot.keys().filter_map(|&k| game.items.records.get(k as usize).map(|r| (k.to_string(), String::from_utf8_lossy(game.items.definitions[r.definition()].name()).into_owned()))).collect::<std::collections::BTreeMap<_, _>>(),
+                "differing_item_names":by_item_slot.keys().filter_map(|&k| game.items.records.get(k as usize).map(|r| (k.to_string(), { let d = &game.items.definitions[r.definition()]; format!("{} kind {} sub {:#x}", String::from_utf8_lossy(d.name()), d.kind(), d.subtype()) }))).collect::<std::collections::BTreeMap<_, _>>(),
                 "frame_mode":frame_mode,"player_updates_equal":player_updates_equal,"effect_updates_equal":effect_updates_equal,
                 "world_anim_updates_equal":world_anim_updates_equal,
                 "critter_updates_equal":have_crit.then_some(critter_updates_equal),
