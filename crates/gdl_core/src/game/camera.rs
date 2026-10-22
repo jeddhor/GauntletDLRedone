@@ -2389,7 +2389,7 @@ impl super::Game {
         self.disable_player_controls = 1;
         let rows = trigger_camera_rows(pitch_yaw)?;
         self.trig_cam = TriggerCam { rows, eye: pos, wait, hold, wobj };
-        // vibrators_off: presentation.
+        self.vibrators_off();
         Ok(())
     }
 

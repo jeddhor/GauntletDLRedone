@@ -401,6 +401,9 @@ impl Game {
             trig_cam: Default::default(),
             tower_cams: Default::default(),
             disable_player_controls: 0,
+            vibes: Default::default(),
+            rumble: Vec::new(),
+            vibe_fresh: [false; 4],
             // InitPlayerControls state; the front end carries it across levels.
             controls: Default::default(),
             control_options: [[0; 4]; 4],
@@ -665,6 +668,7 @@ impl Game {
     /// do_enemies, do_players (`players`), ProcessEffects.
     pub fn step_with(&mut self, visible_override: Option<&Visibility>, players: &mut dyn FnMut(&mut Game) -> R<()>) {
         self.frame_main += 1;
+        self.vibe_fresh = [false; 4];
         // main: AudioQueUpdate / AudioPoll before game_main.
         self.main_audio(self.globals.vb_elapsed);
         // MBResetBlits after the previous frame's render: temp blits and

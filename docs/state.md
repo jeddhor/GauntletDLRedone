@@ -120,8 +120,8 @@ original (PCSX2 reference on Xvfb :191, private captures):
    all eleven attract levels; GUI checked. The select screen's "scene" is
    its column art (already drawn; hud.md). The inventory exit swirl
    (end_fullscreen_inventory, animate_panel_piece mode 2) for the Tower menu
-   and the shop. Remaining in this plan: team moves, vibration
-   (gameplay.md "Not ported").
+   and the shop. Vibration (do_vibe/serve_vibes/vibrators_off → gamepad
+   rumble). Remaining in this plan: team moves (gameplay.md "Not ported").
 
 ---
 

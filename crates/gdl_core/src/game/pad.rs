@@ -558,7 +558,64 @@ impl Game {
         };
         self.controls.controls_update(pads)?;
         let vb = self.globals.vb_elapsed as u32;
-        self.controls.player_controls(&t, self.disable_player_controls != 0, vb)
+        let disabled = self.disable_player_controls != 0;
+        self.controls.player_controls(&t, disabled, vb)?;
+        // PlayerControls: serve_vibes after ReadControls (controls enabled).
+        if !disabled {
+            self.serve_vibes();
+        }
+        Ok(())
+    }
+
+    /// do_vibe 0x1069a8(player, strength, frames) from damage_player: with
+    /// the player's vibration option (PlayerControl +0x30) on,
+    /// joyBeginShake(vibe_inten[strength − 2 + option], clamped to 4) on
+    /// its port and vibes[player] = (1, frames).
+    pub(crate) fn do_vibe(&mut self, p: usize, strength: i32, frames: i32) {
+        // vibe_inten 0x211468: 0.2, 0.4, 0.6, 0.8, 1.0.
+        const VIBE_INTEN: [f32; 5] = [f32::from_bits(0x3e4c_cccd), f32::from_bits(0x3ecc_cccd), f32::from_bits(0x3f19_999a), f32::from_bits(0x3f4c_cccd), 1.0];
+        let option = self.controls.control[p].i32_(0x30);
+        if option == 0 {
+            return;
+        }
+        let k = strength - 2 + option;
+        if k < 0 {
+            return;
+        }
+        self.rumble.push((self.controls.joy_remap[p], Some(VIBE_INTEN[k.min(4) as usize])));
+        self.vibes[p] = (true, frames);
+        self.vibe_fresh[p] = true;
+    }
+
+    /// serve_vibes 0x106a90: one frame off each running vibe; vibe_off once
+    /// it runs out.
+    fn serve_vibes(&mut self) {
+        for p in 0..4 {
+            if std::mem::take(&mut self.vibe_fresh[p]) {
+                continue;
+            }
+            if self.vibes[p].0 {
+                self.vibes[p].1 -= 1;
+                if self.vibes[p].1 < 0 {
+                    self.vibe_off(p);
+                }
+            }
+        }
+    }
+
+    /// vibe_off 0x106a58: joyEndShake on the player's port.
+    fn vibe_off(&mut self, p: usize) {
+        self.vibes[p] = (false, 0);
+        self.rumble.push((self.controls.joy_remap[p], None));
+    }
+
+    /// vibrators_off 0x106b10 (ResetModels, TriggerCameraActivate).
+    pub(crate) fn vibrators_off(&mut self) {
+        for p in 0..4 {
+            if self.vibes[p].0 {
+                self.vibe_off(p);
+            }
+        }
     }
 }
 

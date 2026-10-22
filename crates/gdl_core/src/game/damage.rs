@@ -234,7 +234,7 @@ impl Game {
                     } else {
                         (0, 10)
                     };
-                    self.events.push(Event::Vibrate { player, strength, time });
+                    self.do_vibe(player, strength, time);
                 }
             }
             self.players[player].f32_(p::HEALTH)

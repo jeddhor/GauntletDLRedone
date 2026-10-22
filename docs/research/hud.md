@@ -275,8 +275,22 @@ level start. UpdateCompass: POWERUPS' COMPASS object (StartCompass under
 the world root, world-aligned) at MBWindowTo3D(CompassZ 10, CompassPos
 (64, 128)), scale 1.5, alpha 128, hidden in menus or with the option off
 (HYPOTHESIS: the window point over the 640 × 384 viewport). Not ported:
-Control Style (do_controlsmenu), Screen Adjust (pbScreenSetAdjust),
-vibration output.
+Control Style (do_controlsmenu), Screen Adjust (pbScreenSetAdjust).
+
+Vibration (2026-10-22, gdl_core pad.rs): damage_player's do_vibe 0x1069a8
+(strength 3 / 0x1e frames for flags 0x10040, 2 / 0x14 for 0x120, 1 / 0xf
+for 0x90, else 0 / 10) with the vibration option (PlayerControl +0x30, the
+control_rumble_options value) on: joyBeginShake(vibe_inten 0x211468
+[strength − 2 + option, ≤ 4] = 0.2…1.0) on joy_remap's port, vibes[p] =
+(1, frames). PlayerControls' serve_vibes 0x106a90 (controls enabled, after
+ReadControls) counts frames down and calls vibe_off → joyEndShake below 0;
+vibrators_off 0x106b10 on ResetModels and TriggerCameraActivate.
+joyBeginShake sets only the large motor (actuator byte 1 = intensity ×
+255). Host: the requests drive the port's gamepad's strong motor
+(GamepadRumbleRequest); a new game stops every motor. main runs
+PlayerControls before game_main, so a vibe started before the host's
+update_controls is first served in the next update. Actual disc headless:
+game-run-rumble-G1-v1.json (begin/end 11 updates apart for strength 0).
 
 ## Boss health meters
 

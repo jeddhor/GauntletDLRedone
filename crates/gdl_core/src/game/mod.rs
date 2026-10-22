@@ -249,7 +249,6 @@ pub enum Event {
     MusicStop,
     /// Expired item (ExpireItem 0x1537b0) with its fade mode.
     ItemExpired { slot: usize, mode: i32 },
-    Vibrate { player: usize, strength: i32, time: i32 },
     PlayerDied { player: usize },
     /// StartFX* of EffectHeaders[header] at a position (hit sparks etc.).
     Effect { header: usize, position: [f32; 3] },
@@ -379,6 +378,15 @@ pub struct Game {
     pub trig_cam: camera::TriggerCam,
     pub tower_cams: camera::TowerCams,
     pub disable_player_controls: i32,
+    /// vibes 0x2116c8 (do_vibe / serve_vibes: on, frames left) per player,
+    /// and the actuator requests for the host: (joy_remap port, large motor
+    /// 0..1 from joyBeginShake, None from joyEndShake).
+    pub vibes: [(bool, i32); 4],
+    pub rumble: Vec<(i32, Option<f32>)>,
+    /// Vibes started in this update before the host's update_controls:
+    /// main runs PlayerControls (serve_vibes) before game_main, so they are
+    /// first served in the next update.
+    pub vibe_fresh: [bool; 4],
     /// Controller state (PlayerControl records, plr_* words) and the ELF
     /// control tables (remap, rep_speed, SpecialData, JoyAng/JoyMag).
     pub controls: pad::Controls,

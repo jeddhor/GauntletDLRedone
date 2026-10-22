@@ -1207,7 +1207,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         };
         let mut spawned_slot: Option<usize> = None;
         let mut spawned = Vec::new();
+        // Actuator requests (do_vibe / vibe_off) by update.
+        let mut rumble = Vec::new();
         for f in 0..frames {
+            rumble.extend(game.rumble.drain(..).map(|(port, i)| serde_json::json!([f, port, i])));
             for (n, sp) in spawns.iter().enumerate().filter(|(_, sp)| 4 <= sp.len() && sp[3] as usize == f) {
                 let p = game.players[0].v3(0x50);
                 let (dx, dz) = (sp.get(4).copied().unwrap_or(0.0), sp.get(5).copied().unwrap_or(8.0));
@@ -1328,7 +1331,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             .filter(|&k| game.items.definitions[game.items.records[k].definition()].kind() == 9)
             .map(|k| { let r = &game.items.records[k]; serde_json::json!([k, r.i16_(0xf0), r.u16_(0xd8), r.position()]) })
             .collect();
-        let report = serde_json::json!({"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,
+        let report = serde_json::json!({"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,
             "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
                 "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),

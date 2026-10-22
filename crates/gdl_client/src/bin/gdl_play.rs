@@ -1569,6 +1569,30 @@ fn present_movie(
     *showing = true;
 }
 
+/// joyBeginShake / joyEndShake on the host: the large motor of the port's
+/// gamepad (port k is the k-th gamepad, as player_input reads them; the
+/// keyboard ports have no actuator). A new game (ResetModels'
+/// vibrators_off at a level change) stops every motor.
+fn apply_rumble(sim: Option<ResMut<Sim>>, gamepads: Query<Entity, With<Gamepad>>, mut out: MessageWriter<bevy::input::gamepad::GamepadRumbleRequest>) {
+    use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
+    let Some(mut sim) = sim else { return };
+    let mut pads: Vec<Entity> = gamepads.iter().collect();
+    pads.sort();
+    if sim.is_added() {
+        for &g in &pads {
+            out.write(GamepadRumbleRequest::Stop { gamepad: g });
+        }
+    }
+    for (port, intensity) in std::mem::take(&mut sim.game.rumble) {
+        let Some(&gamepad) = usize::try_from(port).ok().and_then(|k| pads.get(k)) else { continue };
+        out.write(GamepadRumbleRequest::Stop { gamepad });
+        if let Some(i) = intensity {
+            // The motor runs until joyEndShake; the duration only bounds it.
+            out.write(GamepadRumbleRequest::Add { gamepad, intensity: GamepadRumbleIntensity::strong_motor(i), duration: std::time::Duration::from_secs(10) });
+        }
+    }
+}
+
 /// init_attract_mode(param) and the entry it starts. The flyby's level
 /// (attract_wave) is built by front_system; a wave without a configured
 /// level is passed over. The title screen is the front end's Press Start
@@ -5786,7 +5810,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<HudSets>()
         .init_resource::<MenuIcon>()
         .add_systems(Startup, (setup_static, setup_menu_icon).chain())
-        .add_systems(FixedUpdate, simulate.run_if(playing))
+        .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
             Update,
             (
