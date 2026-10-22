@@ -55,6 +55,8 @@ def main():
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
     ap.add_argument('--fall', help='DEBUG: player 0 drops below the world bottom at this update')
     ap.add_argument('--players', help='players in play (copies of player 0 without input, placed by load_player_geo)')
+    ap.add_argument('--turbo', help='DEBUG: player 0 turbo (+0x800)')
+    ap.add_argument('--front', action='store_true', help='DEBUG: player 1 stands 2 ahead of player 0 (with --players 2)')
     ap.add_argument('--flyby', action='store_true', help='the attract flyby on this level (no players; old camera)')
     ap.add_argument('--spawn', help='DEBUG: generate_enemy TYPE:LEVEL:AI:UPDATE[:DX:DZ[:DY]] beside player 0 (DY: floor probe height)')
     a = ap.parse_args()
@@ -126,6 +128,10 @@ def main():
         cmd += [f'spawn={a.spawn}']
     if a.flyby:
         cmd += ['flyby=1']
+    if a.turbo:
+        cmd += [f'turbo={a.turbo}']
+    if a.front:
+        cmd += ['front=1']
     if a.fall:
         cmd += [f'fall={a.fall}']
     if a.weapon:

@@ -1631,17 +1631,6 @@ impl Game {
         Ok(())
     }
 
-    /// The team-move parenting switch on the class (0x14c44c).
-    fn team_move_parenting(&mut self, p: usize) -> R<()> {
-        let r = &self.players[p];
-        let cur = r.u32_(0x1e0);
-        if r.u32_(0x690) != 0 || r.u32_(0x694) != 0 || (0x58..0x5a).contains(&cur) {
-            return unsupported("team-move parenting (PlayerSetParent / PlayerFacePlayer)");
-        }
-        self.players[p].set_u32(0x694, 0);
-        Ok(())
-    }
-
     /// PlyrSfxDoDamage for the class special actions (0x14c818).
     fn action_sfx_damage(&mut self, p: usize) -> R<()> {
         if 2 <= self.players[p].i32_(0x80c) {

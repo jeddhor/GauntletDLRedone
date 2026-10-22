@@ -26,7 +26,7 @@ type V3 = [f32; 3];
 
 /// MulMat4(left, right) on row matrices (world_transform::multiply): the
 /// result is right × left in the row-vector convention.
-fn mat_mul(left: &[[f32; 4]; 4], right: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
+pub(crate) fn mat_mul(left: &[[f32; 4]; 4], right: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
     let mut a: [f32; 16] = std::array::from_fn(|k| left[k / 4][k % 4]);
     let mut b: [f32; 16] = std::array::from_fn(|k| right[k / 4][k % 4]);
     let w = crate::world_transform::multiply(&mut a, &mut b)?;
@@ -49,6 +49,11 @@ fn invert_mat4(m: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
     }
     out[3][3] = 1.0;
     Ok(out)
+}
+
+/// A player record's matrix +0x20..+0x5c (4 × 4).
+pub(crate) fn record_matrix_of(r: &super::record::Record) -> [[f32; 4]; 4] {
+    std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x20 + 0x10 * i + 4 * j)))
 }
 
 impl Game {
@@ -124,8 +129,7 @@ impl Game {
 
     /// The record matrix +0x20..+0x5c (4 × 4).
     fn record_matrix(&self, p: usize) -> [[f32; 4]; 4] {
-        let r = &self.players[p];
-        std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x20 + 0x10 * i + 4 * j)))
+        record_matrix_of(&self.players[p])
     }
 
     /// GetObjWorldMat(+0x20, +0x81c, +0x810): the record matrix becomes the
@@ -143,7 +147,11 @@ impl Game {
             }
         };
         let mut world = local;
-        if let Some(o) = self.player_floor_parent[p] {
+        if let Some(k) = self.player_team_parent[p] {
+            // PlayerSetParent's team parent: MulMat4(the other player's
+            // +0x6b4 node world, node) (game/teammove.rs).
+            world = mat_mul(&self.team_parent_world(k)?, &local)?;
+        } else if let Some(o) = self.player_floor_parent[p] {
             // GetWorldMat: a translation-only parent adds its offset (add.s),
             // otherwise MulMat4(parent, node).
             let (pm, pure) = self.parent_world(o)?;

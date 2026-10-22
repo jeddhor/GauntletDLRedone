@@ -1012,6 +1012,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             let clips = anim_of("clips")?;
             game.player_clips[0] = gdl_core::game::setup::clips_of(&clips, 0);
+            // load_player's +0x6b4: tree 0's DUMMY node (the client also checks
+            // the model package for "<prefix>DUMMY"; not loaded here).
+            let clip_bytes = bounded_read(Path::new(opts.get("clips").ok_or("clips=PATH required")?), 64 * 1024 * 1024)?;
+            let dummy = clips.trees.first().and_then(|t| t.nodes.iter().position(|n| n.label == "DUMMY"));
+            game.player_rigs[0] = Some(std::sync::Arc::new(gdl_core::game::teammove::PlayerRig { anim: gdl_formats::animation::Animations::parse(&clip_bytes)?, bytes: clip_bytes, dummy }));
+            game.players[0].set_u32(0x6b4, dummy.map_or(0, |n| n as u32 + 1));
             game.controls.assign(0, 0);
             if 0 < level || opts.contains_key("world") {
                 let loc = world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("no start locator")?;
@@ -1035,6 +1041,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 game.classes[k] = game.classes[0].clone();
                 game.init_player_missiles(k);
                 game.player_clips[k] = game.player_clips[0].clone();
+                game.player_rigs[k] = game.player_rigs[0].clone();
                 let (start, yaw) = game.player_start;
                 game.place_player(k, start, yaw).map_err(|e| e.0)?;
                 game.load_player_geo_place(k).map_err(|e| e.0)?;
@@ -1044,6 +1051,20 @@ fn run() -> Result<(), Box<dyn Error>> {
                 game.controls.assign(k, k);
                 game.globals.active_players |= 1 << k;
                 eprintln!("player {k} placed at {:?} yaw {}", game.players[k].v3(0x50), game.players[k].f32_(0x86c));
+            }
+            // DEBUG turbo=V: player 0's turbo (+0x800). front=1: player 1
+            // stands 2 ahead of player 0, facing it (team-move checks).
+            if let Some(v) = opts.get("turbo") {
+                game.players[0].set_f32(0x800, v.parse()?);
+            }
+            if opts.get("front").is_some_and(|v| v == "1") && 2 <= n {
+                let (p0, yaw0) = (game.players[0].v3(0x50), game.players[0].f32_(0x86c));
+                let at = [p0[0] + 2.0 * yaw0.sin(), p0[1], p0[2] + 2.0 * yaw0.cos()];
+                let yaw = game.players[0].f32_(0x86c) + std::f32::consts::PI;
+                game.place_player(1, at, yaw).map_err(|e| e.0)?;
+                game.players[1].set_u32(0x1e0, 0);
+                game.players[1].set_u32(0x1e4, 0);
+                eprintln!("player 1 in front at {at:?}");
             }
         }
         if let Some(tp) = opts.get("replay") {
@@ -1209,7 +1230,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         let mut spawned = Vec::new();
         // Actuator requests (do_vibe / vibe_off) by update.
         let mut rumble = Vec::new();
+        // Team-move state per update while a link exists.
+        let mut team = Vec::new();
         for f in 0..frames {
+            if (0..2).any(|k| game.players[k].u32_(0x690) != 0 || game.players[k].u32_(0x694) != 0 || game.players[k].u16_(0x93c) & 0xf0 != 0) {
+                team.push(serde_json::json!([f, (0..2).map(|k| { let r = &game.players[k]; serde_json::json!({"action":r.u32_(0x1e0),"frame":r.f32_(0xac),"link":[r.u32_(0x690), r.u32_(0x694)],"status":format!("{:#x}", r.u16_(0x93c)),"pos":r.v3(0x50),"turbo":r.f32_(0x800),"t1d2":r.i16_(0x1d2)}) }).collect::<Vec<_>>()]));
+            }
             rumble.extend(game.rumble.drain(..).map(|(port, i)| serde_json::json!([f, port, i])));
             for (n, sp) in spawns.iter().enumerate().filter(|(_, sp)| 4 <= sp.len() && sp[3] as usize == f) {
                 let p = game.players[0].v3(0x50);
@@ -1331,7 +1357,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             .filter(|&k| game.items.definitions[game.items.records[k].definition()].kind() == 9)
             .map(|k| { let r = &game.items.records[k]; serde_json::json!([k, r.i16_(0xf0), r.u16_(0xd8), r.position()]) })
             .collect();
-        let report = serde_json::json!({"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,
+        let report = serde_json::json!({"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
             "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
                 "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),

@@ -41,8 +41,11 @@ ghidra-gameplay8, ghidra-pmotion1..4 (2026-10-19).
   turn, control, +0x970 scales (DoPlayerAction).
 - Native links: +0x690/+0x694 partner, +0x880 target item, +0x884
   exit/transporter item, +0x888 grabbed item, +0x89c floor object, +0x8a0
-  wall object are index + 1 (0 = null). +0x6b4/+0x6b8 (team-move node,
-  swing tree) stay 0: the paths that need them are Unsupported.
+  wall object are index + 1 (0 = null). +0x6b4 (load_player's
+  AtreeFindMbidxNode of "<+0x698>DUMMY": tree node index + 1 of the
+  character's tree 0, when the model package has that object — every
+  class's tree holds a "DUMMY" node) feeds the team moves; +0x6b8 (swing
+  tree) stays 0.
 
 ## The node round trip (observed)
 
@@ -107,10 +110,36 @@ options legend=1 quest=N in all boss arenas (no unported path; not
 trace-checked). HYPOTHESIS: BossType 0x23's target is the lowest-index
 first child under the chained critter's +0xd4 node.
 
+## Team moves (2026-10-22)
+
+game/teammove.rs (from instructions): combo_player 0x144688 (turbo ≥ 50,
+the initiator's +0x6b4 node, the partner within 5 and 45° ahead on a floor
+object, 3 in height) on PlayerControl level 0x20000 (remap row 9: raw
+0x200000 = joyGetStatus entry 9, R2) gives GetPlayerDMotion code 0x16 and
++0x694; PlayerMotion 0x14c448 links the pair once the action is 0x58/0x59
+(both +0x690, the partner's +0x93c |= 0x10, the turbo cost +0x8e8 spent)
+and runs the class switch (jump table 0x2a7c20): warrior carries the
+partner on its DUMMY node until frame 30 of 0x58 then throws it (status
+0x40, +0x1d2 = 0xf0 until the unlink); valkyrie/archer turn the partner
+away (PlayerFacePlayer 0x144548 with π) and ride its DUMMY node during
+0x58/0x59 (released with the kept position); dwarf rides like them on 0x58
+(status 0x80, partner +0x8d4 = Time, +0x1d2 = 0xf0) and lets go after the
+throw timer; wizard/knight/sorceress/jester carry the partner during
+0x58/0x59 (the jester releases at once). PlayerSetParent 0x136c58 /
+PlayerUnsetParent 0x136d70: the node becomes identity under the other
+player's DUMMY node (GetObjWorldMat → MulMat4(node world, node)) and
+returns to PlayerRootNode with the position (kept at +0xf0 when restoring).
+The DUMMY node's world is the other player's record matrix under its tree
+pose at the clock's sequence/frame (HYPOTHESIS: the original reads the
+matrix the last MBEndFrame left; no blend). Headless (actual disc, two
+Sorceresses in G1, game-run front=1 turbo=100, R2):
+game-run-team-G1-sor-v1.json — the partner plays 0x92 parented for the
+90 frames of 0x58 and is released with its kept position; no unported
+path. Other classes not exercised; no reference comparison.
+
 ## Unported (Unsupported when reached)
 
-Team moves (0x58..0x5a, 0x88..0x93, PlayerSetParent/
-PlayerFacePlayer), thunder
+Thunder
 hammer / breath / familiar events (0x2000000, 0x1000000, 0x10000000 with
 +0x138 0x80), players in states 2/3 (selecting/joining), inactivate_player,
 setup_player_display, PlayerProcessFamiliar/Scale for boss state 5, rotating

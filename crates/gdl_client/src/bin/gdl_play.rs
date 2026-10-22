@@ -1817,6 +1817,8 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> 
             press(&mut s, 0x12, k(KeyCode::ControlLeft));
             press(&mut s, 0x14, k(KeyCode::Enter));
             press(&mut s, 0x15, k(KeyCode::Tab));
+            // NATIVE: R2 (entry 9: the team move, PlayerControl 0x20000).
+            press(&mut s, 9, k(KeyCode::KeyX));
         }
         1 => {
             press(&mut s, 0, k(KeyCode::KeyF));
@@ -1826,6 +1828,7 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> 
             press(&mut s, 0xd, k(KeyCode::KeyR));
             press(&mut s, 0xb, k(KeyCode::KeyY));
             press(&mut s, 0x14, k(KeyCode::KeyU));
+            press(&mut s, 9, k(KeyCode::KeyB));
         }
         _ => {}
     }
@@ -2874,6 +2877,8 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
             record.set_i32(0xfc, 1);
         }
         profile::level_start(&mut record, &session.pdats, &slot.action_map, game_wave, session.heart_rate).map_err(|e| e.to_string())?;
+        // load_player: the team-move node +0x6b4 (native: tree node index + 1).
+        record.set_u32(0x6b4, slot.rig.dummy.map_or(0, |n| n as u32 + 1));
         // init_next_level: PlayerSaveState except in a treasure room (world
         // 12) and on the return from one (LoadStage).
         if lv.world != 0xc && !returning {
@@ -2999,6 +3004,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
         game.players[0].set_u32(0x1e0, 0);
         game.players[0].set_u32(0x1e4, 0);
         game.player_clips[0] = slots[0].as_ref().map(|s| s.clips.clone()).unwrap_or_default();
+        game.player_rigs[0] = slots[0].as_ref().map(|s| s.rig.clone());
         game.init_player_anim(0).map_err(|e| e.0)?;
         game.controls.assign(0, 0);
         game.control_options[0] = slots[0].as_ref().map_or([0; 4], |s| s.controls);
@@ -3014,6 +3020,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
             game.players[k].set_u32(0x1e0, 0);
             game.players[k].set_u32(0x1e4, 0);
             game.player_clips[k] = slot.clips.clone();
+            game.player_rigs[k] = Some(slot.rig.clone());
             game.init_player_anim(k).map_err(|e| e.0)?;
             game.control_options[k] = slot.controls;
             game.init_player_missiles(k);
@@ -3067,6 +3074,9 @@ fn typed_letter(keys: &ButtonInput<KeyCode>) -> Option<char> {
 struct SlotStart {
     record: Record,
     clips: Vec<gdl_core::animation_clock::ClipTiming>,
+    /// Tree 0 of the character's ANIM package and its DUMMY node (team
+    /// moves: load_player's +0x6b4).
+    rig: std::sync::Arc<gdl_core::game::teammove::PlayerRig>,
     action_map: Vec<[i64; 2]>,
     class: ClassData,
     controls: profile::ControlOptions,
@@ -3081,8 +3091,17 @@ fn slot_starts(front: &Front, sources: &Sources, records: &[Record; 4], controls
             continue;
         }
         let Some(pc) = &sources.players[k] else { continue };
+        // load_player: +0x6b4 = AtreeFindMbidxNode(tree, "<+0x698>DUMMY") —
+        // the tree node "DUMMY" when the model package has that object.
+        let r = &records[k];
+        let tag = gdl_core::player_class::CLASS_TAGS.get(r.u32_(0xc) as usize).copied().unwrap_or("").to_ascii_uppercase();
+        let object = format!("{tag}_{}DUMMY", ["YEL", "BLU", "RED", "GRE"].get(r.u32_(4) as usize).copied().unwrap_or("YEL"));
+        let has_object = sources.packages.get(&pc.model_name).is_some_and(|m| m.objects.definitions.iter().any(|d| d.label == object));
+        let dummy = has_object.then(|| pc.clips.trees.first().and_then(|t| t.nodes.iter().position(|n| n.label == "DUMMY"))).flatten();
+        let rig = std::sync::Arc::new(gdl_core::game::teammove::PlayerRig { anim: Animations::parse(&pc.clip_bytes)?, bytes: pc.clip_bytes.clone(), dummy });
         out[k] = Some(SlotStart {
             record: records[k].clone(),
+            rig,
             clips: setup::clips_of(&pc.clips, 0),
             action_map: front.tables.action_map(&pc.clips),
             class: with_sfx_trees(class_data_of(front, records[k].u32_(0xc).min(16))?, sources, k),

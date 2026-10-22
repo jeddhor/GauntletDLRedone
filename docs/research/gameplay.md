@@ -176,8 +176,7 @@ with a reference.
 
 ## Not ported (known)
 
-Unreachable move logics above; team moves (PlayerSetParent /
-PlayerFacePlayer). (The front-end fixed camera of modes
+Unreachable move logics above. (The front-end fixed camera of modes
 0x8009/0x400b/0x4012 only moves a view hidden under full-screen blits —
 hud.md.)
 - move_logic16 0x13ecd8 (ranged 0x18 attacks on the +0x334 timer; inside

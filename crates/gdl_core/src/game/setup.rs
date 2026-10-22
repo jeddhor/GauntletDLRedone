@@ -368,6 +368,8 @@ impl Game {
             enemy_anims: vec![None; 25],
             player_clips: Default::default(),
             player_floor_parent: [None; 4],
+            player_team_parent: [None; 4],
+            player_rigs: Default::default(),
             player_node: [None; 4],
             transporter_floor_y: None,
             player_water: None,

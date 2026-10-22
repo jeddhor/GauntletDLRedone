@@ -53,6 +53,7 @@ pub mod world_anim;
 pub mod sound;
 pub mod sound_cues;
 pub mod stage;
+pub mod teammove;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
 use crate::item_collision::DynGrid;
@@ -347,6 +348,11 @@ pub struct Game {
     /// The world object whose node the player's node is parented to
     /// (PlayerCheckMovingFloor's MBNodeSetParent); None = PlayerRootNode.
     pub player_floor_parent: [Option<usize>; 4],
+    /// PlayerSetParent's team parent: the player whose +0x6b4 node carries
+    /// this one (game/teammove.rs).
+    pub player_team_parent: [Option<usize>; 4],
+    /// The players' trees for posing nodes (the team-move DUMMY node).
+    pub player_rigs: [Option<std::sync::Arc<teammove::PlayerRig>>; 4],
     /// The player node's local matrix (UpdatePlayerWorldMat writes it,
     /// GetObjWorldMat reads it back); None until the first update.
     pub player_node: [Option<[[f32; 4]; 4]>; 4],

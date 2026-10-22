@@ -121,7 +121,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    its column art (already drawn; hud.md). The inventory exit swirl
    (end_fullscreen_inventory, animate_panel_piece mode 2) for the Tower menu
    and the shop. Vibration (do_vibe/serve_vibes/vibrators_off → gamepad
-   rumble). Remaining in this plan: team moves (gameplay.md "Not ported").
+   rumble). Team moves (teammove.rs: the class switch, PlayerSetParent /
+   PlayerUnsetParent / PlayerFacePlayer under the DUMMY node; R2 = keyboard
+   X / B). The plan's listed items are done; next: reference comparisons
+   (multi-player, flyby camera) and the remaining Unsupported paths in
+   player.md.
 
 ---
 
