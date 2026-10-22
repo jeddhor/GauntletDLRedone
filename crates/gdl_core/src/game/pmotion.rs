@@ -78,7 +78,7 @@ impl Game {
         let mut bounce = 0; // iStack_fc
         if self.players[p].v3(0x20).iter().chain(self.players[p].v3(0x30).iter()).chain(self.players[p].v3(0x40).iter()).any(|v| v.is_nan()) {
             // FatalErrorC (non-fatal on retail) then get_player_pos.
-            self.get_player_pos(p)?;
+            self.get_player_pos(p, 0)?;
         }
         self.players[p].and_u16(0x93c, 0xfffe);
         let cam = add(atan2f(self.globals.camera_90, self.globals.camera_98)?, PI)?;
@@ -191,7 +191,7 @@ impl Game {
             d[2] = c(z);
         }
         if self.players[p].f32_(0x54) <= self.globals.world_bottom {
-            self.get_player_pos(p)?;
+            self.get_player_pos(p, 0)?;
         }
         let request = d;
         self.players[p].set_v3(0x860, d);

@@ -92,7 +92,7 @@ fn object_flags_with_parents(world: &CollisionWorld, mut object: Option<usize>) 
 }
 
 /// PlayerWallCollide: CheckFlags 7, normal-y ±0x3f5db22d, mask 0x13a, exclusion 1.
-fn wall_collide(world: &mut CollisionWorld, r: f32, first: V3, last: V3) -> R<Option<WallContact>> {
+pub(crate) fn wall_collide(world: &mut CollisionWorld, r: f32, first: V3, last: V3) -> R<Option<WallContact>> {
     let (c, _) = world.world_collide(crate::collision::Query {
         radius: r,
         first,

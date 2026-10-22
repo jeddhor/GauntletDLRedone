@@ -2497,6 +2497,10 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
             .find(|l| l.kind == 7 && l.id == id)
             .or_else(|| session.world.locators.iter().find(|l| l.kind == 7 && l.id == 0))
             .ok_or("level has no player start locator")?;
+        // SetPlayerStartPos: StartTransmitter = StartTransmitterList[id].
+        if let Some(cam) = game.std_camera.as_mut() {
+            cam.set_start_transmitter(if loc.id == id { id.max(0) as usize } else { 0 });
+        }
         game.place_player(0, loc.position, loc.rotation[1]).map_err(|e| e.0)?;
         game.players[0].set_u32(0x1e0, 0);
         game.players[0].set_u32(0x1e4, 0);
@@ -2504,15 +2508,13 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
         game.init_player_anim(0).map_err(|e| e.0)?;
         game.controls.assign(0, 0);
         game.control_options[0] = slots[0].as_ref().map_or([0; 4], |s| s.controls);
-        // The other players in play enter beside player 1. PLACEHOLDER:
-        // get_player_pos's multi-player start offsets (new_offset_start) are
-        // not ported; each stands 3 units along x.
+        // The other players in play: load_player_geo → get_player_pos(k, 1)
+        // beside the first earlier one (new_offset_start), else at the start
+        // (place_player first sets up the record and node at the start).
         for (k, slot) in slots.iter().enumerate().skip(1) {
             let Some(slot) = slot else { continue };
-            let mut at = game.players[0].v3(0x50);
-            at[0] += 3.0 * k as f32;
-            let yaw = game.players[0].f32_(0x86c);
-            game.place_player(k, at, yaw).map_err(|e| e.0)?;
+            game.place_player(k, loc.position, loc.rotation[1]).map_err(|e| e.0)?;
+            game.load_player_geo_place(k).map_err(|e| e.0)?;
             game.players[k].set_u32(0x1e0, 0);
             game.players[k].set_u32(0x1e4, 0);
             game.player_clips[k] = slot.clips.clone();

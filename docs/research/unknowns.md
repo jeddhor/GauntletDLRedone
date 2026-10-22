@@ -43,7 +43,7 @@ replaced by a plausible gameplay rule or generated asset.
 | Audio track timing | The EE voice queue is ported (audio_queue.rs); a queued sound's track (AudioTrackSet, the IOP's reply) is taken as allocated and set at the next frame's AudioPoll | Trace audioTrackData after an AudioQueUpdate start in a reference capture |
 | Boss instance after death | BossCamBossCalc reads the freed boss instance; its last bytes stand in | Read BossCritInst's bytes after a boss kill in a capture |
 | Effect tree colour | MBTreeSetColor (node +0x64, flag 0x100) is drawn as a modulation like MBBlitSetColor (block flash) | Trace the 0x100 path in the draw (setPrimColor / VU1) |
-| Multi-player start positions | Extra players stand 3 units along x (PLACEHOLDER) | Port get_player_pos / new_offset_start |
+| Multi-player start positions | get_player_pos / try_location ported from instructions; actual-disc headless runs only | Two-pad reference run: compare players 2–4's start records and a respawn |
 | Select scene | The SELECT 3D scene behind the select columns is not drawn | Port LoadTowerAndSelect's select model and its camera |
 | Good-wizard sequence | Ported (goodwiz.rs); not compared with a reference boss kill | Capture a reference boss kill and compare GoodWizard states and auto_exit_timer |
 | CritterDamagedPlayer anger value | f12 after damage_player is undefined; effect damage used | Read the value in a reference capture |
@@ -62,7 +62,7 @@ Resumed 2026-10-14 by a new agent session. The current resume queue and log path
 are in [state.md](../state.md); movement evidence is in [movement.md](movement.md).
 | Physical pad → joyGetStatus entry | Entries 0–3 are the d-pad (left/right/up/down, observed level bits); remap shows attack = entry 0xd, magic 0xa, turbo 0xc, potion 0xb (by GetPlayerDMotion use) | Press each PS2 button in the reference and read plr_levels 0x2bacc0 |
 | Player node under PlayerRootNode | 150 traced updates consistent with GetWorldMat = local matrix; −0.0 → +0.0 | Trace a moving floor (node parent ≠ root) and a grabbed player |
-| Milestones table | update_player_milestone reads Milestones (0x70 each) / NumMilestones; kind-5 locators are the likely source | Export the Milestones builder and compare with a capture; port get_player_pos respawn |
+| Milestones table | update_player_milestone reads Milestones (0x70 each) / NumMilestones; kind-5 locators are the likely source | Export the Milestones builder and compare with a capture |
 | Panel inputs | button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, menu_on/optmenu/full-screen inventory flags from the front end, MBOX texture search order across packages | Export ResetModels; front-end port |
 | MBTreeSetAlpha draw use | Node +0x53 = ~alpha and flag 0x200; drawn as material alpha × (255 − alpha)/255 (HYPOTHESIS) | Trace the +0x53 byte through the draw path or compare a fading exit/crystal in a capture |
 | Sumner's ghost placement | WIZARD tree at the nearest waypoint's matrix; not seen in the native Sumner camera view | Capture a shard/rune speech in the reference |

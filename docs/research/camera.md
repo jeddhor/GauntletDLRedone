@@ -76,6 +76,30 @@ zooms over MAX_ZOOM_FRAMES updates toward a stack record settled by
 CalcDestination and finally clears start_of_stage and cam_wait.
 HYPOTHESIS (native): that stack record's untouched bytes start at zero.
 
+StartTransmitter 0x238504 is SetPlayerStartPos 0x150858's
+StartTransmitterList[id] (entry 0 when empty; id falls back to 0 above
+PlayerStartMaxId or without that start locator): in the Tower EnterTower's
+id (GetWorldOrder(LastWorldPlayed)) picks the wing's transmitter. The
+native camera keeps the list (Camera::set_start_transmitter; WorldOpen is
+not ported, HYPOTHESIS: open).
+
+## Screen position (get_screen_pos 0x173ea0)
+
+CamUpdate copies the StdCam matrix to Cam[0] 0x23e500 (CopyMat4 after
+CamLookInDir; both captures hold equal rows). get_screen_pos(0) is
+MBWindowProject 0x1d1278 on it: BodyVector 0x1d5838 of p − eye (row dot
+products), depth at least 3, x = (1/z · bx) · MboxWinPtr +0 + +8, y = (1/z ·
+by) · +4 + +0xc, each clamped to ±32767 and truncated to a short.
+MBWindowSetAng sets +0 = +0x14 × 0.5 / tan(h/2), +4 = +0x18 × 0.5 /
+tan(v/2) (tan = sinf/cosf), +8 = +0x14 × 0.5 + +0x4c, +0xc = +0x18 × 0.5 +
++0x58. Both captures: +0x14 640, +0x18 384, +0x4c 0, +0x58 64 (0x440a9067,
+0x44015394, 320, 256 for +0..+0xc). InitCamera's LLIM/RLIM/ULIM/DLIM
+0x23f2a8..b4 = trunc(+8 ∓ +0x14/2), trunc(+0xc ± +0x18/2) = 0, 640, 448, 64
+(captured). The boss camera does not run CamUpdate, so Cam[0] then keeps
+the last StdCam matrix; the native camera reports Unsupported before this
+level's first CamUpdate (try_location only projects outside 0x400c and
+without BossCameraMode).
+
 ## Transmitters (AddLocatorInstList 0x150ac8 / AddTransmitter 0x150768)
 
 Locator kinds 1/2 → flag 0 (kind 1, the start transmitter, is re-marked 3),

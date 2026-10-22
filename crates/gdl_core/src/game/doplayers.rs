@@ -18,6 +18,7 @@
 use super::pcontact::ptr;
 use super::{unsupported, Game, Unsupported, R};
 use crate::animation_clock::{initialize, ClockInit};
+use crate::libm::{cosf, sinf};
 use crate::numeric::{add_guarded_rz as add, add_rz, mul_rz as mul, sub_guarded_rz as sub};
 use crate::player_collision::collision_position;
 
@@ -266,47 +267,241 @@ impl Game {
         Ok(true)
     }
 
-    /// get_player_pos 0x14cef8(player, 0) outside the stage start: beside
-    /// another living player (Unsupported: try_location's screen test), or
-    /// at PlayerStartPos (then the 16 new_offset probes, then
-    /// PlayerInitStartPos[0]) with the start yaw.
-    pub(crate) fn get_player_pos(&mut self, p: usize) -> R<()> {
+    /// try_location 0x14cbd8(other, player, pos, out, blocker, floor): put
+    /// the player at `pos` beside `other`. With `floor`, FloorPos(WldBtm,
+    /// r/2) must hit (on other's moving object, flag 0x1000, when other
+    /// stands on one) within 6 of other's floor +0x88c, or within 3 unless
+    /// other's floor flags +0x898 hold 0x38; else y = other's floor. Then
+    /// +0x50 and UpdateObjOffsets, the screen test of +0x60 against
+    /// LLIM+30, RLIM−30, ULIM−20 and DLIM+40 (skipped in game_mode 0x400c,
+    /// with LockCamReq or BossCameraMode), y + the collision height +0x820,
+    /// and PlayerWallCollide(1.0) from other's +0x70, PlayerCollidePlayers,
+    /// ItemCollide (+0x880; PlayerItemCollision refusing) and
+    /// PlayerCollideEnemies, whose blocker comes back in `out`/`blocker`.
+    #[allow(clippy::too_many_arguments)]
+    fn try_location(&mut self, o: usize, p: usize, pos: &mut V3, out: &mut V3, blocker: &mut i32, floor: bool) -> R<bool> {
+        let r = self.players[p].f32_(0x828);
+        let h = self.players[p].f32_(0x82c);
+        let flags = self.players[o].u32_(0x898) & 0x38;
+        let from = self.players[o].v3(0x70);
+        if !floor {
+            pos[1] = self.players[o].f32_(0x88c);
+        } else {
+            let wb = self.globals.world_bottom;
+            let (y, hit) = self.collision.floor_pos(wb, mul(r, 0.5)?, *pos, 1)?;
+            let Some(hit) = hit else { return Ok(false) };
+            if let Some(of) = ptr(self.players[o].u32_(0x89c))
+                && self.collision.runtime_flags[of] & 0x1000 != 0
+                && of != hit.object
+            {
+                return Ok(false);
+            }
+            let d = sub(y, self.players[o].f32_(0x88c))?.abs();
+            if 6.0 < d || (3.0 < d && flags == 0) {
+                return Ok(false);
+            }
+            pos[1] = y;
+        }
+        self.players[p].set_v3(0x50, *pos);
+        self.update_obj_offsets(p)?;
+        let boss_mode = self.boss_camera.as_ref().map_or(0, |b| b.mode);
+        if self.globals.game_mode != 0x400c && self.lock_cam_req == 0 && boss_mode == 0 {
+            let cam = self.std_camera.as_ref().ok_or_else(|| Unsupported("get_screen_pos without a camera".into()))?;
+            let (x, y) = cam.screen_pos(self.players[p].v3(0x60))?;
+            let [ll, rl, ul, dl] = cam.screen_limits()?;
+            if x < (ll + 0x1e) as f32 || ((rl - 0x1e) as f32) < x || ((ul - 0x14) as f32) < y || y < (dl + 0x28) as f32 {
+                return Ok(false);
+            }
+        }
+        pos[1] = add(pos[1], self.players[p].f32_(0x820))?;
+        if crate::player_collision::wall_collide(&mut self.collision, 1.0, from, *pos)?.is_some() {
+            return Ok(false);
+        }
+        let mut tmp = [0.0; 3];
+        if 0 <= self.player_collide_players(r, h, p, *pos, *pos, &mut tmp, true)? {
+            return Ok(false);
+        }
+        let item = self.item_collide(r, from, *pos, None, false)?;
+        self.players[p].set_u32(0x880, item.map_or(0, |s| s as u32 + 1));
+        if let Some(slot) = item
+            && self.player_item_collision(p, slot)? != 0
+        {
+            return Ok(false);
+        }
+        let e = self.player_collide_enemies(r, h, p, *pos, *pos, &mut tmp)?;
+        if e < 0 {
+            return Ok(true);
+        }
+        *out = *pos;
+        *blocker = e;
+        Ok(false)
+    }
+
+    /// CopyMat4 of player `k`'s record matrix (+0x20..+0x5c) to `p`, with
+    /// the yaw/pitch/roll +0xd8..+0xe0 that get_player_pos copies after it.
+    fn copy_player_mat(&mut self, k: usize, p: usize, rows: usize) {
+        let src = self.players[k].0[0x20..0x20 + 0x10 * rows].to_vec();
+        self.players[p].0[0x20..0x20 + 0x10 * rows].copy_from_slice(&src);
+        let ypr = self.players[k].v3(0xd8);
+        self.players[p].set_v3(0xd8, ypr);
+    }
+
+    /// get_player_pos 0x14cef8(player, mode). At the stage start (game_mode
+    /// 0x400c or start_of_stage): beside the first earlier player in play
+    /// (state 1/4, +0x93c bit 0x20 clear) at new_offset_start's difference ×
+    /// (its radius + 0.5), turned by StartTransmitter's yaw (try_location;
+    /// mode 1 stops there, mode 2 keeps the copied matrix on failure).
+    /// Otherwise beside another player in play from RandInt(4) on (its floor
+    /// refreshed by FloorCollide, 16 new_offset probes, the node parented
+    /// like that player's); a blocking enemy or critter there takes 9999 /
+    /// 99999 damage. Without any other player: PlayerStartPos (then the 16
+    /// probes, then PlayerInitStartPos[0]) with the start yaw.
+    pub(crate) fn get_player_pos(&mut self, p: usize, mode: i32) -> R<()> {
+        if self.globals.cur_world < 0 {
+            return Ok(());
+        }
         self.players[p].set_u32(0x89c, 0);
-        self.player_floor_parent[p] = None;
         if !matches!(self.players[p].i32_(0xfc), 1 | 4) {
             return Ok(());
         }
         self.get_obj_world_mat(p)?;
-        self.rng.rand_int(4);
-        if self.globals.game_mode == 0x400c || self.globals.start_of_stage != 0 {
-            return super::unsupported("get_player_pos at the stage start (player spreading)");
-        }
-        if (0..4).any(|k| k != p && matches!(self.players[k].i32_(0xfc), 1 | 4 | 8) && !self.player_clips[k].is_empty()) {
-            return super::unsupported("get_player_pos beside another player (try_location)");
-        }
-        // new_offset 0x234120 (16 × (x, z), ELF data).
+        let first = self.rng.rand_int(4).unwrap_or(0) as i32;
+        // new_offset_start 0x234100 and new_offset 0x234120 (ELF data).
+        const NEW_OFFSET_START: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 2.0], [-2.0, 2.0], [-2.0, 0.0]];
         const NEW_OFFSET: [[f32; 2]; 16] = [
             [-2.0, -2.0], [-2.0, 0.0], [-2.0, 2.0], [0.0, -2.0], [0.0, 2.0], [2.0, -2.0], [2.0, 0.0], [2.0, 2.0],
             [-2.0, -1.0], [-2.0, 1.0], [-1.0, -2.0], [-1.0, 2.0], [1.0, -2.0], [1.0, 2.0], [2.0, -1.0], [2.0, 1.0],
         ];
-        let (start, yaw) = self.player_start;
-        let r = add(self.players[p].f32_(0x828), 0.5)?;
-        let mut pos = start;
-        if !self.test_location(r, &mut pos)? {
-            let mut found = false;
-            for o in NEW_OFFSET {
-                pos = [add(mul(r, o[0])?, start[0])?, start[1], add(mul(r, o[1])?, start[2])?];
-                if self.test_location(r, &mut pos)? {
-                    found = true;
+        let mut placed = -1i32; // iStack_c4
+        let mut near = -1i32; // iStack_c8
+        let mut blocker = -1i32; // uStack_d0
+        let mut out = [0.0f32; 3]; // uStack_130
+        if self.globals.game_mode == 0x400c || self.globals.start_of_stage != 0 {
+            let k = (0..p.min(4)).find(|&k| matches!(self.players[k].i32_(0xfc), 1 | 4) && self.players[k].u16_(0x93c) & 0x20 == 0).unwrap_or(p);
+            if mode == 1 {
+                placed = -2;
+            }
+            if k != p && k < 4 {
+                let ky = self.players[k].f32_(0x54);
+                self.players[p].set_f32(0x88c, ky);
+                self.copy_player_mat(k, p, 4);
+                let mut pos = self.players[k].v3(0x70);
+                let s = add(self.players[k].f32_(0x828), 0.5)?;
+                let dx = mul(sub(NEW_OFFSET_START[p][0], NEW_OFFSET_START[k][0])?, s)?;
+                let dz = mul(sub(NEW_OFFSET_START[p][1], NEW_OFFSET_START[k][1])?, s)?;
+                let yaw = self.std_camera.as_ref().and_then(|c| c.start_transmitter.map(|t| c.transmitters[t].yaw)).unwrap_or(0.0);
+                pos[0] = add(add(mul(dx, cosf(yaw)?)?, mul(dz, sinf(yaw)?)?)?, pos[0])?;
+                pos[2] = add(add(mul(-dx, sinf(yaw)?)?, mul(dz, cosf(yaw)?)?)?, pos[2])?;
+                if self.try_location(k, p, &mut pos, &mut out, &mut blocker, true)? {
+                    placed = k as i32;
+                } else if mode == 2 {
+                    self.copy_player_mat(k, p, 4);
+                    placed = k as i32;
+                }
+            }
+        }
+        if placed == -1 {
+            for step in 0..4 {
+                let k = (first + step).rem_euclid(4) as usize;
+                if k == p {
+                    continue;
+                }
+                if !matches!(self.players[k].i32_(0xfc), 1 | 4 | 8) || self.player_clips[k].is_empty() {
+                    continue;
+                }
+                let at = if self.players[k].u16_(0x93c) & 0x20 == 0 { self.players[k].v3(0x50) } else { self.players[k].v3(0xf0) };
+                near = k as i32;
+                // FloorCollide(0.5, 4, −10, player_floor_col, 0x17, 1).
+                let (c, _) = self.collision.floor_collide(0.5, 4.0, -10.0, at, true, 1)?;
+                let Some(hit) = c.solid else {
+                    return super::unsupported("get_player_pos beside a player without a floor (player_floor_col +0x34 stale)");
+                };
+                let f = self.collision.runtime_flags[hit.object];
+                let r = &mut self.players[k];
+                r.set_u32(0x89c, hit.object as u32 + 1);
+                r.set_u32(0x898, f);
+                r.set_f32(0x88c, hit.position[1]);
+                self.copy_player_mat(k, p, 3);
+                self.players[p].set_v3(0x50, at);
+                let s = add(self.players[k].f32_(0x828), 0.5)?;
+                for o in NEW_OFFSET {
+                    let c = self.players[k].v3(0x70);
+                    let mut probe = [add(mul(s, o[0])?, c[0])?, c[1], add(mul(s, o[1])?, c[2])?];
+                    if self.try_location(k, p, &mut probe, &mut out, &mut blocker, true)? {
+                        placed = k as i32;
+                        break;
+                    }
+                }
+                if 0 <= placed {
+                    // MBNodeSetParent(player tree, other tree's parent).
+                    self.player_floor_parent[p] = self.player_floor_parent[k];
+                    let fo = self.players[k].u32_(0x89c);
+                    self.players[p].set_u32(0x89c, fo);
                     break;
                 }
             }
-            if !found {
-                pos = self.player_init_start;
-            }
         }
-        let (y, _) = self.collision.floor_pos(pos[1], 0.5, pos, 1).map_err(|e| Unsupported(e.0.to_string()))?;
-        self.players[p].set_f32(0x88c, y);
+        if placed < 0 {
+            if let Ok(k) = usize::try_from(near) {
+                self.copy_player_mat(k, p, 4);
+                if blocker < 0 {
+                    let pos = self.players[p].v3(0x50);
+                    let (y, _) = self.collision.floor_pos(pos[1], 0.5, pos, 1)?;
+                    self.players[p].set_f32(0x88c, y);
+                    self.players[p].set_f32(0x54, y);
+                    self.player_floor_parent[p] = self.player_floor_parent[k];
+                    let fo = self.players[k].u32_(0x89c);
+                    self.players[p].set_u32(0x89c, fo);
+                    // Errorf("Can't find start near other player").
+                } else {
+                    self.players[p].set_v3(0x50, out);
+                    if blocker < 0x10000 {
+                        self.damage_enemy(9999.0, blocker as usize, -2, 0, None, None, 1)?;
+                    } else {
+                        self.critter_damage(99999.0, (blocker & 0xffff) as usize, -2, 0, None, None, 1)?;
+                    }
+                }
+                self.players[p].set_u32(0x1dc, 0);
+                return self.update_player_world_mat(p, false);
+            }
+            let (start, yaw) = self.player_start;
+            let r = add(self.players[p].f32_(0x828), 0.5)?;
+            let mut pos = start;
+            if !self.test_location(r, &mut pos)? {
+                let mut found = false;
+                for o in NEW_OFFSET {
+                    pos = [add(mul(r, o[0])?, start[0])?, start[1], add(mul(r, o[1])?, start[2])?];
+                    if self.test_location(r, &mut pos)? {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    pos = self.player_init_start;
+                }
+            }
+            let (y, _) = self.collision.floor_pos(pos[1], 0.5, pos, 1)?;
+            self.players[p].set_f32(0x88c, y);
+            self.set_start_matrix(p, yaw, Some([pos[0], y, pos[2]]))?;
+        } else {
+            if self.globals.game_mode != 0x400c {
+                self.players[p].set_u32(0x1dc, 0);
+                return self.update_player_world_mat(p, false);
+            }
+            let yaw = self.player_start.1;
+            self.set_start_matrix(p, yaw, None)?;
+        }
+        let yaw = self.player_start.1;
+        let r = &mut self.players[p];
+        r.set_v3(0xd8, [0.0, yaw, 0.0]);
+        r.set_u32(0x1dc, 0);
+        self.update_player_world_mat(p, false)
+    }
+
+    /// CopyMat4(0x2a1ed0) + YawMat3(PlayerStartYaw): the yaw rotation into
+    /// +0x20..+0x4c, with the translation row (x, floor y, z, 1) when given
+    /// (CopyMat4) or the old one kept (CopyMat3).
+    fn set_start_matrix(&mut self, p: usize, yaw: f32, at: Option<V3>) -> R<()> {
         let mut m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         crate::collision::yaw_mat3(&mut m, yaw)?;
         let r = &mut self.players[p];
@@ -314,11 +509,35 @@ impl Game {
             r.set_v3(0x20 + 0x10 * i, *row);
             r.set_f32(0x2c + 0x10 * i, 0.0);
         }
-        r.set_v3(0x50, [pos[0], y, pos[2]]);
-        r.set_f32(0x5c, 1.0);
-        r.set_v3(0xd8, [0.0, yaw, 0.0]);
-        r.set_u32(0x1dc, 0);
-        self.update_player_world_mat(p, false)
+        if let Some(at) = at {
+            r.set_v3(0x50, at);
+            r.set_f32(0x5c, 1.0);
+        }
+        Ok(())
+    }
+
+    /// load_player_geo 0x130d40's placement (WorldHeader set), run by
+    /// init_next_level for each player in play: get_player_pos(p, 1) under
+    /// init_next_level's game_mode 0x400c (NATIVE: the mode is set around the
+    /// call; the host builds the level first), the yaw/pitch/roll matrix of
+    /// +0xd8, +0x86c yaw, +0x88c floor y, +0x854 previous position and
+    /// UpdatePlayerWorldMat(p, 1). The shadow node +0x6a0 is presentation.
+    pub fn load_player_geo_place(&mut self, p: usize) -> R<()> {
+        let mode = std::mem::replace(&mut self.globals.game_mode, 0x400c);
+        let r = self.get_player_pos(p, 1);
+        self.globals.game_mode = mode;
+        r?;
+        let ypr = self.players[p].v3(0xd8);
+        let m = super::enemy_ai::create_ypr_matrix(ypr)?;
+        let r = &mut self.players[p];
+        for (i, row) in m.iter().take(3).enumerate() {
+            r.set_v3(0x20 + 0x10 * i, [row[0], row[1], row[2]]);
+        }
+        r.set_f32(0x86c, ypr[1]);
+        let pos = r.v3(0x50);
+        r.set_f32(0x88c, pos[1]);
+        r.set_v3(0x854, pos);
+        self.update_player_world_mat(p, true)
     }
 
     /// update_player_milestone 0x150fb8: the milestones within 3.5 (y) and

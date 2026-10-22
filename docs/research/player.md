@@ -112,8 +112,7 @@ first child under the chained critter's +0xd4 node.
 Team moves (0x58..0x5a, 0x88..0x93, PlayerSetParent/
 PlayerFacePlayer), thunder
 hammer / breath / familiar events (0x2000000, 0x1000000, 0x10000000 with
-+0x138 0x80), PlayerDamagePlayer (versus), get_player_pos beside another player and at
-the stage start, players in states 2/3 (selecting/joining), inactivate_player,
++0x138 0x80), PlayerDamagePlayer (versus), players in states 2/3 (selecting/joining), inactivate_player,
 setup_player_display, PlayerProcessFamiliar/Scale for boss state 5, rotating
 Milestones: AddLocatorInstList's kind-5 locators (FloorPos drop + 0.5),
 update_player_milestone's +0x950 history. Floor parents with rotation use
@@ -309,6 +308,53 @@ while only selecting players remain. The client loads each player's
 character (load_player_model: players/<class>/<colour><tier>0,
 players/<class>/<colour> for classes 8..16, players/<class>/<code> for a
 Hidden descriptor or Sumner's "sum"; clips and SFX of class & 7) and the
-game gets each class's clips and ClassData. PLACEHOLDER: get_player_pos's
-multi-player start offsets are not ported; extra players stand 3 units
-along x from player 1. The old co-op join (a copy of player 1) is gone.
+game gets each class's clips and ClassData. The old co-op join (a copy of
+player 1) is gone.
+
+## Player placement (get_player_pos 0x14cef8)
+
+init_next_level sets game_mode 0x400c, then for each player in play
+load_player_geo 0x130d40 → get_player_pos(p, 1), the yaw/pitch/roll matrix
+of +0xd8, +0x86c = yaw, +0x88c = y, +0x854 = position and
+UpdatePlayerWorldMat(p, 1). A join in the Tower goes through the select
+screen, whose Done runs init_next_level again, so every placement of a new
+player is a level-start one. get_player_pos(p, mode):
+
+- Stage start (0x400c or start_of_stage): the first earlier player in play
+  (state 1/4, +0x93c bit 0x20 clear) gives +0x88c (its y), its matrix and
+  +0xd8; the try position is its +0x70 plus (new_offset_start[p] −
+  new_offset_start[k]) × (its radius + 0.5), rotated by StartTransmitter
+  +0x24 (x' = dx·cos + dz·sin, z' = −dx·sin + dz·cos). new_offset_start
+  0x234100 = (0,0), (0,2), (−2,2), (−2,0). Mode 1 stops here on failure;
+  mode 2 keeps the copied matrix. In 0x400c a success takes the start yaw
+  (CopyMat3 of YawMat3(PlayerStartYaw)).
+- Otherwise (the PlayerMotion respawn, mode 0): from RandInt(4) on, another
+  player in state 1/4/8 with a tree; its floor is refreshed (FloorCollide
+  0.5, 4, −10, 0x17 → +0x89c, +0x898 flags, +0x88c), its rotation and
+  +0xd8 copied, position = its +0x50 (+0xf0 while grabbed), then the 16
+  new_offset 0x234120 probes × (radius + 0.5) about its +0x70. Success
+  parents the node like that player's and copies +0x89c. All failing: its
+  matrix; with an enemy/critter blocking, that position and damage_enemy
+  9999 / CritterDamage 99999 (player −2); else FloorPos at its position
+  and Errorf "Can't find start near other player".
+- No other player: PlayerStartPos (test_location: FloorPos within 3), the
+  16 probes, then PlayerInitStartPos[0]; FloorPos y, the start yaw.
+
+try_location 0x14cbd8(other, p, pos, out, blocker, 1): FloorPos(WldBtm,
+r/2) must hit — the same object when other stands on a 0x1000 (moving)
+object — within 6 of other's +0x88c, and within 3 unless other's +0x898
+holds 0x38; +0x50 and UpdateObjOffsets; outside 0x400c and without
+LockCamReq/BossCameraMode, get_screen_pos(+0x60) must fall inside
+(LLIM+30, RLIM−30) × (DLIM+40, ULIM−20); y += +0x820; then
+PlayerWallCollide(1.0) from other's +0x70, PlayerCollidePlayers (first),
+ItemCollide → +0x880 (PlayerItemCollision refusing) and
+PlayerCollideEnemies (the blocker returned). get_screen_pos 0x173ea0 is
+MBWindowProject 0x1d1278 with Cam[0]'s matrix 0x23e500, which CamUpdate
+copies from the StdCam matrix (both captures: equal); see camera.md.
+
+Evidence: actual-disc headless runs (gdl_tools game-run players=4) in G1,
+A1 and the Tower place players 2–4 in the square at (radius + 0.5) × 2 = 4
+units, turned by the start yaw (game-run-mp-{G1,A1,L1}-v1.json); a drop
+below the world bottom (fall=200, 3 players) respawns player 1 beside
+another at a new_offset probe (game-run-mp-fall-G1-v1.json). Not compared
+with a reference multi-player run.

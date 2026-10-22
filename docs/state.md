@@ -87,6 +87,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    BossDeath, the boss-arena camera eye fix. game_main's level end and
    next_world (exitflow.rs): realm exits → tally/shop → the Tower; Tower
    portals → the map → the level (docs/research/player.md).
+   2026-10-21: multi-player placement — load_player_geo → get_player_pos /
+   try_location (stage-start square, new_offset respawn probes beside
+   another player, blocker damage), get_screen_pos on Cam[0] with the
+   InitCamera screen limits, SetPlayerStartPos's StartTransmitter by start
+   id (research/player.md, camera.md). Headless: game-run players=N, fall=F.
 
 ---
 

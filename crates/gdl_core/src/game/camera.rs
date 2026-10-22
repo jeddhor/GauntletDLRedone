@@ -37,6 +37,12 @@ const INV_PI: f32 = f32::from_bits(0x3ea2_f983);
 const UNIT: M4 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
 /// fvector 0x2a1ea0, bvector 0x2a1eb0, uvector 0x2a1e60, lvector 0x2a1e90.
 const FVECTOR: V3 = [0.0, 0.0, 1.0];
+/// MboxWinPtr +0x14 (window width), +0x4c and +0x58 (region left and
+/// bottom, MBWindowSetRegion via ChangeWindow: 0 and NTSC's 0x40); both
+/// captures hold these with the single game window.
+const MBOX_WIDTH: f32 = 640.0;
+const MBOX_LEFT: f32 = 0.0;
+const MBOX_BOTTOM: f32 = 64.0;
 const BVECTOR: V3 = [0.0, 0.0, -1.0];
 const UVECTOR: V3 = [0.0, 1.0, 0.0];
 const LVECTOR: V3 = [-1.0, 0.0, 0.0];
@@ -307,6 +313,18 @@ pub struct Camera {
     /// Cam[0] eye/attention copies CamUpdate writes (0x23e560 / 0x23e630).
     pub cam0_eye: V3,
     pub cam0_attention: V3,
+    /// Cam[0]'s matrix 0x23e500 (rows right, up, forward, eye), CamUpdate's
+    /// CopyMat4 of the StdCam matrix; get_screen_pos(0) projects with it.
+    /// None until this level's first CamUpdate (the guest still holds the
+    /// previous level's camera then).
+    #[serde(default)]
+    pub cam0_mat: Option<[V3; 4]>,
+    /// StartTransmitterList (by start id) and found_transmitter, kept for
+    /// SetPlayerStartPos.
+    #[serde(default)]
+    pub start_list: Vec<Option<usize>>,
+    #[serde(default)]
+    pub found: i32,
 }
 
 fn wrap(v: f32) -> R<f32> {
@@ -523,7 +541,87 @@ impl Camera {
             shake: Shake::default(),
             cam0_eye: [0.0; 3],
             cam0_attention: [0.0; 3],
+            cam0_mat: None,
+            start_list: set.start_list,
+            found: set.found,
         })
+    }
+
+    /// SetPlayerStartPos 0x150858's StartTransmitter: StartTransmitterList[id],
+    /// or entry 0 when that is empty. init_game_cam (after the players) then
+    /// clears the chosen transmitter's +2 when a transmitter was found
+    /// (Camera::new did so for entry 0; that one gets AddTransmitter's 1 back).
+    pub fn set_start_transmitter(&mut self, id: usize) {
+        let first = self.start_list.first().copied().flatten();
+        let chosen = self.start_list.get(id).copied().flatten().or(first);
+        if chosen == self.start_transmitter {
+            return;
+        }
+        if 0 < self.found {
+            if let Some(k) = self.start_transmitter {
+                self.transmitters[k].word_02 = 1;
+            }
+            if let Some(k) = chosen {
+                self.transmitters[k].word_02 = 0;
+            }
+        }
+        self.start_transmitter = chosen;
+    }
+
+    /// The window region InitCamera turns into LLIM/RLIM/ULIM/DLIM
+    /// (0x23f2a8..0x23f2b4): MboxWinPtr +8 ∓ +0x14 × 0.5 and +0xc ± +0x18 ×
+    /// 0.5, truncated. Both captures hold (0, 640, 448, 64).
+    pub fn screen_limits(&self) -> R<[i32; 4]> {
+        let (cx, cy) = self.mbox_centre()?;
+        let hw = mul(MBOX_WIDTH, 0.5)?;
+        let hh = mul(self.window.mbox_height, 0.5)?;
+        Ok([sub(cx, hw)? as i32, add(hw, cx)? as i32, add(hh, cy)? as i32, sub(cy, hh)? as i32])
+    }
+
+    /// MboxWinPtr +8 / +0xc (MBWindowSetAng: +0x14 × 0.5 + +0x4c and +0x18 ×
+    /// 0.5 + +0x58).
+    fn mbox_centre(&self) -> R<(f32, f32)> {
+        Ok((add(mul(MBOX_WIDTH, 0.5)?, MBOX_LEFT)?, add(mul(self.window.mbox_height, 0.5)?, MBOX_BOTTOM)?))
+    }
+
+    /// get_screen_pos 0x173ea0(0, x, y, p): MBWindowProject 0x1d1278 with
+    /// Cam[0]'s matrix — the body-space vector (BodyVector 0x1d5838) of p −
+    /// eye, depth at least 3, scaled by MboxWinPtr +0/+4 (MBWindowSetAng:
+    /// +0x14 × 0.5 / tan(h/2), +0x18 × 0.5 / tan(v/2)) about +8/+0xc, each
+    /// clamped to ±32767 and truncated to a short.
+    pub fn screen_pos(&self, p: V3) -> R<(f32, f32)> {
+        let Some(m) = self.cam0_mat else {
+            return unsupported("get_screen_pos before this level's first CamUpdate (Cam[0] holds the previous camera)");
+        };
+        if self.pb.ang[0] == 0.0 || self.pb.ang[1] == 0.0 {
+            return unsupported("get_screen_pos before MBWindowSetAng");
+        }
+        let v = [sub(p[0], m[3][0])?, sub(p[1], m[3][1])?, sub(p[2], m[3][2])?];
+        let dot = |r: V3| -> R<f32> { Ok(add(add(mul(v[0], r[0])?, mul(v[1], r[1])?)?, mul(v[2], r[2])?)?) };
+        let (bx, by, mut bz) = (dot(m[0])?, dot(m[1])?, dot(m[2])?);
+        if bz < 3.0 {
+            bz = 3.0;
+        }
+        let inv_tan = |a: f32| -> R<f32> {
+            let h = mul(a, 0.5)?;
+            Ok(div(1.0, div(sinf(h)?, cosf(h)?)?)?)
+        };
+        let s0 = mul(mul(MBOX_WIDTH, 0.5)?, inv_tan(self.pb.ang[0])?)?;
+        let s1 = mul(mul(self.window.mbox_height, 0.5)?, inv_tan(self.pb.ang[1])?)?;
+        let (cx, cy) = self.mbox_centre()?;
+        let k = div(1.0, bz)?;
+        let x = add(mul(mul(k, bx)?, s0)?, cx)?;
+        let y = add(mul(mul(k, by)?, s1)?, cy)?;
+        let short = |f: f32| -> f32 {
+            if f < -32767.0 {
+                -32767.0
+            } else if 32767.0 < f {
+                32767.0
+            } else {
+                f as i32 as i16 as f32
+            }
+        };
+        Ok((short(x), short(y)))
     }
 
     /// MboxWinPtr +0x90 / +0x98 (camera forward x, z) read by PlayerMotion.
@@ -778,6 +876,7 @@ impl Camera {
         let eye = [add(mul(nd, look[0])?, target[0])?, add(mul(nd, look[1])?, target[1])?, add(mul(nd, look[2])?, target[2])?];
         c.set_v3(o::EYE, eye);
         Self::look_in_dir(c, look)?;
+        self.cam0_mat = Some([c.v3(o::MAT), c.v3(o::MAT + 0x10), c.v3(o::MAT + 0x20), c.v3(o::EYE)]);
         self.cam0_eye = eye;
         self.cam0_attention = target;
         self.camera_update(c)

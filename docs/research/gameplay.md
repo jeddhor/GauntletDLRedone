@@ -98,8 +98,9 @@ closure; the interim player driver), ProcessEffects.
 - Hit-spark/visual effects are presentation; LoadPlyrData is not ported, so
   derived combat words (+0x128 damage, +0x12c speed) are not recomputed after
   a level-up.
-- Later levels keep the carried player record; only get_player_pos's
-  single-player placement is ported (no test_location spreading).
+- Later levels keep the carried player record; player 1 is placed at the
+  start locator (place_player, get_player_pos's single path); other players
+  through load_player_geo → get_player_pos(k, 1) (player.md).
 
 ## Headless evidence (synthetic scenarios, not reference comparisons)
 

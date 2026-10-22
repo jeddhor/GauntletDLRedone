@@ -924,6 +924,30 @@ fn run() -> Result<(), Box<dyn Error>> {
                 game.players[0].set_u32(0x1e4, 0);
             }
             game.init_player_anim(0).map_err(|e| e.0)?;
+            // players=N (2..4): copies of player 0 (index +0 and colour +4 =
+            // k, no input) placed as init_next_level does: load_player_geo →
+            // get_player_pos(k, 1).
+            let n: usize = opts.get("players").map_or(Ok(1), |v| v.parse())?;
+            if !(1..=4).contains(&n) {
+                return Err("players=1..4".into());
+            }
+            for k in 1..n {
+                let mut r = game.players[0].clone();
+                r.set_u32(0, k as u32);
+                r.set_u32(4, k as u32);
+                game.players[k] = r;
+                game.classes[k] = game.classes[0].clone();
+                game.player_clips[k] = game.player_clips[0].clone();
+                let (start, yaw) = game.player_start;
+                game.place_player(k, start, yaw).map_err(|e| e.0)?;
+                game.load_player_geo_place(k).map_err(|e| e.0)?;
+                game.players[k].set_u32(0x1e0, 0);
+                game.players[k].set_u32(0x1e4, 0);
+                game.init_player_anim(k).map_err(|e| e.0)?;
+                game.controls.assign(k, k);
+                game.globals.active_players |= 1 << k;
+                eprintln!("player {k} placed at {:?} yaw {}", game.players[k].v3(0x50), game.players[k].f32_(0x86c));
+            }
         }
         if let Some(tp) = opts.get("replay") {
             // Per-update replay of a reference_trace --player trace: each game
@@ -1064,6 +1088,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // DEBUG: the boss reached the legend-item stage (QuestItemState 2).
                     game.globals.quest_item_state = 2;
                 }
+                if opts.get("fall").and_then(|v| v.parse::<usize>().ok()) == Some(f) {
+                    // DEBUG: player 0 drops below the world bottom (PlayerMotion's
+                    // get_player_pos(p, 0) respawn).
+                    let wb = game.globals.world_bottom;
+                    let r = &mut game.players[0];
+                    r.set_f32(0x54, wb - 1.0);
+                    let m = r.v3(0x50);
+                    eprintln!("fall at {f}: {m:?}");
+                    if let Some(n) = game.player_node[0].as_mut() {
+                        n[3][1] = wb - 1.0;
+                    }
+                }
                 if let Some(at) = opts.get("boss-kill").and_then(|v| v.parse::<usize>().ok())
                     && at <= f
                     && (f - at).is_multiple_of(60)
@@ -1087,7 +1123,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "good_wizard":game.globals.good_wizard,"wiz":[game.good_wiz.alpha,game.good_wiz.speech_idx,game.good_wiz.speech_frame],"wiz_pos":game.good_wiz.matrix.map(|m| m[3]),
                         "auto_exit":[game.auto_exit_timer,game.globals.auto_exit_flag],"que":[game.audio_que.entries[0].len(),game.audio_que.entries[1].len()],
                         "exit":[game.players_done,game.exit_ready],"level_done":game.level_done,"shards":r.u16_(0x1a24),"boss_cam":game.boss_camera.as_ref().map(|c| [c.rec.v3(gdl_core::game::camera::o::EYE), c.rec.v3(gdl_core::game::camera::o::TARGET)]),
-                        "boss_health":usize::try_from(game.boss_crit_inst - 1).ok().and_then(|b| game.critters.get(b)).and_then(|c| c.as_ref()).map(|c| c.rec.f32_(0x4f4))}));
+                        "boss_health":usize::try_from(game.boss_crit_inst - 1).ok().and_then(|b| game.critters.get(b)).and_then(|c| c.as_ref()).map(|c| c.rec.f32_(0x4f4)),
+                        "others":(1..4).filter(|&k| game.globals.active_players >> k & 1 != 0).map(|k| serde_json::json!({"player":k,"pos":game.players[k].v3(0x50),"state":game.players[k].i32_(0xfc),"health":game.players[k].f32_(0x1a10)})).collect::<Vec<_>>()}));
                 }
                 continue;
             }
