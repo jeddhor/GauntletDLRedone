@@ -104,6 +104,8 @@ pub struct EffectNode {
     /// ~value): presentation.
     pub tint: Option<u32>,
     pub alpha: Option<i32>,
+    /// MBTreeSetAmbientAdd's value (0..0x1ff; presentation).
+    pub ambient: Option<i32>,
     /// MBNodeSetParent to another effect's node with an identity local
     /// matrix (PlayerStartMissile's weapon-powerup throw effect on its
     /// missile): drawn at that node, scaled with it.
@@ -156,6 +158,8 @@ pub struct EffectTables {
     /// 0x23f9f8 (7 rgb rows).
     pub mclr_idx: [usize; 5],
     pub light_color: [V3; 7],
+    /// pclr_idx 0x23fa50: player colour → light_color row.
+    pub pclr_idx: [usize; 4],
     /// EnemyMissileInfo 0x24de80: 28 types × 3 kinds × 12 words.
     pub enemy_missile_info: Vec<[u32; 12]>,
     /// EnemyMissileDesc 0x24de68: "ARROW", "BOMB", "FBALL".
@@ -224,6 +228,8 @@ impl EffectTables {
         let shield_effects = five("ShieldEffects")?;
         let throw_magic_effects = five("ThrowMagicEffects")?;
         let mclr_idx = five("mclr_idx")?.map(|v| v.clamp(0, 6) as usize);
+        let pw = words(elf.object("pclr_idx")?);
+        let pclr_idx: [usize; 4] = std::array::from_fn(|k| (pw.get(k).copied().unwrap_or(0) as i32).clamp(0, 6) as usize);
         let lc = words(elf.object("light_color")?);
         let light_color: [V3; 7] = std::array::from_fn(|k| std::array::from_fn(|c| f32::from_bits(lc.get(3 * k + c).copied().unwrap_or(0))));
         let em = words(elf.object("EnemyMissileInfo")?);
@@ -266,6 +272,7 @@ impl EffectTables {
             throw_magic_effects,
             mclr_idx,
             light_color,
+            pclr_idx,
             enemy_missile_info,
             enemy_missile_desc,
             shared,
@@ -542,6 +549,7 @@ impl Game {
             parent: None,
             target: None,
             tint: None,
+            ambient: None,
             alpha: None,
             follow: None,
         });
@@ -1861,7 +1869,18 @@ impl Game {
         if kind == 2 {
             flags |= 0x4_0000;
         }
-        self.start_missile(speed, damage, 0, start, d, flags, &info, 0, sfx, Visual::EnemyMissile { t, kind: kind as u8 })?;
+        let k = self.start_missile(speed, damage, 0, start, d, flags, &info, 0, sfx, Visual::EnemyMissile { t, kind: kind as u8 })?;
+        let shrink = self.globals.enemy_shrink;
+        if shrink < 1.0
+            && let Some(n) = self.effects.nodes[k].as_mut()
+        {
+            // ScaleFX(EnemyShrink, EnemyShrink, EnemyShrink).
+            n.scale = shrink;
+        }
+        if kind == 1 {
+            // SfxSetLight(5, missile, color.27 0x24ef10: red).
+            self.sfx_set_light(k, 5.0, [2.0, 0.0, 0.0]);
+        }
         Ok(true)
     }
 

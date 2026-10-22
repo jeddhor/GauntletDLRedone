@@ -1082,19 +1082,36 @@ impl Game {
     }
 
     /// StartComboFX 0x17f0b0(position, colour a, colour b): ComboEffects[4]
-    /// then ComboEffects[a] (colours, ambient and light are presentation).
+    /// coloured streak_color[b] with MBTreeSetAmbientAdd(0x1ff) and
+    /// SfxSetLight(10, light_color[pclr_idx[b]]), then ComboEffects[a] with
+    /// MBTreeSetAmbientAdd(0x1ff).
     fn start_combo_fx(&mut self, at: V3, a: i32, b: i32) -> R<i32> {
+        const STREAK_COLOR: [u32; 4] = [0xff_ff00, 0xff, 0xff_0000, 0xff00];
         let table = self.combo_effects.clone();
         let mut k = -1;
         if 0 <= b
             && let Some(&h) = table.get(4)
         {
             k = self.start_fx_sub(0.0, h as usize, Some(at), 0)?;
+            if let Ok(slot) = usize::try_from(k) {
+                if let Some(n) = self.effects.nodes[slot].as_mut() {
+                    n.tint = STREAK_COLOR.get(b as usize).copied();
+                    n.ambient = Some(0x1ff);
+                }
+                let t = &self.effects.tables;
+                let light = t.light_color[t.pclr_idx.get(b as usize).copied().unwrap_or(0)];
+                self.sfx_set_light(slot, 10.0, light);
+            }
         }
         if 0 <= a
             && let Some(&h) = table.get(a as usize)
         {
             k = self.start_fx_sub(0.0, h as usize, Some(at), 0)?;
+            if let Ok(slot) = usize::try_from(k)
+                && let Some(n) = self.effects.nodes[slot].as_mut()
+            {
+                n.ambient = Some(0x1ff);
+            }
         }
         Ok(k)
     }
@@ -1581,6 +1598,14 @@ impl Game {
         // fam_dmg_type 0x240818: 0 for the class familiars, 0x11 for the phoenix.
         let dtype = if kind == 4 { 0x11 } else { 0 };
         self.sfx_set_damage(fx, damage, 0.0, 0.0, dtype, me as i16 + 1);
+        // SfxSetLight(3, light_color[pclr_idx[colour]]) — on effect slot
+        // `kind` (a0 = the FamiliarSpit index, 0x17e494), not the new
+        // fireball: as the original.
+        let t = &self.effects.tables;
+        let light = t.light_color[t.pclr_idx.get(self.players[p].u32_(4) as usize).copied().unwrap_or(0)];
+        if kind < self.effects.slots.len() {
+            self.sfx_set_light(kind, 3.0, light);
+        }
         Ok(())
     }
 

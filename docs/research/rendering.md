@@ -333,8 +333,17 @@ they keep their vertex colours. The VU1 microcode was not read.
   +4]) — ELF 0x220f10..0x220f58, colours (2,2,1.5) (1.5,1.5,2) (2,1.5,1.5)
   (1.5,2,1.5); Game::lighting.pos_lights. The VU1 formula is in "VU1
   microcode". gdl_play passes the nearest 8 to the camera to every
-  material. HYPOTHESIS: no life fade. Not set yet: StartMagicFX,
-  StartComboFX, StartFamiliarFireBall and EnemyStartMissile lights.
+  material. HYPOTHESIS: no life fade. Every SfxSetLight caller is ported
+  (ghidra-fxlight1): StartMagicFX / StartThrowMagicFX / StartShieldFX (1.5
+  × power, light_color[mclr_idx[potion colour]]); StartComboFX (10,
+  light_color[pclr_idx[colour b]] = (3, 2, 0, 1): yellow, blue, red, green;
+  the tree coloured streak_color[b] with MBTreeSetAmbientAdd 0x1ff, the
+  second tree ambient add 0x1ff too); StartFamiliarFireBall (3,
+  light_color[pclr_idx[player colour]]) — the original passes the
+  FamiliarSpit index as the effect (a0 = s2 at 0x17e494), so the light goes
+  to effect slot 0..4, not the fireball; the port does the same;
+  EnemyStartMissile kind 1 (5, color.27 0x24ef10 = red), with ScaleFX by
+  EnemyShrink below 1.
 - Critter shadows: CritterInitGeo calls CritterAddShadow 0x193400 for types
   with +0x5c bit 0: SHADOW<n>L1 (shadowdesc; n = slot + 1, slots ≥ 3 → 2)
   of the critter's model, MBNewObject flags 0x880, z mod −32, at the

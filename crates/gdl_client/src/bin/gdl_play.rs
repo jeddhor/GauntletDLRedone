@@ -3894,6 +3894,10 @@ fn present_effect_trees(
                 if let Some(c) = n.tint {
                     req.get(e).color = Some(Vec3::new((c >> 16 & 0xff) as f32, (c >> 8 & 0xff) as f32, (c & 0xff) as f32) / 255.0);
                 }
+                // MBTreeSetAmbientAdd: the colour scale's add / 255.
+                if let Some(a) = n.ambient {
+                    req.get(e).ambient += a as f32 / 255.0;
+                }
             }
         }
         let mods = texmods.entry((fx.pkg.clone(), fx.tree)).or_insert_with(|| anim.trees.get(fx.tree).map(|t| tree_texmods(pkg, t)).unwrap_or_default());
