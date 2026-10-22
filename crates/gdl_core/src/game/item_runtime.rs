@@ -371,7 +371,20 @@ impl Game {
         }
         let max = i32::from(r.i8_(0xf3));
         if r.i8_(0xf7) == 0xf {
-            return unsupported("generate_single (logic 15 generator)");
+            // generate_single(item, 0xf, 0): one enemy per generator (+0xf2
+            // counts it) with +0x2ec = 2 and +0x324 = 0xf.
+            if r.i8_(0xf2) == 0 {
+                let reach = self.items.definitions[r.definition()].f32_(0xc);
+                let k = self.generate_enemy(reach, r.v3(0x60), i32::from(r.i16_(0xf0)), i32::from(r.i8_(0xf6)), r.v3(0x30), 0xf, slot as u32 + 1, 0)?;
+                if let Ok(k) = usize::try_from(k) {
+                    self.enemies[k].set_i16(0x2ec, 2);
+                    self.enemies[k].set_i16(0x324, 0xf);
+                    self.orient_spawn(k, r.f32_(0x100))?;
+                    let rr = &mut self.items.records[slot];
+                    rr.set_i8(0xf2, rr.i8_(0xf2) + 1);
+                }
+            }
+            return Ok(());
         }
         if max <= i32::from(r.i8_(0xf2)) {
             return Ok(());
@@ -649,6 +662,7 @@ impl Game {
             }
         }
         self.process_item_wobjs()?;
+        self.did_rock_fly = self.do_rock_fly;
         Ok(())
     }
 
@@ -978,13 +992,34 @@ impl Game {
                 }
             }
             0x28 | 0x31 | 0x33 | 0x34 | 0x35 => {
-                // 0x33 first consults DoRockFly/DidRockFly (both 0 in the
-                // fixture; only boss scripts change them, not ported).
+                // 0x33: when DoRockFly changed (DoWorldEffects, boss 0x2a)
+                // the rock takes off: +0xfc = 20 + Random(10) (1), 30 +
+                // Random(15) (2) or 50 + Random(100) with +0xf8/+0x100 = 10 ×
+                // the x/z direction from RockFlyCenter (0, 0, 0 in the
+                // data) (3); +0xd8 bit 0 set.
+                if sub_ == 0x33 && self.do_rock_fly != self.did_rock_fly {
+                    let up = match self.do_rock_fly {
+                        1 => Some(add(self.random_pub(10.0)?, 20.0)?),
+                        2 => Some(add(self.random_pub(15.0)?, 30.0)?),
+                        3 => {
+                            let p = r.v3(0x40);
+                            let mut d = p;
+                            crate::item_collision::normal_vector_2d(&mut d)?;
+                            let rr = &mut self.items.records[slot];
+                            rr.set_f32(0xf8, mul(d[0], 10.0)?);
+                            rr.set_f32(0x100, mul(d[2], 10.0)?);
+                            Some(add(self.random_pub(100.0)?, 50.0)?)
+                        }
+                        _ => None,
+                    };
+                    if let Some(v) = up {
+                        self.items.records[slot].set_f32(0xfc, v);
+                    }
+                    self.items.records[slot].or_u16(0xd8, 1);
+                }
+                let r = self.items.records[slot].clone();
                 if r.u16_(0xd8) & 1 == 0 {
                     return Ok(());
-                }
-                if sub_ == 0x33 {
-                    return unsupported("flying rock (DoRockFly)");
                 }
                 let rot = &self.items.tables.rand_rot_216;
                 let (f29, f27) = (rot[!slot & 7], rot[slot & 7]);

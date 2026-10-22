@@ -1875,7 +1875,20 @@ impl Game {
             return self.death_touch(i);
         }
         if t == 0x1f {
-            return unsupported("It tag (do_enemy_attack type 0x1f)");
+            // The "It" enemy tags its target: the old It's +0x92c cleared,
+            // It = the target (+0x298) with +0x92c = 1, NewHelp 0x32 at the
+            // player, and the tagger dies.
+            if let Ok(old) = usize::try_from(self.globals.it) {
+                self.players[old].set_u16(0x92c, 0);
+            }
+            let it = self.enemies[i].i32_(0x298);
+            self.globals.it = it;
+            let Ok(p) = usize::try_from(it) else { return Ok(()) };
+            self.players[p].set_u16(0x92c, 1);
+            let at = self.players[p].v3(0x60);
+            let who = self.players[p].u32_(0) as usize;
+            self.help_at(0x32, who, Some(at));
+            return self.enemy_dies(i, it as i16);
         }
         if self.enemies[i].i16_(e::LOGIC) == 0x1f {
             return Ok(());

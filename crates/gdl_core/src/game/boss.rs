@@ -7,7 +7,7 @@
 use super::critter_ai::yaw_vec3;
 use super::damage::pd;
 use super::effects::{fx, Visual};
-use super::{unsupported, Event, Game, R};
+use super::{Event, Game, R};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
 
 /// spew_tab 0x25d1a8: (bronze, silver, gold) coins per active player by CurWorld.
@@ -204,7 +204,7 @@ impl Game {
             r.set_i16(fx::OWNER, 0);
         }
         if self.globals.boss_type == 0x2a {
-            return unsupported("SkorneSpewItems");
+            return self.skorne_spew_items(spread, pos, v);
         }
         let nap = self.globals.num_active_players;
         if nap == 0 {
@@ -228,15 +228,34 @@ impl Game {
                 // Passes 0/1 rotate the original vector (the scaled one is
                 // overwritten), pass 2 the scaled one.
                 let out = yaw_vec3(a, if pass == 2 { w } else { v })?;
-                self.start_spew_item(1, 1, name, *value, pos, out)?;
+                self.start_spew_item(0, 1, 1, name, *value, 0, pos, out)?;
                 a = add(a, step)?;
             }
         }
         Ok(())
     }
 
-    /// StartSpewItem 0x19e740 (kind 1: value +0xf4, +0xf0/+0xf8 = 0, +0x100 = 0x78).
-    fn start_spew_item(&mut self, kind: i32, sub_: i32, name: &[u8], value: i32, pos: [f32; 3], vel: [f32; 3]) -> R<()> {
+    /// SkorneSpewItems 0x19ea..(spread, position, velocity): Skorne's four
+    /// boss1_items (0x25d250, 0x1c each: name, +0x10 value, +0x14 the
+    /// +0xf0 word, +0x18 the +0xf8 word) as kind-1 subtype-9 spew items
+    /// fanned over ±spread (step spread / 2).
+    fn skorne_spew_items(&mut self, spread: f32, pos: [f32; 3], v: [f32; 3]) -> R<()> {
+        let step = mul(add(spread, spread)?, 0.25)?;
+        let mut a = add(-spread, mul(step, 0.5)?)?;
+        for k in 0..4 {
+            let (name, value, f0, f8) = self.boss1_items[k].clone();
+            let out = yaw_vec3(a, v)?;
+            self.start_spew_item(f8, 1, 9, &name, value, f0, pos, out)?;
+            a = add(a, step)?;
+        }
+        Ok(())
+    }
+
+    /// StartSpewItem 0x19e740(+0xf8 word, kind, subtype, name, +0xf4,
+    /// +0xf0, position, velocity): AddItem at the position; kind 1 also
+    /// sets +0x100 = 0x78.
+    #[allow(clippy::too_many_arguments)]
+    fn start_spew_item(&mut self, f8: u32, kind: i32, sub_: i32, name: &[u8], value: i32, f0: u32, pos: [f32; 3], vel: [f32; 3]) -> R<()> {
         if 0x20 <= self.spew_items.len() {
             return Ok(());
         }
@@ -245,8 +264,8 @@ impl Game {
         if kind == 1 {
             let r = &mut self.items.records[k];
             r.set_i32(0xf4, value);
-            r.set_u32(0xf0, 0);
-            r.set_u32(0xf8, 0);
+            r.set_u32(0xf0, f0);
+            r.set_u32(0xf8, f8);
             r.set_i16(0x100, 0x78);
         }
         self.spew_items.push((Some(k), vel));

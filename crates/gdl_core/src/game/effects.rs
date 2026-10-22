@@ -2246,7 +2246,26 @@ impl Game {
                             result = -1;
                         }
                     } else if self.players[k].u32_(0x134) & 0x102_0000 != 0 {
-                        return unsupported("missile reflected by a player shield");
+                        // A reflecting shield (+0x134 0x1020000):
+                        // AudioWeaponReflect, flags −0xc00 +8, the velocity
+                        // reversed and this step undone, the lifetime capped
+                        // at ATime + 10 (else 1 s shorter), damage ≤ 15. The
+                        // CreateDirMatrix turn (flag 0x20000) is presentation.
+                        self.events.push(Event::Audio { cue: "AudioWeaponReflect", player: None, arg: 0 });
+                        let r = self.fx_mut(i);
+                        r.set_u32(fx::FLAGS, flags & 0xffff_f3ff | 8);
+                        let v = r.v3(fx::VELOCITY);
+                        let nv = [-v[0], -v[1], -v[2]];
+                        r.set_v3(fx::VELOCITY, nv);
+                        to = [add(mul(nv[0], spf)?, to[0])?, add(mul(nv[1], spf)?, to[1])?, add(mul(nv[2], spf)?, to[2])?];
+                        moved = true;
+                        let cap = add(atime, 10.0)?;
+                        let end = self.fx(i).f32_(fx::END);
+                        let e2 = if cap < end { cap } else { sub(end, 1.0)? };
+                        self.fx_mut(i).set_f32(fx::END, e2);
+                        if 15.0 < self.fx(i).f32_(fx::DAMAGE) {
+                            self.fx_mut(i).set_f32(fx::DAMAGE, 15.0);
+                        }
                     } else {
                         let mut dir = self.fx(i).v3(fx::VELOCITY);
                         normal_vector(&mut dir)?;
@@ -2266,7 +2285,17 @@ impl Game {
                             to = p;
                             moved = true;
                         } else if self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0x20_0000 != 0 && 0 <= self.fx(i).i16_(fx::HIT_FX) && 2.0 < damage {
-                            return unsupported("piercing missile hit effect on a player");
+                            // A piercing shot's hit effect at the player
+                            // (+0x60), on the floor for flags 0x300000; damage
+                            // flag 0x100000 cleared.
+                            let at = self.players[k].v3(0x60);
+                            let h = self.fx(i).i16_(fx::HIT_FX) as usize;
+                            let k2 = self.start_fx_sub(0.0, h, Some(at), 0)?;
+                            if 0 <= k2 && self.fx(i).u32_(fx::FLAGS) & 0x30_0000 != 0 {
+                                self.place_effect_on_floor(k2 as usize)?;
+                            }
+                            let df = self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0xffef_ffff;
+                            self.fx_mut(i).set_u32(fx::DAMAGE_FLAGS, df);
                         }
                         result = if res != 0 { 3 } else { 2 };
                     }
@@ -2687,7 +2716,7 @@ impl Game {
                     moved = true;
                 }
                 if f & 0x400_0000 != 0 {
-                    self.boss_generate_enemy()?;
+                    self.boss_generate_enemy(m, to)?;
                     self.fx_mut(i).set_u32(fx::FLAGS, f & 0xfbff_ffff | 0x400);
                 }
                 let _ = hit_at;
@@ -2707,7 +2736,7 @@ impl Game {
                         }
                     }
                     if f & 0x400_0000 != 0 {
-                        self.boss_generate_enemy()?;
+                        self.boss_generate_enemy(m, if moved { to } else { from })?;
                     }
                     if let Some(it) = self.fx(i).u32_(0xec).checked_sub(1).map(|v| v as usize) {
                         // The carried item lands: visible (+0xe1 = 0), kind-1
@@ -2802,10 +2831,28 @@ impl Game {
         Ok(best)
     }
 
-    /// BossGenerateEnemy 0x19dbe0: only Garm (BossType 0x2c) spawns enemies.
-    fn boss_generate_enemy(&mut self) -> R<()> {
-        if self.globals.boss_type == 0x2c {
-            return unsupported("BossGenerateEnemy (Garm)");
+    /// BossGenerateEnemy 0x19dbe0(effect matrix): Garm (BossType 0x2c)
+    /// raises two GRM enemies (type 0x1b, level 3, generate_enemy(1, …,
+    /// threshold 1)) 3 units out along the matrix forward yawed by
+    /// genang.15 = ±π/4, facing that way, +0x300 = the matrix position.
+    fn boss_generate_enemy(&mut self, rows: [V3; 3], at: V3) -> R<()> {
+        if self.globals.boss_type != 0x2c {
+            return Ok(());
+        }
+        for a in [f32::from_bits(0x3f49_0fdb), f32::from_bits(0xbf49_0fdb)] {
+            let d = super::critter_ai::yaw_vec3(a, rows[2])?;
+            let pos = [add(mul(d[0], 3.0)?, at[0])?, add(mul(d[1], 3.0)?, at[1])?, add(mul(d[2], 3.0)?, at[2])?];
+            let k = self.generate_enemy(1.0, pos, 0x1b, 3, d, -1, 0, 1)?;
+            // NATIVE guard: the original writes through a failed (−1) index.
+            let Ok(k) = usize::try_from(k) else { continue };
+            let h = crate::libm::atan2f(d[0], d[2])?;
+            let r = &mut self.enemies[k];
+            r.set_f32(0x260, h);
+            r.set_f32(0x264, h);
+            r.set_u32(0x254, 0);
+            r.set_f32(0x258, h);
+            r.set_u32(0x25c, 0);
+            r.set_v3(0x300, at);
         }
         Ok(())
     }

@@ -325,6 +325,8 @@ impl Game {
             stop_time: s.extra.stop_time,
             max_stop_time: 0.0,
             sumner_hint_time: 0.0,
+            do_rock_fly: 0,
+            did_rock_fly: 0,
             world_num_levels: inp.wdata.levels.len() as i32,
             tower: super::tower::TowerState::default(),
             hud: match super::hud::HudTables::from_elf(inp.elf) {
@@ -448,6 +450,17 @@ impl Game {
             good_wiz_alpha: 0,
             auto_exit_timer: 0,
             spew_items: Vec::new(),
+            boss1_items: {
+                let b = inp.elf.object("boss1_items")?;
+                b.chunks_exact(0x1c)
+                    .take(4)
+                    .map(|r| {
+                        let w = |o: usize| u32::from_le_bytes(r[o..o + 4].try_into().unwrap());
+                        let name = r[..0x10].iter().copied().take_while(|&c| c != 0).collect();
+                        (name, w(0x10) as i32, w(0x14), w(0x18))
+                    })
+                    .collect()
+            },
             player_grab: [None; 4],
             mb_objects: inp.mb_objects,
             lookouts: super::lookouts::build(&inp.world.locators),

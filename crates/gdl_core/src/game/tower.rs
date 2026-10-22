@@ -402,6 +402,18 @@ impl Game {
         self.world_labels.iter().position(|l| l == name)
     }
 
+    /// DoWorldEffects 0x1535c0 (SFXX flag 0x20 of player and critter effects):
+    /// boss 0x2a counts DoRockFly up; bosses 0x29 and 0x2c hide the world
+    /// object G5BIGDIRT / H4NSFFXL_PURPLE (MBTreeSetFlags 1).
+    pub(crate) fn do_world_effects(&mut self) {
+        match self.globals.boss_type {
+            0x2a => self.do_rock_fly += 1,
+            0x29 => self.world_node_set_flags("G5BIGDIRT", 1),
+            0x2c => self.world_node_set_flags("H4NSFFXL_PURPLE", 1),
+            _ => {}
+        }
+    }
+
     /// MBTreeSetFlags(node, bits, 0) on a named world node (presentation).
     pub fn world_node_set_flags(&mut self, name: &str, bits: u32) {
         if let Some(i) = self.find_world_object(name) {

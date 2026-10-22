@@ -188,3 +188,34 @@ start_magic sets damage flag 0x800000 for casters past level 0x18. With it:
   swaps, which were previously dropped events).
 - Checked headlessly: G1 game runs with --plevel 30/80 and magic, turbo +
   magic and attack + magic: no unsupported path; NewHelp 0x93 at level 80.
+
+## Enemy and boss paths (2026-10-21)
+
+- The enemies array starts at 0x22d960: Ghidra's DAT_ names in kill_enemy
+  and generate_single are offset by 0x10 (kill_enemy's `lwc1 f0,0x40(s1)`
+  reads the position at +0x40).
+- kill_enemy 0x139c58: a gargoyle (type 0x20) without a carried item drops
+  AddItem(1, 0x10, "GARG" + LevelEnemyDesc(0x20) upper-cased) at +0x40
+  (visible, +0x100 = 0x3c for kind 1, placed); type 0x1b (GRM) fires
+  enemy_death_fx → StartEnemyDeathFX (effect 0x58 toward the target or first
+  active player along CreateDirMatrix(dir, 0) — YPR with half the pitch —
+  at 20, radius 3, damage 50 flags 0x100020, morph to 0x59 after 3 s);
+  every kill deletes the +0x1f4 effect (Death's StartDeathFX).
+- Shield reflection (player +0x134 & 0x1020000) and piercing hit effects
+  on players in ProcessEffects (see the code comments).
+- generate_single 0x153e70 (logic-15 generators): one enemy per generator,
+  +0x2ec = 2, +0x324 = 0xf, the spawn heading as generate_now's.
+- do_enemy_attack type 0x1f: the "It" enemy tags its target (+0x298): the
+  old It's +0x92c cleared, It = target with +0x92c = 1, NewHelp 0x32, the
+  tagger dies (the swap on contact, targeting and HUD icon were ported).
+- DoWorldEffects 0x1535c0 (SFXX flag 0x20, player and critter effects):
+  boss 0x2a counts DoRockFly; 0x29 / 0x2c hide G5BIGDIRT / H4NSFFXL_PURPLE.
+  ProcessItems launches subtype-0x33 rocks when DoRockFly changed (modes
+  1/2/3: up 20+R(10), 30+R(15), 50+R(100) with x/z 10 × the direction from
+  RockFlyCenter (0, 0, 0)) and copies DoRockFly to DidRockFly at the end.
+- BossGenerateEnemy 0x19dbe0: Garm raises two GRM (0x1b, level 3) at ±π/4
+  (genang.15) off the effect forward, 3 units out.
+- SkorneSpewItems: Skorne spews boss1_items (BGNTR/BMASK/BHORN/BGNTL_IC,
+  kind 1 subtype 9, +0xf0 = 0x4000/0x2000/0x1000/0x8000, +0xf8 = 240.0)
+  instead of coins.
+- Checked: 51-level pad sweep sw22 clean.

@@ -279,6 +279,11 @@ pub struct Game {
     pub item_trees: std::collections::HashMap<usize, String>,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
+    /// DoRockFly / DidRockFly (DoWorldEffects counts boss 0x2a's rock
+    /// launches; ProcessItems launches subtype-0x33 rocks on a change).
+    /// ResetItems zeroes both at level start.
+    pub do_rock_fly: i32,
+    pub did_rock_fly: i32,
     pub old_enemy_shrink: f32,
     pub boss_is_dying: i32,
     pub suicide_bomber_index: i32,
@@ -396,6 +401,9 @@ pub struct Game {
     pub player_grab: [Option<critters::Grab>; 4],
     /// SpewItems (item slot, velocity), at most 0x20.
     pub spew_items: Vec<(Option<usize>, [f32; 3])>,
+    /// boss1_items 0x25d250 (SkorneSpewItems): name, +0xf4 value, +0xf0
+    /// word, +0xf8 word.
+    pub boss1_items: Vec<(Vec<u8>, i32, u32, u32)>,
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).

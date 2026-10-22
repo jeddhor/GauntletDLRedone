@@ -20,7 +20,7 @@
 //! applied. Lights, streaks, colours, ambient flashes, texture-mod nodes and
 //! particles are presentation (events or omitted).
 use super::effects::{fx, EffectParent, Visual};
-use super::{Event, Game, Unsupported, R};
+use super::{Game, Unsupported, R};
 use crate::libm::{cosf, sinf};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
 /// plight_color 0x2341f8: per class base the player effects' light colour.
@@ -411,7 +411,7 @@ impl Game {
                 self.shake_camera(f32::from_bits(0x3dcc_cccd), 0, 0, 0x5a, 100);
             }
             if flags & 0x20 != 0 {
-                self.events.push(Event::Audio { cue: "DoWorldEffects", player: Some(p), arg: 0 });
+                self.do_world_effects();
             }
             first.get_or_insert(out);
             // The next link is parented to this link's effect (uVar6).
@@ -482,7 +482,7 @@ impl Game {
     /// PlaceEffectOnFloor(effect, 0): FloorCollide(radius + 1, radius + 5,
     /// −10) at the effect; on a hit the node takes floor_col's matrix
     /// (+0.1 y), otherwise the identity rotation.
-    fn place_effect_on_floor(&mut self, k: usize) -> R<()> {
+    pub(crate) fn place_effect_on_floor(&mut self, k: usize) -> R<()> {
         let r = self.fx(k).f32_(fx::RADIUS);
         let Some(n) = self.effects.nodes[k] else { return Ok(()) };
         let (c, _) = self.collision.floor_collide(add(r, 1.0)?, add(r, 5.0)?, -10.0, n.position, false, 1)?;

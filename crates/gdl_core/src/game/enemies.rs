@@ -15,7 +15,7 @@
 //! round trip of GetObjWorldMat is the identity under EnemyRootNode
 //! (hypothesis recorded in docs/research/enemies.md).
 use super::record::{Record, ENEMY};
-use super::{unsupported, Game, Unsupported, R};
+use super::{Game, Unsupported, R};
 use crate::collision::Query;
 use crate::item_collision::{item_coll_sub, normal_vector_2d, CollideEnv};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sqrt_rn, sub_guarded_rz as sub};
@@ -915,12 +915,73 @@ impl Game {
             let at = self.enemies[i].v3(0x40);
             self.start_bag_fx(0.0, at, slot)?;
         } else if t == 0x20 {
-            return unsupported("gargoyle drop (AddItem GARG…)");
+            // A gargoyle leaves AddItem(1, 0x10, "GARG" + LevelEnemyDesc(0x20)
+            // upper-cased) at its position (+0x40): visible, a 60-vblank
+            // pickup delay for kind 1, placed. No such item: nothing.
+            let name = format!("GARG{}", self.level_enemy_desc_name(0x20)?).to_ascii_uppercase();
+            if let Some(d) = self.items.find_info_index(1, 0x10, name.as_bytes()) {
+                let slot = self.add_item_sub(d, None)?;
+                let pos = self.enemies[i].v3(0x40);
+                let kind1 = self.items.definitions[d].kind() == 1;
+                let r = &mut self.items.records[slot];
+                r.set_u8(0xe1, 0);
+                if kind1 {
+                    r.set_i16(0x100, 0x3c);
+                }
+                r.set_f32(0x40, pos[0]);
+                r.set_f32(0x44, pos[1]);
+                r.set_f32(0x48, pos[2]);
+                self.items.place_item(slot, &mut self.collision)?;
+            }
+        }
+        if t == 0x1b {
+            self.enemy_death_fx(i)?;
         }
         let rec = &mut self.enemies[i];
         rec.set_f32(e::HEALTH, 0.0);
         rec.set_i32(e::STATE, 0);
+        // DeleteEffect(+0x1f4, 1): Death's StartDeathFX effect.
+        if let Ok(fx) = usize::try_from(self.enemies[i].i32_(0x1f4)) {
+            self.delete_effect(fx, true);
+            self.enemies[i].set_i32(0x1f4, -1);
+        }
         self.uncouple_enemy(i);
+        Ok(())
+    }
+
+    /// enemy_death_fx 0x139b58 (kill_enemy, type 0x1b): toward the target
+    /// player (+0x288, else the first in state 1) StartEnemyDeathFX: effect
+    /// 0x58 from the enemy position along the CreateDirMatrix(dir, 0)
+    /// forward (YPR with half the pitch) at 20, radius 3, damage 50 (flags
+    /// 0x100020, owner 0), morphing to 0x59 after 3 s.
+    fn enemy_death_fx(&mut self, i: usize) -> R<()> {
+        let t = self.enemies[i].i16_(0x288);
+        let p = if 0 <= t { Some(t as usize) } else { (0..4).find(|&k| self.players[k].i32_(0xfc) == 1) };
+        let Some(p) = p.filter(|&p| p < 4) else { return Ok(()) };
+        if self.effects.tables.headers.get(0x58).copied().flatten().is_none() {
+            return Ok(());
+        }
+        let from = self.enemies[i].v3(0x40);
+        let to = self.players[p].v3(0x50);
+        let mut d = [sub(to[0], from[0])?, sub(to[1], from[1])?, sub(to[2], from[2])?];
+        crate::collision::normal_vector(&mut d)?;
+        let fwd = if add(add(mul(d[0], d[0])?, mul(d[1], d[1])?)?, mul(d[2], d[2])?)? < 0.001 {
+            [0.0, 0.0, 1.0]
+        } else {
+            let h = crate::vu0::fqdist(d[0], d[2])?.0;
+            let pitch = mul(crate::libm::atan2f(d[1], h)?, 0.5)?;
+            let yaw = crate::libm::atan2f(d[0], d[2])?;
+            let m = super::enemy_ai::create_ypr_matrix([pitch, yaw, 0.0])?;
+            [m[2][0], m[2][1], m[2][2]]
+        };
+        let k = self.start_fx_sub(0.0, 0x58, Some(from), 0x8c01)?;
+        if 0 <= k {
+            let k = k as usize;
+            let v = [mul(fwd[0], 20.0)?, mul(fwd[1], 20.0)?, mul(fwd[2], 20.0)?];
+            self.sfx_set_physics_pub(k, 0.0, 3.0, Some(v), None);
+            self.sfx_set_damage(k, 50.0, 0.0, 0.0, 0x10_0020, 0);
+            self.sfx_set_morph(k, 3.0, 0x59, -1);
+        }
         Ok(())
     }
 
