@@ -240,7 +240,7 @@ impl SoundTables {
 }
 
 impl Game {
-    fn sound_on(&self) -> bool {
+    pub(crate) fn sound_on(&self) -> bool {
         self.sounds.rom.is_some()
     }
 

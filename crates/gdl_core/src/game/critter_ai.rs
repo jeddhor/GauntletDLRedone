@@ -459,8 +459,8 @@ impl Game {
             self.boss_cam_mode = 1;
         }
         if music {
-            // attn_area = 1, attn_change_now = 1: attention-area music change.
-            self.events.push(super::Event::Audio { cue: "BossActivateMusic", player: None, arg: 1 });
+            // attn_area = 1, attn_change_now = 1: the boss music area.
+            self.set_attention_area(1, 1);
         }
     }
 

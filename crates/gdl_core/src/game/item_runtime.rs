@@ -6,7 +6,7 @@
 //! The camera is supplied by [`Camera`] (rest-pose hypothesis until do_camera
 //! is ported); item animation clocks use the verified AnimateTree selection.
 use super::enemies::e;
-use super::{unsupported, Game, R};
+use super::{unsupported, Event, Game, R};
 
 const HALF_PI: f32 = f32::from_bits(0x3fc9_0fdb);
 use crate::animation_clock::{select, ClipTiming, ClockState, SelectionInput};
@@ -605,6 +605,8 @@ impl Game {
                 self.animate_item_state(slot, visible, vb)?;
             }
         }
+        // The music attention area the nearest kind-0xd item asks for.
+        let mut attn = (-1i32, 0i32);
         for slot in 0..self.items.records.len() {
             let r = &self.items.records[slot];
             if !r.active() || r.u16_(0xd8) & 0x8100 != 0 {
@@ -658,12 +660,87 @@ impl Game {
                 9 => self.process_exit(slot)?,
                 10 => self.process_type10(slot)?,
                 0xc => self.process_rotator(slot)?,
+                0xd => self.process_sound_item(slot, &mut attn)?,
                 _ => {}
             }
+        }
+        if 0 <= attn.0 && attn.0 != self.bg_music.attn_area {
+            self.set_attention_area(attn.0, attn.1);
         }
         self.process_item_wobjs()?;
         self.did_rock_fly = self.do_rock_fly;
         Ok(())
+    }
+
+    /// ProcessItems case 0xd: a world sound (+0xfc < 1: the +0xf4 loop at a
+    /// level by the nearest player's distance against the +0xf0 radius,
+    /// DoItemSound 0x15d2b0) or a music attention area (+0xfc − 1, chosen
+    /// when a player is inside the radius; +0x100 the change mode). The
+    /// +0xf8 node (a moving world node) is presentation.
+    fn process_sound_item(&mut self, slot: usize, attn: &mut (i32, i32)) -> R<()> {
+        let r = self.items.records[slot].clone();
+        let radius = r.f32_(0xf0);
+        let pos = r.v3(0x40);
+        let d = self.distance_to_closest_player(pos)?;
+        let area = r.i16_(0xfc);
+        if 0 < area {
+            let a = i32::from(area) - 1;
+            if d < radius && attn.0 < a {
+                *attn = (a, i32::from(r.i16_(0x100)));
+            }
+            return Ok(());
+        }
+        let k = if d < radius || radius <= 2.0 {
+            1.0
+        } else {
+            let t = sub(mul(radius, 1.5)?, d)?;
+            crate::numeric::div_rn(add(t, t)?, radius)?
+        };
+        let state = r.i16_(0xfe);
+        if 0.0 < k || state < 0 {
+            let id = r.i32_(0xf4);
+            let playing = self.do_item_sound(slot, k, id, pos, r.u16_(0x100))?;
+            self.items.records[slot].set_i16(0xfe, i16::from(playing));
+        } else if 0 < state {
+            self.events.push(Event::ItemSoundStop { slot });
+            self.items.records[slot].set_i16(0xfe, 0);
+        }
+        Ok(())
+    }
+
+    /// DoItemSound(level, id, position, flags): volume level × 224 × LEVL
+    /// +0x98 (16 while Sumner speaks, a trigger camera runs or time stops;
+    /// the first treasure room ×4 within 0x40..0xff); killed in game modes
+    /// 0x4014/0x400c and at the end of the stage; priority 3 with flag 2,
+    /// else 0x70; flag 1 lowers the music (LowerBGMusic(0.5, 1 − level/2)).
+    /// True while it plays.
+    fn do_item_sound(&mut self, slot: usize, k: f32, id: i32, pos: V3, flags: u16) -> R<bool> {
+        if id < 0 {
+            return Ok(false);
+        }
+        let mut vol = mul(mul(k, 224.0)?, self.level_f32(0x98))? as i32;
+        let sumner = self.globals.cur_world == 0xd && 0.0 < self.tower.sumner_speech_time;
+        if sumner || self.globals.trig_cam_active != 0 || self.stop_time != 0 {
+            vol = 0x10;
+        }
+        if matches!(self.globals.game_mode, 0x4014 | 0x400c) || self.globals.end_of_stage != 0 {
+            self.events.push(Event::ItemSoundStop { slot });
+            return Ok(false);
+        }
+        vol = vol.max(0);
+        if self.globals.cur_world == 0xc && self.globals.cur_level == 0 {
+            let v = vol << 2;
+            vol = if v < 0x40 { 0x40 } else { v.min(0xff) };
+        }
+        let priority = if flags & 2 != 0 { 3 } else { 0x70 };
+        if self.sound_on() {
+            self.events.push(Event::ItemSound { slot, id, volume: vol, position: pos, priority });
+        }
+        if flags & 1 != 0 {
+            let amount = sub(1.0, mul(k, 0.5)?)?;
+            self.lower_bg_music(0.5, amount);
+        }
+        Ok(true)
     }
 
     /// ProcessItems' find_enemy_slot(0, -1) probe: only sets no_enemy_slot.

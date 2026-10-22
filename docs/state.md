@@ -73,6 +73,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    behind it, credits, movies. 2026-10-21: Control Style, Screen Adjust. 2026-10-21: the ICON_ARROW selector.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.
+   2026-10-21: the Audio* cue placeholders, background music (areas,
+   parts, map/shop music, boss attention) and kind-0xd world sounds
+   (docs/research/audio.md). Remaining audio: golem names, demon fireball,
+   SPU curves.
 
 ---
 

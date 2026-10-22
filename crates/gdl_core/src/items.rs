@@ -222,6 +222,9 @@ pub struct ItemSession {
     pub battle_wave_1_done: bool,
     /// TowerInit's TowerNewPlayer (SetItem hides the Tower crystals).
     pub tower_new_player: bool,
+    /// AudioFindSound(name, 0x10, 1): the audio data's sound names (upper
+    /// case) with their IDs, for type-13 items; empty without audio data.
+    pub sound_names: Vec<(Vec<u8>, i32)>,
 }
 
 pub struct ItemWorld {
@@ -254,8 +257,6 @@ pub struct ItemWorld {
     pub rune_item: Option<usize>,
     pub rune_pos: [f32; 3],
     pub quest_item: Option<usize>,
-    /// Sound ids for type-13 items (AudioFindSound over the audio data).
-    pub find_sound: fn(&[u8]) -> Option<i32>,
     pub rng: Rand,
 }
 
@@ -335,7 +336,6 @@ impl ItemWorld {
             rune_item: None,
             rune_pos: [0.0; 3],
             quest_item: None,
-            find_sound: |_| None,
             rng: Rand::new(0),
         })
     }
@@ -856,7 +856,10 @@ impl ItemWorld {
                 } else {
                     name.make_ascii_uppercase();
                     let n = name.iter().position(|&b| b == 0).unwrap_or(16);
-                    r.set_i32(0xf4, (self.find_sound)(&name[..n]).unwrap_or(-1));
+                    // AudioFindSound: the first name equal over 15 bytes.
+                    let key = &name[..n.min(15)];
+                    let id = self.session.sound_names.iter().find(|(s, _)| s.iter().take(15).eq(key.iter())).map(|(_, id)| *id);
+                    r.set_i32(0xf4, id.unwrap_or(-1));
                 }
                 r.set_u16(0xfe, 0);
                 r.set_u16(0x100, iu16(0x38));

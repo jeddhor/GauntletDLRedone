@@ -281,6 +281,7 @@ impl Game {
             critter_7_loaded: critter_slot0_loaded(&inp.critters, 7),
             tower_crystals_taken: tower_crystals_taken(&s.players, inp.elf, s.globals.demo_mode)?,
             battle_wave_1_done: battle_wave_1_done(&s.players)?,
+            sound_names: inp.audio_rom.as_ref().map(|r| r.sounds.iter().zip(&r.ids).map(|((n, _), id)| (n.to_uppercase().into_bytes(), *id)).collect()).unwrap_or_default(),
             tower_new_player: g.cur_world == 0xd && {
                 let recs: Vec<Record> = s.players.iter().map(|h| hex(h).map(Record)).collect::<Result<_, _>>()?;
                 super::tower::tower_new_player(g.tower_counter, &recs)
@@ -453,6 +454,7 @@ impl Game {
             stage_save: None,
             wave_timer: Default::default(),
             bg_duck: Default::default(),
+            bg_music: Default::default(),
             secret_char: inp.elf.object("secret_char")?.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect(),
             boss1_items: {
                 let b = inp.elf.object("boss1_items")?;
@@ -602,7 +604,8 @@ impl Game {
             // init_next_level → EnterTower after the items are placed.
             game.enter_tower().map_err(|e| format!("EnterTower: {}", e.0))?;
         }
-        // init_next_level: init_wave_timer, init_thermometer.
+        // init_next_level: BGMusicStart, init_wave_timer, init_thermometer.
+        game.bg_music_start();
         game.init_wave_timer().map_err(|e| format!("init_wave_timer: {}", e.0))?;
         game.init_thermometer(inp.world.min, inp.world.max);
         Ok(game)
@@ -729,6 +732,8 @@ impl Game {
             self.log.note("do_wave_timer", &e);
         }
         self.modify_thermometer();
+        // game_main: BGMusicUpdate.
+        self.bg_music_update();
         // main: DoLighting once per frame.
         self.do_lighting();
     }

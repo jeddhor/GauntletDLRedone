@@ -460,5 +460,6 @@ footsteps by surface (water 4, shield 3, floor flags), weapon ricochets
 (once a second), level-up and help lines (AudioExp by character × 9,
 AudioHelp/AudioHasItem), legend-item sounds by world (jump table 0x2a90c0:
 snd1–4.517–520), transport / world explosion / world hit by world, the good
-wizard's lines (gwiz_sidx), the thermometer's rune hints. Music (map,
-shop, boss areas) is the background-music work that follows.
+wizard's lines (gwiz_sidx), the thermometer's rune hints. Background
+music (stage areas and parts, map and shop music, boss attention) and the
+kind-0xd world sounds are described in audio.md.

@@ -43,7 +43,7 @@ impl Game {
     /// init_mapscreen(time, skip) for the next level `code` with its MAPS
     /// record.
     pub fn init_mapscreen(&mut self, time: i32, skip: bool, code: &str, map: Option<[f32; 18]>) -> MapScreen {
-        self.audio("MapMusicStart", None, 0);
+        self.map_music_start();
         self.globals.game_mode = 0x400f;
         self.hud.reset_models();
         self.hud_reset_players();
@@ -178,7 +178,7 @@ impl Game {
         m.time_left -= vb;
         let done = self.globals.paused == 0 && m.load_done == 99 && glow_done && m.time_left < 1;
         if done {
-            self.audio("MapMusicEnd", None, 0);
+            self.bank_music_end();
         }
         done
     }

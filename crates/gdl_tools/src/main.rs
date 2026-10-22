@@ -714,6 +714,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             tower_crystals_taken: session["tower_crystals_taken"].as_i64().unwrap_or(0) != 0,
             battle_wave_1_done: session["battle_wave_1_done"].as_i64().unwrap_or(0) != 0,
             tower_new_player: session["tower_new_player"].as_i64().unwrap_or(0) != 0,
+            sound_names: Vec::new(),
         };
         let tables = gdl_core::items::ItemTables::from_elf(&elf)?;
         let mut collision = gdl_core::collision::CollisionWorld::from_world(&world)?;

@@ -323,7 +323,7 @@ impl Game {
         })
     }
 
-    /// PlayerMotion's melee consumption (EE 0x14b9xx..0x14bdb0): damage the
+    /// PlayerMotion's (0x1480a8) melee consumption block: damage the
     /// target in reach with the class melee damage (+0x118).
     fn player_melee(&mut self, p: usize, bits: u32, facing: [f32; 3]) -> R<()> {
         let mul = crate::numeric::mul_rz;

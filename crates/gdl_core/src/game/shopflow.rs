@@ -82,7 +82,7 @@ impl Game {
         }
         self.globals.skip_wave = 0;
         if !flow.skip {
-            self.audio("ShopMusicStart", None, 0);
+            self.shop_music_start();
         }
         // ResetModels and setup_player_display for every box.
         self.hud.reset_models();
@@ -233,7 +233,7 @@ impl Game {
         if !done {
             return Ok(0);
         }
-        self.audio("ShopMusicEnd", None, 0);
+        self.bank_music_end();
         Ok(if flow.from_menu == 0 { 2 } else { 1 })
     }
 

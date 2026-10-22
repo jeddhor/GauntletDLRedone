@@ -3,6 +3,7 @@
 //! ProcessEffects. Records keep their original layouts (see `record`);
 //! presentation side effects (help text, audio, FX, HUD notices, vibration)
 //! are emitted as [`Event`]s instead of being performed.
+pub mod bgmusic;
 pub mod boss;
 pub mod camera;
 pub mod critter_ai;
@@ -220,6 +221,17 @@ pub enum Event {
     BossKey { position: [f32; 3] },
     /// AudioSuicideYellKill-style stop of every playing instance of an ID.
     StopSound { id: i32 },
+    /// AudioStreamPlay: a STREAMS/<name> stage music part (looping or once).
+    Music { name: String, volume: i32, looping: bool },
+    /// DoItemSound: item `slot`'s looping sound (started or its volume and
+    /// pan updated; one voice per item).
+    ItemSound { slot: usize, id: i32, volume: i32, position: [f32; 3], priority: i32 },
+    /// KillItemSound for item `slot`.
+    ItemSoundStop { slot: usize },
+    /// AudioStreamSetVolume (0..0x7f × LEVL +0x94).
+    MusicVolume { volume: i32 },
+    /// AudioStreamStop.
+    MusicStop,
     /// Expired item (ExpireItem 0x1537b0) with its fade mode.
     ItemExpired { slot: usize, mode: i32 },
     Vibrate { player: usize, strength: i32, time: i32 },
@@ -420,6 +432,8 @@ pub struct Game {
     pub secret_char: Vec<i32>,
     /// LowerBGMusic's duck (sound_cues.rs).
     pub bg_duck: sound_cues::BgDuck,
+    /// BGMusic* state (bgmusic.rs).
+    pub bg_music: bgmusic::BgMusic,
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).

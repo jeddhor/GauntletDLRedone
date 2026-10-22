@@ -30,6 +30,8 @@ struct Voice {
     gain: [f32; 2],
     priority: i32,
     queued: bool,
+    /// An owner's voice (DoItemSound's per-item track): updated in place.
+    tag: Option<u32>,
 }
 
 #[derive(Default)]
@@ -38,6 +40,10 @@ struct Mixer {
     queue: Vec<Voice>,
     music: Option<(Arc<Vec<i16>>, u32, u32, f64)>,
     music_gain: f32,
+    /// The stage music loops (its last part) or plays once.
+    music_loops: bool,
+    /// AudioStreamSetVolume relative to volMusic (1.0 = 100).
+    music_level: f32,
     /// Settings → Audio sound volume (GamePrefs word 0) / 128.
     sfx_gain: f32,
     out_rate: u32,
@@ -61,14 +67,23 @@ impl Mixer {
                 let i = (*pos as usize) % n.max(1);
                 let l = f32::from(pcm[i * ch]) / 32768.0;
                 let r = f32::from(pcm[i * ch + ch - 1]) / 32768.0;
-                out[f * channels] += l * self.music_gain;
+                let g = self.music_gain * self.music_level;
+                out[f * channels] += l * g;
                 if 1 < channels {
-                    out[f * channels + 1] += r * self.music_gain;
+                    out[f * channels + 1] += r * g;
                 }
                 *pos += step;
                 if n as f64 <= *pos {
+                    if !self.music_loops {
+                        // PlayStreamComplete: the part ended.
+                        *pos = n as f64;
+                        break;
+                    }
                     *pos -= n as f64;
                 }
+            }
+            if !self.music_loops && n as f64 <= *pos {
+                self.music = None;
             }
         }
         for v in &mut self.voices {
@@ -116,7 +131,7 @@ pub struct AudioOut {
 
 impl AudioOut {
     pub fn new(rom: AudioRom, bank_paths: HashMap<String, PathBuf>, stream_paths: HashMap<String, PathBuf>) -> Self {
-        let mixer = Arc::new(Mutex::new(Mixer { music_gain: 0.5, sfx_gain: 1.0, out_rate: OUT_RATE, ..Default::default() }));
+        let mixer = Arc::new(Mutex::new(Mixer { music_gain: 0.5, music_level: 1.0, music_loops: true, sfx_gain: 1.0, out_rate: OUT_RATE, ..Default::default() }));
         let mut status = String::from("audio: no output device");
         let silent = std::env::var_os("GDL_NO_AUDIO").is_some();
         if silent {
@@ -154,6 +169,37 @@ impl AudioOut {
         self.play_ex(id, volume, pan, priority, false, true);
     }
 
+    /// DoItemSound: the owner's looping voice started, or its volume and
+    /// pan set (AudioTrackVol / AudioTrackPan).
+    pub fn play_tagged(&mut self, tag: u32, id: i32, volume: i32, pan: f32, priority: i32) {
+        let gain = |c_vol: f32| {
+            let g = (volume.max(0) as f32 / 256.0) * c_vol;
+            let pan = pan.clamp(-1.0, 1.0);
+            [g * (1.0 - pan.max(0.0)), g * (1.0 + pan.min(0.0))]
+        };
+        if let Ok(mut m) = self.mixer.lock()
+            && let Some(v) = m.voices.iter_mut().find(|v| v.tag == Some(tag) && v.id == id)
+        {
+            let (b, call) = AudioRom::split(id);
+            let c_vol = self.banks.get(&b).and_then(Option::as_ref).and_then(|(vbk, _)| vbk.calls.get(call)).map_or(1.0, |c| f32::from(c.volume) / 127.0);
+            v.gain = gain(c_vol);
+            return;
+        }
+        self.play_ex(id, volume, pan, priority, false, true);
+        if let Ok(mut m) = self.mixer.lock()
+            && let Some(v) = m.voices.iter_mut().rev().find(|v| v.id == id && v.tag.is_none())
+        {
+            v.tag = Some(tag);
+        }
+    }
+
+    /// KillItemSound for an owner.
+    pub fn stop_tagged(&mut self, tag: u32) {
+        if let Ok(mut m) = self.mixer.lock() {
+            m.voices.retain(|v| v.tag != Some(tag));
+        }
+    }
+
     fn play_ex(&mut self, id: i32, volume: i32, pan: f32, priority: i32, queued: bool, force_loop: bool) {
         let (b, call) = AudioRom::split(id);
         let Some((vbk, pcm)) = self.bank(b) else { return };
@@ -182,7 +228,7 @@ impl AudioOut {
         let g = (volume.max(0) as f32 / 256.0) * (f32::from(c.volume) / 127.0);
         let pan = pan.clamp(-1.0, 1.0);
         let gain = [g * (1.0 - pan.max(0.0)), g * (1.0 + pan.min(0.0))];
-        let v = Voice { id, chain, rates, loop_from: loop_from.or(Some(0)), loops, part: 0, pos: 0.0, gain, priority, queued };
+        let v = Voice { id, chain, rates, loop_from: loop_from.or(Some(0)), loops, part: 0, pos: 0.0, gain, priority, queued, tag: None };
         if let Ok(mut m) = self.mixer.lock() {
             if queued {
                 if m.queue.len() < 8 {
@@ -225,14 +271,37 @@ impl AudioOut {
         }
     }
 
-    /// Loop a STREAMS/<name> music file.
-    pub fn music(&mut self, name: &str) {
-        let Some(path) = self.stream_paths.get(&name.to_uppercase()) else { return };
-        let Ok(bytes) = std::fs::read(path) else { return };
-        let Ok(ads) = Ads::parse(&bytes) else { return };
+    /// AudioStreamPlay: a STREAMS/<name> part, looping or once, at volume
+    /// (0..0x7f; 100 = volMusic). False when the file is missing.
+    pub fn stream(&mut self, name: &str, looping: bool, volume: i32) -> bool {
+        let Some(path) = self.stream_paths.get(&name.to_uppercase()) else { return false };
+        let Ok(bytes) = std::fs::read(path) else { return false };
+        let Ok(ads) = Ads::parse(&bytes) else { return false };
         let pcm = Arc::new(ads.decode(&bytes));
         if let Ok(mut m) = self.mixer.lock() {
             m.music = Some((pcm, ads.rate, ads.channels, 0.0));
+            m.music_loops = looping;
+            m.music_level = volume.max(0) as f32 / 100.0;
+        }
+        true
+    }
+
+    /// stream_playing(): the stage music still sounds.
+    pub fn stream_playing(&self) -> bool {
+        self.mixer.lock().is_ok_and(|m| m.music.is_some())
+    }
+
+    /// AudioStreamSetVolume.
+    pub fn stream_volume(&mut self, volume: i32) {
+        if let Ok(mut m) = self.mixer.lock() {
+            m.music_level = volume.max(0) as f32 / 100.0;
+        }
+    }
+
+    /// AudioStreamStop.
+    pub fn stream_stop(&mut self) {
+        if let Ok(mut m) = self.mixer.lock() {
+            m.music = None;
         }
     }
 }
@@ -292,6 +361,7 @@ mod tests {
             gain: [1.0, 0.5],
             priority: 0,
             queued,
+            tag: None,
         }
     }
 

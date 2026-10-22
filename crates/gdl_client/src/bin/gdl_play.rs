@@ -2376,6 +2376,40 @@ fn join_copy(game: &mut Game, k: usize, from: usize) -> Result<(), String> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The simulation's audio requests: sounds, loops, kills and the stage
+/// music stream (BGPlayStream / AudioStreamSetVolume / AudioStreamStop).
+fn play_audio(audio: &mut Option<NonSendMut<gdl_client::audio::AudioOut>>, events: &[Event], me: Vec3, right: Vec3) {
+    let Some(a) = audio.as_mut() else { return };
+    for e in events {
+        match e {
+            Event::Sound { id, position, volume, priority, queue } => {
+                // Presentation pan: offset along the camera's right axis.
+                let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
+                a.play(*id, *volume, pan, *priority, *queue);
+            }
+            Event::LoopSound { id, position, volume, priority } => {
+                let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
+                a.play_loop(*id, *volume, pan, *priority);
+            }
+            Event::StopSound { id } => a.stop(*id),
+            Event::Music { name, volume, looping } => {
+                // A missing part counts as playing (BGPlayStream's error
+                // path keeps the loop flag set).
+                a.stream(name, *looping, *volume);
+            }
+            Event::ItemSound { slot, id, volume, position, priority } => {
+                let pan = ((Vec3::from_array(*position) - me).dot(right) / 20.0).clamp(-1.0, 1.0);
+                a.play_tagged(*slot as u32, *id, *volume, pan, *priority);
+            }
+            Event::ItemSoundStop { slot } => a.stop_tagged(*slot as u32),
+            Event::MusicVolume { volume } => a.stream_volume(*volume),
+            Event::MusicStop => a.stream_stop(),
+            _ => {}
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn simulate(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<(Entity, &Gamepad)>,
@@ -2398,6 +2432,12 @@ fn simulate(
         // Only ports with a device are connected (keyboard: ports 0 and 1).
         port.connected = k < 2 || pads.get(k).is_some();
     }
+    // PlayStreamComplete: a stage music part played once has ended.
+    if sim.game.bg_music.stream_playing && audio.as_ref().is_some_and(|a| !a.stream_playing()) {
+        sim.game.bg_stream_complete();
+    }
+    let me = Vec3::from_array(sim.game.players[0].v3(0x50));
+    let right = sim.game.std_camera.as_ref().map_or(presentation.basis[0], |c| Vec3::from_array(c.pb.cam_rows[0]));
     // game mode 0x400f: do_mapscreen until the next level loads.
     if let Some((mut m, next)) = sim.map.take() {
         let g = &mut sim.game;
@@ -2407,6 +2447,8 @@ fn simulate(
         } else {
             sim.map = Some((m, next));
         }
+        let new: Vec<Event> = sim.game.events.drain(..).collect();
+        play_audio(&mut audio, &new, me, right);
         return;
     }
     // game mode 0x4012: game_main runs do_shop (and WritePlayerInfo) only.
@@ -2419,6 +2461,8 @@ fn simulate(
             Ok(_) => sim.shop_done = Some(tower),
             Err(e) => sim.error = Some(format!("do_shop: {}", e.0)),
         }
+        let new: Vec<Event> = sim.game.events.drain(..).collect();
+        play_audio(&mut audio, &new, me, right);
         return;
     }
     for (k, port) in ports.iter().enumerate().take(4).skip(1) {
@@ -2489,27 +2533,11 @@ fn simulate(
             sim.error = Some(format!("teleport: {}", e.0));
         }
     }
-    let new: Vec<Event> = sim.game.events.drain(before..).collect();
-    sim.game.events.clear();
-    let me = Vec3::from_array(sim.game.players[0].v3(0x50));
-    let right = sim.game.std_camera.as_ref().map_or(presentation.basis[0], |c| Vec3::from_array(c.pb.cam_rows[0]));
-    for e in &new {
-        if let Some(a) = audio.as_mut() {
-            match e {
-                Event::Sound { id, position, volume, priority, queue } => {
-                    // Presentation pan: offset along the camera's right axis.
-                    let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
-                    a.play(*id, *volume, pan, *priority, *queue);
-                }
-                Event::LoopSound { id, position, volume, priority } => {
-                    let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
-                    a.play_loop(*id, *volume, pan, *priority);
-                }
-                Event::StopSound { id } => a.stop(*id),
-                _ => {}
-            }
-        }
-    }
+    let _ = before;
+    // Every request since the last frame (level setup's BGMusicStart, the
+    // shop and map screens' leftovers included).
+    let new: Vec<Event> = sim.game.events.drain(..).collect();
+    play_audio(&mut audio, &new, me, right);
     for e in new {
         match e {
             Event::Exp { amount, .. } => sim.exp += i64::from(amount),
@@ -3891,11 +3919,10 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.insert_resource(hud_sets);
     world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
+    // The stage music starts from the level's BGMusicStart request.
+    let _ = stage;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
-        if let Some(st) = stage {
-            a.music(&st);
-        }
     }
     if let Some((path, why)) = recovered {
         world.resource_mut::<Sim>().last_event = format!("save recovered from {} ({why})", path.display());
@@ -4775,9 +4802,6 @@ fn advance_level(
             }
             if let Some(a) = audio.as_mut() {
                 a.stop_all();
-                if let Some(stage) = game.sounds.stage.as_ref() {
-                    a.music(&stage.stream_name(0, 0));
-                }
             }
             session.current = idx;
             init_hud(&mut game, &sources, &session, &front, &mut hud_sets);
