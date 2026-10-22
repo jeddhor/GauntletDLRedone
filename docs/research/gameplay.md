@@ -187,8 +187,8 @@ hud.md.)
   (subtype 0 continuously unless LockCamReq and object flag 4; subtype 2 once
   triggered until +0xfc reaches ±+0xf8, then +0xd8 |= 0x1000; subtype 1 is a
   co-op camera target, presentation). The object's flag 1 is cleared so
-  collision uses the full matrix. Native composition of rotated nodes with
-  their parents (rows × parent rows) is not verified against GetWorldMat.
+  collision uses the full matrix. Rotated nodes compose through GetWorldMat's
+  MulMat4 chain (collision.md); no rotator has been traced yet.
   AudioRotator 0x160020 (snd1_370 0x23d568 loop, snd2_371 0x23d5a0 stop).
 - Lookouts (game/lookouts.rs): kind-8/10 locators, at most 0x14, +0x30
   position, +0x70 next (locator +2), +0x72 parameter (locator +1). Actual
@@ -214,14 +214,13 @@ hud.md.)
   closed realms (WorldOpen: Temple/Hell/Battle need shards, Hell all runes).
   PlayersSetWaveFinished records each completed level. With the fixture save
   (G1 in progress) the tower offers the first level of A, B, C, D, G, I, J
-  and K. Not modelled: Sumner (secret character), TowerCheckMessages
-  speeches/window cameras, shard/rune display, exit model swaps. The client's
+  and K. Since ported (tower.rs, pselect.rs, hud.md): Sumner as a select-screen
+  character, TowerCheckMessages' speeches, captions and cameras, the
+  shard/rune display and the exit reveals. The client's
   campaign mode (`run_play.py --campaign`) starts in the tower; exits and the
   boss TowerWave pick the next level by (world, level).
-- Camera (HYPOTHESIS, do_camera not ported): the simulation camera follows
-  player 0's rest pose after every update; it gates placed-enemy spawns and
-  item activation. It was previously fixed at the level start, so placed
-  enemies spawned only near the start.
+- Camera: superseded — the gameplay camera is the ported StdCam (camera.md),
+  whose culling view gates placed-enemy spawns and item activation.
 - ResolveWorldData 0x161738 rewrites each LEVL record once (+6 0 → 1) and
   clears flag bit 0: zero fields +0xac..+0xdc take +0xa8 (+0xa8 and +0xc4
   default 1.0), +0xa8/+0xb0/+0xb4/+0xd0/+0xd4/+0xdc are multiplied by

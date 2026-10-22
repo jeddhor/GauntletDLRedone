@@ -2868,9 +2868,6 @@ fn present_particles(
     }
 }
 
-/// The interim player simulation of a character: the captured template
-/// with the record's class values (speed +0x124, collision offset +0x81c,
-/// radius +0x828, height +0x82c, scales +0x964/+0x968/+0x96c).
 /// Build the native game for level `idx` with player 0's record `carry`,
 /// entered at the level's start locator (get_player_pos). init_next_level's
 /// record steps run first: load_player_geo/load_player (profile::level_start)
@@ -4161,11 +4158,10 @@ fn present_player(
         }
         if ui.details {
             t.push_str(&format!(
-                "\n\nINTERIM PLAYTEST (not the M12 slice). player updates {}\n\
-                 Native: item/enemy/generator/missile/damage/pickup/magic/exp/exit/sound-cue systems, movement + collision\n\
-                 Interim/presentation: session globals from the capture, player clip clock, camera, unlit materials, menus,\n\
-                 enemy frame objects, item rest poses, approximate audio mixing, magic without animation, melee holds the player still, boss pose without blending\n\
-                 Enter after death: interim continue   F9: debug skip to next level{}",
+                "\n\nINTERIM BUILD (the M12 slice is not accepted). player updates {}\n\
+                 Native, compared with reference traces: players, enemies, items, effects, world animation, camera\n\
+                 Approximate: session globals start from the capture, audio mixing, critter poses without sequence blending,\n\
+                 the GS's per-draw truncation in lighting   F9: debug skip to next level{}",
                 sim.updates,
                 g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),
             ));
@@ -5917,7 +5913,7 @@ fn load_level_packages(cache: &mut HashMap<String, Package>, cfg: &HashMap<Strin
 }
 
 /// Level complete → banner → next level (exit destination wave), or the
-/// end of the playable realm. Enter continues after death (interim).
+/// end of the playable realm.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn advance_level(
     mut commands: Commands,

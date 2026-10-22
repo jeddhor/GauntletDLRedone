@@ -13,8 +13,10 @@ SELECT A CHARACTER: saved characters, "Create a new character" (eight base
 classes, four colours, up to seven letters/digits) and, until done once,
 "Import PELE (PS2 savestate capture)" — the save region of the character in
 the preserved savestate, copied into a new native slot (the capture is only
-read). Every game starts in the Tower. Options → Audio sets music and sound
-volume (stored in options.json); the other entries say "not ported yet".
+read). Every game starts in the Tower. Options follow the original menu
+records: Audio (music and sound volume, options.json), Game Options
+(difficulty, multiplayer mode), Compass, Controls (style, vibration, auto
+aim, auto attack) and Screen (Screen Adjust).
 
 In game, Esc / P / gamepad Start opens the original pause menu: in the Tower
 Settings, Manage Character, Shop, Inventory, Quit Game; in a realm Settings,
@@ -30,20 +32,21 @@ Level returns to the Tower; Quit Game returns to the title without saving
 Realm portals in the Tower open per the character's progress (EnterTower,
 HideExits); a defeated boss returns to the Tower. Packages load per level.
 
-Co-op (INTERIM, M16 in progress): player 2 joins by pressing R (keyboard
-T/F/G/H move, R throw, Y potion) or South on gamepad 2; gamepads 1–4 drive
-players 1–4 (D-pad or left stick, South throw, East potion). A joining player
-is a copy of player 1's record (PLACEHOLDER: per-player select is not
-ported); the camera is the original StdCam (research/camera.md).
+Co-op (M16 in progress): player 2 joins by pressing R (keyboard T/F/G/H
+move, R throw, Y potion) or South on gamepad 2; gamepads 1–4 drive players
+1–4 (D-pad or left stick, South throw, East potion). Joining goes through the
+select screen (init_player_select(1)) with the player's own character and is
+placed by load_player_geo / get_player_pos; the camera is the original StdCam
+(research/camera.md).
 
 Controls: arrows/WASD move, Space/K throw, E/L use a potion (magic), F1
 toggles the diagnostics block, stand still in the exit portal to leave the
-level, F9 debug-skips to the next level. Death (kill_player): in a realm the
-player is out (keys dropped, powerups cleared); with nobody left the game
-returns to the Tower and restores the level-start state (gold and items found
-in that level are lost, as PlayerRestoreState does); in the Tower the
-player is restored at once. INTERIM: the dying animation is replaced by a
-two-second wait. Menus: arrows/WASD or D-pad,
+level, F9 debug-skips to the next level. Death: do_players state 8 plays the
+dying action, then kill_player — in a realm the player is out (keys
+dropped, powerups cleared); with nobody left game_main goes to TowerWave and
+the level-start state is restored (PlayerRestoreState); in the Tower the
+player is restored at once. Message scrolls close with Enter/Esc (the
+original's Triangle). Menus: arrows/WASD or D-pad,
 Enter/Space or South to accept, Esc/Backspace or East to go back; Esc on the
 "Press Start" screen exits. The HUD shows colour/class, level, experience,
 save slot, health, gold, keys, potions, kills, active enemies and standing
@@ -52,11 +55,25 @@ generators; F1 adds the interim labels and any unported path hit.
 Audio: original sound effects, announcer lines and level music play through
 ALSA (research/audio.md); mixing is approximate. `--virtual` runs are silent.
 
-Bosses (research/critters.md): the boss is simulated by the native critter
-engine and drawn from its skeleton (no sequence blending); the HUD shows its
-health. Only the lich (G5) has been run end to end; other bosses may stop at an
-unported path (grab, fire cones, the chimera's heads), shown as SIMULATION
-STOPPED. Players currently walk through critters.
+Bosses (research/critters.md): the native critter engine (boss AI, grab and
+fire cones, the chimera's heads, BOSSGEN, death, coin spew, the good wizard;
+statue golems, gargoyles and generals) with PlayerCollideCritters; critters
+are drawn from their skeletons without sequence blending (not modelled). The
+HUD shows the boss meters.
+
+Current state (2026-10-22): the simulation (do_players, do_enemies,
+ProcessItems, ProcessEffects, world animation, the StdCam) is compared update
+by update with reference traces of G1 combat and the Tower's new game — every
+part equal on trace-fight-g1-v6, trace-combat-g1-v4, trace-varied-g1-v2 and
+the Tower traces except sound items' audio handles (gameplay.md). The
+paragraphs below up to the smoke tests describe the 2026-10-16..18 interim
+build and are kept as history; the materials, item poses, enemy frames,
+missiles and effects they call presentation-only have since been ported
+(rendering.md). Still approximate: audio mixing (SPU curves), critter
+sequence blending, the GS's per-draw integer truncation in lighting
+(rendering.md "Tower lighting comparison"). Smoke test 2026-10-22 (Xvfb):
+attract → title → Load → the Tower, the welcome scroll pages, crystals
+collected with their pickup effects and the crystal counter.
 
 Start: player records are built natively from the save region
 (game::profile: PlayerLoadSaveFile / new_player + change_player, then the
