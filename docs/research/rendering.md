@@ -210,8 +210,8 @@ they keep their vertex colours. The VU1 microcode was not read.
   MODULATE — a second pass of the alternate texture blended by its alpha
   where the base wrote alpha bit 7); ≥ 0: the alternate for subobjects
   whose texture equals the mode (texmod swaps). gdl_play folds the keep-A
-  pass into the fragment (GsMaterial::overlay). HYPOTHESIS: it uses the
-  base UVs (the VU1 microcode is unread).
+  pass into the fragment (GsMaterial::overlay). It uses the base UVs:
+  VU1 program A kicks the same vertex block for it (see "VU1 microcode").
 - Effect slots draw EffectHeaders' trees (WEAPONS, POWERUPS or the critter
   file's model) and FamiliarSpit trees with their node flags, posed each
   frame by tree_pose at (ATime − start) × 900 / timing (sequence 0).
@@ -444,6 +444,20 @@ code. Two programs light vertices:
   cosθ / d, 1) of the light colour. pb_do_poslights (0x272004) is 1 and only
   pbDrawObject reads it: every object gets the lights within its reach,
   world draws included.
+- Second pass of program A (pairs 765..836): with header word 1.y bit
+  0x80 the subroutine at pair 267 writes a register block after the
+  vertices and the vertex block (its start saved at mem[9].w, pair 474) is
+  XGKICKed again under a new GIF tag — the keep-A pass (alternate texture,
+  −4) reuses the base pass's STQ, colours and positions (read; the earlier
+  HYPOTHESIS holds).
+- Chrome in program A (pairs 591..627): with mem[17].w set, u = N·mem[62],
+  v = N·mem[63] (setChrome uploads its two axes × 0.1333 = 1/7.5 there with
+  UNPACK V3-32 at 0x3e, so these are n̂·axis); header word 1.y bit 0x40
+  warps both to 0.6 t + 0.4 t³; then uv = uv × mem[15].xy + mem[16].xy, the
+  per-object UV scale and offset from the object header (pairs 131..157;
+  the init program sets 256 / 0, i.e. ITOF15 UVs / 128). The values the EE
+  writes there for chrome draws are not traced (gdl_play adds the camera
+  angles as the offset at scale 1).
 - gdl_play: lit materials min(min(ambient + N·L light, 1) + Σ, 255/128);
   vertex-coloured materials min(min(colour × (1 + add), 1) + Σ, 255/128).
   HYPOTHESIS: vf12 of program B is MBLightmapMod/MBNoShadeMod's 1 + add

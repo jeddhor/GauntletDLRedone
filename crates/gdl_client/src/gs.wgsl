@@ -107,7 +107,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Keep-A pass (setupKeepA): the same geometry with the alternate
     // texture, TFX MODULATE, ALPHA_1 0x44 and TEST_1 0x5c000 (DATE/DATM:
     // only where the base pass wrote alpha bit 7, Av >= 0x80).
-    // HYPOTHESIS: it uses the base UVs (the VU1 microcode is unread).
+    // VU1 program A re-kicks the base pass's vertex block for it, so it
+    // uses the base UVs (rendering.md "VU1 microcode").
     let o = textureSample(overlay_texture, overlay_sampler, in.uv + params.options.zw);
     if params.extra.x > 0.5 && alpha >= 0.999 {
         let os = min(cf * o.rgb, vec3(1.0));
