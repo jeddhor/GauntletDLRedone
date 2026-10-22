@@ -101,7 +101,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    the system ffmpeg, audio decoded natively — decisions/0003-movies.md):
    the level movies after the map screen, victory/garm before the shop.
    Fixed: the map screen's end opened the select screen (shared signal).
-   Next: the attract sequence (Screen2D, movies, flybys, credits).
+   2026-10-22: the attract sequence at boot and after the title's timeout
+   (SONY screen + card check, MIDWAY/OPENING/TITLE2 and the class movies,
+   group shots, credits; flybys passed over — hud.md). Movie frames now
+   rebind their material each frame (in-game movies showed a frozen frame).
 
 ---
 

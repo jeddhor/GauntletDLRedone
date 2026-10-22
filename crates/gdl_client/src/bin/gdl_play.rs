@@ -363,6 +363,31 @@ struct Front {
     controls_menu: Option<gdl_core::game::optmenu::ControlsMenu>,
     menu_clock: (Option<(&'static str, usize)>, f32),
     base: Base,
+    /// The attract sequence (init_attract_mode), its running entry and the
+    /// entry's blits; SONY, GROUP1 and CREDITS as front texture sets 3–5.
+    attract: gdl_core::game::attract::Attract,
+    attract_run: Option<AttractRun>,
+    attract_blits: Vec<gdl_core::game::hud::Blit>,
+    credits: gdl_core::game::attract::Credits,
+    attract_pkgs: Vec<Package>,
+    /// titlescreen_timeout in vblanks (init_titlescreen_timer: 0x708) and
+    /// the attract modes' 30 Hz step clock (SetMaxFPS(0x1e)).
+    title_timeout: f32,
+    attract_clock: f32,
+}
+
+/// The running attract entry (game modes 0x8000..0x8008; the title screen
+/// is the front end's Press Start page).
+enum AttractRun {
+    /// Screen2D table 0: the SONY screen during the card check.
+    Card(gdl_core::game::attract::CardCheck),
+    /// Screen2D tables 1/2: the group shot for screen2dtimeleft vblanks
+    /// (NATIVE: no flyby level loads behind it).
+    Group { left: i32 },
+    /// init_movie / do_movie: "/MPEG2/<name>.pss".
+    Movie { name: String, player: Option<gdl_client::movie::MoviePlayer>, tried: bool },
+    /// init_credits / do_credits.
+    Credits,
 }
 
 /// Front-end text (menus) drawn over everything.
@@ -1392,11 +1417,90 @@ struct Sim {
 #[derive(Component)]
 struct MovieQuad;
 
-/// InitMovie / ServeMovie / KillMovie on the host: on a movie's first frame
-/// the decoder starts (gdl_client::movie; a missing file or decoder ends
-/// the movie as a failed InitMovie does) and its soundtrack plays on the
-/// music channel; each frame shows the newest due video frame over the
-/// whole screen (GS alpha 0x80); afterwards the quad hides and the
+/// The assets a movie frame touches: images, blit materials, meshes.
+type MovieAssets<'w> = (ResMut<'w, Assets<Image>>, ResMut<'w, Assets<gdl_client::BlitMaterial>>, ResMut<'w, Assets<Mesh>>);
+
+/// The movie frame's image (shared by the in-game and attract movies).
+#[derive(Resource, Default)]
+struct MovieScreen {
+    image: Option<Handle<Image>>,
+    material: Option<Handle<gdl_client::BlitMaterial>>,
+}
+
+/// Show `frame` (640×480 RGBA, GS alpha forced to 0x80) on the full-screen
+/// movie quad, creating the quad and its image on first use.
+#[allow(clippy::too_many_arguments)]
+fn show_movie_frame(
+    commands: &mut Commands,
+    screen: &mut MovieScreen,
+    images: &mut Assets<Image>,
+    mats: &mut Assets<gdl_client::BlitMaterial>,
+    meshes: &mut Assets<Mesh>,
+    quad: &mut Query<&mut Visibility, With<MovieQuad>>,
+    frame: Option<Vec<u8>>,
+) {
+    let img = screen
+        .image
+        .get_or_insert_with(|| {
+            let size = (gdl_client::movie::WIDTH * gdl_client::movie::HEIGHT * 4) as usize;
+            let mut im = Image::new(
+                bevy::render::render_resource::Extent3d { width: gdl_client::movie::WIDTH, height: gdl_client::movie::HEIGHT, depth_or_array_layers: 1 },
+                bevy::render::render_resource::TextureDimension::D2,
+                [0, 0, 0, 0x80].repeat(size / 4),
+                bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+                bevy::asset::RenderAssetUsages::default(),
+            );
+            im.sampler = bevy::image::ImageSampler::linear();
+            images.add(im)
+        })
+        .clone();
+    if let Some(mut f) = frame {
+        if std::env::var_os("GDL_DEBUG_ATTRACT").is_some() {
+            let sum: u64 = f.iter().step_by(4).map(|&v| u64::from(v)).sum();
+            eprintln!("MOVIE frame mean red {}", sum / (f.len() as u64 / 4).max(1));
+        }
+        for px in f.chunks_exact_mut(4) {
+            px[3] = 0x80;
+        }
+        if let Some(im) = images.get_mut(&img) {
+            im.data = Some(f);
+        }
+        // The material's bind group holds the texture it was prepared with:
+        // mark it changed so the new frame is bound.
+        if let Some(m) = screen.material.as_ref() {
+            let _ = mats.get_mut(m);
+        }
+    }
+    if quad.is_empty() {
+        let params = gdl_client::BlitParams { rgba: Vec4::ONE, crop: Vec4::new(0.0, 1.0, 0.0, 1.0), mask_rect: Vec4::ZERO };
+        let mat = mats.add(gdl_client::BlitMaterial { params, texture: Some(img), mask: None });
+        screen.material = Some(mat.clone());
+        commands.spawn((
+            Mesh2d(meshes.add(Rectangle::new(1.0, 1.0))),
+            MeshMaterial2d(mat),
+            Transform::from_xyz(0.0, 0.0, 50.0).with_scale(Vec3::new(512.0, 384.0, 1.0)),
+            Visibility::Visible,
+            bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
+            MovieQuad,
+        ));
+    } else {
+        for mut v in quad.iter_mut() {
+            *v = Visibility::Visible;
+        }
+    }
+}
+
+fn hide_movie(quad: &mut Query<&mut Visibility, With<MovieQuad>>) {
+    for mut v in quad.iter_mut() {
+        *v = Visibility::Hidden;
+    }
+}
+
+/// InitMovie / ServeMovie / KillMovie on the host for init_gamemovie: on a
+/// movie's first frame the decoder starts (gdl_client::movie; a missing
+/// file or decoder ends the movie as a failed InitMovie does) and its
+/// soundtrack plays on the music channel; each frame shows the newest due
+/// video frame over the whole screen; afterwards the quad hides and the
 /// soundtrack stops.
 #[allow(clippy::too_many_arguments)]
 fn present_movie(
@@ -1404,20 +1508,16 @@ fn present_movie(
     time: Res<Time>,
     mut sim: ResMut<Sim>,
     front: Res<Front>,
-    mut images: ResMut<Assets<Image>>,
-    mut mats: ResMut<Assets<gdl_client::BlitMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut screen: ResMut<MovieScreen>,
+    (mut images, mut mats, mut meshes): MovieAssets,
     mut quad: Query<&mut Visibility, With<MovieQuad>>,
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
-    mut image: Local<Option<Handle<Image>>>,
     mut showing: Local<bool>,
 ) {
     let mut note = None;
     let Some(run) = sim.movie.as_mut() else {
         if std::mem::take(&mut *showing) {
-            for mut v in &mut quad {
-                *v = Visibility::Hidden;
-            }
+            hide_movie(&mut quad);
             if let Some(a) = audio.as_mut() {
                 a.stream_stop();
             }
@@ -1446,45 +1546,179 @@ fn present_movie(
     if let Some(n) = note {
         sim.last_event = n;
     }
-    let img = image
-        .get_or_insert_with(|| {
-            let size = (gdl_client::movie::WIDTH * gdl_client::movie::HEIGHT * 4) as usize;
-            let mut im = Image::new(
-                bevy::render::render_resource::Extent3d { width: gdl_client::movie::WIDTH, height: gdl_client::movie::HEIGHT, depth_or_array_layers: 1 },
-                bevy::render::render_resource::TextureDimension::D2,
-                [0, 0, 0, 0x80].repeat(size / 4),
-                bevy::render::render_resource::TextureFormat::Rgba8Unorm,
-                bevy::asset::RenderAssetUsages::default(),
-            );
-            im.sampler = bevy::image::ImageSampler::linear();
-            images.add(im)
-        })
-        .clone();
-    if let Some(mut f) = frame {
-        for px in f.chunks_exact_mut(4) {
-            px[3] = 0x80;
-        }
-        if let Some(im) = images.get_mut(&img) {
-            im.data = Some(f);
-        }
-    }
-    if quad.is_empty() {
-        let params = gdl_client::BlitParams { rgba: Vec4::ONE, crop: Vec4::new(0.0, 1.0, 0.0, 1.0), mask_rect: Vec4::ZERO };
-        let mat = mats.add(gdl_client::BlitMaterial { params, texture: Some(img), mask: None });
-        commands.spawn((
-            Mesh2d(meshes.add(Rectangle::new(1.0, 1.0))),
-            MeshMaterial2d(mat),
-            Transform::from_xyz(0.0, 0.0, 50.0).with_scale(Vec3::new(512.0, 384.0, 1.0)),
-            Visibility::Visible,
-            bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
-            MovieQuad,
-        ));
-    } else {
-        for mut v in &mut quad {
-            *v = Visibility::Visible;
-        }
-    }
+    show_movie_frame(&mut commands, &mut screen, &mut images, &mut mats, &mut meshes, &mut quad, frame);
     *showing = true;
+}
+
+/// init_attract_mode(param) and the entry it starts. NATIVE: the flybys
+/// (a level under the old Cam system, not ported) are passed over; the
+/// title screen is the front end's Press Start page (init_titlescreen and
+/// its timer 0x708).
+fn start_attract(front: &mut Front, param: i32) {
+    use gdl_core::game::attract::AttractEntry;
+    let mut p = param;
+    for _ in 0..32 {
+        let entry = front.attract.init_attract_mode(p, false);
+        p = -1;
+        front.attract_clock = 0.0;
+        front.attract_run = match entry {
+            AttractEntry::Flyby => continue,
+            AttractEntry::Titlescreen => {
+                front.menu.page = gdl_client::menu::Page::PressStart;
+                front.title_timeout = 1800.0;
+                None
+            }
+            AttractEntry::Screen2D { table: 0 } => Some(AttractRun::Card(Default::default())),
+            AttractEntry::Screen2D { .. } => Some(AttractRun::Group { left: 60 }),
+            AttractEntry::Movie { name } => Some(AttractRun::Movie { name, player: None, tried: false }),
+            AttractEntry::Credits => {
+                front.credits.scroll = 0;
+                front.credits.timer = 0;
+                Some(AttractRun::Credits)
+            }
+        };
+        return;
+    }
+}
+
+/// ExitAttract / init_titlescreen: Start (or accept) during an attract
+/// entry goes to the title screen.
+fn exit_attract(front: &mut Front) {
+    front.attract_run = None;
+    front.attract_blits.clear();
+    front.menu.page = gdl_client::menu::Page::PressStart;
+    front.title_timeout = 1800.0;
+}
+
+/// The attract entries per frame at 30 Hz (SetMaxFPS(0x1e), vb_elapsed 2),
+/// and the title screen's timeout back into the sequence.
+#[allow(clippy::too_many_arguments)]
+fn run_attract(
+    mut commands: Commands,
+    time: Res<Time>,
+    screen_mode: Res<Screen>,
+    mut front: ResMut<Front>,
+    mut screen: ResMut<MovieScreen>,
+    (mut images, mut mats, mut meshes): MovieAssets,
+    mut quad: Query<&mut Visibility, With<MovieQuad>>,
+    mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
+    mut last: Local<(bool, bool)>,
+) {
+    let dt = time.delta_secs();
+    if *screen_mode != Screen::Front {
+        return;
+    }
+    let front = &mut *front;
+    let movie_now = matches!(front.attract_run, Some(AttractRun::Movie { .. }));
+    let credits_now = matches!(front.attract_run, Some(AttractRun::Credits));
+    // Leaving a movie or the credits: the quad hides, the sound stops.
+    if last.0 && !movie_now {
+        hide_movie(&mut quad);
+        if let Some(a) = audio.as_mut() {
+            a.stream_stop();
+        }
+    }
+    if last.1 && !credits_now
+        && let Some(a) = audio.as_mut()
+    {
+        a.stream_stop();
+    }
+    if credits_now && !last.1
+        && let Some(a) = audio.as_mut()
+    {
+        // AudioStreamStart("castle2b", 1).
+        a.stream("CASTLE2B", true, 100);
+    }
+    *last = (movie_now, credits_now);
+    if front.attract_run.is_none() {
+        front.attract_blits.clear();
+        if matches!(front.menu.page, gdl_client::menu::Page::PressStart) {
+            front.title_timeout -= dt * 59.94;
+            if front.title_timeout <= 0.0 {
+                // do_titlescreen: the timeout → init_attract_mode(-1).
+                start_attract(front, -1);
+            }
+        }
+        return;
+    }
+    front.attract_clock += dt * 30.0;
+    let steps = front.attract_clock.floor() as i32;
+    front.attract_clock -= steps as f32;
+    let vb = 2 * steps;
+    let mut next = false;
+    match front.attract_run.as_mut() {
+        Some(AttractRun::Card(check)) => {
+            front.attract_blits = front.ui_hud.screen_blits("SONY_SCREEN");
+            // get_card_state: the native card is port 0 slot 0, formatted
+            // with room (decisions: host saves).
+            let card = |p: i32, s: i32| if (p, s) == (0, 0) { (2, true) } else { (0, false) };
+            for _ in 0..steps {
+                match check.step(&card) {
+                    Ok(true) => {
+                        front.attract.did_mc_check = 2;
+                        next = true;
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        front.menu.status = e;
+                        next = true;
+                        break;
+                    }
+                }
+            }
+        }
+        Some(AttractRun::Group { left }) => {
+            front.attract_blits = front.ui_hud.screen_blits("GROUP_SHOT_MIDWAY");
+            *left -= vb;
+            next = *left < 1;
+        }
+        Some(AttractRun::Movie { name, player, tried }) => {
+            front.attract_blits.clear();
+            if !*tried {
+                *tried = true;
+                let key = format!("MPEG2/{}", name.to_uppercase());
+                match front.base.movies.get(&key).map(|p| gdl_client::movie::MoviePlayer::start(p)) {
+                    Some(Ok(p)) => *player = Some(p),
+                    Some(Err(e)) => front.menu.status = format!("movie {key}: {e}"),
+                    None => front.menu.status = format!("movie {key} is not on the disc"),
+                }
+                if let (Some(p), Some(a)) = (player.as_mut(), audio.as_mut())
+                    && let Some((pcm, rate, ch)) = p.audio.take()
+                {
+                    a.play_pcm(pcm, rate, ch);
+                }
+            }
+            match player.as_mut() {
+                Some(p) if p.playing() => {
+                    let frame = p.advance(f64::from(dt));
+                    show_movie_frame(&mut commands, &mut screen, &mut images, &mut mats, &mut meshes, &mut quad, frame);
+                }
+                _ => next = true,
+            }
+        }
+        Some(AttractRun::Credits) => {
+            let (blits, done) = front.ui_hud.credits_frame(&mut front.credits, vb);
+            front.attract_blits = blits;
+            front.credits.timer += vb;
+            next = done || 0x1517 < front.credits.timer;
+        }
+        None => {}
+    }
+    if std::env::var_os("GDL_DEBUG_ATTRACT").is_some() {
+        let kind = match &front.attract_run {
+            Some(AttractRun::Card(_)) => "card".to_string(),
+            Some(AttractRun::Group { left }) => format!("group {left}"),
+            Some(AttractRun::Movie { name, player, .. }) => format!("movie {name} {}", player.as_ref().map_or("none", |p| if p.playing() { "playing" } else { "ended" })),
+            Some(AttractRun::Credits) => format!("credits {}", front.credits.scroll),
+            None => "title".into(),
+        };
+        let b = front.attract_blits.last().map(|b| (b.tex, b.x, b.y, b.w, b.h, b.rgba, b.z, b.crop));
+        eprintln!("ATTRACT {kind} blits {} first {b:?} next {next}", front.attract_blits.len());
+    }
+    if next {
+        start_attract(front, -1);
+    }
 }
 
 /// init_gamemovie's movie with the host's decoder (started by
@@ -4219,7 +4453,9 @@ fn present_hud(
             front_list.extend(front.ui_hud.inventory_blits(&sim.game.players, &max, front.menu_clock.1 as i32 * rate));
         }
     }
-    if *screen == Screen::Front {
+    if *screen == Screen::Front && front.attract_run.is_some() {
+        front_list.extend(front.attract_blits.clone());
+    } else if *screen == Screen::Front {
         front.title_clock += time.delta_secs() * 59.94;
         let page = &front.menu.page;
         let glow = matches!(page, gdl_client::menu::Page::PressStart | gdl_client::menu::Page::Title { .. });
@@ -4248,7 +4484,9 @@ fn present_hud(
             if !sets.images.contains_key(&key) {
                 let key_name = sets.keys.get(t.set as usize).cloned().unwrap_or_else(|| "STATIC".into());
             let pkg = if 100 <= t.set {
-                [&front.static_pkg, &front.title_pkg, &front.select_pkg].get(t.set as usize - 100).copied()
+                // Front sets: STATIC, TITLE, SELECT, then SONY, GROUP1, CREDITS.
+                let k = t.set as usize - 100;
+                [&front.static_pkg, &front.title_pkg, &front.select_pkg].get(k).copied().or_else(|| front.attract_pkgs.get(k - 3))
             } else if key_name == "STATIC" {
                 Some(&front.static_pkg)
             } else if key_name == "SELECT" {
@@ -4913,6 +5151,20 @@ fn front_system(world: &mut EcsWorld) {
     let screen = *world.resource::<Screen>();
     let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
     let (keys, toggle) = menu_keys(world, naming);
+    if screen == Screen::Front {
+        // attract_advance / do_movie's new_start: Start (or accept) leaves
+        // the attract sequence for the title screen.
+        if world.resource::<Front>().attract_run.is_some() {
+            if toggle || keys.contains(&Key::Accept) {
+                exit_attract(&mut world.resource_mut::<Front>());
+            }
+            return;
+        }
+        // init_titlescreen_timer on any input on the title.
+        if toggle || !keys.is_empty() {
+            world.resource_mut::<Front>().title_timeout = 1800.0;
+        }
+    }
     if screen == Screen::Playing {
         // game_main: no active player left (each declined to continue) →
         // init_over → the title.
@@ -4995,8 +5247,9 @@ fn front_text(
     mut backdrop: Query<(&mut Visibility, Has<FrontPanel>), With<FrontBackdrop>>,
 ) {
     let original = menu_view(&front, *screen, &ui).is_some() || select_columns(&front, *screen).is_some();
+    let attract = front.attract_run.is_some();
     for (mut v, panel) in &mut backdrop {
-        let want = if *screen == Screen::Front && !(panel && original) { Visibility::Inherited } else { Visibility::Hidden };
+        let want = if *screen == Screen::Front && !attract && !(panel && original) { Visibility::Inherited } else { Visibility::Hidden };
         if *v != want {
             *v = want;
         }
@@ -5004,7 +5257,7 @@ fn front_text(
     let Ok((mut t, mut tf)) = text.single_mut() else { return };
     // On the title the menu sits in the lower part, below the logo.
     tf.translation.y = if *screen == Screen::Front { -300.0 } else { 0.0 };
-    let show = (*screen == Screen::Front || ui.paused) && menu_view(&front, *screen, &ui).is_none() && select_columns(&front, *screen).is_none() && !inventory_view(&front, *screen, &ui);
+    let show = (*screen == Screen::Front || ui.paused) && !attract && menu_view(&front, *screen, &ui).is_none() && select_columns(&front, *screen).is_none() && !inventory_view(&front, *screen, &ui);
     let want = if show { front.menu.text() } else { String::new() };
     if t.0 != want {
         t.0 = want;
@@ -5177,6 +5430,21 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     let controls_menu = gdl_core::game::optmenu::ControlsMenu::from_elf(&elf).ok();
+    // The attract screens' packages (init_screen2d's "sony" / "group1",
+    // init_credits' "credits") as front texture sets 3–5, and the credits
+    // font (FontInitSpecial("credits", 8): font 0xd).
+    let mut attract_pkgs = Vec::new();
+    for name in ["SONY", "GROUP1", "CREDITS"] {
+        let pkg = load_package(&package_entry(&catalog, name, true)?)?;
+        ui_hud.add_texture_set(gdl_client::hud_texture_set(name, &pkg.objects));
+        attract_pkgs.push(pkg);
+    }
+    if let Ok(f) = catalog.read("FONTS/CREDITS.FNT").map_err(|e| e.to_string()).and_then(|b| gdl_formats::fnt::Font::parse(&b).map_err(|e| e.to_string())) {
+        let tex = ui_hud.lookup("CREDITS");
+        ui_hud.font_init_special(f, tex);
+    }
+    let attract = gdl_core::game::attract::Attract::from_elf(&elf)?;
+    let credits = gdl_core::game::attract::Credits::from_elf(&elf)?;
     let mut front = Front {
         menu: {
             let mut m = Menu::new(music_v, sfx_v);
@@ -5211,6 +5479,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         powerups_pkg,
         controls_menu,
         menu_clock: (None, 0.0),
+        attract,
+        attract_run: None,
+        attract_blits: Vec::new(),
+        credits,
+        attract_pkgs,
+        title_timeout: 1800.0,
+        attract_clock: 0.0,
         base: Base {
             package_cfg,
             start,
@@ -5224,6 +5499,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         },
     };
     refresh_saves(&mut front);
+    // main → init_attract_mode(-1): the boot starts the attract sequence
+    // (the SONY screen and card check, the MIDWAY, OPENING and TITLE2
+    // movies, then the title screen). DEBUG: GDL_NO_ATTRACT starts at the
+    // title.
+    // GDL_DEBUG_CREDITS starts with init_attract_mode(0x8000) (the
+    // credits, as both shoulder buttons held do).
+    if std::env::var_os("GDL_DEBUG_CREDITS").is_some() {
+        start_attract(&mut front, 0x8000);
+    } else if std::env::var_os("GDL_NO_ATTRACT").is_none() {
+        start_attract(&mut front, -1);
+    }
     // hint_menu categories → HINTS_E.ROM lists (every line of every entry,
     // in list order; NATIVE: next_*_hint's progress-based choice is not ported).
     let hints_rom = gdl_formats::textrom::TextRom::parse(&front.catalog.read("TEXT/HINTS_E.ROM")?)?;
@@ -5243,6 +5529,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<PartVariants>()
         .init_resource::<MatRequests>()
         .init_resource::<PendingTreePsys>()
+        .init_resource::<MovieScreen>()
         .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
         .init_resource::<EnemyFrames>()
         .insert_resource(Time::<Fixed>::from_hz(30.0))
@@ -5265,6 +5552,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             Update,
             (
                 front_system,
+                run_attract,
                 ps2_viewport,
                 (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
                 front_text,

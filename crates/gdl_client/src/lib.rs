@@ -189,11 +189,18 @@ pub fn hud_texture_set(name: &str, objects: &Objects) -> gdl_core::game::hud::Te
 
 /// A HUD texture (bilinear, clamped): raw GS RGBA. Format 146 (4-bit, no
 /// inline palette) takes the shared CLUT CBP 8968 the Tower dump binds for
-/// the 8Hifonts/INITIALS glyph sprites (white, alpha 8 × index).
+/// the 8Hifonts/INITIALS glyph sprites (white, alpha 8 × index). Format 130
+/// (8-bit, no palette: the CREDITS font page, texels 0/107/126/128) is read
+/// as white with the texel as GS alpha (HYPOTHESIS: an identity alpha CLUT;
+/// no dump of the credits screen).
 pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index: usize) -> Option<Image> {
     let b = objects.bitmap_records.get(index)?;
     let rgba = if b.format == 146 {
         b.decode_lightmap_indices(textures).ok()?.into_iter().flat_map(|i| [255, 255, 255, i * 8]).collect()
+    } else if b.format == 130 {
+        let n = b.width as usize * b.height as usize;
+        let start = b.texture_offset as usize;
+        textures.get(start..start.checked_add(n)?)?.iter().flat_map(|&a| [255, 255, 255, a]).collect()
     } else {
         let def = table.bitmaps.iter().find(|t| t.texture_offset == b.texture_offset && t.format == b.format && t.width == b.width && t.height == b.height)?;
         let mut rgba = def.decode_base_rgba(textures).ok()?;

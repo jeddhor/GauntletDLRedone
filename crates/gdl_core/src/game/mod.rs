@@ -3,6 +3,7 @@
 //! ProcessEffects. Records keep their original layouts (see `record`);
 //! presentation side effects (help text, audio, FX, HUD notices, vibration)
 //! are emitted as [`Event`]s instead of being performed.
+pub mod attract;
 pub mod audio_queue;
 pub mod bgmusic;
 pub mod boss;

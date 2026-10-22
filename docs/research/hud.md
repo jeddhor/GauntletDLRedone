@@ -539,4 +539,31 @@ Screen2D 0, movie table 0 (midway), movie table 1 (opening), movie table 2
 (title2), the title screen, Screen2D 1, a flyby, movie table 3 (war_dwa /
 val_kni / wiz_sor / jes_arc by attract_movie_idx), Screen2D 2, a flyby,
 credits, movie table 4 (fail, only after a failed game), repeat; movies from
-MPEG2 via init_movie/do_movie. Not ported yet.
+MPEG2 via init_movie/do_movie. init_attract_mode skips the credits unless
+(attract_count & 0xf) == 0xf (or both shoulder buttons force 0x8000), the
+table-0 screen once did_mc_check is set, the fail movie without a failed
+game and the title after the first cycle; attract_movie_idx advances each
+cycle (the class movies war_dwa, val_kni, wiz_sor, jes_arc in turn). Start
+(new_start / attract_advance) ends any entry for the title screen
+(ExitAttract → init_titlescreen); the title's timeout is
+init_titlescreen_timer's 0x708 vblanks, counted while no menu is up, after
+which init_attract_mode(-1) resumes the sequence. main calls
+init_attract_mode(-1) at boot.
+
+Ported (2026-10-22; gdl_core::game::attract, the client's run_attract):
+the sequence, Screen2D table 0 (SONY "sony_screen00..03" at screenblitxy
+during the card check: one state per 30 Hz frame over ports 0–1 × slots
+0–3; the native card is port 0 slot 0, formatted with room, so the check
+takes 18 frames and shows no message), Screen2D tables 1/2 ("group1"
+Group_shot_midway00..03 for screen2dtimeleft 60 vblanks), the MPEG2
+movies, the credits (init_credits: CRED_ALL00..03, FontInitSpecial
+("credits", 8) = font 0xd, AudioStreamStart("castle2b", 1); scroll_credits:
+credit_text / credit_text2 / credit_text3 from y 0x17f − scroll, 21/15/15
+pixels apart, the later lists at scale 0.833, MBFontMsgSetAlpha fades =
+alpha 0x80 − value/2 over 16 lines at each edge, the scroll + 1 + finished
+sections per frame; done when nothing is drawn or timer1 > 0x1517).
+Synthetic tests: the boot cycle order, the forced credits, the 18-frame
+card check. GUI: SONY screen, MIDWAY/OPENING/TITLE2, title; credits via
+GDL_DEBUG_CREDITS. Not ported: the flybys (init_flyby/do_flyby: an
+attract level under the old Cam system; passed over), the card-check
+messages for a missing, unformatted or full card, the "Version" text.
