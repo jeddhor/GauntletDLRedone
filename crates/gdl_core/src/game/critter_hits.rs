@@ -438,39 +438,42 @@ impl Game {
             }
         }
         let Some(h) = self.effects.tables.headers.get(header as usize).copied().flatten() else { return Ok(-1) };
-        let world = if attach {
-            // SfxSetParent: 0x800 the MB parent of +0xcc (a root's own matrix,
-            // a child's tree parent), 1 the +0xcc animation root, otherwise
-            // the +0xdc transition node; spawned at the parent's world
-            // transform of the local offset.
+        // SfxSetParent: 0x800 the MB parent of +0xcc (a root's own +0x70
+        // node, a child's tree parent), 1 the +0xcc animation root, otherwise
+        // the +0xdc transition node. The effect node keeps the offset as its
+        // local translation under that node and follows it (ProcessEffects'
+        // GetWorldMat; trace-g5-boss-v1 step 166, the lich's attack effect).
+        let parent = if attach {
             let ar = self.crit(i).anim_root;
-            let node = if flags & 0x800 != 0 {
+            if flags & 0x800 != 0 {
                 match usize::try_from(self.crit(i).parents[ar]) {
-                    Ok(p) => Some(Some(p)),
-                    Err(_) => Some(None),
+                    Ok(p) => Some((self.critter_pose_owner(i), Some(p))),
+                    Err(_) => Some((self.critter_pose_owner(i), None)),
                 }
             } else if flags & 1 != 0 {
-                Some(Some(ar))
+                Some((i, Some(ar)))
             } else {
-                self.crit(i).node_dc.map(Some)
-            };
-            match node {
-                Some(Some(n)) => {
-                    let m = self.critter_node_world(i, n, Some(pos))?;
-                    [m[12], m[13], m[14]]
-                }
-                Some(None) => {
-                    let o = self.critter_pose_owner(i);
-                    let m = crate::tree_pose::node_world(&[-1], &[crate::tree_pose::IDENTITY], self.critter_root_pub(o), 0, Some(pos)).map_err(|e| Unsupported(e.0))?;
-                    [m[12], m[13], m[14]]
-                }
-                None => pos,
+                self.crit(i).node_dc.map(|n| (i, Some(n)))
             }
         } else {
-            pos
+            None
+        };
+        let world = match parent {
+            Some((c, Some(n))) => {
+                let m = self.critter_node_world(c, n, Some(pos))?;
+                [m[12], m[13], m[14]]
+            }
+            Some((c, None)) => {
+                let m = crate::tree_pose::node_world(&[-1], &[crate::tree_pose::IDENTITY], self.critter_self_world(c)?, 0, Some(pos)).map_err(|e| Unsupported(e.0))?;
+                [m[12], m[13], m[14]]
+            }
+            None => pos,
         };
         let time = CritterFile::f32_pub(srec, 0x3c);
         let k = self.start_fx_tree(time, Visual::Header(header as usize), h.frames, h.timing, Some(world), fl)?;
+        if let (Some((c, n)), Some(node)) = (parent, self.effects.nodes[k].as_mut()) {
+            node.parent = Some(super::effects::EffectParent { player: 0, local: pos, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: Some((c, n)) });
+        }
         self.fx_mut(k).set_u32(fx::KIND, header as u32);
         let id = self.crit(i).rec.u16_(c::ID) | 0x1000;
         self.fx_mut(k).set_i16(fx::OWNER, id as i16);

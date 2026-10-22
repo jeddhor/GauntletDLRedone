@@ -531,7 +531,7 @@ impl Game {
             }
             let v = mul_vec_mat3(pos, &rows)?;
             let w = [add(v[0], base[0])?, add(v[1], base[1])?, add(v[2], base[2])?];
-            (w, rows, Some(EffectParent { player: owner, local: pos, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] }))
+            (w, rows, Some(EffectParent { player: owner, local: pos, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: None }))
         };
         let k = self.start_fx_tree(time, Visual::Header(header as usize), h.frames, h.timing, Some(world), fx_flags)?;
         self.fx_mut(k).set_u32(fx::KIND, header as u32);

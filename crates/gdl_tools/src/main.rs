@@ -394,15 +394,26 @@ impl ReferenceEffects {
         }
         let f = |o: usize| f32::from_le_bytes(n[o..o + 4].try_into().unwrap());
         let v = |o: usize| [f(o), f(o + 4), f(o + 8)];
-        Some(gdl_core::game::effects::EffectParent { player: 0, local: v(0x30), local_matrix: [v(0), v(0x10), v(0x20)] })
+        Some(gdl_core::game::effects::EffectParent { player: 0, local: v(0x30), local_matrix: [v(0), v(0x10), v(0x20)], critter: None })
     }
 
-    fn seed(&self, game: &mut gdl_core::game::Game, items_base: u32, atime: f32, player_node: u32) {
+    /// A node parented to a critter's MB node (CritterDoSfxSub's
+    /// SfxSetParent): `critter_nodes` maps the traced node pointers to
+    /// (instance, tree node; None for the instance's +0x70 node).
+    fn critter_parent(n: &[u8], critter_nodes: &std::collections::HashMap<u32, (usize, Option<usize>)>) -> Option<gdl_core::game::effects::EffectParent> {
+        let par = u32::from_le_bytes(n[0x74..0x78].try_into().unwrap());
+        let &(c, node) = critter_nodes.get(&par)?;
+        let f = |o: usize| f32::from_le_bytes(n[o..o + 4].try_into().unwrap());
+        let v = |o: usize| [f(o), f(o + 4), f(o + 8)];
+        Some(gdl_core::game::effects::EffectParent { player: 0, local: v(0x30), local_matrix: [v(0), v(0x10), v(0x20)], critter: Some((c, node)) })
+    }
+
+    fn seed(&self, game: &mut gdl_core::game::Game, items_base: u32, atime: f32, player_node: u32, critter_nodes: &std::collections::HashMap<u32, (usize, Option<usize>)>) {
         for (k, raw) in self.slots.iter().enumerate().take(game.effects.slots.len()) {
             game.effects.slots[k] = gdl_core::game::record::Record(Self::native(raw, items_base));
             game.effects.nodes[k] = self.nodes.get(&k).map(|n| {
                 let mut node = Self::node(n, atime);
-                node.parent = Self::player_parent(n, player_node);
+                node.parent = Self::player_parent(n, player_node).or_else(|| Self::critter_parent(n, critter_nodes));
                 node
             });
         }
@@ -505,6 +516,21 @@ impl ReferenceCritters {
             }
         }
         Ok(true)
+    }
+
+    /// The live instances' MB node pointers: +0x70 → (k, None), CritterGetNode's
+    /// table entries → (k, Some(index)).
+    fn node_pointers(&self) -> std::collections::HashMap<u32, (usize, Option<usize>)> {
+        let mut m = std::collections::HashMap::new();
+        for (&k, (_, _, tree)) in &self.nodes {
+            if let Some(r) = self.slots.get(k) {
+                m.insert(Self::word(r, 0x70), (k, None));
+            }
+            for (n, &p) in tree.iter().enumerate() {
+                m.insert(p, (k, Some(n)));
+            }
+        }
+        m
     }
 
     fn global(&self, name: &str) -> Result<Vec<u8>, Box<dyn Error>> {
@@ -2059,7 +2085,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         gl.camera_98 = fl(&win[0x98..]);
                         let atime = gl.atime;
                         let player_node = word(&hexb(&bp["player0"])?[0x80..]);
-                        fx_b.seed(game, items_base, atime, player_node);
+                        fx_b.seed(game, items_base, atime, player_node, &crit_b.node_pointers());
                         if have_crit {
                             crit_b.seed(game, items_base, &obj_b)?;
                         }

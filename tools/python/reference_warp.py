@@ -25,22 +25,16 @@ import time
 
 from pine_probe import Pine, configured_socket
 from reference_player import elf_symbols
+from reference_slots import SLOTS, STAGE_SLOT, resolve, stage_is_preserved, state_file
 from virtual_display import environment
 
 KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L', 'Return']
-SLOTS = {1: 'poison-fields-original.p2s', 2: 'tower-newgame-v1.p2s', 3: 'w2l1-newgame-v1.p2s',
-         4: 'w1l1-newgame-v1.p2s', 5: 'w11l1-newgame-v1.p2s', 6: 'w7l1-newgame-v1.p2s', 7: 'w11l1-newgame-v2.p2s',
-         8: 'w2l6-boss-v1.p2s'}
-SSTATES = pathlib.Path('private/reference/config/PCSX2/sstates')
-
-
-def state_file(slot):
-    return SSTATES / f'SLUS-20047 (15030637).{slot:02d}.p2s'
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--slot', type=int, choices=sorted(SLOTS), required=True)
+    parser.add_argument('--slot', type=int, choices=sorted(SLOTS), default=0)
+    parser.add_argument('--stage', help='a preserved capture name to start from through the staging slot 9')
     parser.add_argument('--pos', type=float, nargs=3, help='player 0 position written after the reload (guest write)')
     parser.add_argument('--skip-wave', type=lambda v: int(v, 0), help="skip_wave written after the reload: 0x10000 + world << 8 | record (do_exit's wave skip; guest write)")
     parser.add_argument('--schedule', type=pathlib.Path, required=True, help='JSON list of {steps, keys} segments')
@@ -64,8 +58,9 @@ def main():
             raise ValueError(f'{p}: outputs must be new private files')
     capture = None
     if args.save_slot is not None:
-        if not 3 <= args.save_slot <= 9 or args.save_slot in SLOTS or state_file(args.save_slot).exists():
-            raise ValueError('save slot must be 3..9 and not exist yet')
+        free = not state_file(args.save_slot).exists() or (args.save_slot == STAGE_SLOT and stage_is_preserved())
+        if not 3 <= args.save_slot <= 9 or args.save_slot in SLOTS or not free:
+            raise ValueError('save slot must be 3..9, unbound, and empty (or the staging slot holding a preserved copy)')
         if not args.capture:
             raise ValueError('--save-slot needs --capture')
         capture = pathlib.Path('private/reference/captures') / args.capture
@@ -75,9 +70,9 @@ def main():
     env = environment()
     if launch.get('display') != env['DISPLAY'] or not launch.get('diagnostic_hotkeys'):
         raise ValueError('reference was not launched with virtual-display stepping bindings')
-    fixture, frozen = state_file(args.slot), pathlib.Path('private/reference/captures') / SLOTS[args.slot]
-    if hashlib.sha256(fixture.read_bytes()).digest() != hashlib.sha256(frozen.read_bytes()).digest():
-        raise ValueError(f'private slot {args.slot} differs from its preserved capture')
+    if not args.stage and args.slot not in SLOTS:
+        raise ValueError('give --slot N or --stage CAPTURE')
+    args.slot, frozen = resolve(args.slot, args.stage)
     profile = json.loads(pathlib.Path('profiles/ps2/slus-20047-reference.json').read_text())
     vb_counter = profile['symbols']['vb_counter']['guest_address']
     sym = elf_symbols({'players', 'CurWorld', 'CurLevel', 'game_mode', 'skip_wave'})
@@ -164,8 +159,13 @@ def main():
             for key in held:
                 xdo('keyup', key)
         if args.save_slot is not None:
-            pine.request(bytes([0x09, args.save_slot]))
             target = state_file(args.save_slot)
+            if target.exists():
+                # Only the staging slot can exist here, holding a preserved copy.
+                if args.save_slot != STAGE_SLOT or not stage_is_preserved():
+                    raise ValueError('save slot changed during the run')
+                target.unlink()
+            pine.request(bytes([0x09, args.save_slot]))
             deadline = time.monotonic() + 30
             last = -1
             while time.monotonic() < deadline:
@@ -181,7 +181,7 @@ def main():
         time.sleep(0.3)
         subprocess.run(['import', '-window', 'root', str(args.shot)], env=env, check=True)
     with args.report.open('x') as f:
-        json.dump(dict(source_slot=args.slot, source_capture=SLOTS[args.slot], warped=bool(args.pos) or args.skip_wave is not None,
+        json.dump(dict(source_slot=args.slot, source_capture=frozen.name, warped=bool(args.pos) or args.skip_wave is not None,
                        schedule=segments, log=log), f, indent=1)
     for entry in log:
         print(entry)

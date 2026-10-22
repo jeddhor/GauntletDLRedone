@@ -116,12 +116,15 @@ pub struct EffectNode {
     pub follow: Option<usize>,
 }
 
-/// An effect node parented to a player node: local position and rotation.
+/// An effect node parented to a player node, or (CritterDoSfxSub's
+/// SfxSetParent) to a critter's node — `critter` = (instance, tree node; None
+/// for the instance's own +0x70 node): local position and rotation.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct EffectParent {
     pub player: usize,
     pub local: V3,
     pub local_matrix: [V3; 3],
+    pub critter: Option<(usize, Option<usize>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -2414,17 +2417,32 @@ impl Game {
 
     fn process_effect(&mut self, i: usize) -> R<()> {
         if let Some(Some(par)) = self.effects.nodes[i].map(|n| n.parent) {
-            // The parent node's world transform this update (psfx.rs HYPOTHESIS).
-            let r = &self.players[par.player];
-            let rows = [r.v3(0x20), r.v3(0x30), r.v3(0x40)];
-            let base = r.v3(0x50);
-            let col = |v: V3, c: usize| -> R<f32> { Ok(add(add(mul(v[0], rows[0][c])?, mul(v[1], rows[1][c])?)?, mul(v[2], rows[2][c])?)?) };
-            let w = [add(col(par.local, 0)?, base[0])?, add(col(par.local, 1)?, base[1])?, add(col(par.local, 2)?, base[2])?];
-            let lm = par.local_matrix;
-            let m = [[col(lm[0], 0)?, col(lm[0], 1)?, col(lm[0], 2)?], [col(lm[1], 0)?, col(lm[1], 1)?, col(lm[1], 2)?], [col(lm[2], 0)?, col(lm[2], 1)?, col(lm[2], 2)?]];
-            if let Some(n) = self.effects.nodes[i].as_mut() {
-                n.position = w;
-                n.matrix = m;
+            // The parent node's world transform this update (psfx.rs HYPOTHESIS
+            // for players; a critter's node by GetWorldMat).
+            let parent = match par.critter {
+                Some((c, node)) if self.critters.get(c).is_some_and(Option::is_some) => {
+                    let w = match node {
+                        Some(n) => self.critter_node_world(c, n, None)?,
+                        None => self.critter_self_world(c)?,
+                    };
+                    Some(([[w[0], w[1], w[2]], [w[4], w[5], w[6]], [w[8], w[9], w[10]]], [w[12], w[13], w[14]]))
+                }
+                // The critter instance is gone: the node keeps its last transform.
+                Some(_) => None,
+                None => {
+                    let r = &self.players[par.player];
+                    Some(([r.v3(0x20), r.v3(0x30), r.v3(0x40)], r.v3(0x50)))
+                }
+            };
+            if let Some((rows, base)) = parent {
+                let col = |v: V3, c: usize| -> R<f32> { Ok(add(add(mul(v[0], rows[0][c])?, mul(v[1], rows[1][c])?)?, mul(v[2], rows[2][c])?)?) };
+                let w = [add(col(par.local, 0)?, base[0])?, add(col(par.local, 1)?, base[1])?, add(col(par.local, 2)?, base[2])?];
+                let lm = par.local_matrix;
+                let m = [[col(lm[0], 0)?, col(lm[0], 1)?, col(lm[0], 2)?], [col(lm[1], 0)?, col(lm[1], 1)?, col(lm[1], 2)?], [col(lm[2], 0)?, col(lm[2], 1)?, col(lm[2], 2)?]];
+                if let Some(n) = self.effects.nodes[i].as_mut() {
+                    n.position = w;
+                    n.matrix = m;
+                }
             }
         }
         let Some(node) = self.effects.nodes[i] else { return Ok(()) };

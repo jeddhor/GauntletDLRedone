@@ -365,6 +365,19 @@ impl Game {
     pub(crate) fn critter_set_yaw_matrix_pub(&mut self, i: usize) -> R<()> {
         self.critter_set_yaw_matrix(i)
     }
+    /// GetWorldMat of the instance's own +0x70 node: its stored local
+    /// through the floor chain (the record matrix before the first store).
+    pub(crate) fn critter_self_world(&self, i: usize) -> R<Mat> {
+        let cr = self.crit(i);
+        match cr.node {
+            Some(local) => {
+                let w = self.collision.chain_world(local, cr.floor).map_err(|e| Unsupported(e.0.to_string()))?;
+                Ok(std::array::from_fn(|k| w[k / 4][k % 4]))
+            }
+            None => Ok(self.critter_root(i)),
+        }
+    }
+
     pub(crate) fn critter_node_world_pub(&self, i: usize, n: usize) -> R<Mat> {
         self.critter_node_world(i, n, None)
     }

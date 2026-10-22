@@ -835,7 +835,7 @@ impl Game {
         if 0 <= k
             && let Some(n) = self.effects.nodes[k as usize].as_mut()
         {
-            n.parent = Some(super::effects::EffectParent { player: p, local: [0.0; 3], local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] });
+            n.parent = Some(super::effects::EffectParent { player: p, local: [0.0; 3], local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: None });
         }
         Ok(k)
     }

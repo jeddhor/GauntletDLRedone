@@ -1175,7 +1175,7 @@ impl Game {
             let k = self.start_fx_sub(f32::from_bits(0x4974_23f0), 0x5c, None, 0)?;
             if 0 <= k
                 && let Some(n) = self.effects.nodes[k as usize].as_mut() {
-                    n.parent = Some(super::effects::EffectParent { player: p, local, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] });
+                    n.parent = Some(super::effects::EffectParent { player: p, local, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: None });
                 }
             self.quest_weapon_sfx = k;
         }
@@ -1276,7 +1276,7 @@ impl Game {
                 let k = self.start_fx_sub(0.0, 0x5d, Some([0.0, 0.0, 5.0]), 0)?;
                 if 0 <= k {
                     if let Some(n) = self.effects.nodes[k as usize].as_mut() {
-                        n.parent = Some(super::effects::EffectParent { player: p, local: [0.0, 0.0, 5.0], local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] });
+                        n.parent = Some(super::effects::EffectParent { player: p, local: [0.0, 0.0, 5.0], local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: None });
                     }
                     self.sfx_set_morph(k as usize, 3.0, 0x5a, 0);
                 }
@@ -1600,7 +1600,7 @@ impl Game {
     /// SfxSetParent(effect, player node) with a local offset.
     pub(crate) fn parent_fx_to_player(&mut self, k: usize, p: usize, local: V3) {
         if let Some(n) = self.effects.nodes[k].as_mut() {
-            n.parent = Some(super::effects::EffectParent { player: p, local, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] });
+            n.parent = Some(super::effects::EffectParent { player: p, local, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: None });
         }
     }
 
