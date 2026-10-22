@@ -101,6 +101,9 @@ impl Game {
             }
         }
         self.items.records[slot].set_i16(0xd8, -1);
+        if let Some(f) = self.items.floor_parent.get_mut(slot) {
+            *f = None;
+        }
         self.item_trees.remove(&slot);
         if slot < self.items.first_empty {
             self.items.first_empty = slot;
@@ -613,6 +616,17 @@ impl Game {
                 continue;
             }
             let mut r = r.clone();
+            // GetObjWorldMat 0x103450: the record matrix from the node's world
+            // matrix — under a moving floor parent MulMat4(parent, node)
+            // (doplayers::parented_matrix); otherwise the record's own.
+            if let Some(Some((o, local))) = self.items.floor_parent.get(slot) {
+                let world = super::doplayers::parented_matrix(local, &self.parent_world(*o)?)?;
+                for (i, row) in world.iter().enumerate() {
+                    for (j, v) in row.iter().enumerate() {
+                        r.set_f32(0x10 + 0x10 * i + 4 * j, *v);
+                    }
+                }
+            }
             crate::items::ItemWorld::update_offsets(&mut r)?;
             self.items.records[slot] = r.clone();
             let d = &self.items.definitions[r.definition()];

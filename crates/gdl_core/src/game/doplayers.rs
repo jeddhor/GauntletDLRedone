@@ -51,6 +51,50 @@ fn invert_mat4(m: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
     Ok(out)
 }
 
+/// Whether a parent world matrix is translation-only (identity rotation;
+/// standing for the parent node's flag 4, HYPOTHESIS).
+fn translation_only(m: &[[f32; 4]; 4]) -> bool {
+    (0..3).all(|i| (0..3).all(|j| m[i][j] == if i == j { 1.0 } else { 0.0 }))
+}
+
+/// UpdateObjWorldMat's UnparentMatrix: a node matrix relative to its parent's
+/// world matrix (the root: none). UnparentMatrix's product with the root's
+/// identity leaves −0.0 as +0.0 (observed: player node rows hold +0.0 where
+/// the record has −0.0); a translation-only parent's offset is subtracted,
+/// otherwise MulMat4(InvertMat4(parent), node).
+pub(crate) fn unparent_matrix(mut m: [[f32; 4]; 4], parent: Option<&[[f32; 4]; 4]>) -> R<[[f32; 4]; 4]> {
+    for row in m.iter_mut() {
+        for v in row.iter_mut() {
+            *v = add_rz(*v, 0.0)?;
+        }
+    }
+    if let Some(pm) = parent {
+        if translation_only(pm) {
+            for j in 0..3 {
+                m[3][j] = sub(m[3][j], pm[3][j])?;
+            }
+        } else {
+            // InvertMat4 (rigid inverse), then MulMat4(inverse, node, node).
+            m = mat_mul(&invert_mat4(pm)?, &m)?;
+        }
+    }
+    Ok(m)
+}
+
+/// GetWorldMat of a node under a parent world matrix: a translation-only
+/// parent adds its offset (add.s), otherwise MulMat4(parent, node).
+pub(crate) fn parented_matrix(local: &[[f32; 4]; 4], pm: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
+    if translation_only(pm) {
+        let mut world = *local;
+        for j in 0..3 {
+            world[3][j] = add(pm[3][j], local[3][j])?;
+        }
+        Ok(world)
+    } else {
+        mat_mul(pm, local)
+    }
+}
+
 /// A player record's matrix +0x20..+0x5c (4 × 4).
 pub(crate) fn record_matrix_of(r: &super::record::Record) -> [[f32; 4]; 4] {
     std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x20 + 0x10 * i + 4 * j)))
@@ -119,12 +163,9 @@ impl Game {
         Ok(())
     }
 
-    /// The parent object's world matrix (rows) and whether it is a pure
-    /// translation (treated as the parent node's flag 4; HYPOTHESIS).
-    fn parent_world(&self, o: usize) -> R<([[f32; 4]; 4], bool)> {
-        let m = self.collision.object_matrix(o).map_err(|e| Unsupported(e.0.to_string()))?;
-        let pure = (0..3).all(|i| (0..3).all(|j| m[i][j] == if i == j { 1.0 } else { 0.0 }));
-        Ok((m, pure))
+    /// The parent object's world matrix (rows).
+    pub(crate) fn parent_world(&self, o: usize) -> R<[[f32; 4]; 4]> {
+        self.collision.object_matrix(o).map_err(|e| Unsupported(e.0.to_string()))
     }
 
     /// The record matrix +0x20..+0x5c (4 × 4).
@@ -152,16 +193,7 @@ impl Game {
             // +0x6b4 node world, node) (game/teammove.rs).
             world = mat_mul(&self.team_parent_world(k)?, &local)?;
         } else if let Some(o) = self.player_floor_parent[p] {
-            // GetWorldMat: a translation-only parent adds its offset (add.s),
-            // otherwise MulMat4(parent, node).
-            let (pm, pure) = self.parent_world(o)?;
-            if pure {
-                for j in 0..3 {
-                    world[3][j] = add(pm[3][j], local[3][j])?;
-                }
-            } else {
-                world = mat_mul(&pm, &local)?;
-            }
+            world = parented_matrix(&local, &self.parent_world(o)?)?;
         }
         let r = &mut self.players[p];
         for (i, row) in world.iter().enumerate() {
@@ -191,25 +223,11 @@ impl Game {
         if self.players[p].u16_(0x93c) & 0x20 != 0 {
             return Ok(());
         }
-        let mut m = self.record_matrix(p);
-        // UnparentMatrix's product with the root's identity leaves −0.0 as
-        // +0.0 (observed: node rows hold +0.0 where the record has −0.0).
-        for row in m.iter_mut() {
-            for v in row.iter_mut() {
-                *v = add_rz(*v, 0.0)?;
-            }
-        }
-        if let Some(o) = self.player_floor_parent[p] {
-            let (pm, pure) = self.parent_world(o)?;
-            if pure {
-                for j in 0..3 {
-                    m[3][j] = sub(m[3][j], pm[3][j])?;
-                }
-            } else {
-                // InvertMat4 (rigid inverse), then MulMat4(inverse, node, node).
-                m = mat_mul(&invert_mat4(&pm)?, &m)?;
-            }
-        }
+        let parent = match self.player_floor_parent[p] {
+            Some(o) => Some(self.parent_world(o)?),
+            None => None,
+        };
+        let m = unparent_matrix(self.record_matrix(p), parent.as_ref())?;
         self.player_node[p] = Some(m);
         if offsets {
             self.update_obj_offsets(p)?;

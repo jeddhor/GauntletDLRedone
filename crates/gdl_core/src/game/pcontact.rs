@@ -547,12 +547,13 @@ impl Game {
 
     /// PlayerCheckMovingFloor 0x1458a0: parent the player node to a moving
     /// floor object's node (flag 0x1000), unless another player is already
-    /// on a different moving object (then the step is refused).
+    /// on a different moving object (then the step is refused). The
+    /// original's object +0x28 test (matrix/node pointer) holds for every
+    /// object (all 1,360 in the G1 fixture), parented or not.
     fn player_check_moving_floor(&mut self, p: usize, obj: Option<usize>, d: &mut V3) -> R<i32> {
         let mut refused = false;
         if let Some(o) = obj
             && self.collision.runtime_flags[o] & 0x1000 != 0
-            && self.collision.objects[o].parent.is_some()
         {
             if self.other_player_on_other_moving_object(p, o) {
                 refused = true;
@@ -580,7 +581,7 @@ impl Game {
             let r = &self.players[k];
             k != p
                 && r.i32_(0xfc) == 1
-                && ptr(r.u32_(0x89c)).is_some_and(|f| f != o && self.collision.objects[f].parent.is_some() && self.collision.runtime_flags[f] & 0x4000 != 0)
+                && ptr(r.u32_(0x89c)).is_some_and(|f| f != o && self.collision.runtime_flags[f] & 0x4000 != 0)
         })
     }
 

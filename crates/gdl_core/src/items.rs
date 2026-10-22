@@ -256,6 +256,11 @@ pub struct ItemWorld {
     pub rune_pos: [f32; 3],
     pub quest_item: Option<usize>,
     pub rng: Rand,
+    /// PlaceItem's MBNodeSetParent onto a moving (flag 0x1000) floor object:
+    /// per slot the object and the node matrix relative to it
+    /// (UpdateObjWorldMat); ProcessItems' GetObjWorldMat rebuilds the record
+    /// matrix from them every update.
+    pub floor_parent: Vec<Option<(usize, [[f32; 4]; 4])>>,
 }
 
 /// WPitchMat3/WYawMat3/WRollMat3 0x1d5228/0x1d5178/0x1d52d8 on rows 0..2.
@@ -334,6 +339,7 @@ impl ItemWorld {
             rune_pos: [0.0; 3],
             quest_item: None,
             rng: Rand::new(0),
+            floor_parent: Vec::new(),
         })
     }
 
@@ -1019,6 +1025,20 @@ impl ItemWorld {
         let kind = self.definitions[r.definition()].kind();
         let r = &mut self.records[slot];
         r.set_f32(0x44, placed);
+        // MBNodeSetParent(item node, floor node) when the floor object has a
+        // node (+0x28: every object, all 1,360 in the G1 fixture) and flag
+        // 0x1000, then UpdateObjWorldMat (the node relative to that parent).
+        // A static floor leaves the node's parent as it was.
+        if let Some(o) = floor.filter(|&o| collision.runtime_flags.get(o).is_some_and(|f| f & 0x1000 != 0)) {
+            let m: [[f32; 4]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x10 + 0x10 * i + 4 * j)));
+            let pm = collision.object_matrix(o).map_err(|e| UnsupportedItem(format!("PlaceItem parent: {e:?}")))?;
+            let local = crate::game::doplayers::unparent_matrix(m, Some(&pm)).map_err(|e| UnsupportedItem(e.0))?;
+            if self.floor_parent.len() <= slot {
+                self.floor_parent.resize(slot + 1, None);
+            }
+            self.floor_parent[slot] = Some((o, local));
+        }
+        let r = &mut self.records[slot];
         if let (true, Some(bound), Some(f)) = (kind == 5 && r.u16_(0xf4) & 0x400 != 0, r.u32_(0xf0).checked_sub(1), floor) {
             let bound = bound as usize;
             if bound == f || Some(bound) == self.object_parent[f] {

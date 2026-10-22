@@ -69,8 +69,16 @@ object has a node (+0x28) and flag 0x1000 (MBNodeSetParent), then
 UpdateObjWorldMat makes the matrix local — so items on moving floors follow
 them. Kind 13 sound items keep FindWorldAnimNode(10.0, position) at +0xf8;
 S_CROWS' +0x40 moves with the flock while +0x50/+0x60 stay at the anchor.
-Native: offsets recomputed from the record every update; neither the moving-
-floor parent nor the +0xf8 world-animation node is modelled (unknowns.md "Item world matrices").
+Fixture: 23 live G1 items have nodes parented to flag-0x1000 objects (node
++0x74 = the object's +0x28), several of them root objects without a +0x18
+parent (229, 420, 817); every one of the 1,360 objects has its +0x28 node.
+Native (2026-10-22): place_item records the floor parent and the node matrix
+relative to it (doplayers::unparent_matrix, shared with UpdatePlayerWorldMat),
+ProcessItems' second loop rebuilds the record matrix from the parent's
+current matrix (parented_matrix) before the offsets; the +0xf8
+world-animation node of kind 13 is not modelled (unknowns.md "Item world
+matrices"). The same +0x28 reading corrected PlayerCheckMovingFloor and
+OtherPlayerOnOtherMovingObject, which had required a +0x18 parent.
 
 World numbers come from worlddatas (EE 0x23deb0; 14 × 44 B, number +0, letter
 +0xf): castle 1 … town 7 (G, Poison Fields) … tower 0xd. SetItem's generator
