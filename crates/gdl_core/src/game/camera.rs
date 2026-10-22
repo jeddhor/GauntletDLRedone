@@ -1451,7 +1451,7 @@ fn slow_normal_vector_2d(v: &mut V3) -> R<f32> {
     Ok(d)
 }
 /// GetYawPitch 0x1d6258.
-fn get_yaw_pitch(v: V3) -> R<(f32, f32)> {
+pub(crate) fn get_yaw_pitch(v: V3) -> R<(f32, f32)> {
     let yaw = crate::libm::atan2f(v[0], v[2])?;
     let (xz, _) = crate::vu0::fqdist(v[0], v[2])?;
     Ok((yaw, crate::libm::atan2f(v[1], xz)?))

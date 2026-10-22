@@ -12,7 +12,8 @@ use super::record::Record;
 use super::{unsupported, Game, Unsupported, R};
 use crate::animation_clock::{ClipTiming, ClockState};
 use crate::numeric::{add_guarded_rz as add, mul_rz as mul};
-use crate::tree_pose::{node_world, Mat, IDENTITY};
+use crate::tree_pose::{node_world, node_world_chain, Mat, IDENTITY};
+use crate::world_transform::MatrixBox;
 use gdl_formats::animation::Animations;
 use gdl_formats::critter::{label, CritterWad};
 use std::sync::Arc;
@@ -136,6 +137,42 @@ pub struct CritterData {
     pub safe_rock_hide: bool,
 }
 
+/// The +0x84 AnimInfo clock of an instance record (the enemy layout).
+pub fn anim_info_clock(r: &Record) -> ClockState {
+    ClockState {
+        sequence: r.u16_(0x92),
+        previous_sequence: r.u16_(0xa0),
+        reset_byte: r.u8_(0x96),
+        option_bits: r.u8_(0x97),
+        enabled_word: r.u16_(0xa2),
+        loop_word: r.u16_(0xb8),
+        mode_bits: r.u16_(0xba),
+        frame: r.f32_(0x9c),
+        blend_fraction: r.f32_(0x98),
+        start_time: r.f32_(0xa4),
+        blend_end_time: r.f32_(0xa8),
+        period_scale: r.f32_(0xb0),
+        last_time: r.f32_(0xb4),
+    }
+}
+
+/// Write a clock into an instance record's +0x84 AnimInfo (the enemy layout).
+pub fn set_anim_info_clock(r: &mut Record, c: &ClockState) {
+    r.set_u16(0x92, c.sequence);
+    r.set_u16(0xa0, c.previous_sequence);
+    r.set_u8(0x96, c.reset_byte);
+    r.set_u8(0x97, c.option_bits);
+    r.set_u16(0xa2, c.enabled_word);
+    r.set_u16(0xb8, c.loop_word);
+    r.set_u16(0xba, c.mode_bits);
+    r.set_f32(0x9c, c.frame);
+    r.set_f32(0x98, c.blend_fraction);
+    r.set_f32(0xa4, c.start_time);
+    r.set_f32(0xa8, c.blend_end_time);
+    r.set_f32(0xb0, c.period_scale);
+    r.set_f32(0xb4, c.last_time);
+}
+
 /// One instance (CritterInsts entry).
 #[derive(Clone, Debug)]
 pub struct Critter {
@@ -167,6 +204,13 @@ pub struct Critter {
     /// x/z at the floor + 0.1 after ProcessCritter's floor test;
     /// presentation, world-aligned, z mod −32).
     pub shadow: Option<(usize, [f32; 3])>,
+    /// The +0x70 MB node's local matrix (rows), as UnparentMatrix stored the
+    /// instance matrix at the end of CritterInitGeo and ProcessCritter, and
+    /// the WORLDS object it is parented to (CritterCollideWorld's flag-0x1000
+    /// floor; None: EnemyRootNode). ProcessCritter starts from its
+    /// GetWorldMat, so critters ride moving floors (trace-k2-newgame-v4).
+    pub node: Option<[[f32; 4]; 4]>,
+    pub floor: Option<usize>,
 }
 
 impl Game {
@@ -320,6 +364,9 @@ impl Game {
     }
     pub(crate) fn critter_set_yaw_matrix_pub(&mut self, i: usize) -> R<()> {
         self.critter_set_yaw_matrix(i)
+    }
+    pub(crate) fn critter_node_world_pub(&self, i: usize, n: usize) -> R<Mat> {
+        self.critter_node_world(i, n, None)
     }
     pub(crate) fn critter_root_pub(&self, i: usize) -> Mat {
         self.critter_root(i)
@@ -645,6 +692,8 @@ impl Game {
             node_e8: None,
             colnode_nodes: vec![(None, None); ncol],
             shadow: None,
+            node: None,
+            floor: None,
         };
         self.critters[i] = Some(crit);
         self.skin_views.critters.remove(&i);
@@ -702,11 +751,33 @@ impl Game {
 
     /// GetWorldMat of tree node `n` for instance `i` (children compose
     /// through the root's tree and matrix), with an optional local offset.
+    /// With a stored +0x70 node the tree composes through it (its local as
+    /// UnparentMatrix last stored it), the floor object chain, the identity
+    /// root and the translation-only root, as collision::chain_world does.
     pub(crate) fn critter_node_world(&self, i: usize, n: usize, offset: Option<V3>) -> R<Mat> {
         let o = self.critter_pose_owner(i);
-        let root = self.critter_root(o);
         let cr = self.crit(o);
-        node_world(&cr.parents, &cr.locals, root, n, offset).map_err(|e| Unsupported(format!("critter pose: {}", e.0)))
+        let flat = |m: [[f32; 4]; 4]| -> Mat { std::array::from_fn(|k| m[k / 4][k % 4]) };
+        let w = match cr.node {
+            Some(local) => {
+                let mut roots = vec![MatrixBox { matrix: flat(local), flags: 0 }];
+                let mut k = cr.floor;
+                while let Some(p) = k {
+                    if 128 < roots.len() {
+                        return unsupported("critter floor chain");
+                    }
+                    roots.push(MatrixBox { matrix: flat(self.collision.node_matrix(p)), flags: 0 });
+                    k = self.collision.node_parent(p);
+                }
+                roots.push(MatrixBox { matrix: IDENTITY, flags: 0 });
+                let mut zero = IDENTITY;
+                zero[12..15].fill(0.0);
+                roots.push(MatrixBox { matrix: zero, flags: 4 });
+                node_world_chain(&cr.parents, &cr.locals, &roots, n, offset)
+            }
+            None => node_world(&cr.parents, &cr.locals, self.critter_root(o), n, offset),
+        };
+        w.map_err(|e| Unsupported(format!("critter pose: {}", e.0)))
     }
 
     /// CritterGetNode: tree node `idx` or the default.
@@ -727,20 +798,7 @@ impl Game {
         self.critter_set_yaw_matrix(i)?;
         let t = self.crit(i).ty;
         // AtreeInit: the tree root is node 0, parented to the critter node.
-        let n56 = self.type_i16(i, 0x56);
-        let d4 = self.critter_node(i, n56, None);
-        let flags = self.type_u32(i, 0x5c);
-        let d4 = if flags & 0x10 != 0 { d4.map(|n| usize::try_from(self.crit(i).parents[n]).ok().unwrap_or(n)) } else { d4 };
-        let n58 = self.type_i16(i, 0x58);
-        let n5a = self.type_i16(i, 0x5a);
-        let d8 = self.critter_node(i, n58, None);
-        let e8 = self.critter_node(i, n5a, None);
-        {
-            let cr = self.crit_mut(i);
-            cr.node_d4 = d4;
-            cr.node_d8 = d8;
-            cr.node_e8 = e8;
-        }
+        self.critter_geo_nodes(i);
         let floor_off = CritterFile::f32_(self.ctype(t), 0xb0);
         let (col, _) = self.collision.floor_collide(5.0, 4.0, -1000.0, pos, false, 2)?;
         let y = match col.solid {
@@ -748,6 +806,8 @@ impl Game {
             None => add(pos[1], floor_off)?,
         };
         self.crm(i).set_f32(c::POS + 4, y);
+        // CopyMat4(instance matrix, node), UnparentMatrix under EnemyRootNode.
+        self.critter_store_node(i)?;
         // CopyMat3 of the placed matrix and the home position.
         let mrow: [V3; 3] = std::array::from_fn(|r| self.cr(i).v3(c::MATRIX + 16 * r));
         for (r, row) in mrow.iter().enumerate() {
@@ -765,6 +825,96 @@ impl Game {
             self.cr(i).v3(c::HOME_POS)
         };
         self.crm(i).set_v3(c::LEASH_CENTRE, centre);
+        Ok(())
+    }
+
+    /// CritterInitGeo's look-at nodes: +0xd4 (TYPE +0x56, its parent with
+    /// TYPE +0x5c bit 0x10), +0xd8 (+0x58) and +0xe8 (+0x5a).
+    fn critter_geo_nodes(&mut self, i: usize) {
+        let n56 = self.type_i16(i, 0x56);
+        let d4 = self.critter_node(i, n56, None);
+        let flags = self.type_u32(i, 0x5c);
+        let d4 = if flags & 0x10 != 0 { d4.map(|n| usize::try_from(self.crit(i).parents[n]).ok().unwrap_or(n)) } else { d4 };
+        let n58 = self.type_i16(i, 0x58);
+        let n5a = self.type_i16(i, 0x5a);
+        let d8 = self.critter_node(i, n58, None);
+        let e8 = self.critter_node(i, n5a, None);
+        let cr = self.crit_mut(i);
+        cr.node_d4 = d4;
+        cr.node_d8 = d8;
+        cr.node_e8 = e8;
+    }
+
+    /// Replay seeding (gdl_tools' frame replay; research only): root
+    /// instance `i` of TYPE `t` (CritterETypes slot `slot`) from a reference
+    /// CritterInsts record whose guest pointer words the caller cleared. The
+    /// native tree state follows CritterInitInst, CritterInitGeo's nodes and
+    /// CritterInitColnodes; `node_dc` is the +0xdc transition node (tree
+    /// index), `node`/`floor` the +0x70 node's local matrix and parent
+    /// object, the clock comes from the +0x84 AnimInfo and the pose is
+    /// evaluated at it (the previous update's CritterAnimate). The health
+    /// meter (+0x484) and children are not seeded.
+    #[allow(clippy::too_many_arguments)]
+    pub fn seed_critter(&mut self, i: usize, t: TypeRef, slot: usize, rec: &[u8], node_dc: Option<usize>, node: Option<[[f32; 4]; 4]>, floor: Option<usize>) -> R<()> {
+        if rec.len() != INST_SIZE || MAX_INSTS <= i {
+            return unsupported("critter seed record");
+        }
+        if 0 <= CritterFile::i16_(self.ctype(t), 0x11c) {
+            return unsupported("critter seed with children");
+        }
+        while self.critters.len() <= i {
+            self.critters.push(None);
+        }
+        let id = self.critter_new_id;
+        self.critter_init_inst(i, t)?;
+        self.critter_new_id = id;
+        self.critter_geo_nodes(i);
+        self.critter_init_colnodes(i);
+        let rec = Record(rec.to_vec());
+        let clock = anim_info_clock(&rec);
+        let shadow = (self.type_u32(i, 0x5c) & 1 != 0).then(|| (if slot < 3 { slot } else { 1 } + 1, rec.v3(c::POS)));
+        let cr = self.crit_mut(i);
+        cr.clock = clock;
+        cr.clip = clock.sequence;
+        cr.rec = rec;
+        cr.node_dc = node_dc;
+        cr.shadow = shadow;
+        cr.node = node;
+        cr.floor = floor;
+        self.critter_update_pose(i)?;
+        self.critter_seed_look_at(i)
+    }
+
+    /// The instance matrix +0x10..+0x4c (4 × 4; translation = +0x40).
+    fn critter_mat4(&self, i: usize) -> [[f32; 4]; 4] {
+        let r = self.cr(i);
+        std::array::from_fn(|a| std::array::from_fn(|b| r.f32_(c::MATRIX + 0x10 * a + 4 * b)))
+    }
+
+    /// CopyMat4(+0x10, node) then UnparentMatrix(node, its parent): the
+    /// floor object's chain (collision::unparent_chain) or EnemyRootNode.
+    pub(crate) fn critter_store_node(&mut self, i: usize) -> R<()> {
+        let m = self.critter_mat4(i);
+        let local = match self.crit(i).floor {
+            Some(o) => self.collision.unparent_chain(m, Some(o)).map_err(|e| Unsupported(e.0.to_string()))?,
+            None => super::doplayers::unparent_matrix(m, None)?,
+        };
+        self.crit_mut(i).node = Some(local);
+        Ok(())
+    }
+
+    /// ProcessCritter's GetWorldMat(+0x70 node, +0x10): the node's local
+    /// matrix through its parent chain into the instance matrix.
+    pub(crate) fn critter_load_node(&mut self, i: usize) -> R<()> {
+        let Some(local) = self.crit(i).node else { return Ok(()) };
+        let floor = self.crit(i).floor;
+        let w = self.collision.chain_world(local, floor).map_err(|e| Unsupported(e.0.to_string()))?;
+        let r = self.crm(i);
+        for (a, row) in w.iter().enumerate() {
+            for (b, v) in row.iter().enumerate() {
+                r.set_f32(c::MATRIX + 0x10 * a + 4 * b, *v);
+            }
+        }
         Ok(())
     }
 

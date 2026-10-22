@@ -102,6 +102,7 @@ impl Game {
         let kids = self.critter_children(i);
         let live = kids.iter().filter(|&&k| 0.0 < self.cf(k, c::HEALTH)).count();
         self.crm_pub(i).set_u8(c::NLIVE_CHILDREN, live as u8);
+        self.critter_load_node(i)?;
         self.critter_attention_pub(i)?;
         self.critter_update_colnodes_pub(i)?;
         self.critter_do_knockback(i)?;
@@ -160,6 +161,8 @@ impl Game {
         for &k in &self.critter_children(i) {
             self.critter_update_skinfx(k)?;
         }
+        // CopyMat4 + UnparentMatrix into the node, then +0x50/+0x60.
+        self.critter_store_node(i)?;
         self.critter_attention_pub(i)?;
         Ok(true)
     }
@@ -1281,6 +1284,11 @@ impl Game {
         let switched = out.return_flags & 1 != 0;
         let cr = self.crit_mut(i);
         cr.clock = out.state;
+        // DoAnimation's reset handshake (a nonzero byte becomes 2; critter
+        // trees animate type-1 nodes): trace-k2-newgame-v5 step 42.
+        if cr.clock.reset_byte != 0 {
+            cr.clock.reset_byte = 2;
+        }
         if switched {
             cr.clip = seq;
         }
@@ -1294,7 +1302,7 @@ impl Game {
     /// Native pose of the critter tree at its clock. CritterAnimate's
     /// AnimateATree passes blend 0 (clear f12 at 0x112a30), so critter
     /// clocks never blend.
-    fn critter_update_pose(&mut self, i: usize) -> R<()> {
+    pub(crate) fn critter_update_pose(&mut self, i: usize) -> R<()> {
         let t = self.crit(i).ty;
         let Some(tree) = self.critter_data.files[t.0].trees[t.1] else { return Ok(()) };
         let Some(model) = self.critter_data.files[t.0].model.clone() else { return Ok(()) };
@@ -1702,20 +1710,113 @@ impl Game {
         Ok(())
     }
 
-    /// CritterLookAtPlayer 0x19c600: decrements +0xb4e. The head/neck turn
-    /// (NodeLookAtPos on +0xd4/+0xd8) is not applied to the native pose
-    /// (labelled approximation).
+    /// CritterLookAtPlayer 0x19c600: the +0xd4/+0xd8 nodes turn towards
+    /// the target player's +0x60 (none during death, flag-1 moves, a pause
+    /// or a slow; then they relax towards zero), the accumulated yaw/pitch
+    /// in +0x10c/+0x114 and +0x110/+0x118; decrements +0xb4e.
     fn critter_look_at_player(&mut self, i: usize, mv: Option<usize>) -> R<()> {
+        let mut busy = false;
         if let Some(m) = mv {
             let mt = self.critter_move_i32(i, m, 0);
             if mt == 0x10 || mt == 0 {
                 return Ok(());
             }
+            if mt == 0x11 || self.critter_move_i32(i, m, 4) & 1 != 0 {
+                busy = true;
+            }
+        }
+        if 0 < self.ci16(i, c::PAUSE) {
+            busy = true;
         }
         if 0 < self.ci16(i, c::SLOW) {
             let v = self.ci16(i, c::SLOW).wrapping_sub(self.globals.vb_elapsed as i16);
             self.set_ci16(i, c::SLOW, v);
+            busy = true;
         }
+        let tgt = self.ci16(i, c::TARGET);
+        let pos = (!busy && 0 <= tgt).then(|| self.players[tgt as usize].v3(0x60));
+        let tf = |g: &Game, o: usize| g.critter_type_f32(i, o);
+        if let Some(n) = self.crit(i).node_d4 {
+            let (a, b, d) = (tf(self, 0x60), tf(self, 0x68), tf(self, 0x70));
+            self.node_look_at_pos(i, n, pos, [a, 0.0, b, d], 0x10c, 0x114)?;
+        }
+        if let Some(n) = self.crit(i).node_d8 {
+            let (a, b, d) = (tf(self, 0x64), tf(self, 0x6c), tf(self, 0x74));
+            self.node_look_at_pos(i, n, pos, [a, 0.0, b, d], 0x110, 0x118)?;
+        }
+        Ok(())
+    }
+
+    /// Replay seeding: the previous update's look-at rotation of the
+    /// +0xd4/+0xd8 nodes, rebuilt on the freshly evaluated pose from the
+    /// record's accumulated angles (CritterLookAtPlayer skips move types
+    /// 0x10 and 0).
+    pub(crate) fn critter_seed_look_at(&mut self, i: usize) -> R<()> {
+        let mv = self.ci16(i, c::MOVE);
+        if mv < 0 || matches!(self.critter_move_i32(i, mv as usize, 0), 0x10 | 0) {
+            return Ok(());
+        }
+        if let Some(n) = self.crit(i).node_d4 {
+            let (y, p) = (self.cf(i, 0x10c), self.cf(i, 0x114));
+            self.look_at_rebuild(i, n, y, p, self.critter_type_f32(i, 0x60), self.critter_type_f32(i, 0x68))?;
+        }
+        if let Some(n) = self.crit(i).node_d8 {
+            let (y, p) = (self.cf(i, 0x110), self.cf(i, 0x118));
+            self.look_at_rebuild(i, n, y, p, self.critter_type_f32(i, 0x64), self.critter_type_f32(i, 0x6c))?;
+        }
+        Ok(())
+    }
+
+    /// NodeLookAtPos 0x19c240(yaw limit, yaw offset, pitch limit, pitch
+    /// offset, node, target, yaw, pitch): the target's yaw/pitch relative to
+    /// the node's world forward (row 2) and position, approached by at most
+    /// SPF × π/2 per update in the instance words `yaw_at`/`pitch_at`; the
+    /// node's local rotation is rebuilt (ExtractPYR → CreatePYRMatrix) with
+    /// those angles clamped to the limits around its animated pose.
+    fn node_look_at_pos(&mut self, i: usize, n: usize, pos: Option<V3>, lim: [f32; 4], yaw_at: usize, pitch_at: usize) -> R<()> {
+        let (mut yaw, mut pitch) = (0.0, 0.0);
+        if let Some(p) = pos {
+            let w = self.critter_node_world_pub(i, n)?;
+            let (cy, cp) = super::camera::get_yaw_pitch([w[8], w[9], w[10]])?;
+            let d = [sub(p[0], w[12])?, sub(p[1], w[13])?, sub(p[2], w[14])?];
+            let (ty, tp) = super::camera::get_yaw_pitch(d)?;
+            yaw = add(lim[1], sub(ty, cy)?)?;
+            pitch = add(lim[3], sub(tp, cp)?)?;
+        }
+        let step = |g: &Game, target: f32, cur: f32| -> R<f32> {
+            let mut d = wrap(sub(target, cur)?)?;
+            let k = mul(g.globals.spf, f32::from_bits(0x3fc9_0fdb))?;
+            if k < d {
+                d = k;
+            }
+            if d < -k {
+                d = -k;
+            }
+            Ok(add(d, cur)?)
+        };
+        let y = step(self, yaw, self.cf(i, yaw_at))?;
+        self.crm_pub(i).set_f32(yaw_at, y);
+        let p = step(self, pitch, self.cf(i, pitch_at))?;
+        self.crm_pub(i).set_f32(pitch_at, p);
+        self.look_at_rebuild(i, n, y, p, lim[0], lim[2])
+    }
+
+    /// NodeLookAtPos's ExtractPYR → CreatePYRMatrix of node `n`'s local
+    /// with the accumulated yaw `y` and pitch `p` (limits around the pose).
+    fn look_at_rebuild(&mut self, i: usize, n: usize, y: f32, p: f32, yaw_limit: f32, pitch_limit: f32) -> R<()> {
+        let o = self.critter_pose_owner(i);
+        let Some(local) = self.crit(o).locals.get(n).copied() else { return unsupported("look-at node") };
+        let mut e = super::world_anim::extract_pyr(&local)?;
+        let limit = |v: f32, l: f32| if l < v { l } else if v < -l { -l } else { v };
+        e[1] = add(limit(wrap(sub(y, e[1])?)?, yaw_limit), e[1])?;
+        e[0] = add(limit(wrap(sub(p, e[0])?)?, pitch_limit), e[0])?;
+        let r = super::world_anim::create_pyr_matrix(e)?;
+        let m = &mut self.crit_mut(o).locals[n];
+        for (row, v) in r.iter().enumerate() {
+            m[4 * row..4 * row + 3].copy_from_slice(v);
+            m[4 * row + 3] = 0.0;
+        }
+        m[15] = 1.0;
         Ok(())
     }
 

@@ -548,7 +548,9 @@ impl Game {
                 _ => {
                     let f1f0 = [sinf(want)?, 0.0, cosf(want)?];
                     item = ptr(self.players[p].u32_(0x880));
-                    let mut tgt = -1;
+                    // The given target is uStack_118 (sp+0x128): the
+                    // PlayerCollideEnemies contact or -1 (0x1492c0/0x149470).
+                    let mut tgt = target;
                     dist = self.player_get_target(p, to, f1f0, &mut aim, &mut tgt, &mut item)?;
                     target = tgt;
                     let (crit_i, enemy) = if target < 0x10000 {
@@ -1415,9 +1417,11 @@ impl Game {
                     let probe = [add(mul(k, f1f0[0])?, pos[0])?, add(mul(k, f1f0[1])?, pos[1])?, add(mul(k, f1f0[2])?, pos[2])?];
                     self.player_collide_items(radius, height, p, pos, probe, None, false, None)?;
                 }
-                // piStack_114 carries over from the targeting stage (the
-                // probe's +0x880 update is not re-read).
-                let mut tgt = -1;
+                // uStack_118/piStack_114 (sp+0x128/+0x12c) carry over from
+                // the targeting stage: the given target and item (the
+                // probe's +0x880 update is not re-read; 0x14bb08..0x14bb20,
+                // trace-b1-newgame-v2 step 402).
+                let mut tgt = *target;
                 dist = self.player_get_target(p, to, f1f0, aim, &mut tgt, item)?;
                 *target = tgt;
                 let enemy = usize::try_from(tgt).ok().filter(|&t| t < 0x10000);

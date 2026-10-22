@@ -155,11 +155,10 @@ impl Game {
                 pick = p as i32;
             }
             if 0.0 < dmg {
-                let dir = [
-                    add(add(add(a[0], b[0])?, a[0])?, b[0])?,
-                    add(add(add(a[1], b[1])?, a[1])?, b[1])?,
-                    add(add(add(a[2], b[2])?, a[2])?, b[2])?,
-                ];
+                // 0x19bcf4..0x19bd28: t = a + b, then t + t (the decompiler's
+                // a + b + a + b; trace-k2-newgame-v5 step 14).
+                let t = [add(a[0], b[0])?, add(a[1], b[1])?, add(a[2], b[2])?];
+                let dir = [add(t[0], t[0])?, add(t[1], t[1])?, add(t[2], t[2])?];
                 self.critter_damage_player(i, p, drec, 0, dir, true)?;
             }
         }

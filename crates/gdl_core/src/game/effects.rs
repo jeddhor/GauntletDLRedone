@@ -957,23 +957,25 @@ impl Game {
     }
 
     /// SfxSkipItem(item, effect flags, damage flags): 0 hit, 1 skip, 2 pass.
+    /// Kinds 1 and 2 end in the shared tail 0x17b1dc: an indestructible
+    /// item (+0xe3 = −1) is skipped unless the damage flags have 0x600
+    /// (trace-b1-newgame-v2 step 278: a blast and the KEY).
     fn sfx_skip_item(&self, slot: usize, flags: u32, dflags: u32) -> u8 {
         let r = &self.items.records[slot];
         let d = &self.items.definitions[r.definition()];
         let st = d.subtype();
         let indestructible = r.i8_(0xe3) == -1;
+        let tail = |v: u8| if indestructible && dflags & 0x600 == 0 { 1 } else { v };
         match d.kind() {
-            1 => {
-                if flags & 0x100 == 0 {
-                    0
-                } else if dflags & 0x80_0000 == 0 || !(st == 3 || st == 1) {
-                    1
-                } else {
-                    2
-                }
-            }
-            2 if st == 0x2b => u8::from(flags & 0x1000 != 0),
-            2 => u8::from(indestructible && dflags & 0x600 == 0),
+            1 => tail(if flags & 0x100 == 0 {
+                0
+            } else if dflags & 0x80_0000 == 0 || !(st == 3 || st == 1) {
+                1
+            } else {
+                2
+            }),
+            2 if st == 0x2b => tail(u8::from(flags & 0x1000 != 0)),
+            2 => tail(0),
             3 => u8::from(flags & 0x1000 != 0),
             4 if dflags & 0x200 != 0 => 0,
             8 => {

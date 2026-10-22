@@ -117,8 +117,12 @@ impl Game {
         if slot < self.items.first_empty {
             self.items.first_empty = slot;
         }
-        if let Some(a) = self.item_anims.get_mut(slot) {
-            *a = None;
+        // The record keeps its +0x84 AnimInfo as the clock left it.
+        if let Some(a) = self.item_anims.get_mut(slot).and_then(Option::take) {
+            let r = &mut self.items.records[slot];
+            let mut rec = super::record::Record(r.0.to_vec());
+            super::critters::set_anim_info_clock(&mut rec, &a.clock);
+            r.0.copy_from_slice(&rec.0);
         }
     }
 

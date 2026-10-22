@@ -456,6 +456,225 @@ impl ReferenceEffects {
     }
 }
 
+/// The reference CritterInsts (16 × 0xb70) accumulated from
+/// reference_enemies.py's `critters_delta`, with NumCritterInsts,
+/// BossCritInst and `critter_globals` (traces from trace-k2-newgame-v3).
+#[derive(Default, Clone)]
+struct ReferenceCritters {
+    slots: Vec<Vec<u8>>,
+    num: usize,
+    boss: u32,
+    globals: serde_json::Map<String, serde_json::Value>,
+    /// Live instances' +0x70 nodes: local matrix (0x40 bytes), parent link
+    /// (traces from trace-k2-newgame-v4) and CritterGetNode's tree node
+    /// pointers by index (from trace-k2-newgame-v5).
+    nodes: std::collections::BTreeMap<usize, (Vec<u8>, u32, Vec<u32>)>,
+}
+
+impl ReferenceCritters {
+    /// CritterInsts (CritterEmptyInst 0x193ae4..0x193ae8).
+    const BASE: u32 = 0x251750;
+    /// The waypoint records FindClosestWaypoint walks (0x14fddc..0x14fde0,
+    /// stride 0x80); native +0xb5c holds the index + 1.
+    const WAYPOINTS: u32 = 0x23bd20;
+    fn apply(&mut self, sample: &serde_json::Value) -> Result<bool, Box<dyn Error>> {
+        let e = &sample["enemies"];
+        let Some(delta) = e["critters_delta"].as_object() else { return Ok(false) };
+        let hexv = |v: &serde_json::Value| -> Result<Vec<u8>, Box<dyn Error>> {
+            let s = v.as_str().ok_or("critter hex")?;
+            Ok((0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<Vec<u8>, _>>()?)
+        };
+        self.slots.resize(16, vec![0; 0xb70]);
+        for (slot, hex) in delta {
+            let k: usize = slot.parse()?;
+            *self.slots.get_mut(k).ok_or("critter slot")? = hexv(hex)?;
+        }
+        self.num = e["NumCritterInsts"].as_u64().ok_or("NumCritterInsts")? as usize;
+        let b = hexv(&e["BossCritInst"])?;
+        self.boss = u32::from_le_bytes(b[..4].try_into()?);
+        self.globals = e["critter_globals"].as_object().cloned().unwrap_or_default();
+        self.nodes.clear();
+        if let Some(nodes) = e["critter_nodes"].as_object() {
+            for (k, n) in nodes {
+                let p = hexv(&n["parent"])?;
+                let tree = match n.get("tree_nodes") {
+                    Some(t) => hexv(t)?.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect(),
+                    None => Vec::new(),
+                };
+                self.nodes.insert(k.parse()?, (hexv(&n["node"])?, u32::from_le_bytes(p[..4].try_into()?), tree));
+            }
+        }
+        Ok(true)
+    }
+
+    fn global(&self, name: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+        let s = self.globals.get(name).and_then(|v| v.as_str()).ok_or_else(|| format!("critter global {name}"))?;
+        Ok((0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<Vec<u8>, _>>()?)
+    }
+
+    fn word(r: &[u8], o: usize) -> u32 {
+        u32::from_le_bytes(r[o..o + 4].try_into().unwrap())
+    }
+
+    /// Stack residue: CritterGetSingleTargetPlayer copies its 0x30-byte
+    /// target struct into +0x140, and CritterCalcTarget never writes the
+    /// struct's +0x14/+0x18/+0x1c/+0x2c (no critter code reads them back;
+    /// the 0x15c loads in CritterDamage/CritterDamagePlayer/CritterGolemAI
+    /// are the global 0x22015c).
+    const RESIDUE: [usize; 4] = [0x154, 0x158, 0x15c, 0x16c];
+
+    fn live(&self, k: usize) -> bool {
+        k < self.num && self.slots.get(k).is_some_and(|r| Self::word(r, 4) != 0)
+    }
+
+    /// Guest pointer words: TYPE +0x04, the critter node +0x70, the atree and
+    /// AnimInfo links +0x80..+0x8c and +0xc0/+0xc4, CritterInitGeo's +0xcc,
+    /// the shadow +0xd0, the nodes +0xd4/+0xd8/+0xdc/+0xe8, the chain
+    /// +0xb60/+0xb64 and each collision node's +0/+4/+8.
+    fn pointer_words(ncol: usize) -> Vec<usize> {
+        let mut v = vec![0x04, 0x70, 0x80, 0x84, 0x88, 0x8c, 0xc0, 0xc4, 0xcc, 0xd0, 0xd4, 0xd8, 0xdc, 0xe8, 0xb60, 0xb64];
+        for c in 0..ncol {
+            v.extend([0x540 + 0x60 * c, 0x544 + 0x60 * c, 0x548 + 0x60 * c]);
+        }
+        v
+    }
+
+    /// The record in the native convention: pointer words cleared, the
+    /// +0xb54 item as slot + 1 and the +0xb5c waypoint as index + 1.
+    fn native(raw: &[u8], ncol: usize, items_base: u32) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut r = raw[..0xb70].to_vec();
+        for o in Self::pointer_words(ncol) {
+            r[o..o + 4].fill(0);
+        }
+        let it = Self::word(raw, 0xb54);
+        if it != 0 {
+            if it < items_base || !(it - items_base).is_multiple_of(0x110) {
+                return Err(format!("critter +0xb54 {it:#x} is not an Items record").into());
+            }
+            r[0xb54..0xb58].copy_from_slice(&((it - items_base) / 0x110 + 1).to_le_bytes());
+        }
+        let wp = Self::word(raw, 0xb5c);
+        if wp != 0 {
+            if wp < Self::WAYPOINTS || !(wp - Self::WAYPOINTS).is_multiple_of(0x80) {
+                return Err(format!("critter +0xb5c {wp:#x} is not a waypoint record").into());
+            }
+            r[0xb5c..0xb60].copy_from_slice(&((wp - Self::WAYPOINTS) / 0x80 + 1).to_le_bytes());
+        }
+        Ok(r)
+    }
+
+    fn ncol(game: &gdl_core::game::Game, t: (usize, usize)) -> usize {
+        let ty = &game.critter_data.files[t.0].wad.types[t.1];
+        i16::from_le_bytes([ty[0x118], ty[0x119]]).max(0) as usize
+    }
+
+    /// Seed the native instances, CritterNewID/CritterCounter, the boss
+    /// state and BossCritInst (index + 1). Roots only (children: error).
+    fn seed(&self, game: &mut gdl_core::game::Game, items_base: u32, objects: &ReferenceObjects) -> Result<(), Box<dyn Error>> {
+        let etypes = self.global("CritterETypes")?;
+        let enemy_root = self.global("EnemyRootNode").ok().map(|b| Self::word(&b, 0));
+        game.critters.clear();
+        for k in 0..self.num.min(16) {
+            game.critters.push(None);
+            if !self.live(k) {
+                continue;
+            }
+            let raw = &self.slots[k];
+            let ty = Self::word(raw, 4);
+            let at = (0..54).find(|&n| Self::word(&etypes, 4 * n) == ty).ok_or_else(|| format!("critter {k} TYPE {ty:#x} is not a CritterETypes entry"))?;
+            let (kind, slot) = (at / 6, at % 6);
+            let t = game.critter_data.etypes[kind][slot].ok_or_else(|| format!("no native critter type for kind {kind} slot {slot}"))?;
+            let ncol = Self::ncol(game, t);
+            // Tree node pointers → indices by CritterGetNode's table (+0xc0,
+            // 0x28-byte entries); traces without it cannot seed +0xdc.
+            let table = self.nodes.get(&k).map(|n| n.2.clone()).unwrap_or_default();
+            let index = |p: u32| -> Option<usize> { if p == 0 { None } else { table.iter().position(|&q| q == p) } };
+            let dc = Self::word(raw, 0xdc);
+            let node_dc = if dc == 0 {
+                None
+            } else {
+                Some(index(dc).ok_or_else(|| format!("critter {k} +0xdc {dc:#x} is not in its node table (trace before trace-k2-newgame-v5?)"))?)
+            };
+            // The +0x70 node: local matrix and parent (EnemyRootNode, or a
+            // WORLDS object by its +0x28 node pointer).
+            let (node, floor) = match self.nodes.get(&k) {
+                Some((n, parent, _)) => {
+                    let m: [[f32; 4]; 4] = std::array::from_fn(|a| std::array::from_fn(|b| f32::from_bits(Self::word(n, 0x10 * a + 4 * b))));
+                    let floor = if Some(*parent) == enemy_root {
+                        None
+                    } else {
+                        Some(objects.0.iter().position(|o| Self::word(o, 0x28) == *parent).ok_or_else(|| format!("critter {k} node parent {parent:#x} is not a WORLDS object node"))?)
+                    };
+                    (Some(m), floor)
+                }
+                None => (None, None),
+            };
+            game.seed_critter(k, t, slot, &Self::native(raw, ncol, items_base)?, node_dc, node, floor).map_err(|e| e.0)?;
+            // The traced node pointers against the native look-at and
+            // collision nodes (a reference node outside the tree is noted).
+            let cr = game.critters[k].as_ref().ok_or("seeded critter")?;
+            let mut checks = vec![(0xd4, cr.node_d4), (0xd8, cr.node_d8), (0xe8, cr.node_e8)];
+            for (c, (n, n2)) in cr.colnode_nodes.iter().enumerate() {
+                checks.push((0x544 + 0x60 * c, *n));
+                checks.push((0x548 + 0x60 * c, *n2));
+            }
+            for (o, n) in checks {
+                let p = Self::word(raw, o);
+                if index(p) != n {
+                    game.log.note("critter seed", &gdl_core::game::Unsupported(format!("critter {k} +{o:#x} {p:#x} ≠ native node {n:?}")));
+                }
+            }
+        }
+        let g = |n: &str| -> Result<u32, Box<dyn Error>> { Ok(Self::word(&self.global(n)?, 0)) };
+        game.critter_new_id = g("CritterNewID")? as u16;
+        game.critter_counter = g("CritterCounter")? as u16;
+        let bp = self.global("BossStartPos")?;
+        game.boss_start_pos = std::array::from_fn(|j| f32::from_bits(Self::word(&bp, 4 * j)));
+        game.boss_activate_time = f32::from_bits(g("BossActivateTime")?);
+        game.boss_cam_mode = g("BossCamMode")? as i32;
+        game.boss_crit_inst = if self.boss == 0 { 0 } else { ((self.boss - Self::BASE) / 0xb70 + 1) as i32 };
+        Ok(())
+    }
+
+    /// Differing words of the native instances against these (the native
+    /// clock written back to the +0x84 AnimInfo).
+    fn compare(&self, game: &gdl_core::game::Game, items_base: u32) -> Result<Vec<serde_json::Value>, Box<dyn Error>> {
+        let mut out = Vec::new();
+        if game.critters.len() != self.num {
+            out.push(serde_json::json!({"field":"NumCritterInsts","native":game.critters.len(),"reference":self.num}));
+        }
+        let boss = if self.boss == 0 { 0 } else { ((self.boss - Self::BASE) / 0xb70 + 1) as i32 };
+        if game.boss_crit_inst != boss {
+            out.push(serde_json::json!({"field":"BossCritInst","native":game.boss_crit_inst,"reference":boss}));
+        }
+        for k in 0..16 {
+            let n = game.critters.get(k).and_then(Option::as_ref);
+            match (n, self.live(k)) {
+                (None, false) => {}
+                (Some(cr), true) => {
+                    let ncol = Self::ncol(game, cr.ty);
+                    let mut nr = cr.rec.0.clone();
+                    ReferenceItems::write_clock(&mut nr, &cr.clock);
+                    let r = Self::native(&self.slots[k], ncol, items_base)?;
+                    let mut skip = Self::pointer_words(ncol);
+                    skip.extend(Self::RESIDUE);
+                    for o in (0..0xb70).step_by(4) {
+                        if skip.contains(&o) {
+                            continue;
+                        }
+                        let (a, b) = (Self::word(&nr, o), Self::word(&r, o));
+                        if a != b {
+                            out.push(serde_json::json!({"critter":k,"offset":format!("{o:#x}"),"native":format!("{a:08x}"),"reference":format!("{b:08x}")}));
+                        }
+                    }
+                }
+                (a, b) => out.push(serde_json::json!({"critter":k,"field":"live","native":a.is_some(),"reference":b})),
+            }
+        }
+        Ok(out)
+    }
+}
+
 fn texdef_export(
     source: &Path,
     textures: Option<&Path>,
@@ -1583,6 +1802,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             let player_hud_words: std::collections::HashSet<usize> = [0x878, 0x87c, 0x2ae0].into_iter().collect();
             let mut obj_before = ReferenceObjects::default();
             obj_before.apply(s0)?;
+            // Critters (traces from trace-k2-newgame-v3): seeded before the
+            // update and compared after.
+            let mut crit_before = ReferenceCritters::default();
+            let have_crit = frame_mode && crit_before.apply(s0)? && !crit_before.globals.is_empty();
+            let mut critter_updates_equal = 0;
             let mut world_anim_updates_equal = 0;
             let mut player_updates_equal = 0;
             let mut effect_updates_equal = 0;
@@ -1603,6 +1827,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let mut obj_after = obj_before.clone();
                 obj_after.apply(a)?;
                 let obj_b = std::mem::replace(&mut obj_before, obj_after);
+                let mut crit_after = crit_before.clone();
+                if have_crit && !crit_after.apply(a)? {
+                    return Err("frame_replay: a sample without critters_delta".into());
+                }
+                let crit_b = std::mem::replace(&mut crit_before, crit_after);
                 if b["observation"]["scalars"]["AFrame"]["raw_u32"] == a["observation"]["scalars"]["AFrame"]["raw_u32"] {
                     continue;
                 }
@@ -1769,6 +1998,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                         let atime = gl.atime;
                         let player_node = word(&hexb(&bp["player0"])?[0x80..]);
                         fx_b.seed(game, items_base, atime, player_node);
+                        if have_crit {
+                            crit_b.seed(game, items_base, &obj_b)?;
+                        }
                         // AddEnemyHitCol's alternating blood (traces from
                         // trace-fight-g1-v5).
                         if let Some(v) = b["enemies"].get("sfx_ene_bloodidx") {
@@ -1823,10 +2055,32 @@ fn run() -> Result<(), Box<dyn Error>> {
                 // Traces without the help globals: every solve attempt starts
                 // from the help box state before the update.
                 let help_before = game.hud.help.clone();
+                // The native item side state an attempt may clear (DeleteItem:
+                // floor parent, sound node/anchor, tree, clock, first empty
+                // slot): every attempt starts from the update's
+                // (trace-b1-newgame-v2 step 366's poison barrel).
+                let item_side = (
+                    game.items.floor_parent.clone(),
+                    game.items.sound_node.clone(),
+                    game.items.sound_anchor.clone(),
+                    game.items.first_empty,
+                    game.item_trees.clone(),
+                    game.item_anims.clone(),
+                    game.items.geo.clone(),
+                );
                 for _ in 0..4 {
                     if b["enemies"].get("help_flag").is_none() {
                         game.hud.help = help_before.clone();
                     }
+                    (
+                        game.items.floor_parent,
+                        game.items.sound_node,
+                        game.items.sound_anchor,
+                        game.items.first_empty,
+                        game.item_trees,
+                        game.item_anims,
+                        game.items.geo,
+                    ) = item_side.clone();
                     seed_all(&mut game)?;
                     game.rng.state = seed;
                     res = if items_mode { game.process_items() } else { Ok(()) };
@@ -1886,6 +2140,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 let item_diffs = if items_mode { ref_before.compare(&game, &hexb(&a["enemies"]["WorldInfo"])?, items_base) } else { Vec::new() };
                 let (mut player_diffs, effect_diffs) = (Vec::new(), if frame_mode { fx_before.compare(&game, items_base) } else { Vec::new() });
+                let mut critter_diffs = Vec::new();
                 if frame_mode {
                     let after = hexb(&a["player"]["player0"])?;
                     for o in (0..0x2b00).step_by(4) {
@@ -1902,6 +2157,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                     }
                     if effect_diffs.is_empty() && res.is_ok() {
                         effect_updates_equal += 1;
+                    }
+                    if have_crit {
+                        critter_diffs = crit_before.compare(&game, items_base)?;
+                        if critter_diffs.is_empty() && res.is_ok() {
+                            critter_updates_equal += 1;
+                        }
                     }
                     if let Some(wa) = a["enemies"].get("world_anims") {
                         let raw = hexb(wa)?;
@@ -1924,13 +2185,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "words_differing":diffs.len(),"diffs":diffs.iter().take(60).collect::<Vec<_>>(),
                     "item_words_differing":item_diffs.len(),"item_diffs":item_diffs.iter().take(60).collect::<Vec<_>>(),
                     "player_words_differing":player_diffs.len(),"player_diffs":player_diffs.iter().take(40).collect::<Vec<_>>(),
-                    "effect_words_differing":effect_diffs.len(),"effect_diffs":effect_diffs.iter().take(40).collect::<Vec<_>>()}));
+                    "effect_words_differing":effect_diffs.len(),"effect_diffs":effect_diffs.iter().take(40).collect::<Vec<_>>(),
+                    "critter_words_differing":critter_diffs.len(),"critter_diffs":critter_diffs.iter().take(60).collect::<Vec<_>>()}));
             }
             let report = serde_json::json!({"scope":"per-update replay of a reference enemies trace through the native do_enemies (all 25 records, every u32 except presentation pointers 0x70 0x80 0x84 0x88 0x8c 0xc0 0xc4 0x1f0; generator/floor links mapped)",
                 "items_mode":items_mode,"item_scope":"items_replay: ProcessItems then do_enemies; Items array words except +0x70..+0xc7 and the +0xe6 link, export_live_items convention",
                 "item_updates_equal":item_updates_equal,"differing_item_offsets":by_item_offset,"differing_item_slots":by_item_slot,
+                "differing_item_names":by_item_slot.keys().filter_map(|&k| game.items.records.get(k as usize).map(|r| (k.to_string(), String::from_utf8_lossy(game.items.definitions[r.definition()].name()).into_owned()))).collect::<std::collections::BTreeMap<_, _>>(),
                 "frame_mode":frame_mode,"player_updates_equal":player_updates_equal,"effect_updates_equal":effect_updates_equal,
                 "world_anim_updates_equal":world_anim_updates_equal,
+                "critter_updates_equal":have_crit.then_some(critter_updates_equal),
                 "item_floor_parents":game.items.floor_parent.iter().enumerate().filter_map(|(k, p)| p.map(|(o, l)| serde_json::json!({"item":k,"object":o,"local":l}))).collect::<Vec<_>>(),
                 "items_without_native_clock":(0..game.items.records.len()).filter(|&k| game.items.records[k].active() && game.item_anims.get(k).is_none_or(|a| a.is_none()))
                     .map(|k| String::from_utf8_lossy(game.items.definitions[game.items.records[k].definition()].name()).into_owned())

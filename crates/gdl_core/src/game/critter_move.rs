@@ -5,8 +5,9 @@
 //! CritterMoveNodeCol 0x19a610, CritterColItem 0x159e20 and
 //! CritterWorldDamage 0x19cad0. TYPE +0x7c radius, +0x78 height; TYPE +0x5c
 //! flag 0x100 tests the collision nodes (+0x540 + 0x60k, position +0x40)
-//! instead of the +0x60 centre. Moving-floor parenting and the shadow
-//! matrix are presentation.
+//! instead of the +0x60 centre. The last floor hit re-parents the +0x70
+//! node (a flag-0x1000 object, else EnemyRootNode); the shadow matrix is
+//! presentation.
 use super::critters::{c, CritterFile};
 use super::enemies::e;
 use super::{Game, R};
@@ -144,6 +145,8 @@ impl Game {
         let down = sub(-h, 3.0)?;
         let (f1, _) = self.collision.floor_collide(1.0, h, down, probe, false, 2)?;
         let mut ok = true;
+        // The last FloorCollide's hit (the original's lVar9).
+        let mut last = f1.solid;
         match f1.solid {
             None => ok = false,
             Some(fh) => {
@@ -156,6 +159,7 @@ impl Game {
                     if 0.0 < len && mul(len, f32::from_bits(0x3dcc_cccd))? < step {
                         let p2 = v_add(col, *mv)?;
                         let (f2, _) = self.collision.floor_collide(1.0, h, down, p2, false, 2)?;
+                        last = f2.solid;
                         match f2.solid {
                             Some(h2) => y = h2.position[1],
                             None => {
@@ -169,6 +173,7 @@ impl Game {
                 }
                 if !ok {
                     let (f3, _) = self.collision.floor_collide(1.0, h, down, col, false, 2)?;
+                    last = f3.solid;
                     y = f3.solid.map_or(base, |h3| h3.position[1]);
                 }
                 let mut dy = sub(y, base)?;
@@ -184,6 +189,12 @@ impl Game {
             result |= 0x10;
         }
         self.crm_pub(i).set_u32(0x480, result);
+        // MBNodeSetParent(+0x70, the floor object's node when its +0x28 node
+        // exists and flag 0x1000 is set, else EnemyRootNode).
+        if let Some(fh) = last {
+            let moving = self.collision.runtime_flags.get(fh.object).is_some_and(|f| f & 0x1000 != 0);
+            self.crit_mut(i).floor = moving.then_some(fh.object);
+        }
         Ok(result)
     }
 

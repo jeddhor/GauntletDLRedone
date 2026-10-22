@@ -71,6 +71,23 @@ pub fn node_world(tree_parents: &[i32], locals: &[Mat], root: Mat, i: usize, off
     Ok(compose(MatrixBox { matrix: locals[i], flags: 0 }, &mut parents, offset)?.matrix)
 }
 
+/// [`node_world`] with an explicit chain after the tree's ancestors
+/// (immediate first; flag 4 boxes add their translation), for trees whose
+/// root hangs under further MB nodes.
+pub fn node_world_chain(tree_parents: &[i32], locals: &[Mat], roots: &[MatrixBox], i: usize, offset: Option<[f32; 3]>) -> Result<Mat, PoseError> {
+    let mut parents = Vec::new();
+    let mut k = usize::try_from(tree_parents[i]).ok();
+    while let Some(p) = k {
+        if 128 < parents.len() {
+            return Err(PoseError("parent chain".into()));
+        }
+        parents.push(MatrixBox { matrix: locals[p], flags: 0 });
+        k = usize::try_from(tree_parents[p]).ok();
+    }
+    parents.extend_from_slice(roots);
+    Ok(compose(MatrixBox { matrix: locals[i], flags: 0 }, &mut parents, offset)?.matrix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

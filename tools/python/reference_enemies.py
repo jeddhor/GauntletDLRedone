@@ -20,13 +20,18 @@ from reference_player import elf_symbols
 ENEMY_GLOBALS = ['BossIndex', 'SuicideBomberIndex', 'CurWorld', 'level_data', 'Items', 'WorldBase', 'frame_main',
                  'sfx_ene_bloodidx', 'help_flag', 'help_num', 'help_player', 'help_time', 'help_interval',
                  'help_interval_idx', 'help_lv', 'help_testflag', 'RuneDispTimer']
+# Critter globals (name: bytes): CritterETypes[9][6] TYPE pointers, the id
+# and frame counters, the target bookkeeping and the boss state.
+CRITTER_GLOBALS = {'CritterETypes': 9 * 6 * 4, 'CritterNewID': 4, 'CritterCounter': 4, 'CritterNActivePlayers': 4,
+                   'CritterPlayerNTargets': 16, 'BossStartPos': 12, 'BossActivateTime': 4, 'BossCamMode': 4,
+                   'EnemyRootNode': 4}
 ENEMY_SIZE = 0x3b0
 ENEMY_COUNT = 25
 
 
 def enemy_probe(memory):
     sym = elf_symbols({'enemies', '_impure_ptr', 'WorldInfo', 'NumItems', 'Effects', 'NumEffects', 'SfxId', 'CritterInsts',
-                       'NumCritterInsts', 'BossCritInst'} | set(ENEMY_GLOBALS))
+                       'NumCritterInsts', 'BossCritInst'} | set(ENEMY_GLOBALS) | set(CRITTER_GLOBALS))
     base, impure = sym['enemies'], sym['_impure_ptr']
     reent, = struct.unpack_from('<I', memory, impure)
     if not 0x100000 <= reent < 0x2000000 or reent % 4:
@@ -122,7 +127,24 @@ def enemy_probe(memory):
                 previous_crit[k] = r
         out['critters_delta'] = crit_delta
         out['NumCritterInsts'] = struct.unpack('<i', read(sym['NumCritterInsts'], 4))[0]
+        # Each live instance's +0x70 MB node (ProcessCritter's GetWorldMat
+        # source): local matrix +0x00..+0x40 and parent link +0x74.
+        nodes = {}
+        for k in range(min(max(out['NumCritterInsts'], 0), 16)):
+            r = crit[0xb70 * k:0xb70 * (k + 1)]
+            ty, node = struct.unpack_from('<I', r, 4)[0], struct.unpack_from('<I', r, 0x70)[0]
+            if ty and node and node % 16 == 0 and node + 0x80 <= 32 * 1024 * 1024:
+                raw = read(node, 0x80)
+                nodes[str(k)] = {'node': raw[:0x40].hex(), 'parent': raw[0x74:0x78].hex()}
+                # CritterGetNode's table: +0xc0 → +0xbc entries of 0x28
+                # bytes, the tree node's MB node pointer first.
+                count, table = struct.unpack_from('<II', r, 0xbc)
+                if 0 < count <= 128 and table and table % 4 == 0 and table + 0x28 * count <= 32 * 1024 * 1024:
+                    t = chunks(read, table, 0x28 * count)
+                    nodes[str(k)]['tree_nodes'] = b''.join(t[0x28 * n:0x28 * n + 4] for n in range(count)).hex()
+        out['critter_nodes'] = nodes
         out['BossCritInst'] = read(sym['BossCritInst'], 4).hex()
+        out['critter_globals'] = {k: read(sym[k], n).hex() for k, n in CRITTER_GLOBALS.items()}
         return out
 
     regions = [(base + o, memory[base + o:base + min(size, o + 2048)]) for o in range(0, size, 2048)]

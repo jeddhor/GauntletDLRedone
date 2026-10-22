@@ -108,6 +108,27 @@ pub fn create_pyr_matrix(a: [f32; 3]) -> R<[[f32; 3]; 3]> {
     Ok([[mul(c1, c2)?, m01, m02], [mul(-c1, s2)?, m11, m12], [-s1, mul(-s0, c1)?, mul(c0, c1)?]])
 }
 
+/// ExtractPYR 0x1d6790: the [pitch, yaw, roll] CreatePYRMatrix rebuilds,
+/// from a matrix's rows (16 floats; m[k] = float +4k).
+pub fn extract_pyr(m: &[f32; 16]) -> R<[f32; 3]> {
+    let atan2 = |y: f32, x: f32| crate::libm::atan2f(y, x).map_err(|_| Unsupported("atan2f".into()));
+    if sub(1.0, m[2].abs())?.abs() < f32::from_bits(0x38d1_b717) {
+        let a = atan2(m[9], m[5])?;
+        let y = if 0.0 < m[2] { f32::from_bits(0xbfc9_0fdb) } else { f32::from_bits(0x3fc9_0fdb) };
+        return Ok([a, y, 0.0]);
+    }
+    let p = atan2(-m[6], m[10])?;
+    let c = crate::libm::cosf(p).map_err(|_| Unsupported("cosf".into()))?;
+    if c == 0.0 {
+        return Ok(if 0.0 < p { [p, atan2(-m[2], -m[6])?, atan2(-m[8], -m[9])?] } else { [p, atan2(-m[2], m[6])?, atan2(m[8], m[9])?] });
+    }
+    let div = |a: f32, b: f32| crate::numeric::div_rn(a, b).map_err(|_| Unsupported("div".into()));
+    let k = div(m[10], c)?;
+    let y = atan2(-m[2], k)?;
+    let r = atan2(div(-m[1], k)?, div(m[0], k)?)?;
+    Ok([p, y, r])
+}
+
 /// DoWorldAnimSub's matrix part for one entry at `frame`, starting from the
 /// object's rest local matrix (identity rows, `position` = its +0x1c).
 pub fn eval_local(set: &WorldAnimSet, e: &WorldAnimState, frame: f32, position: [f32; 3]) -> R<M4> {

@@ -1994,7 +1994,7 @@ impl Game {
         let k = add(r, len)?;
         let probe = [add(pos[0], mul(k, d[0])?)?, add(pos[1], mul(k, d[1])?)?, add(pos[2], mul(k, d[2])?)?];
         let (c, _) = self.collision.floor_collide(mul(r, 0.5)?, half, sub(-half, 5.0)?, probe, false, 2)?;
-        let Some(hit) = c.solid else {
+        let Some(mut hit) = c.solid else {
             if 0.01 <= self.ef(i, 0x280) {
                 let y = sub(self.globals.world_bottom, 1000.0)?;
                 self.enemies[i].set_f32(0x2a8, y);
@@ -2027,7 +2027,13 @@ impl Game {
                     mv[2] = 0.0;
                     return Ok(0);
                 }
-                Some(h2) => floor_y = h2.position[1],
+                // The second FloorCollide reassigns the object the rest
+                // reads and returns (0x143120: iVar2; trace-b1-newgame-v2
+                // step 276 at the B1RAMP#6 / B1FLOOR00#04 seam).
+                Some(h2) => {
+                    floor_y = h2.position[1];
+                    hit = h2;
+                }
             }
         }
         let slide = (wall as u32).wrapping_sub(1) < 2 || (wall == 3 && self.enemy_wall_hit != Some(hit.object));
@@ -2902,8 +2908,18 @@ impl Game {
                         let y = self.turn_enemy_ang(self.ef(k, 0x260), k)?;
                         self.enemies[k].set_f32(0x258, y);
                         self.do_enemy_move(k)?;
-                        let a = self.do_enemy_action(k)?;
-                        self.enemies[k].set_u32(0xe0, a);
+                        // 0x13bad4..0x13bb10: with a tree (+0x80), the action
+                        // (not for BossType) and +0x3a4 = 0 when it differs
+                        // from +0xe4, else −1 (trace-b1-newgame-v2 step 404).
+                        if self.enemies[k].u32_(0x80) != 0 {
+                            if self.enemies[k].i32_(e::TYPE) != self.globals.boss_type {
+                                let a = self.do_enemy_action(k)?;
+                                self.enemies[k].set_u32(0xe0, a);
+                            }
+                            let v = if self.enemies[k].u32_(0xe0) != self.enemies[k].u32_(0xe4) { 0 } else { -1 };
+                            self.enemies[k].set_i32(0x3a4, v);
+                        }
+                        let a = self.enemies[k].u32_(0xe0);
                         // The dying enemy stays while its death skin runs
                         // (actions 0x1c/0x1d/0x20).
                         self.enemy_process_skin_fx(k)?;
