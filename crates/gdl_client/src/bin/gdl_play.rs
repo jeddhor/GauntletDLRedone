@@ -1643,6 +1643,32 @@ fn player_rhand(elf_bytes: &[u8], class: u32) -> Option<String> {
     Some(s.iter().take_while(|b| **b != 0).map(|b| char::from(*b)).collect())
 }
 
+/// A special texture modifier (AddSpecialTexmod 0x111180 / DoSpecialTexmods
+/// 0x1112b0): the mesh's texture becomes `base` + k of `package`, k
+/// stepping 0..frames every `rate` AFrames.
+#[derive(Component)]
+struct SpecialTexmod {
+    package: String,
+    base: String,
+    frames: u32,
+    rate: u32,
+}
+
+fn present_special_texmods(sim: Res<Sim>, libs: Res<Libraries>, q: Query<(Entity, &SpecialTexmod)>, mut req: ResMut<MatRequests>, mut step: Local<(u64, u32)>) {
+    // AFrame: one step per game update (DoSpecialTexmods runs per frame).
+    let aframe = sim.updates;
+    for (e, t) in &q {
+        if step.0 != aframe {
+            *step = (aframe, if aframe % u64::from(t.rate.max(1)) == 0 { (step.1 + 1) % t.frames.max(1) } else { step.1 });
+        }
+        let Some(lib) = libs.0.get(&t.package) else { continue };
+        let Some(&base) = lib.label_index.get(&t.base.to_uppercase()) else { continue };
+        if let Some(img) = lib.record_images.get(&(base + step.1 as u16)) {
+            req.get(e).replace = Some(img.clone());
+        }
+    }
+}
+
 /// The ground shadow object of a player slot (load_player: SHADOWL1, MB
 /// flags 0x880, z modifier −36; UpdatePlayerShadow places it).
 #[derive(Component)]
@@ -1697,6 +1723,11 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
         if rhand.as_deref() == Some(node.label.as_str()) {
             for (mesh, material) in &weapon {
                 let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot))).id();
+                // load_player: the Jester's (class & 7 == 7) held bomb gets
+                // AddSpecialTexmod(model, "BOMB", SFX model, "BOMB00", 5, 1).
+                if pc.key.class & 7 == 7 {
+                    commands.entity(child).insert(SpecialTexmod { package: pc.sfx_name.clone(), base: "BOMB00".into(), frames: 5, rate: 1 });
+                }
                 commands.entity(body).add_child(child);
             }
         }
@@ -4892,7 +4923,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

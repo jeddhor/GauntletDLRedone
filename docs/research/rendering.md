@@ -347,3 +347,10 @@ stores ~value at node +0x53 and sets flag 0x200; setPrimAlpha draws
 node +0x64 with flag 0x100; the client modulates by the colour
 (HYPOTHESIS, unknowns.md). StartGenFX 0x17f580: EffectHeaders 0x50 + level
 for generator spawns of levels 1..3 at the enemy's position.
+
+AddSpecialTexmod 0x111180 / DoSpecialTexmods: load_player gives a player
+of class & 7 == 7 (Jester, Hyena) a special texmod on the held weapon — the
+model's BOMB texture shows the SFX package's BOMB00 + k, k stepping 0..4
+every AFrame (rate 1). The client tags the weapon meshes and replaces
+their texture each update (the BOMB record itself is a placeholder that
+drew magenta).

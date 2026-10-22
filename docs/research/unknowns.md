@@ -45,7 +45,6 @@ replaced by a plausible gameplay rule or generated asset.
 | Effect tree colour | MBTreeSetColor (node +0x64, flag 0x100) is drawn as a modulation like MBBlitSetColor (block flash) | Trace the 0x100 path in the draw (setPrimColor / VU1) |
 | Multi-player start positions | Extra players stand 3 units along x (PLACEHOLDER) | Port get_player_pos / new_offset_start |
 | Select scene | The SELECT 3D scene behind the select columns is not drawn | Port LoadTowerAndSelect's select model and its camera |
-| Jester bomb texture | The held BOMB (AddSpecialTexmod BOMB00) draws magenta | Port AddSpecialTexmod for class 7 |
 | Good-wizard sequence | Ported (goodwiz.rs); not compared with a reference boss kill | Capture a reference boss kill and compare GoodWizard states and auto_exit_timer |
 | CritterDamagedPlayer anger value | f12 after damage_player is undefined; effect damage used | Read the value in a reference capture |
 | Rotated node composition | Rotators compose rotated nodes as rows × parent rows (unverified) | Transcribe GetWorldMat and compare a rotator level |
