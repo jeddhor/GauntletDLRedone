@@ -271,6 +271,41 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "pss-inspect" {
+        // pss-inspect DIR NEW_REPORT.json: every *.PSS's program-stream layout
+        // and its private-stream audio (SShd header, decoded length).
+        let mut entries = Vec::new();
+        let mut names: Vec<_> = fs::read_dir(&args[1])?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("pss"))).collect();
+        names.sort();
+        for path in names {
+            let b = bounded_read(&path, 64 * 1024 * 1024)?;
+            let e = match gdl_formats::pss::demux_audio(&b) {
+                Ok((audio, l)) => {
+                    let ads = gdl_formats::audio::Ads::parse(&audio).ok();
+                    let pcm = ads.as_ref().map(|a| a.decode(&audio).len() / a.channels.max(1) as usize);
+                    serde_json::json!({"file":path.file_name().map(|n| n.to_string_lossy().into_owned()),"sha256":hash(&b),"packs":l.packs,"video_bytes":l.video_bytes,
+                        "audio_bytes":l.audio_bytes,"padding_bytes":l.padding_bytes,"trailing":l.trailing,"ads":ads,
+                        "audio_seconds":pcm.zip(ads.as_ref()).map(|(n, a)| n as f64 / f64::from(a.rate.max(1)))})
+                }
+                Err(e) => serde_json::json!({"file":path.file_name().map(|n| n.to_string_lossy().into_owned()),"sha256":hash(&b),"error":e.to_string()}),
+            };
+            entries.push(e);
+        }
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &serde_json::json!({"movies":entries}))?;
+        file.write_all(b"\n")?;
+        return Ok(());
+    }
+    if args.len() == 2 && args[0] == "levl-list" {
+        // levl-list WDATA.WAD: each LEVL record's code and +0x34 movie name (stdout).
+        let w = gdl_formats::wdata::WorldData::parse(&bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?)?;
+        for (k, l) in w.levels.iter().enumerate() {
+            let m = &l.raw[0x34..0x44];
+            let m = String::from_utf8_lossy(&m[..m.iter().position(|&b| b == 0).unwrap_or(m.len())]).into_owned();
+            println!("{k} {} movie {:?}", l.code, m);
+        }
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "audio-inspect" {
         // audio-inspect FILE(.VBK|.ADS|AUDATPS2.ROM) NEW_REPORT.json: tables + decoded lengths.
         let b = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;

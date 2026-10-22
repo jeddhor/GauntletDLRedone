@@ -9,6 +9,7 @@ pub mod fnt;
 pub mod memcard;
 pub mod objects;
 pub mod pdata;
+pub mod pss;
 pub mod texdef;
 pub mod textrom;
 pub mod wad;

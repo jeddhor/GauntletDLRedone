@@ -504,3 +504,39 @@ Tower in init_next_level after the select). Loading a file returns to menu
 Start → Load → SLOT 1 → TEST → Sorceress → Done → the Tower and Sumner's
 welcome. DEBUG: GDL_DEBUG_NATIVE_SELECT keeps the native save list (and
 the PS2-capture import).
+
+## Movies (2026-10-22)
+
+init_gamemovie 0x1657d0(param) sets game mode 0x400e, BGMusicStop and
+AudioStopAll; unless NoMovies (0), AuxLevels 0x10 or a skip_wave it opens
+"/MPEG/victory.pss" (param 0x2c, movietype 2), "/MPEG/garm.pss" (0x2b,
+movietype 2) or the level's own LEVL +0x34 name (movietype 1). Callers: the
+map screen's end (LoadWorldData of the destination, then init_gamemovie —
+the realm movies movieA1.. and the legend-item movies iceaxe, javelin,
+bellows, scimitar, soulsave, fscroll, lamp, lantern, goodbook play before
+their level) and game_main's BossType 0x2c/0x2b level end.
+do_gamemovie 0x165908: an accept edge (active_player_edge 0x2000000, any
+player not in state 0) kills a movietype-1 movie; when it ends, movietype 1
+→ init_next_level(0), 2 → init_shop. LEVL +0x34 names per realm (actual
+disc, gdl_tools levl-list): A1 movieA1, A2 iceaxe, A3 movieA3; B1 movieB1,
+B4 movieB4, B5 javelin; C1 movieC1, C3 bellows, C4 movieC4; D1 movieD1, D3
+movieD3, D4 scimitar; E1 soulsave; G1 movieG1, G3 fscroll, G4 movieG4; H1
+movieH1; I1 movieI1, I3 movieI3, I4 lamp; J1 movieJ1, J2 lantern, J3
+movieJ3; K2 movieK1, K3 movieK3, K4 goodbook. init_stats_display (0x4016,
+"FINAL STATS") has no caller or reference in this build.
+
+The PSS format and the decoder choice are in docs/decisions/0003-movies.md
+(gdl_tools pss-inspect: all 36 files demux; private/reports/pss-inspect-
+MPEG-v1.json, -MPEG2-v1.json). Native: gdl_core::game::movie, the client's
+present_movie (full-screen HUD-layer quad, soundtrack on the music
+channel). The realm movies are rendered with the map and empty player
+panels in their first frames. HYPOTHESIS: the 480-line movie is shown over
+the 448-line frame's full height (InitMovie sets a 640×480 interlaced
+display; the native window keeps the game's frame).
+
+Attract sequence (init_attract_mode 0x182708, attract_tab 0x249568):
+Screen2D 0, movie table 0 (midway), movie table 1 (opening), movie table 2
+(title2), the title screen, Screen2D 1, a flyby, movie table 3 (war_dwa /
+val_kni / wiz_sor / jes_arc by attract_movie_idx), Screen2D 2, a flyby,
+credits, movie table 4 (fail, only after a failed game), repeat; movies from
+MPEG2 via init_movie/do_movie. Not ported yet.

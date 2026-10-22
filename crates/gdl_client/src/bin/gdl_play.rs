@@ -239,6 +239,8 @@ struct LevelSource {
     /// Critter files (CRITTER/*.WAD) with their model ANIM.PS2 and the
     /// library (package name) that draws the model.
     critters: Vec<(String, Option<String>, Option<String>)>,
+    /// LEVL +0x34: the movie init_gamemovie plays before the level ("" none).
+    movie: String,
 }
 
 /// Inputs to (re)build the native game for a level; the current geometry.
@@ -316,6 +318,8 @@ struct Base {
     anim_paths: HashMap<String, String>,
     audio_rom: Option<gdl_formats::audio::AudioRom>,
     shared_labels: std::collections::HashSet<String>,
+    /// The disc's movies ("MPEG/MOVIEA1", "MPEG2/MIDWAY" → .PSS path).
+    movies: HashMap<String, std::path::PathBuf>,
 }
 
 /// Front end: menu, save store, class tables and the asset catalog.
@@ -1375,8 +1379,129 @@ struct Sim {
     select_quit: bool,
     /// The level init_next_level enters after the select screen.
     select_next: Option<usize>,
-    /// The level to load once the shop or map screen finished.
+    /// The level to load once the shop finished (after the select screen).
     shop_done: Option<usize>,
+    /// The level the map screen leads to (init_gamemovie, init_next_level).
+    map_done: Option<usize>,
+    /// game mode 0x400e: an in-game movie and where play goes on after it.
+    movie: Option<MovieRun>,
+    movie_done: Option<MovieThen>,
+}
+
+/// The full-screen movie frame (HUD layer, above the other blits).
+#[derive(Component)]
+struct MovieQuad;
+
+/// InitMovie / ServeMovie / KillMovie on the host: on a movie's first frame
+/// the decoder starts (gdl_client::movie; a missing file or decoder ends
+/// the movie as a failed InitMovie does) and its soundtrack plays on the
+/// music channel; each frame shows the newest due video frame over the
+/// whole screen (GS alpha 0x80); afterwards the quad hides and the
+/// soundtrack stops.
+#[allow(clippy::too_many_arguments)]
+fn present_movie(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut sim: ResMut<Sim>,
+    front: Res<Front>,
+    mut images: ResMut<Assets<Image>>,
+    mut mats: ResMut<Assets<gdl_client::BlitMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut quad: Query<&mut Visibility, With<MovieQuad>>,
+    mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
+    mut image: Local<Option<Handle<Image>>>,
+    mut showing: Local<bool>,
+) {
+    let mut note = None;
+    let Some(run) = sim.movie.as_mut() else {
+        if std::mem::take(&mut *showing) {
+            for mut v in &mut quad {
+                *v = Visibility::Hidden;
+            }
+            if let Some(a) = audio.as_mut() {
+                a.stream_stop();
+            }
+        }
+        return;
+    };
+    if !run.tried {
+        run.tried = true;
+        if let Some(req) = &run.game.request {
+            let key = format!("{}/{}", req.dir, req.name.to_uppercase());
+            match front.base.movies.get(&key) {
+                Some(path) => match gdl_client::movie::MoviePlayer::start(path) {
+                    Ok(p) => run.player = Some(p),
+                    Err(e) => note = Some(format!("movie {key}: {e}")),
+                },
+                None => note = Some(format!("movie {key} is not on the disc")),
+            }
+        }
+        if let (Some(p), Some(a)) = (run.player.as_mut(), audio.as_mut())
+            && let Some((pcm, rate, ch)) = p.audio.take()
+        {
+            a.play_pcm(pcm, rate, ch);
+        }
+    }
+    let frame = run.player.as_mut().and_then(|p| p.advance(f64::from(time.delta_secs())));
+    if let Some(n) = note {
+        sim.last_event = n;
+    }
+    let img = image
+        .get_or_insert_with(|| {
+            let size = (gdl_client::movie::WIDTH * gdl_client::movie::HEIGHT * 4) as usize;
+            let mut im = Image::new(
+                bevy::render::render_resource::Extent3d { width: gdl_client::movie::WIDTH, height: gdl_client::movie::HEIGHT, depth_or_array_layers: 1 },
+                bevy::render::render_resource::TextureDimension::D2,
+                [0, 0, 0, 0x80].repeat(size / 4),
+                bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+                bevy::asset::RenderAssetUsages::default(),
+            );
+            im.sampler = bevy::image::ImageSampler::linear();
+            images.add(im)
+        })
+        .clone();
+    if let Some(mut f) = frame {
+        for px in f.chunks_exact_mut(4) {
+            px[3] = 0x80;
+        }
+        if let Some(im) = images.get_mut(&img) {
+            im.data = Some(f);
+        }
+    }
+    if quad.is_empty() {
+        let params = gdl_client::BlitParams { rgba: Vec4::ONE, crop: Vec4::new(0.0, 1.0, 0.0, 1.0), mask_rect: Vec4::ZERO };
+        let mat = mats.add(gdl_client::BlitMaterial { params, texture: Some(img), mask: None });
+        commands.spawn((
+            Mesh2d(meshes.add(Rectangle::new(1.0, 1.0))),
+            MeshMaterial2d(mat),
+            Transform::from_xyz(0.0, 0.0, 50.0).with_scale(Vec3::new(512.0, 384.0, 1.0)),
+            Visibility::Visible,
+            bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
+            MovieQuad,
+        ));
+    } else {
+        for mut v in &mut quad {
+            *v = Visibility::Visible;
+        }
+    }
+    *showing = true;
+}
+
+/// init_gamemovie's movie with the host's decoder (started by
+/// present_movie on its first frame; None once it could not start).
+struct MovieRun {
+    game: gdl_core::game::movie::GameMovie,
+    player: Option<gdl_client::movie::MoviePlayer>,
+    tried: bool,
+    then: MovieThen,
+}
+
+/// do_gamemovie's result: movietype 1 → init_next_level(0) of the level,
+/// 2 → init_shop (then the Tower).
+#[derive(Clone, Copy)]
+enum MovieThen {
+    Level(usize),
+    Shop(usize),
 }
 
 /// One port's joyGetStatus entries this update. HYPOTHESIS mapping (the
@@ -2762,13 +2887,27 @@ fn simulate(
     }
     let me = Vec3::from_array(sim.game.players[0].v3(0x50));
     let right = sim.game.std_camera.as_ref().map_or(presentation.basis[0], |c| Vec3::from_array(c.pb.cam_rows[0]));
+    // game mode 0x400e: do_gamemovie (controls polled; the game waits).
+    if let Some(mut run) = sim.movie.take() {
+        let vb = sim.game.globals.vb_elapsed;
+        sim.game.main_audio(vb);
+        if let Err(e) = sim.game.update_controls(&ports) {
+            sim.error = Some(format!("controls: {}", e.0));
+        }
+        let serving = !run.tried || run.player.as_ref().is_some_and(|p| p.playing());
+        match sim.game.do_gamemovie(&mut run.game, serving) {
+            Some(_) => sim.movie_done = Some(run.then),
+            None => sim.movie = Some(run),
+        }
+        return;
+    }
     // game mode 0x400f: do_mapscreen until the next level loads.
     if let Some((mut m, next)) = sim.map.take() {
         let g = &mut sim.game;
         g.hud.begin_frame();
         g.main_audio(g.globals.vb_elapsed);
         if g.do_mapscreen(&mut m) {
-            sim.shop_done = Some(next);
+            sim.map_done = Some(next);
         } else {
             sim.map = Some((m, next));
         }
@@ -4442,7 +4581,7 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         let pdats = world.resource::<Session>().pdats.clone();
         select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
     }
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -4904,8 +5043,20 @@ fn run() -> Result<(), Box<dyn Error>> {
         monsters.insert(t, name);
     }
     let mut levels = Vec::new();
+    let mut wdata_cache: HashMap<String, gdl_formats::wdata::WorldData> = HashMap::new();
     for l in cfg["levels"].as_array().ok_or("config levels")? {
+        let wd_path = l["wdata"].as_str().ok_or("level wdata")?.to_string();
+        if !wdata_cache.contains_key(&wd_path) {
+            wdata_cache.insert(wd_path.clone(), gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(Path::new(&wd_path))?)?);
+        }
+        let movie = wdata_cache[&wd_path]
+            .levels
+            .get(l["index"].as_u64().ok_or("level index")? as usize)
+            .and_then(|r| r.raw.get(0x34..0x44))
+            .map(|m| String::from_utf8_lossy(&m[..m.iter().position(|&b| b == 0).unwrap_or(m.len())]).into_owned())
+            .unwrap_or_default();
         levels.push(LevelSource {
+            movie,
             name: l["name"].as_str().ok_or("level name")?.to_string(),
             index: l["index"].as_u64().ok_or("level index")? as usize,
             world: l["world"].as_i64().ok_or("level world")? as i32,
@@ -5060,7 +5211,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         powerups_pkg,
         controls_menu,
         menu_clock: (None, 0.0),
-        base: Base { package_cfg, start, levels, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
+        base: Base {
+            package_cfg,
+            start,
+            levels,
+            monster_paths,
+            monsters,
+            anim_paths,
+            audio_rom,
+            shared_labels,
+            movies: cfg["movies"].as_object().map_or(HashMap::new(), |m| m.iter().filter_map(|(n, v)| Some((n.to_uppercase(), v.as_str()?.into()))).collect()),
+        },
     };
     refresh_saves(&mut front);
     // hint_menu categories → HINTS_E.ROM lists (every line of every entry,
@@ -5105,7 +5266,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
@@ -5197,6 +5358,27 @@ fn advance_level(
             Err(e) => sim.error = Some(format!("init_player_select: {}", e.0)),
         }
     }
+    // do_mapscreen finished: LoadWorldData, init_gamemovie (the level's
+    // LEVL +0x34 movie), else init_next_level.
+    if let Some(k) = sim.map_done.take() {
+        let skip = i32::from((13..=0xffff).contains(&sim.game.globals.skip_wave));
+        let gm = sim.game.init_gamemovie(skip, &session.levels[k].movie);
+        if gm.request.is_some() {
+            sim.movie = Some(MovieRun { game: gm, player: None, tried: false, then: MovieThen::Level(k) });
+        } else {
+            session.next = Some(k);
+            session.banner = Some((0.0, String::new()));
+        }
+    }
+    // do_gamemovie finished.
+    match sim.movie_done.take() {
+        Some(MovieThen::Level(k)) => {
+            session.next = Some(k);
+            session.banner = Some((0.0, String::new()));
+        }
+        Some(MovieThen::Shop(k)) => start_shop(&mut sim, &front, k),
+        None => {}
+    }
     // do_player_select aborted: init_titlescreen (every player left).
     if std::mem::take(&mut sim.select_quit) {
         session.finished = Some("Every player left the select screen; the title screen follows (Esc).".into());
@@ -5246,9 +5428,13 @@ fn advance_level(
                 }
                 // init_gamemovie (movies are not ported), then game_wave =
                 // TowerWave: init_next_level into the Tower.
-                LevelEnd::Movie(_) => {
-                    session.next = tower;
-                    session.banner = Some((0.0, String::new()));
+                // init_gamemovie(BossType): victory / garm (movietype 2),
+                // then init_shop and the Tower.
+                LevelEnd::Movie(b) => {
+                    let gm = sim.game.init_gamemovie(b, "");
+                    if let Some(k) = tower {
+                        sim.movie = Some(MovieRun { game: gm, player: None, tried: false, then: MovieThen::Shop(k) });
+                    }
                     (None, false)
                 }
                 LevelEnd::Map { skip } => match sim.game.next_world_wave() {

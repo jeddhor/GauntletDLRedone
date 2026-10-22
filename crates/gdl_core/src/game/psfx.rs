@@ -95,6 +95,9 @@ impl Game {
 
     /// PlyrSfxDoDamage(previous frame, frame, player, DAMG index, partner, extra).
     pub(crate) fn plyr_sfx_do_damage(&mut self, prev: f32, frame: f32, p: usize, d: i16, partner: Option<usize>, extra: Option<V3>) -> R<()> {
+        // The caller's extra point: PlyrSfxDoDamageSub's local case rewrites
+        // it in place (body space) for the rest of the chain.
+        let mut extra = extra;
         let mut d = d;
         let mut depth = 0;
         while 0 <= d {
@@ -146,7 +149,7 @@ impl Game {
                 match u16::from_le_bytes([rec[0], rec[1]]) {
                     0 | 5 => {}
                     2 => {
-                        self.plyr_sfx_do_damage_sub(p, &rec, false, extra)?;
+                        self.plyr_sfx_do_damage_sub(p, &rec, false, &mut extra)?;
                     }
                     10 => {
                         if frame != prev {
@@ -154,7 +157,7 @@ impl Game {
                         }
                     }
                     _ => {
-                        self.plyr_sfx_do_damage_sub(p, &rec, true, extra)?;
+                        self.plyr_sfx_do_damage_sub(p, &rec, true, &mut extra)?;
                     }
                 }
             }
@@ -223,11 +226,11 @@ impl Game {
 
     /// PlyrSfxDoDamageSub(player, DAMG, local, extra): the class effect and
     /// its damage parameters; returns the effect slot or −1.
-    fn plyr_sfx_do_damage_sub(&mut self, p: usize, rec: &[u8], local: bool, extra: Option<V3>) -> R<i32> {
+    fn plyr_sfx_do_damage_sub(&mut self, p: usize, rec: &[u8], local: bool, extra: &mut Option<V3>) -> R<i32> {
         let rows = self.player_rows(p);
         let off = [f32_at(rec, 0x2c), f32_at(rec, 0x30), f32_at(rec, 0x34)];
         let pos = if !local {
-            match extra {
+            match *extra {
                 None => {
                     let w = mul_vec_mat3(off, &rows)?;
                     let base = self.players[p].v3(0x50);
@@ -239,9 +242,18 @@ impl Game {
                 }
             }
         } else {
-            match extra {
+            match *extra {
                 None => off,
-                Some(_) => return super::unsupported("PlyrSfxDoDamageSub with a body-space extra offset"),
+                Some(e) => {
+                    // MulBodyVecMat4(extra, extra, player matrix): e − the
+                    // translation +0x50 dotted with each row, in place.
+                    let t = self.players[p].v3(0x50);
+                    let v = [sub(e[0], t[0])?, sub(e[1], t[1])?, sub(e[2], t[2])?];
+                    let dot = |r: V3| -> R<f32> { Ok(add(add(mul(v[0], r[0])?, mul(v[1], r[1])?)?, mul(v[2], r[2])?)?) };
+                    let b = [dot(rows[0])?, dot(rows[1])?, dot(rows[2])?];
+                    *extra = Some(b);
+                    [add(b[0], off[0])?, add(b[1], off[1])?, add(b[2], off[2])?]
+                }
             }
         };
         let sfx = i16_at(rec, 0x48);

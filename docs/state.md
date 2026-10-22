@@ -97,6 +97,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    missile), the held-weapon WEAP_HOLD effect, texmod targets named for
    particle textures with frames from other packages, signed psys record
    offsets (gameplay.md, rendering.md). gdl_tools anim-trees inspector.
+   2026-10-22: in-game movies (init_gamemovie/do_gamemovie; PSS video via
+   the system ffmpeg, audio decoded natively — decisions/0003-movies.md):
+   the level movies after the map screen, victory/garm before the shop.
+   Fixed: the map screen's end opened the select screen (shared signal).
+   Next: the attract sequence (Screen2D, movies, flybys, credits).
 
 ---
 

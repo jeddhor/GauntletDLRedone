@@ -15,6 +15,7 @@ pub mod doplayers;
 pub mod damage;
 pub mod effects;
 pub mod exitflow;
+pub mod movie;
 pub mod goodwiz;
 pub mod heal;
 pub mod healthmeter;

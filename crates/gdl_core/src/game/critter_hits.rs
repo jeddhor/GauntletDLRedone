@@ -555,7 +555,14 @@ impl Game {
             }
         } else {
             match base {
-                Some(_) => return unsupported("CritterDoDamageFX local with a base (MulBodyVecMat4)"),
+                // MulBodyVecMat4(base, base, critter matrix): base − the
+                // translation dotted with each row (no caller passes both).
+                Some(b) => {
+                    let v = [sub(b[0], pos[0])?, sub(b[1], pos[1])?, sub(b[2], pos[2])?];
+                    let dot = |r: V3| -> R<f32> { Ok(add(add(mul(v[0], r[0])?, mul(v[1], r[1])?)?, mul(v[2], r[2])?)?) };
+                    let bb = [dot(m[0])?, dot(m[1])?, dot(m[2])?];
+                    [add(bb[0], off[0])?, add(bb[1], off[1])?, add(bb[2], off[2])?]
+                }
                 None => off,
             }
         };

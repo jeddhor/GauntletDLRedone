@@ -43,6 +43,17 @@ def resolve(targets):
     return paths
 
 
+def movie_config():
+    """The disc's movies (MPEG/*.PSS, MPEG2/*.PSS, read in place from the
+    extracted disc filesystem): "DIR/NAME" → path; their SHA-256 values are in
+    private/reports/pss-inspect-*-v1.json."""
+    out = {}
+    for d in ('MPEG', 'MPEG2'):
+        for f in sorted(pathlib.Path('private/disc', d).glob('*.PSS')):
+            out[f'{d}/{f.stem.upper()}'] = str(f)
+    return out
+
+
 def audio_config():
     """AUDATPS2.ROM, every AUDIO/*.VBK bank and STREAMS/*.ADS music, by verified identity."""
     proposed = json.loads(pathlib.Path('private/reports/wad-independent.json').read_text())
@@ -241,7 +252,7 @@ def main():
         catalog=dict(names='private/reports/wad-independent.json', archive='private/wad/manifest.json', root='private/wad'),
         saves=str(save_dir), packages=packages,
         monsters=[dict(type=t, package=p) for t, p in sorted(monsters.items())],
-        audio=audio_config())
+        audio=audio_config(), movies=movie_config())
     CONFIG.write_text(json.dumps(config, indent=1) + '\n')
     env = os.environ.copy()
     if args.virtual:

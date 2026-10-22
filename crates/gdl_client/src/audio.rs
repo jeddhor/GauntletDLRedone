@@ -273,6 +273,16 @@ impl AudioOut {
         true
     }
 
+    /// A movie's soundtrack (the PSS private stream) on the music channel,
+    /// once, at full stream level.
+    pub fn play_pcm(&mut self, pcm: Vec<i16>, rate: u32, channels: u32) {
+        if let Ok(mut m) = self.mixer.lock() {
+            m.music = Some((Arc::new(pcm), rate, channels, 0.0));
+            m.music_loops = false;
+            m.music_level = 1.0;
+        }
+    }
+
     /// stream_playing(): the stage music still sounds.
     pub fn stream_playing(&self) -> bool {
         self.mixer.lock().is_ok_and(|m| m.music.is_some())
