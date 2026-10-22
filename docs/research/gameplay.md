@@ -302,3 +302,20 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   frame_main (find_closest_player's (frame_main & 7) stagger) and the
   generator records (generator 131's +0xd8 gained 0x4000 at step 148, after
   which it blocks enemies through check_vacancy).
+- Combat-approach trace (private/reports/trace-combat-g1-v1.json, 540
+  vblanks: walk Up 120, Up+Left 260 onto the zombies' platform, then throws;
+  the native route was planned headlessly first and the reference ended
+  within 0.3 of it). Enemy replay: 195/270 updates equal
+  (replay-enemies-combat-g1-v1.json; the rest: generator spawns in
+  do_items, the +0x2a0 item link now mapped, AnimInfo +0x94 mirrors, ±0.0
+  signs in yaw matrices and one logic-07 stuck-counter divergence of
+  enemy 6 — open). Player replay (--replay with the enemies, items and
+  generator records the trace carries, +0x880 mapped, +0x93e cleared as
+  SetPlayerVars does): 244/270 equal (replay-player-combat-g1-v8.json; was
+  82). Fixed on the way: show_crystals' +0x904 timer uses the EE adder
+  (sub_guarded_rz; plain subtraction was one ulp off), and headless game-run
+  now runs init_next_level's player displays (hud_init without textures) so
+  WritePlayerInfo keeps its record words. Open: idle facing near targets
+  (from step 406 the native yaw moves by 1..3 ulps and from 492 turns while
+  the reference holds it), +0x894 at step 194. The 150-update walking trace
+  still replays 150/150.

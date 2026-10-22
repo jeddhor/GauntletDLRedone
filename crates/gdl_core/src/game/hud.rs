@@ -1695,7 +1695,10 @@ impl Game {
             return;
         }
         let spf = self.globals.spf;
-        r.set_f32(o::SHOW_TIME, r.f32_(o::SHOW_TIME) - spf);
+        // sub.S (the EE adder's guard-bit alignment, toward zero).
+        if let Ok(v) = crate::numeric::sub_guarded_rz(r.f32_(o::SHOW_TIME), spf) {
+            r.set_f32(o::SHOW_TIME, v);
+        }
         let item = r.i32_(o::SHOW_ITEM);
         let cls = 0xb4 * r.u32_(o::CLASS) as usize;
         let (name, have, max) = if item < 0x100 {

@@ -906,6 +906,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 None => None,
             },
             critters })?;
+        // init_next_level's player displays (reset_players, setup_player_display,
+        // SetPlayerWindows) as gdl_play's init_hud runs them, without textures:
+        // WritePlayerInfo keeps its record words (+0x904 show timer, meter
+        // time) in headless runs too.
+        game.hud_init(Vec::new(), Vec::new(), None);
         // Optional scripted player: sim=START_SIM.json clips=SOR_CLIPS.PS2 script=LEVELS_HEX:UPDATES,...
         let mut driver = match (opts.get("sim"), opts.get("script")) {
             (Some(sim_path), Some(_)) => {
@@ -1068,6 +1073,35 @@ fn run() -> Result<(), Box<dyn Error>> {
                 eprintln!("player 1 in front at {at:?}");
             }
         }
+        // items_seed=FILE (tools/python/export_live_items.py): the fixture's
+        // live item records and item world-object words in the native
+        // convention replace the freshly loaded ones (replays).
+        if let Some(ip) = opts.get("items_seed") {
+            let hexb = |v: &serde_json::Value| -> Result<Vec<u8>, Box<dyn Error>> {
+                let s = v.as_str().ok_or("hex field")?;
+                (0..s.len()).step_by(2).map(|i| Ok(u8::from_str_radix(&s[i..i + 2], 16)?)).collect()
+            };
+            let v: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(ip), 64 * 1024 * 1024)?)?;
+            for r in v["records"].as_array().ok_or("items_seed records")? {
+                let slot = r["slot"].as_u64().ok_or("slot")? as usize;
+                let bytes = hexb(&r["record"])?;
+                let rec: [u8; 0x110] = bytes.try_into().map_err(|_| "item record size")?;
+                while game.items.records.len() <= slot {
+                    game.items.records.push(gdl_core::items::ItemRecord([0; 0x110]));
+                }
+                game.items.records[slot] = gdl_core::items::ItemRecord(rec);
+            }
+            for (k, o) in v["objects"].as_array().ok_or("items_seed objects")?.iter().enumerate() {
+                if let Some(w) = game.items.objects.get_mut(k) {
+                    let f = |n: usize| o[n].as_u64().unwrap_or(0);
+                    w.flags_10 = f(0) as u32;
+                    w.word_14 = f(1) as u16;
+                    w.byte_16 = f(2) as u8;
+                    w.byte_17 = f(3) as u8;
+                }
+            }
+            game.sync_collision();
+        }
         if let Some(tp) = opts.get("enemy_replay") {
             // Per-update replay of a reference_trace --player --enemies trace
             // through the native do_enemies: each update starts from the
@@ -1088,31 +1122,6 @@ fn run() -> Result<(), Box<dyn Error>> {
             };
             let word = |b: &[u8]| u32::from_le_bytes(b[..4].try_into().unwrap());
             let fl = |b: &[u8]| f32::from_le_bytes(b[..4].try_into().unwrap());
-            // items_seed=FILE (tools/python/export_live_items.py): the fixture's
-            // live item records and item world-object words in the native
-            // convention replace the freshly loaded ones.
-            if let Some(ip) = opts.get("items_seed") {
-                let v: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(ip), 64 * 1024 * 1024)?)?;
-                for r in v["records"].as_array().ok_or("items_seed records")? {
-                    let slot = r["slot"].as_u64().ok_or("slot")? as usize;
-                    let bytes = hexb(&r["record"])?;
-                    let rec: [u8; 0x110] = bytes.try_into().map_err(|_| "item record size")?;
-                    while game.items.records.len() <= slot {
-                        game.items.records.push(gdl_core::items::ItemRecord([0; 0x110]));
-                    }
-                    game.items.records[slot] = gdl_core::items::ItemRecord(rec);
-                }
-                for (k, o) in v["objects"].as_array().ok_or("items_seed objects")?.iter().enumerate() {
-                    if let Some(w) = game.items.objects.get_mut(k) {
-                        let f = |n: usize| o[n].as_u64().unwrap_or(0);
-                        w.flags_10 = f(0) as u32;
-                        w.word_14 = f(1) as u16;
-                        w.byte_16 = f(2) as u8;
-                        w.byte_17 = f(3) as u8;
-                    }
-                }
-                game.sync_collision();
-            }
             const LCG_MUL: u32 = 0x41c6_4e6d;
             const LCG_INV: u32 = {
                 // Inverse of LCG_MUL modulo 2^32 (Newton iteration).
@@ -1143,8 +1152,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             const ESIZE: usize = 0x3b0;
             // Guest pointers: presentation/tree/anim links stay raw (the native
             // only tests +0x80 for zero) and are not compared; the generator
-            // (+0x2a4, an Items record) and floor (+0x2ac, a WorldBase object of
-            // 0x3c bytes) links become the native slot/object + 1.
+            // (+0x2a4) and blocking-item (+0x2a0) links (Items records) and the
+            // floor link (+0x2ac, a WorldBase object of 0x3c bytes) become the
+            // native slot/object + 1.
             let pointer_words: std::collections::HashSet<usize> = [0x70, 0x80, 0x84, 0x88, 0x8c, 0xc0, 0xc4, 0x1f0].into_iter().collect();
             let s0 = samples.first().ok_or("empty trace")?;
             let items_base = word(&hexb(&s0["enemies"]["Items"])?);
@@ -1158,7 +1168,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let native_words = |raw: &[u8]| -> Vec<u8> {
                 let mut r = raw.to_vec();
                 for k in 0..r.len() / ESIZE {
-                    for (o, base, size) in [(0x2a4, items_base, 0x110), (0x2ac, world_base, 0x3c)] {
+                    for (o, base, size) in [(0x2a4, items_base, 0x110), (0x2a0, items_base, 0x110), (0x2ac, world_base, 0x3c)] {
                         let at = k * ESIZE + o;
                         let v = link(u32::from_le_bytes(r[at..at + 4].try_into().unwrap()), base, size);
                         r[at..at + 4].copy_from_slice(&v.to_le_bytes());
@@ -1387,10 +1397,20 @@ fn run() -> Result<(), Box<dyn Error>> {
                     } else {
                         0
                     };
+                    // The item link (+0x880, an Items record) becomes the slot
+                    // + 1 when the trace records the Items base (--enemies).
+                    let items_base = samples.first().and_then(|s| s["enemies"].get("Items")).map(&hexb).transpose()?.map(|b| word(&b));
                     let r = &mut game.players[0];
+                    let item = r.u32_(0x880);
                     r.set_u32(0x89c, floor);
                     for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
                         r.set_u32(o, 0);
+                    }
+                    if let Some(base) = items_base
+                        && item >= base
+                        && (item - base).is_multiple_of(0x110)
+                    {
+                        r.set_u32(0x880, (item - base) / 0x110 + 1);
                     }
                 }
                 let ctl = hexb(&ap["control"])?;
@@ -1432,6 +1452,51 @@ fn run() -> Result<(), Box<dyn Error>> {
                 if let Some(c) = game.std_camera.as_mut() {
                     c.std = gdl_core::game::record::Record(hexb(&bp["stdcam"])?);
                 }
+                // Traces with --enemies: do_enemies runs before do_players,
+                // so the enemy records after the update (generator/item/floor
+                // links mapped) and
+                // the player's +0x940/+0x944 (the enemies' targeting count and
+                // crowd) come from the reference; the grid is rebuilt.
+                if let (Some(eb), Some(e0)) = (a["enemies"].get("enemies"), samples.first().and_then(|s| s["enemies"].as_object())) {
+                    let eb = hexb(eb)?;
+                    let base_of = |n: &str| -> Result<u32, Box<dyn Error>> { Ok(word(&hexb(e0.get(n).ok_or("trace base")?)?)) };
+                    let (items_base, world_base) = (base_of("Items")?, base_of("WorldBase")?);
+                    for k in 0..game.enemies.len().min(eb.len() / 0x3b0) {
+                        let mut rec = gdl_core::game::record::Record(eb[k * 0x3b0..(k + 1) * 0x3b0].to_vec());
+                        for (o, base, size) in [(0x2a4, items_base, 0x110u32), (0x2a0, items_base, 0x110), (0x2ac, world_base, 0x3c)] {
+                            let v = rec.u32_(o);
+                            let n = if v == 0 || v < base || !(v - base).is_multiple_of(size) { if v == 0 { 0 } else { u32::MAX } } else { (v - base) / size + 1 };
+                            rec.set_u32(o, n);
+                        }
+                        game.enemies[k] = rec;
+                    }
+                    // The generator items as do_items left them (WorldInfo +0x68
+                    // maps the definition pointer; presentation words kept).
+                    if let (Some(gens), Some(wi)) = (a["enemies"]["generator_items"].as_object(), a["enemies"].get("WorldInfo")) {
+                        let defs = word(&hexb(wi)?[0x68..]);
+                        for (slot, hex) in gens {
+                            let slot: usize = slot.parse()?;
+                            let raw = hexb(hex)?;
+                            let Some(rec) = game.items.records.get_mut(slot) else { continue };
+                            let keep = rec.0;
+                            let mut new = [0u8; 0x110];
+                            new.copy_from_slice(&raw[..0x110]);
+                            let ptr = word(&raw[0..]);
+                            let def = if ptr == 0 { 0 } else { ptr.wrapping_sub(defs) / 0x50 };
+                            new[0..4].copy_from_slice(&def.to_le_bytes());
+                            new[0x70..0xc8].copy_from_slice(&keep[0x70..0xc8]);
+                            new[0xe6..0xe8].copy_from_slice(&keep[0xe6..0xe8]);
+                            rec.0 = new;
+                        }
+                    }
+                    let after = hexb(&ap["player0"])?;
+                    game.players[0].set_u32(0x940, word(&after[0x940..]));
+                    game.players[0].set_u32(0x944, word(&after[0x944..]));
+                    game.setup_dyn_grid().map_err(|e| e.0)?;
+                }
+                // game_main's SetPlayerVars clears the panel-written word
+                // (+0x93e) before do_players.
+                game.players[0].set_u16(0x93e, 0);
                 game.player_floor_parent[0] = None;
                 // The node matrix at the update start (trace field "node":
                 // node +0x00..+0x40); without it, the record's own matrix.
