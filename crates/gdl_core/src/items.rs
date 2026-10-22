@@ -1009,6 +1009,8 @@ impl ItemWorld {
 
     /// GetActiveTime 0x1512c0: 0 → default, positive → itself,
     /// negative → (-t >> 1) + RandInt(-t).
+    /// GetActiveTime on the item world's own generator (load-time use only;
+    /// in play ProcessItems draws from the game's rand).
     pub fn get_active_time(&mut self, t: i32, default: i32) -> R<i32> {
         if t == 0 {
             return Ok(default);

@@ -18,6 +18,11 @@ from reference_snapshot import describe, fixture_regions
 from virtual_display import environment
 
 KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L']
+# Preserved savestates by PCSX2 slot. 3..7: reference_warp.py from slot 2
+# (player 0 written onto a Tower portal, then the realm's first level loads;
+# 5 was saved while world 11 still loaded).
+SLOTS = {1: 'poison-fields-original.p2s', 2: 'tower-newgame-v1.p2s', 3: 'w2l1-newgame-v1.p2s',
+         4: 'w1l1-newgame-v1.p2s', 5: 'w11l1-newgame-v1.p2s', 6: 'w7l1-newgame-v1.p2s', 7: 'w11l1-newgame-v2.p2s'}
 
 
 def schedule_segments(path, steps, keys, limit=120):
@@ -58,8 +63,8 @@ def main():
                         help='diagnostic: keep final keys held after the last step for a following debugger stop. '
                              'Release them with keyup while the render window has focus; releases delivered to '
                              'the debugger window leave PCSX2 input stale (observed 2026-10-15)')
-    parser.add_argument('--slot', type=int, choices=(1, 2), default=1,
-                        help='savestate slot: 1 the Poison Fields fixture, 2 the Tower new game')
+    parser.add_argument('--slot', type=int, choices=sorted(SLOTS), default=1,
+                        help='savestate slot: 1 the Poison Fields fixture, 2 the Tower new game, 3.. reference_warp.py captures')
     parser.add_argument('--out', type=pathlib.Path, required=True)
     args = parser.parse_args()
     # StdCam traces need longer walks to cross transmitter zones (600 bound).
@@ -74,7 +79,7 @@ def main():
     if launch.get('display') != env['DISPLAY'] or not launch.get('diagnostic_hotkeys'):
         raise ValueError('reference was not launched with virtual-display stepping bindings')
     fixture = pathlib.Path(f'private/reference/config/PCSX2/sstates/SLUS-20047 (15030637).0{args.slot}.p2s')
-    frozen = pathlib.Path('private/reference/captures/' + ('poison-fields-original.p2s' if args.slot == 1 else 'tower-newgame-v1.p2s'))
+    frozen = pathlib.Path('private/reference/captures') / SLOTS[args.slot]
     fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
     if fixture_hash != hashlib.sha256(frozen.read_bytes()).hexdigest():
         raise ValueError(f'private slot {args.slot} differs from preserved fixture')

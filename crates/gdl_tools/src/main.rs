@@ -1237,6 +1237,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             Ok(gdl_formats::animation::Animations::parse(&bounded_read(Path::new(path), 64 * 1024 * 1024)?)?)
         };
         let effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &anim_of("weapons")?, &anim_of("powerups")?)?;
+        let start_rune_disp = start.globals.rune_disp_timer;
         let mut game = gdl_core::game::Game::new_level(gdl_core::game::setup::LevelInputs {
             world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, item_anim_nodes, effect_tables,
             // load_players=N: the select-screen entry (the Tower of a new game: 0).
@@ -1260,6 +1261,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 None => None,
             },
             critters })?;
+        // Replays of traces that start mid-level keep the start state's
+        // RuneDispTimer rather than init_next_level's 300 (traces since
+        // trace-a1-newgame-v2 seed their own per update).
+        if opts.contains_key("replay") || opts.contains_key("enemy_replay") {
+            game.globals.rune_disp_timer = start_rune_disp;
+        }
         // init_next_level's player displays (reset_players, setup_player_display,
         // SetPlayerWindows) as gdl_play's init_hud runs them, without textures:
         // WritePlayerInfo keeps its record words (+0x904 show timer, meter
@@ -1608,8 +1615,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     gl.anim_time_scale = fl(&g("AnimTimeScale")?);
                     gl.vb_elapsed = word(&g("vb_elapsed")?) as i32;
                     gl.game_mode = word(&g("game_mode")?);
-                    gl.cam_wait = word(&g("cam_wait")?) as i32;
-                    gl.start_of_stage = word(&g("start_of_stage")?) as i32;
+                    // The camera (main, after game_main) ends the stage start:
+                    // the update ran with the before sample's values
+                    // (trace-a1-newgame-v2 steps 78 → 79).
+                    gl.cam_wait = word(&hexb(&bp["cam_wait"])?) as i32;
+                    gl.start_of_stage = word(&hexb(&bp["start_of_stage"])?) as i32;
                     gl.enemy_shrink = fl(&g("EnemyShrink")?);
                     gl.quest_item_state = word(&g("QuestItemState")?);
                     gl.boss_type = word(&g("BossType")?) as i32;
@@ -1621,6 +1631,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                     gl.num_active_players = word(&g("NumActivePlayers")?) as i32;
                     gl.boss_index = word(&hexb(&b["enemies"]["BossIndex"])?) as i32;
                     game.stop_time = word(&g("StopTime")?) as i32;
+                    // world_update's start_enemyinfo from the update's
+                    // starting start_of_stage (the before sample; the globals
+                    // above are the after sample's) and LEVL +0x48.
+                    game.start_enemyinfo = game.globals.start_of_stage == 0 || game.level.get(0x48..0x4c).is_some_and(|v| v != [0; 4]);
                     game.suicide_bomber_index = word(&hexb(&b["enemies"]["SuicideBomberIndex"])?) as i32;
                     // find_closest_player's stagger (frame_main & 7); traces
                     // before trace-enemies-g1-v3 lack it.
@@ -1763,6 +1777,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                             h.interval_idx = gw("help_interval_idx")?.max(0) as usize;
                             h.lv = gw("help_lv")?;
                             h.testflag = gw("help_testflag")? != 0;
+                        }
+                        // RuneDispTimer (traces from trace-a1-newgame-v2).
+                        if let Some(v) = b["enemies"].get("RuneDispTimer") {
+                            game.globals.rune_disp_timer = word(&hexb(v)?) as i32;
                         }
                         // world_update's DoWorldAnimation from the traced
                         // entries (+6 flags, +8 frame) and object words (traces

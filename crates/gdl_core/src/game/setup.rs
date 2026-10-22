@@ -119,6 +119,7 @@ pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animat
             .map(|s| (s.label.clone(), i16::from_le_bytes([s.raw[0x20], s.raw[0x21]])))
             .collect();
         data.trees.insert((t, level), (clips_of(anim, k), init_actions(&labels)));
+        data.tree_nodes.insert((t, level), tree.nodes.len() as i32);
     }
 }
 
@@ -709,6 +710,11 @@ impl Game {
         game.bg_music_start();
         game.init_wave_timer().map_err(|e| format!("init_wave_timer: {}", e.0))?;
         game.init_thermometer(inp.world.min, inp.world.max);
+        // init_next_level: RuneDispTimer = 300 outside world 0xc (the rune
+        // stones show at the level start; show_crystals waits for it).
+        if game.globals.cur_world != 0xc {
+            game.globals.rune_disp_timer = 300;
+        }
         Ok(game)
     }
 
@@ -724,40 +730,51 @@ impl Game {
         }
         let mut anim = EnemyAnim { clock: fresh_clock(), clips, current: 0, tree: (t, lvl) };
         // AtreeInit's InitAnimInfo 0x110750 zeroes the AnimInfo (sequence and
-        // previous sequence 0; its InitAnim(0) keeps them 0), so InitAnim(START)
-        // leaves the previous sequence 0 (trace-fight-g1-v3 steps 198/474).
+        // previous sequence 0) and runs InitAnim(0); generate_enemy's
+        // InitAnim(START) on success then leaves the previous sequence 0
+        // (trace-fight-g1-v3 steps 198/474).
         anim.clock.sequence = 0;
         anim.clock.previous_sequence = 0;
-        // generate_enemy: InitAnim(START) when the type has one.
-        let start = table.get(1).map_or(-1, |e| e.0);
-        let first = if 0 <= start { start as u16 } else { 0 };
-        if let Some(clip) = anim.clips.get(first as usize).copied() {
-            anim.clock = crate::animation_clock::initialize(
-                anim.clock,
-                crate::animation_clock::ClockInit {
-                    sequence: first,
-                    frames: clip.frames,
-                    timing_factor: clip.timing_factor,
-                    repeat: clip.repeat,
-                    start_frame: 0,
-                    enabled_word: 1,
-                    playback_scale: 1.0,
-                    blend_duration: 0.0,
-                    now: self.globals.atime,
-                    anim_time_scale: self.globals.anim_time_scale,
-                },
-            )?;
-            anim.current = first;
-            // InitAnim's AnimInfo mirrors: +0x90 the tree's sequence count,
-            // +0x92 the sequence, +0x94 its frame count (trace-fight-g1-v3:
-            // type 13 levels 1/2/3 hold 9/12/10, type 12 holds 7).
-            let r = &mut self.enemies[i];
-            r.set_i16(0x90, anim.clips.len() as i16);
-            r.set_u16(0x92, first);
-            r.set_i16(0x94, clip.frames);
-        }
-        self.enemies[i].set_u32(0x80, 1); // atree present (native marker)
         self.enemy_anims[i] = Some(anim);
+        self.enemy_init_anim(i, 0)?;
+        self.enemies[i].set_u32(0x80, 1); // atree present (native marker)
+        // AtreeInitSub's InitAnimInfo: AnimInfo +0x28 = 1.0 (+0xac); the
+        // atree's +0x3c node count (+0xbc).
+        let nodes = self.enemy_anim_data.tree_nodes.get(&(t, lvl)).copied().unwrap_or(0);
+        self.enemies[i].set_f32(0xac, 1.0);
+        self.enemies[i].set_i32(0xbc, nodes);
+        Ok(())
+    }
+
+    /// InitAnim(sequence) on an enemy's clock, with its AnimInfo mirrors:
+    /// +0x90 the tree's sequence count, +0x92 the sequence, +0x94 its frame
+    /// count (trace-fight-g1-v3: type 13 levels 1/2/3 hold 9/12/10, type 12
+    /// holds 7).
+    pub(crate) fn enemy_init_anim(&mut self, i: usize, seq: u16) -> R<()> {
+        let (now, scale) = (self.globals.atime, self.globals.anim_time_scale);
+        let Some(anim) = self.enemy_anims.get_mut(i).and_then(|a| a.as_mut()) else { return Ok(()) };
+        let Some(clip) = anim.clips.get(seq as usize).copied() else { return Ok(()) };
+        anim.clock = crate::animation_clock::initialize(
+            anim.clock,
+            crate::animation_clock::ClockInit {
+                sequence: seq,
+                frames: clip.frames,
+                timing_factor: clip.timing_factor,
+                repeat: clip.repeat,
+                start_frame: 0,
+                enabled_word: 1,
+                playback_scale: 1.0,
+                blend_duration: 0.0,
+                now,
+                anim_time_scale: scale,
+            },
+        )?;
+        anim.current = seq;
+        let count = anim.clips.len() as i16;
+        let r = &mut self.enemies[i];
+        r.set_i16(0x90, count);
+        r.set_u16(0x92, seq);
+        r.set_i16(0x94, clip.frames);
         Ok(())
     }
 

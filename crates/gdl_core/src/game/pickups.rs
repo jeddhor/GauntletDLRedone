@@ -696,7 +696,8 @@ impl Game {
                     }
                     self.audio_pickup_rune(idx);
                     self.got_it(idx, def.subtype(), amount);
-                    // RuneDispTimer = 300: HUD presentation.
+                    // RuneDispTimer = 300 (ShowRuneStones; show_crystals waits).
+                    self.globals.rune_disp_timer = 300;
                     self.start_gem_fx(r.v3(0x40), 0x400)?;
                     self.items.rune_item = None;
                     let mut bits = 0u32;

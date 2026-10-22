@@ -63,3 +63,27 @@ verifies actual Xvfb PID/start-time and exact display/auth arguments on every
 GUI operation; it still refuses Xorg/Xwayland or an authentication/PID mismatch.
 The existing :191 server was independently verified during this migration.
 A synthetic process fixture covers these rejection cases. No desktop fallback.
+
+## Warped level-start captures (2026-10-22)
+
+tools/python/reference_warp.py reloads a preserved slot, can write player 0's
+position (the record's matrix translation +0x50 and its node's local
+translation +0x30 — a guest write, so these states are labelled as warped),
+steps a bounded key schedule with verified F10 vblanks, and saves the result to
+a new PCSX2 slot (PINE MsgSaveState 0x09; slots 1 and 2 and existing files are
+refused) copied to a new private capture. From slot 2 (the Tower new game),
+standing on a realm portal exits after ~300 vblanks (CurWorld changes, player
+state 5), the realm's first level loads through game modes 0x400f/0x400e and
+starts with no map screen. Captures (private/reference/captures, reports
+warp-*.json and screenshots in private/reports):
+
+| Slot | Capture | Portal (Tower exit) | Level at save |
+|---|---|---|---|
+| 3 | w2l1-newgame-v1.p2s | (−25.55, −6.43, −117.13), world 2 | B1 after its start (1200 vblanks) |
+| 4 | w1l1-newgame-v1.p2s | (117.93, 0.59, −88.83), world 1 | A1 "Courtyard" during the stage-start title and zoom |
+| 5 | w11l1-newgame-v1.p2s | (163.11, 5.91, 42.41), world 11 | still loading (mode 0x400e) — not for traces |
+| 6 | w7l1-newgame-v1.p2s | (45.07, −6.43, −112.70), world 7 | G1 new game after its start |
+| 7 | w11l1-newgame-v2.p2s | world 11, 1800 vblanks | K1, the moving ship, after its start |
+
+reference_trace.py and reference_screenshot.py accept these slots; each run
+first checks the PCSX2 slot file against its preserved capture.

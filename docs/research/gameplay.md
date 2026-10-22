@@ -533,3 +533,19 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   it, and the retry kept the help box state while the player record was
   reseeded, so NewHelp's priority test refused it. The replay now restores
   the help state per attempt when a trace lacks the help globals.
+- A1 (the Castle's Courtyard, a new game; slot 4 from reference_warp.py,
+  trace-a1-newgame-v2: the stage start, Up, Up+Left, two throws; 540
+  vblanks, RuneDispTimer now probed): whole-update replay
+  (replay-frame-a1-v6.json) 270/270 in every part — enemies, items, player
+  0, effects, world animation. Fixed on the way: the replay seeds cam_wait
+  and start_of_stage from the before sample (main's camera ends the stage
+  start after game_main) and recomputes start_enemyinfo; init_next_level's
+  RuneDispTimer = 300 (outside world 0xc) and the rune pickup's were missing
+  (ShowRuneStones then marks player +0x93e bit 2 and show_crystals waits);
+  newly attached enemy trees take InitAnimInfo's +0xac 1.0 and +0xbc node
+  count; InitAnim(START) only after a successful generate_enemy placement
+  (LAB_001397cc; a failed spawn keeps sequence 0); ProcessItems' animated
+  item timers use GetActiveTime with the game's rand (the item world had its
+  own generator, shifting every later draw) and a base of (frames × period
+  scale + 0.5) << 1 (the port multiplied by 1.0) — the A1 traps (SPIKES,
+  TENTACLE) and the LOW food item.

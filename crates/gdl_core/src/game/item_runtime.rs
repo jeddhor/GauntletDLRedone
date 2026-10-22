@@ -975,12 +975,23 @@ impl Game {
                     } else {
                         i32::from(def.i16_(0x4a)) << 1
                     };
-                    let mut base = (add(mul(f32::from(rr.i16_(0x94)), 1.0)?, 0.5)? as i32) << 1;
+                    // (frames × AnimInfo +0x2c, the clock's period scale,
+                    // + 0.5) << 1 (record +0x94, +0xb0).
+                    let period = self.item_anims.get(slot).and_then(|a| a.as_ref()).map_or(1.0, |a| a.clock.period_scale);
+                    let mut base = (add(mul(f32::from(rr.i16_(0x94)), period)?, 0.5)? as i32) << 1;
                     if kind == 8 && 4 < rr.i16_(0x90) && t < 0 {
                         t = 0;
                         base = 0;
                     }
-                    let v = self.items.get_active_time(t, base)?;
+                    // GetActiveTime 0x1512c0: the game's rand (pbRand).
+                    let v = if t == 0 {
+                        base
+                    } else if 0 < t {
+                        t
+                    } else {
+                        let n = t.wrapping_neg();
+                        (n >> 1) + self.rng.rand_int(n as u32).ok_or_else(|| super::Unsupported("RandInt(0)".into()))? as i32
+                    };
                     self.items.records[slot].set_i16(0xda, v as i16);
                 }
                 let de = self.items.records[slot].u8_(0xde);

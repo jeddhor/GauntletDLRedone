@@ -575,6 +575,12 @@ impl Game {
             g.enemy_update_obj_world_mat(s)?;
             g.enemy_update_offsets(s)?;
             g.enemies[s].set_i32(0xe0, 1);
+            // InitAnim(START) (record +0xf0, InitActions entry 1) only on a
+            // successful placement; a failed spawn keeps InitAnimInfo's
+            // sequence 0 (trace-a1-newgame-v2 step 387).
+            if let Ok(start) = u16::try_from(g.enemies[s].i32_(0xf0)) {
+                g.enemy_init_anim(s, start)?;
+            }
             let genfx = g.enemy_load.genfx.get(ti).copied().unwrap_or(0);
             if 2.0 < g.enemies[s].f32_(e::HALF_HEIGHT) && level < 4 && genfx != 0 {
                 g.start_gen_fx(pos, level)?;
