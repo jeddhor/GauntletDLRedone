@@ -605,3 +605,23 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   player and keeps logic 7. The replay now tries neighbouring call counts
   when a solved update still differs and keeps the closest
   (results "alt_seed").
+- B6 (the dragon's arena, a boss level; slot 8 — reached from B1 by
+  writing player 0 onto the exit and skip_wave = 0x10205, do_exit's wave
+  skip; trace-b6-boss-v3: idle, Up, two throws at the dragon, Left, Up; 500
+  vblanks with the window eye and Cam[0] probed): whole-update replay
+  (replay-frame-b6-v7.json) 250/250 in every part — enemies, items, player
+  0, effects, world animation and the dragon (CritterBossAI, BossCritInst,
+  BossType 0x22). Fixed on the way:
+  - main's camera dispatch sets newcam_mode 0 when BossCritInst is set (2
+    under StdCamUpdate); ItemVisible tests the camera target's distance
+    only in modes 1 and 2, so with a boss the fire vents (FLAMEV) stay
+    visible (Game::newcam_mode; the native had 2 always). The replay now
+    culls with the traced MB window matrix (rows +0x70..+0x9c, eye +0xa0),
+    which the boss camera writes.
+  - ProcessEffects' CreateDirMatrix up is row 2 of Cam[0]'s matrix
+    (0x23e520 = Cam + 0x30), which CamUpdate copies from the StdCam and the
+    boss camera leaves ((0, −sin 1, −cos 1) in B6); the port used the
+    window row, equal under StdCam only.
+  - StartFXTree (0x17d7b0) writes +0x50 (the AnimInfo loop word) only on
+    its positive-time and zero-frame paths; otherwise InitAnim's value, the
+    first sequence's repeat flag, stays (the dragon's header 102 loops).

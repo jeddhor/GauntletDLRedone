@@ -3,9 +3,10 @@
 Bosses and statue enemies (golems, gargoyles, generals) are "critters": a
 data-driven engine separate from the ordinary enemy AI. Sources: SLUS_200.47
 critter/boss family 0x191850–0x1a1fa8 (exports in private/reports/ghidra-critter,
--atree, -lgws, -lookat1). Status: transcription in progress; one critter (K2's
-General, a golem-type kind 8) is compared with the reference over 210 updates
-("Reference comparison" below); bosses, golems, gargoyles and children are not
+-atree, -lgws, -lookat1). Status: transcription in progress; K2's General (a
+golem-type kind 8, 210 updates) and B6's dragon (a boss, CritterBossAI, 250
+updates) match the reference ("Reference comparison" below); golems,
+gargoyles, the other bosses and critters with children (the chimera) are not
 compared yet. Native port: gdl_core game/critters.rs (types,
 loading, instances, pose), critter_ai.rs (per-frame AI), critter_hits.rs
 (attacks, damage, hit tests); tree_pose.rs evaluates the skeleton.
@@ -120,6 +121,12 @@ into +0x140, and CritterCalcTarget never writes the struct's +0x14/+0x18/+0x1c/
 0x80808080, 1.0 in the trace). No critter code reads them back (the 0x15c loads
 in CritterDamage, CritterDamagePlayer and CritterGolemAI are the global
 0x22015c, EnemyShrink); the replay skips them.
+
+trace-b6-boss-v3 (slot 8, B6 reached through do_exit's wave skip): the dragon
+— BossCritInst → instance 0, BossType 0x22, active, 2000 health — through its
+moves and the player's two throws at it: critters 250/250 with no critter
+change needed; the boss level's fixes were the camera-side ones (gameplay.md
+"B6").
 
 Found by the comparison:
 - ProcessCritter starts with GetWorldMat(+0x70 node → +0x10) and ends (every

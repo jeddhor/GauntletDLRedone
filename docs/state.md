@@ -103,8 +103,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    EnemyCollideFloor's second-query object, SfxSkipItem's indestructible
    tail, PlayerMotion's carried PlayerGetTarget target, the state-8 action
    guard and +0x3a4; the replay restores item side state per attempt.
-   Next: traces of a boss, statue activations (golem/gargoyle), a critter
-   with children, and more realm levels (G1 from slot 6).
+   G1 from its new-game capture 250/250 (the replay now tries neighbouring
+   rand call counts); B6's dragon boss 250/250 in every part (slot 8 via
+   do_exit's wave skip; newcam_mode, Cam[0]'s up vector and the effect
+   loop word fixed). Next: more bosses (via --skip-wave from slots 3–7:
+   A5 0x105 with the chimera's children, G5 0x704, K5 0xb04), statue
+   activations (golem/gargoyle), and the boss fight to its death.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,
