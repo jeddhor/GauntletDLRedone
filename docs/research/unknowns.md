@@ -76,3 +76,5 @@ are in [state.md](../state.md); movement evidence is in [movement.md](movement.m
 | Skin chrome (alt tex −3) | setChrome's axes ported; the VU1 UV formula (n·u + azimuth/2π, n·v + elevation/π) is a HYPOTHESIS | Read the VU1 chrome path or capture a gold/silver shield |
 | Keep-A pass UVs (alt tex −4) | The alternate texture's second pass uses the base UVs (HYPOTHESIS) | Read the VU1 microcode's keep-A path or capture an enemy death dissolve |
 | Player shadow splash | UpdatePlayerShadow's −2 TextureSplash drawn natively; never observed (no water entry in checks) | Walk into water in a level with flag-0x200 collision (A4, C4, I4) |
+| Enemy AnimInfo at +0x84 | move_logic19 writes +0xa2 and reads +0x9c; taken as the player's AnimInfo layout at +0x84 (+0x1e enabled word, +0x18 frame; StopTime's +0xa4 start time fits). The native clock holds them | Read the enemy record's AnimInfo uses in DoEnemyAction/AnimateATree or trace a golem enemy (none on this disc) |
+| Unreachable enemy logics | 8/9/11/12/13/20/21/22 and blocked08/10/20 are selected by no disc data (enemy-logic-scan-v1) and stay unported | Port if another revision's data selects them |

@@ -89,10 +89,21 @@
   was removed. Synthetic tests: serialisation and max-wait refusal, track
   ends.
 
+- Golem audio (2026-10-22): SetEnemyAudio 0x15f1c8 type 0x1d names the
+  sounds GOL<LevelLetter(0)> with kill word KILL and no bite, and looks up
+  golwalk/golborn/golswing 0x23d440/44/48 = S_GOL<L>STOMP/BORN/SWING without
+  modify_boss_ene; InitEnemyAudio 0x15f118 resets them to −1 per level.
+  AudioEnemyWalk 0x15fa48 (types 0x1d/0x20: AudioSFX3(golwalk, 0x7f, 0x1c)),
+  AudioGolemBorn 0x15fc68 (AudioSFX(golborn, 0xe0, 0xd)) and AudioGolemSwing
+  0x15fc80 (AudioSFX3(golswing, 0xe0, 0xc)) are called from move_logic19.
+  LevelLetter 0x162768 reads worlddatas[world_data_idx] +0xf (test world T →
+  G for argument 0). Not exercised on the disc: the GOLEM enemy package is
+  absent, so golems run as critters (gameplay.md).
+- AudioDemonFireBall 0x15fcb8 (enemy type 2 fireballs by CurWorld) and
+  AudioSelect 0x15ce80 are ported (effects.rs, sound_cues.rs).
+
 ## Not yet
 
-The golem enemy sound names (SetEnemyAudio type 0x1d, guarded), AudioSelect
-(select-screen music 0xc0000; the select screen is not ported),
-AudioDemonFireBall, tower coin sounds, exact SPU volume/pan curves, the
+Tower coin sounds, exact SPU volume/pan curves, the
 +0xf8 world-node motion of moving sound items (the position stays the
 placement), AudioLoadStage bank residency (the host loads banks on demand).

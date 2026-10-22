@@ -1166,7 +1166,36 @@ fn run() -> Result<(), Box<dyn Error>> {
             return Ok(());
         }
         let mut samples = Vec::new();
+        // DEBUG spawn=TYPE:LEVEL:AI:FRAME[:DX:DZ[:DY]][;...]: generate_enemy beside
+        // player 0 at that update; `spawned` traces the first one every 5 updates.
+        let spawns: Vec<Vec<f32>> = match opts.get("spawn") {
+            Some(v) => v.split(';').map(|one| one.split(':').map(|x| x.parse::<f32>()).collect::<Result<Vec<_>, _>>()).collect::<Result<_, _>>()?,
+            None => Vec::new(),
+        };
+        let mut spawned_slot: Option<usize> = None;
+        let mut spawned = Vec::new();
         for f in 0..frames {
+            for (n, sp) in spawns.iter().enumerate().filter(|(_, sp)| 4 <= sp.len() && sp[3] as usize == f) {
+                let p = game.players[0].v3(0x50);
+                let (dx, dz) = (sp.get(4).copied().unwrap_or(0.0), sp.get(5).copied().unwrap_or(8.0));
+                let k = game.generate_enemy(1.0, [p[0] + dx, p[1], p[2] + dz], sp[0] as i32, sp[1] as i32, [0.0, 0.0, -1.0], sp[2] as i32, 0, 1).map_err(|e| e.0)?;
+                if let Ok(k) = usize::try_from(k) {
+                    // Without a generator generate_enemy keeps the given point;
+                    // drop it on the floor as check_enemy_pos does for generators.
+                    let at = game.enemies[k].v3(0x40);
+                    let dy = sp.get(6).copied().unwrap_or(2.0);
+                    let r = game.check_enemy_pos_pub([at[0], p[1] + dy, at[2]], None, k).map_err(|e| e.0)?;
+                    eprintln!("spawn {n} at {f}: generate_enemy -> {k}, check_enemy_pos {r}, at {:?}", game.enemies[k].v3(0x40));
+                    if n == 0 {
+                        spawned_slot = Some(k);
+                    }
+                }
+            }
+            if let Some(k) = spawned_slot.filter(|_| f % 5 == 0) {
+                let e = &game.enemies[k];
+                spawned.push(serde_json::json!({"frame":f,"state":e.i32_(0xc8),"logic":e.i16_(0x324),"ran":e.i16_(0x328),"stage":e.i16_(0x32a),"action":e.u32_(0xe0),
+                    "pos":e.v3(0x40),"heading":e.f32_(0x260),"target":e.i16_(0x288),"dist":e.f32_(0x290),"health":e.f32_(0x214),"anim_enabled":e.u16_(0xa2)}));
+            }
             if opts.contains_key("pads") {
                 let mut pads = [gdl_core::game::pad::PadStatus::default(); 8];
                 pads[0].connected = true;
@@ -1256,12 +1285,17 @@ fn run() -> Result<(), Box<dyn Error>> {
             .map(|(k, r)| serde_json::json!({"slot":k,"name":String::from_utf8_lossy(game.items.definitions[r.definition()].name()),
                 "type":r.i16_(0xf0),"count":r.i8_(0xf2),"max":r.i8_(0xf3),"level":r.i8_(0xf6),"logic":r.i8_(0xf7),
                 "d8":r.u16_(0xd8),"pos":r.v3(0x60)})).collect();
+        // Placed-enemy items (kind 4): slot, +0xf0 type, +0xf2 level, +0xf3 ai.
+        let placed: Vec<_> = (0..game.items.records.len())
+            .filter(|&k| game.items.definitions[game.items.records[k].definition()].kind() == 4)
+            .map(|k| { let r = &game.items.records[k]; serde_json::json!([k, r.i16_(0xf0), r.i8_(0xf2), r.i8_(0xf3)]) })
+            .collect();
         // Exit items (kind 9): slot, +0xf0 destination wave, +0xd8 flags.
         let exits: Vec<_> = (0..game.items.records.len())
             .filter(|&k| game.items.definitions[game.items.records[k].definition()].kind() == 9)
             .map(|k| { let r = &game.items.records[k]; serde_json::json!([k, r.i16_(0xf0), r.u16_(0xd8), r.position()]) })
             .collect();
-        let report = serde_json::json!({"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,
+        let report = serde_json::json!({"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
             "critter_files":game.critter_data.files.iter().map(|f| serde_json::json!({"name":f.name,"trees":f.trees,"model":f.model.is_some()})).collect::<Vec<_>>(),
             "critter_etypes":game.critter_data.etypes.iter().map(|r| r.iter().map(|t| t.map(|t| [t.0, t.1])).collect::<Vec<_>>()).collect::<Vec<_>>(),

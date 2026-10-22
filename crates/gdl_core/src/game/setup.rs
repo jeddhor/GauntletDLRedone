@@ -515,7 +515,7 @@ impl Game {
                     word_2a: a.word_2a,
                     parts: a.parts.clone(),
                 });
-                super::sound::SoundTables::new(inp.elf, inp.audio_rom, &slots, level.boss_type, &snds, stage)?
+                super::sound::SoundTables::new(inp.elf, inp.audio_rom, &slots, level.boss_type, super::bgmusic::level_letter(g.cur_world), &snds, stage)?
             },
             log: FrameLog::default(),
         };

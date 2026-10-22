@@ -570,7 +570,7 @@ impl Game {
         Ok(-3)
     }
 
-    pub(crate) fn check_enemy_pos_pub(&mut self, pos: V3, offset: Option<V3>, i: usize) -> R<i32> {
+    pub fn check_enemy_pos_pub(&mut self, pos: V3, offset: Option<V3>, i: usize) -> R<i32> {
         self.check_enemy_pos(pos, offset, i)
     }
 

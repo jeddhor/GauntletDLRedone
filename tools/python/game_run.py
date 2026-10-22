@@ -55,6 +55,7 @@ def main():
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
     ap.add_argument('--fall', help='DEBUG: player 0 drops below the world bottom at this update')
     ap.add_argument('--players', help='players in play (copies of player 0 without input, placed by load_player_geo)')
+    ap.add_argument('--spawn', help='DEBUG: generate_enemy TYPE:LEVEL:AI:UPDATE[:DX:DZ[:DY]] beside player 0 (DY: floor probe height)')
     a = ap.parse_args()
     letters = {'A': (1, 'CASTLE'), 'B': (2, 'MOUNT'), 'C': (3, 'DESERT'), 'D': (4, 'FOREST'), 'E': (5, 'TEMPLE'),
                'F': (6, 'HELL'), 'G': (7, 'TOWN'), 'H': (8, 'BATTLE'), 'I': (9, 'ICE'), 'J': (10, 'DREAM'),
@@ -120,6 +121,8 @@ def main():
         cmd += [f'teleport={a.teleport}']
     if a.players:
         cmd += [f'players={a.players}']
+    if a.spawn:
+        cmd += [f'spawn={a.spawn}']
     if a.fall:
         cmd += [f'fall={a.fall}']
     if a.weapon:

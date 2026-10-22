@@ -79,8 +79,8 @@ original (PCSX2 reference on Xvfb :191, private captures):
    multiplayer join/camera rules; remaining unported paths from sweeps.
    2026-10-21: the Audio* cue placeholders, background music (areas,
    parts, map/shop music, boss attention) and kind-0xd world sounds
-   (docs/research/audio.md). Remaining audio: golem names, demon fireball,
-   SPU curves. 2026-10-21: the EE voice queue and track timing in the
+   (docs/research/audio.md). Remaining audio: SPU curves (golem names and
+   the demon fireball were ported later). 2026-10-21: the EE voice queue and track timing in the
    simulation (level/shop/map exits and the good wizard wait on it), the
    good wizard after a boss (goodwiz.rs: model, captions, speech, exit),
    PlayerGiveShard, StartBlockFX/StartGenFX, boss meters hidden at
@@ -108,6 +108,14 @@ original (PCSX2 reference on Xvfb :191, private captures):
    2026-10-22: game over (init_over/do_over: GAME OVER over the running
    level, then the FAIL movie and the attract sequence), also for Quit Game.
    2026-10-22: Sumner's hint pad picks hints by progress (next_*_hint).
+   2026-10-22: every enemy move logic the disc selects is ported (15, 19,
+   24, 27, 28, 31 added, plus set_suicide_bomber_index, which do_enemies
+   called and the port had skipped — suicide-bomber flight never fired);
+   golem audio (SetEnemyAudio 0x1d, AudioEnemyWalk/GolemBorn/GolemSwing).
+   Logics 8/9/11/12/13/20/21/22 are selected by no disc data
+   (enemy-logic-scan-v1.json). game-run spawn= DEBUG option. Remaining in
+   this plan: team moves, attract flybys, the select screen's camera, the
+   inventory exit swirl, vibration (gameplay.md "Not ported").
 
 ---
 

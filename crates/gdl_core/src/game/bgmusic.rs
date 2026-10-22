@@ -28,15 +28,20 @@ pub struct BgMusic {
     pub bank_music: Option<i32>,
 }
 
+/// LevelLetter(0) 0x162768: worlddatas[world_data_idx] +0xf (1–11 A–K, 12
+/// S, 13 L; the test world's T reads G), 'A' without a world.
+pub(crate) fn level_letter(cur_world: i32) -> char {
+    match cur_world {
+        12 => 'S',
+        13 => 'L',
+        w @ 1..=11 => (b'A' + (w - 1) as u8) as char,
+        _ => 'A',
+    }
+}
+
 impl Game {
-    /// LevelLetter(0): the realm letter of the current world.
     fn level_letter(&self) -> char {
-        match self.globals.cur_world {
-            12 => 'S',
-            13 => 'L',
-            w @ 1..=11 => (b'A' + (w - 1) as u8) as char,
-            _ => 'A',
-        }
+        level_letter(self.globals.cur_world)
     }
 
     /// BGMusicStart: area 0, part 0, the volume at volMusic, then the first

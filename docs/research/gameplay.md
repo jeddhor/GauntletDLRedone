@@ -22,7 +22,7 @@ closure; the interim player driver), ProcessEffects.
   OpenChest.
 - Enemies: generate_enemy and spawning, InitActions trees ("<PREFIX><level>",
   levels 4–7 use EnemyDesc letters A/B/S/F from ELF 0x22d858), do_ai with
-  move_logic00/02/04/05/06/07/18, blocked00/07, attacks, collisions,
+  move_logic00/02/04/05/06/07/18 (and the logics below), blocked00/07, attacks, collisions,
   damage_enemy, damage_player. Other realms: move_logic14 0x13f320 (strafe,
   re-aim at π/4 + n·π/12 after four turns or a >π/2 miss), move_logic17
   0x13eba8 / move_logic23 0x13da78 (stationary, ranged action 0x18 within
@@ -125,11 +125,61 @@ logs only the type-30 enemy_load note); throws kill zombies and destroy a
 generator; a debug potion override shows the blast growing to radius ≈ 20 and
 killing nearby zombies and a generator.
 
+## Enemy move logics (2026-10-22)
+
+do_enemies saves LOGIC in +0x326 before the AI and afterwards stores the
+logic that ran in +0x328 and restores LOGIC from +0x326 (0x13bbd4), so a
+switch inside do_ai (e.g. 15 → 0, 27 → 0, 28 → 7, any → 0x18) lasts one
+update; format_brain runs when the logic differs from the one that ran last.
+Newly ported from instructions:
+
+- set_suicide_bomber_index 0x139920 (called by do_enemies after FWRDVAL): the
+  first live logic-0x12 enemy near the camera with action 4 at +0xe0/+0xe4;
+  unchanged when none. Without it found_suicide_bomber never fired.
+- move_logic24 0x13d8b0: run at 2× directly away from SuicideBomberIndex,
+  adding the next offset_step5 step (≤ 8, +0x338) on each +0x36c contact.
+- move_logic27 0x13d4e8 (type 0x1f via enemy_fix_ai type 31): stand until a
+  target exists, then +0x314 = 1e6 and move_logic00.
+- move_logic28 0x13d310 (C3 generators): hold, face the target and attack
+  (0xc/0xe alternating on +0x33c, 0x10 at level ≥ 3, on the +0x334 timer)
+  near the camera within +0x314 and ±10 height; within 6 → logic 7.
+- move_logic31 0x13cbc0 (type 0x1b, the GRM raised by the boss, via
+  enemy_fix_ai type 27): xlate31 0x13cb10 lunge on ATTACK1 (+0x2e0 = target
+  within 7.5), 30–59-vblank rest after attacks, half-speed creep, then
+  ATTACK1 within 10 or ATTACK3.
+- move_logic15 0x13efe0 (placed enemies with AI 15, e.g. A2/B1 and the 0x21
+  fallbacks): patrol the lookout chain (stage 0 nearest lookout with a next
+  link, stage 1 follow +0x70 on arrival |dy| < 4, planar < 1); a target
+  within 0.8 × +0x314 (+0x28c and planar) → logic 0.
+- move_logic19 0x13e4e8 (golem enemies): AnimInfo +0x84 disabled (+0xa2 = 0)
+  until a target in range is near the camera (+0x330, AudioGolemBorn), then
+  WALK stages with a 30–119-vblank walk, stomps at WALK frames 10/25 and
+  AudioGolemSwing at ATTACK1/2/3 frame 2 (+0x3a0 = previous frame).
+- move_logic01 0x141f48 with get_target_ang 0x13c2d8 (not assignable:
+  init_enemy_vars maps AI 1 → 0 and 10 → 7).
+
+Reachability (private/reports/enemy-logic-scan-v1.json, all 51 levels):
+generator AI values 0/2/4/7/0xe/0x1c/0x1d/0x1e, placed-enemy AI values
+0/3/7/0xf/0x10/0x11/0x12/0x13/0x17/0x1a/0x1b, plus enemy_fix_ai,
+enemy_logic_num and the cathedral/hell tables (7/0x11/0x12/0x13/0x17/0x1b/
+0x1e/0x1f/3). All are ported. Logics 8, 9, 0xb, 0xc, 0xd, 0x14, 0x15, 0x16
+and blocked08/10/20 are selected by no disc data and stay unported (do_ai
+reports Unsupported); the golem enemy path cannot run on this disc because
+MONSTERS/GOLEM is absent (generate_enemy −5), so golems are critters.
+
+Synthetic spawns on the actual disc (game-run spawn=, DEBUG):
+game-run-spawn-G1-l15/l27/l28/l31-v1.json and -bomber-v1.json — no
+unsupported paths; 15/27 hand over to the logic-0 chase, 28 holds and
+attacks, 31 creeps and attacks, and a GRU beside a level-6 bomber ran logic
+24 for 40 updates while the bomber ran, then returned to 7. Not compared
+with a reference.
+
 ## Not ported (known)
 
-Critters (GENERAL/GOLEM/GAR/DEATH), shield reflection,
-blocked08/10/20, move_logic 03/08–13/15/16/19–22/24–28 except those listed, bosses, power/turbo melee (event bits 0xf0), dash attack 0x3e, turbo powers, shields, transporters' destinations,
-wave exits (SaveStage), camera logic, save/load, co-op.
+Unreachable move logics above; team moves (PlayerSetParent /
+PlayerFacePlayer); the attract flybys (do_camera with game_mode & 0x8000);
+the select screen's fixed camera (MBCameraUpdate of 0x2a1e40); the
+inventory exit swirl; vibration.
 - move_logic16 0x13ecd8 (ranged 0x18 attacks on the +0x334 timer; inside
   0.6 × range it backs off with action 0x16 at speed 0.8 until beyond 0.8 ×
   range), AudioDemonFireBall 0x15fcb8.

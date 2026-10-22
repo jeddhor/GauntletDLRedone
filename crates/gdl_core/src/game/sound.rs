@@ -81,6 +81,9 @@ pub struct SoundTables {
     /// monkill1, monkill1L3, monkill2, monkill2L3, monhurt1, monhurt2,
     /// monhurt1L3D0, monhurt1L3D1, monhurt2L3D0, monhurt2L3D1, monbite, monbiteL3.
     mon: [[i32; 8]; 12],
+    /// golwalk/golborn/golswing 0x23d440/44/48 (S_GOL<letter>STOMP/BORN/
+    /// SWING; −1 from InitEnemyAudio).
+    golem: [i32; 3],
     /// snd_pname1/2 by colour × character (InitNameAudio; colour sounds are −1).
     pname: [[[i32; 17]; 4]; 2],
     /// snd_pname1s/2s 0x2c2788 (S_<COLOUR><CHAR>1S / 2S).
@@ -99,12 +102,15 @@ fn words(b: &[u8]) -> Vec<i32> {
 }
 
 impl SoundTables {
-    /// `enemies`: GetEnemyTypes (type, subtype, ENMY name) per slot.
+    /// `enemies`: GetEnemyTypes (type, subtype, ENMY name) per slot;
+    /// `letter`: LevelLetter(0) (the golem names).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         elf: &Elf,
         rom: Option<AudioRom>,
         enemies: &[(i32, i32, String)],
         boss_type: i32,
+        letter: char,
         snds: &[(String, i16, i16)],
         stage: Option<Stage>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -153,6 +159,7 @@ impl SoundTables {
             },
             enemy_idx: vec![-1; 0x2d],
             mon: [[-1; 8]; 12],
+            golem: [-1; 3],
             pname: [[[-1; 17]; 4]; 2],
             pname_s: [[[-1; 17]; 4]; 2],
             audio_select_state: 0,
@@ -194,7 +201,12 @@ impl SoundTables {
             } else if *ty == 0x1b {
                 (format!("{name}1"), format!("{name}1"), 0, 0, "DIE")
             } else if *ty == 0x1d {
-                return Err("SetEnemyAudio golem (LevelLetter) not ported".into());
+                // GOL<letter>, kill "KILL", no bite; the three golem cues
+                // are looked up without modify_boss_ene.
+                for (k, cue) in ["STOMP", "BORN", "SWING"].iter().enumerate() {
+                    s.golem[k] = find(&format!("S_GOL{letter}{cue}")).unwrap_or(-1);
+                }
+                (format!("GOL{letter}"), format!("GOL{letter}"), 0, 0, "KILL")
             } else {
                 (name.clone(), name.clone(), 0, i32::from(*ty != 0x1d), "DIE")
             };
@@ -260,6 +272,27 @@ impl Game {
         if self.sound_on() && 0 <= id {
             self.events.push(Event::Sound { id, position: pos, volume, priority, pan: None });
         }
+    }
+
+    /// AudioEnemyWalk 0x15fa48: types 0x1d (golem) and 0x20 stomp —
+    /// AudioSFX3(golwalk, position, 0x7f, 0x1c).
+    pub(crate) fn audio_enemy_walk(&mut self, i: usize) -> R<()> {
+        let t = self.enemies[i].i32_(e::TYPE);
+        if t == 0x1d || t == 0x20 {
+            let pos = self.enemies[i].v3(e::POSITION);
+            self.sfx3(self.sounds.golem[0], pos, 0x7f, 0x1c)?;
+        }
+        Ok(())
+    }
+
+    /// AudioGolemBorn 0x15fc68: AudioSFX(golborn, position, 0xe0, 0xd).
+    pub(crate) fn audio_golem_born(&mut self, pos: V3) {
+        self.sfx(self.sounds.golem[1], Some(pos), 0xe0, 0xd);
+    }
+
+    /// AudioGolemSwing 0x15fc80: AudioSFX3(golswing, position, 0xe0, 0xc).
+    pub(crate) fn audio_golem_swing(&mut self, pos: V3) -> R<()> {
+        self.sfx3(self.sounds.golem[2], pos, 0xe0, 0xc)
     }
 
     /// AudioSFX2(id, pan, volume, priority): fixed pan (pantab), no position.

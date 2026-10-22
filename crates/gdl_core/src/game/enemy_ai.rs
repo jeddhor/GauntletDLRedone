@@ -8,7 +8,10 @@
 //! RequestEnemyAction 0x177a08, DoEnemyAction 0x1793f8, InitActions 0x177a88,
 //! CreateYPRMatrix 0x1d6660 with ffsin/ffcos 0x1d6d18/0x1d6ea0, get_yaw
 //! 0x168b68, FixAngle 0x1d6328, check_vacancy 0x13c9e0, FastWallCollide
-//! 0x11ed90, DeadEnd 0x13be90, blocked00 0x142438, blocked07 0x141120, EnemyWorldDamage 0x142e90.
+//! 0x11ed90, DeadEnd 0x13be90, blocked00 0x142438, blocked07 0x141120, EnemyWorldDamage 0x142e90,
+//! move_logic01/15/19/24/27/28/31 (0x141f48/0x13efe0/0x13e4e8/0x13d8b0/0x13d4e8/
+//! 0x13d310/0x13cbc0), xlate31 0x13cb10, get_target_ang 0x13c2d8,
+//! set_suicide_bomber_index 0x139920.
 //!
 //! Visibility (MBWorldSphereVisible) is a camera query; until the camera is
 //! simulated natively it is supplied per enemy by the caller (`visible`).
@@ -485,6 +488,17 @@ impl Game {
         let db = add(mul(bx, bx)?, mul(bz, bz)?)?;
         let da = add(mul(ax, ax)?, mul(az, az)?)?;
         Ok(if db <= da { -1 } else { 1 })
+    }
+
+    /// set_suicide_bomber_index 0x139920: the first live logic-0x12 enemy
+    /// near the camera (+0x2f0) running or about to run (action 4 at +0xe0
+    /// or +0xe4); unchanged when there is none.
+    fn set_suicide_bomber_index(&mut self) {
+        if let Some(k) = self.enemies.iter().position(|r| {
+            r.i32_(e::STATE) == 1 && r.i16_(e::LOGIC) == 0x12 && r.i16_(0x2f0) != 0 && (r.i32_(0xe0) == 4 || r.i32_(0xe4) == 4)
+        }) {
+            self.suicide_bomber_index = k as i32;
+        }
     }
 
     fn found_suicide_bomber(&self, i: usize) -> R<bool> {
@@ -1006,6 +1020,365 @@ impl Game {
         Ok(())
     }
 
+    /// The enemy AnimInfo (+0x84, the player's +0x94 layout) frame +0x9c,
+    /// kept on the native clock.
+    fn enemy_anim_frame(&self, i: usize) -> f32 {
+        self.enemy_anims.get(i).and_then(|a| a.as_ref()).map_or(self.ef(i, 0x9c), |a| a.clock.frame)
+    }
+
+    /// AnimInfo +0x1e (+0xa2): 0 freezes the clock (CalcAnimInfo).
+    fn set_enemy_anim_enabled(&mut self, i: usize, on: u16) {
+        self.enemies[i].set_u16(0xa2, on);
+        if let Some(Some(a)) = self.enemy_anims.get_mut(i) {
+            a.clock.enabled_word = on;
+        }
+    }
+
+    /// move_logic19 0x13e4e8 (golems): frozen (AnimInfo disabled) until a
+    /// target within range comes near the camera (+0x2f0) — +0x330 born,
+    /// AudioGolemBorn. Then +0x32a stages: 0 → 1 request WALK; once walking
+    /// 2 with a 30..119-vblank walk (+0x338), stepping toward the target
+    /// (paused while +0x36c counts down) until it runs out (WALK request
+    /// dropped), it is blocked on +0x212 or the action falls back to READY.
+    /// Stomps at WALK frames 10 and 25, AudioGolemSwing at frame 2 of
+    /// ATTACK1/2/3; +0x3a0 keeps the previous frame.
+    fn move_logic19(&mut self, i: usize) -> R<()> {
+        if self.enemies[i].i32_(0x330) == 0 {
+            if 0 <= self.enemies[i].i16_(0x288) && self.ef(i, 0x290) < self.ef(i, 0x314) && self.enemies[i].i16_(0x2f0) != 0 {
+                self.enemies[i].set_i32(0x330, 1);
+                let pos = self.enemies[i].v3(e::POSITION);
+                self.audio_golem_born(pos);
+            }
+            if self.enemies[i].i32_(0x330) == 0 {
+                self.set_enemy_anim_enabled(i, 0);
+                return Ok(());
+            }
+        }
+        self.set_enemy_anim_enabled(i, 1);
+        if self.enemies[i].i16_(0x2f2) == 0 || self.enemies[i].i16_(0x288) < 0 {
+            self.enemies[i].set_i16(e::LOGIC, ((i & 1) + 5) as i16);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let f = self.get_face_ang(i, true)?;
+        self.enemies[i].set_f32(0x260, f);
+        let stage = self.enemies[i].i16_(0x32a);
+        let mut walk = stage == 2;
+        if stage != 2 {
+            if stage != 1 {
+                self.enemies[i].set_i32(0x338, 1);
+                self.enemies[i].set_i16(0x32a, stage.wrapping_add(1));
+            }
+            self.request_enemy_action(i, 3);
+            if self.enemies[i].i32_(0xe0) == 3 {
+                let r = self.rng.rand_int(0x5a).ok_or_else(|| super::Unsupported("RandInt".into()))? as i32;
+                self.enemies[i].set_i32(0x338, r + 0x1e);
+                let s = self.enemies[i].i16_(0x32a).wrapping_add(1);
+                self.enemies[i].set_i16(0x32a, s);
+            }
+            walk = self.enemies[i].i16_(0x32a) == 2;
+        }
+        if walk {
+            let vb = self.globals.vb_elapsed;
+            let t = self.enemies[i].i32_(0x36c);
+            let step = t < 1 || {
+                self.enemies[i].set_i32(0x36c, t - vb);
+                t - vb < 1
+            };
+            if step {
+                let h = self.ef(i, 0x260);
+                self.set_enemy_trans(1.0, h, i)?;
+            }
+            let left = self.enemies[i].i32_(0x338) - vb;
+            self.enemies[i].set_i32(0x338, left);
+            if left < 1 && self.enemies[i].i32_(0xe4) == 3 {
+                self.enemies[i].set_i32(0xe4, 0);
+            }
+            let blocked = 0 < self.enemies[i].i32_(0x36c) && self.enemies[i].i16_(0x212) == 1;
+            if blocked || self.enemies[i].i32_(0xe0) == 0 {
+                self.enemies[i].set_i16(0x32a, 0);
+            }
+        }
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)?;
+        let prev = self.ef(i, 0x3a0);
+        let cur = self.enemy_anim_frame(i);
+        if self.enemies[i].i32_(0xe0) == 3 {
+            if 0 < self.enemies[i].i32_(0x36c) && 1 < self.enemies[i].i32_(0x338) {
+                self.enemies[i].set_i32(0x338, 1);
+            }
+            if (prev < 10.0 && 10.0 <= cur) || (prev < 25.0 && 25.0 <= cur) {
+                self.audio_enemy_walk(i)?;
+            }
+        }
+        if matches!(self.enemies[i].i32_(0xe0), 0xc | 0xe | 0x10) && prev < 2.0 && 2.0 <= cur {
+            let pos = self.enemies[i].v3(e::POSITION);
+            self.audio_golem_swing(pos)?;
+        }
+        self.enemies[i].set_f32(0x3a0, cur);
+        Ok(())
+    }
+
+    /// move_logic24 0x13d8b0 (entered from found_suicide_bomber): run at 2×
+    /// directly away from the SuicideBomberIndex enemy, adding the next
+    /// offset_step5 step (up to eight, +0x338) on each +0x36c contact.
+    fn move_logic24(&mut self, i: usize) -> R<()> {
+        let mut off = 0.0f32;
+        let contact_before = self.enemies[i].i32_(0x36c);
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        if 0 < self.enemies[i].i32_(0x36c) {
+            let k = self.enemies[i].i32_(0x338);
+            if k < 8 {
+                off = *usize::try_from(k).ok().and_then(|k| self.offset_step5.get(k)).ok_or_else(|| super::Unsupported("offset_step5 index".into()))?;
+                self.enemies[i].set_i32(0x338, k + 1);
+                self.enemies[i].set_i32(0x36c, 0);
+            }
+        }
+        let s = usize::try_from(self.suicide_bomber_index).map_err(|_| super::Unsupported("move_logic24 without a bomber".into()))?;
+        let y = get_yaw(self.enemies[s].v3(0x40), self.enemies[i].v3(0x40))?;
+        let h = wrap(add(add(y, PI)?, off)?)?;
+        self.enemies[i].set_f32(0x260, h);
+        self.set_enemy_trans(2.0, h, i)?;
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)?;
+        if self.enemies[i].i16_(0x294) != 0 {
+            self.enemies[i].set_i32(0x36c, 0);
+        }
+        if contact_before < 1 && 0 < self.enemies[i].i32_(0x36c) {
+            let h = self.ef(i, 0x260);
+            self.enemies[i].set_f32(0x268, h);
+            self.enemies[i].set_i32(0x338, 0);
+        }
+        Ok(())
+    }
+
+    /// xlate31 0x13cb10(scale, enemy): set_enemy_trans's step along +0x260
+    /// without its action request or checks.
+    fn xlate31(&mut self, scale: f32, i: usize) -> R<()> {
+        let heading = self.ef(i, 0x260);
+        if self.ef(i, 0x320) != heading {
+            let (s, c) = (sinf(heading)?, cosf(heading)?);
+            let rec = &mut self.enemies[i];
+            rec.set_f32(0x318, s);
+            rec.set_f32(0x31c, c);
+            rec.set_f32(0x320, heading);
+        }
+        let fw = self.fwrdval[self.enemies[i].i32_(e::TYPE) as usize];
+        let rec = &mut self.enemies[i];
+        rec.set_f32(0x224, add(mul(mul(rec.f32_(0x318), fw)?, scale)?, rec.f32_(0x224))?);
+        rec.set_f32(0x22c, add(mul(mul(rec.f32_(0x31c), fw)?, scale)?, rec.f32_(0x22c))?);
+        Ok(())
+    }
+
+    /// get_target_ang 0x13c2d8: toward the target each brain period
+    /// (+0x380 ≥ +0x37c), stored in +0x260.
+    fn get_target_ang(&mut self, i: usize) -> R<f32> {
+        let rec = &self.enemies[i];
+        let Ok(p) = usize::try_from(rec.i16_(0x288)) else { return Ok(rec.f32_(0x260)) };
+        if rec.i32_(0x380) < rec.i32_(0x37c) {
+            return Ok(rec.f32_(0x260));
+        }
+        let y = get_yaw(self.players[p].v3(0x50), rec.v3(e::POSITION))?;
+        self.enemies[i].set_f32(0x260, y);
+        Ok(y)
+    }
+
+    /// move_logic15 0x13efe0: patrol the lookout chain — stage 0 picks the
+    /// nearest lookout with a next link, stage 1 walks to it and follows
+    /// +0x70 on arrival (|dy| < 4, planar < 1); a target within 0.8 ×
+    /// range (+0x28c and planar distance) switches to logic 0.
+    fn move_logic15(&mut self, i: usize) -> R<()> {
+        if self.found_suicide_bomber(i)? {
+            self.enemies[i].set_i16(e::LOGIC, 0x18);
+            return self.do_ai(i);
+        }
+        if let Ok(p) = usize::try_from(self.enemies[i].i16_(0x288)) {
+            let reach = mul(self.ef(i, 0x314), f32::from_bits(0x3f4c_cccd))?;
+            if self.ef(i, 0x28c) <= reach {
+                let pp = self.players[p].v3(0x50);
+                let (d, _) = fqdist(sub(pp[0], self.ef(i, 0x40))?, sub(pp[2], self.ef(i, 0x48))?)?;
+                if d <= mul(self.ef(i, 0x314), f32::from_bits(0x3f4c_cccd))? {
+                    self.enemies[i].set_i16(e::LOGIC, 0);
+                    self.do_ai(i)?;
+                    self.enemies[i].set_i16(0x32a, 0);
+                    return Ok(());
+                }
+            }
+        }
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let stage = self.enemies[i].i16_(0x32a);
+        if stage == 0 {
+            let me = self.enemies[i].v3(e::POSITION);
+            let mut best = (-1i32, f32::from_bits(0x47c3_5000));
+            for (k, l) in self.lookouts.iter().enumerate() {
+                if l.next < 0 {
+                    continue;
+                }
+                let d = [sub(l.position[0], me[0])?, sub(l.position[1], me[1])?, sub(l.position[2], me[2])?];
+                let q = sqrt_rn(add(add(mul(d[0], d[0])?, mul(d[1], d[1])?)?, mul(d[2], d[2])?)?)?;
+                if q < best.1 {
+                    best = (k as i32, q);
+                }
+            }
+            self.enemies[i].set_i32(0x330, best.0);
+            self.enemies[i].set_i16(0x32a, 1);
+        }
+        if stage == 0 || stage == 1 {
+            let l = usize::try_from(self.enemies[i].i32_(0x330))
+                .ok()
+                .and_then(|k| self.lookouts.get(k))
+                .ok_or_else(|| super::Unsupported("move_logic15 without a linked lookout (Lookouts[-1])".into()))?;
+            let (lp, next) = (l.position, l.next);
+            let me = self.enemies[i].v3(e::POSITION);
+            let y = get_yaw(lp, me)?;
+            self.enemies[i].set_f32(0x260, y);
+            if sub(lp[1], me[1])?.abs() < 4.0 && fqdist(sub(lp[0], me[0])?, sub(lp[2], me[2])?)?.0 < 1.0 {
+                self.enemies[i].set_i32(0x330, i32::from(next));
+            }
+        }
+        let h = self.ef(i, 0x260);
+        self.set_enemy_trans(1.0, h, i)?;
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)
+    }
+
+    /// move_logic01 0x141f48: walk straight at the target (get_target_ang
+    /// each brain period). After a dead end (+0x36c, counting down only
+    /// while +0x212 is 2) it waits until the heading moves 6° (0x3dd67750)
+    /// from the blocked one at +0x268.
+    fn move_logic01(&mut self, i: usize) -> R<()> {
+        let contact_before = self.enemies[i].i32_(0x36c);
+        if self.found_suicide_bomber(i)? {
+            self.enemies[i].set_i16(e::LOGIC, 0x18);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(0x2f2) == 0 || self.enemies[i].i16_(0x288) < 0 {
+            self.enemies[i].set_i16(e::LOGIC, ((i & 1) + 5) as i16);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let h = self.get_target_ang(i)?;
+        self.enemies[i].set_f32(0x260, h);
+        let mut t = self.enemies[i].i32_(0x36c);
+        if self.enemies[i].i16_(0x212) == 2 && 0 < t {
+            t -= self.globals.vb_elapsed;
+            self.enemies[i].set_i32(0x36c, t);
+        }
+        let step = t < 1 || f32::from_bits(0x3dd6_7750) <= sub(self.ef(i, 0x260), self.ef(i, 0x268))?.abs();
+        if step {
+            self.enemies[i].set_i32(0x36c, 0);
+            let h = self.ef(i, 0x260);
+            self.set_enemy_trans(1.0, h, i)?;
+        }
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)?;
+        if contact_before < 1 && 0 < self.enemies[i].i32_(0x36c) {
+            let h = self.ef(i, 0x260);
+            self.enemies[i].set_f32(0x268, h);
+        }
+        Ok(())
+    }
+
+    /// move_logic31 0x13cbc0: face the target near the camera; lunge on
+    /// ATTACK1 (marking +0x2e0 within 7.5), rest 30..59 vblanks after an
+    /// attack, otherwise creep at half speed until the +0x334 timer is out,
+    /// then ATTACK1 within 10 or ATTACK3.
+    fn move_logic31(&mut self, i: usize) -> R<()> {
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let f = self.get_face_ang(i, true)?;
+        self.enemies[i].set_f32(0x260, f);
+        if 0 <= self.enemies[i].i16_(0x288) {
+            self.enemies[i].set_i32(0xe4, 0);
+            if self.enemies[i].i16_(0x2f0) != 0 {
+                let a = self.enemies[i].i32_(0xe0);
+                let rand = |g: &mut Game| -> R<i32> { Ok(g.rng.rand_int(0x1e).ok_or_else(|| super::Unsupported("RandInt".into()))? as i32 + 0x1e) };
+                if (a as u32).wrapping_sub(0xc) < 2 {
+                    self.xlate31(1.0, i)?;
+                    let r = rand(self)?;
+                    self.enemies[i].set_i32(0x334, r);
+                    if self.ef(i, 0x290) <= 7.5 {
+                        let t = self.enemies[i].i16_(0x288);
+                        self.enemies[i].set_i16(0x2e0, t);
+                    }
+                } else if (a as u32).wrapping_sub(0x10) < 2 {
+                    let r = rand(self)?;
+                    self.enemies[i].set_i32(0x334, r);
+                } else if self.enemies[i].i32_(0x334) < 1 {
+                    self.request_enemy_action(i, if self.ef(i, 0x290) <= 10.0 { 0xc } else { 0x10 });
+                } else if a != 1 {
+                    let t = self.enemies[i].i32_(0x334) - self.globals.vb_elapsed;
+                    self.enemies[i].set_i32(0x334, t);
+                    self.xlate31(0.5, i)?;
+                }
+            }
+        }
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)
+    }
+
+    /// move_logic28 0x13d310: hold position facing the target and attack
+    /// from range (0xc/0xe alternating on +0x33c, 0x10 at level +0x21a ≥ 3,
+    /// when the +0x334 timer is out) while it is near the camera, within
+    /// +0x314 and ±10 in height; within 6 it switches to logic 7.
+    fn move_logic28(&mut self, i: usize) -> R<()> {
+        if 0 <= self.enemies[i].i16_(0x288) && self.ef(i, 0x290) <= 6.0 {
+            self.enemies[i].set_i16(e::LOGIC, 7);
+            return self.do_ai(i);
+        }
+        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
+            self.format_brain(i);
+        }
+        let f = self.get_face_ang(i, true)?;
+        self.enemies[i].set_f32(0x260, f);
+        if let Ok(p) = usize::try_from(self.enemies[i].i16_(0x288)) {
+            let dy = sub(self.ef(i, 0x44), self.players[p].f32_(0x54))?;
+            if self.enemies[i].i16_(0x2f0) != 0 && self.ef(i, 0x290) <= self.ef(i, 0x314) && (-10.0..=10.0).contains(&dy) {
+                let t = self.enemies[i].i32_(0x334);
+                if 0 < t {
+                    self.enemies[i].set_i32(0x334, t - self.globals.vb_elapsed);
+                } else if 3 <= self.enemies[i].i16_(0x21a) {
+                    self.request_enemy_action(i, 0x10);
+                } else {
+                    let n = self.enemies[i].i32_(0x33c).wrapping_add(1);
+                    self.enemies[i].set_i32(0x33c, n);
+                    self.request_enemy_action(i, if n & 1 != 0 { 0xc } else { 0xe });
+                }
+            }
+        }
+        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
+        self.enemies[i].set_f32(0x258, y);
+        self.do_enemy_move(i)
+    }
+
+    /// move_logic27 0x13d4e8: stand still until a target is found, then
+    /// chase it for good (+0x314 range 1e6, logic 0, move_logic00).
+    fn move_logic27(&mut self, i: usize) -> R<()> {
+        if self.enemies[i].i16_(0x288) < 0 {
+            for o in [0x224, 0x228, 0x22c] {
+                self.enemies[i].set_u32(o, 0);
+            }
+            return self.do_enemy_move(i);
+        }
+        self.enemies[i].set_u32(0x314, 0x4974_23f0);
+        self.enemies[i].set_i16(e::LOGIC, 0);
+        self.move_logic00(i)
+    }
+
     /// move_logic29 0x13cf40: keep a 8–18 band from the target (+0x330: 0
     /// hold, 1 back off, 2 close in), stepping through offset_step5 on each
     /// +0x36c contact, attacking (0xc/0xe alternating, 0x10 at level 3+)
@@ -1264,6 +1637,7 @@ impl Game {
         }
         match self.enemies[i].i16_(e::LOGIC) {
             0 => self.move_logic00(i)?,
+            1 => self.move_logic01(i)?,
             2 => self.move_logic_diag(i, true, 4)?,
             3 => self.move_logic03(i)?,
             4 => self.move_logic_diag(i, false, 2)?,
@@ -1271,13 +1645,19 @@ impl Game {
             6 => self.move_logic_wander(i, HALF_PI)?,
             7 => self.move_logic07(i)?,
             0x12 => self.move_logic18(i)?,
+            0x13 => self.move_logic19(i)?,
             0xe => self.move_logic14(i)?,
+            0xf => self.move_logic15(i)?,
             0x10 => self.move_logic16(i)?,
             0x11 => self.move_logic_turret(i, false)?,
             0x17 => self.move_logic_turret(i, true)?,
+            0x18 => self.move_logic24(i)?,
+            0x1b => self.move_logic27(i)?,
+            0x1c => self.move_logic28(i)?,
             0x1a => self.move_logic26(i)?,
             0x1d => self.move_logic29(i)?,
             0x1e => self.move_logic30(i)?,
+            0x1f => self.move_logic31(i)?,
             l if (0..0x20).contains(&l) => return unsupported(format!("move_logic{l:02}")),
             _ => self.kill_enemy(i)?,
         }
@@ -2390,6 +2770,7 @@ impl Game {
         for k in 0..self.enemy_tables.speed.len() {
             self.fwrdval[k] = mul(mul(vb, scale)?, self.enemy_tables.speed[k])?;
         }
+        self.set_suicide_bomber_index();
         self.globals.num_visible_enemies = 0;
         for k in 0..self.enemies.len() {
             if self.enemies[k].i32_(e::STATE) != 0 {
