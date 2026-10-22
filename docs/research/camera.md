@@ -175,8 +175,16 @@ visited marks; get_pitch's sign.
 - private/reports/trace-stdcam-g1-v2.json: 500 vblanks (walk across three
   transmitter zones, 7 → 114 → 24 → …): 250/250 pb blocks and 250/250
   StdCam records bit-exact, including the 50-step rotation blends.
-- Not trace-checked: StdCamInit(0) / the stage-start zoom (the fixture is
-  mid-level), more than one player, DoShake.
+- The stage-start zoom is trace-checked since 2026-10-22
+  (trace-g1-newgame-v4, G1 from its new-game capture, slot 6): the frame
+  replay seeds ZOOM_FRAMES, resetStdCam and WorldStartTime, runs
+  world_update's stage-start block (cam_wait 2 → 1 three seconds after
+  WorldStartTime) before the update and main's camera dispatch after it:
+  StdCam record and window 250/250 through the zoom's start (step 58), its
+  steps and its nine UpdateCam settles. The stack record's untouched bytes
+  being zero (HYPOTHESIS) produced no difference.
+- Not trace-checked: StdCamInit(0) at a level load (the capture starts
+  after it), more than one player, DoShake.
 
 ## Native integration
 
@@ -248,7 +256,19 @@ StdCam record, which BossCameraUpdate does not write, so boss arenas were
 drawn from the level-start eye with the boss camera's rotation (the player
 at the screen's top edge in A5).
 
-Not trace-checked: no capture or trace of a boss arena exists yet.
+Trace-checked 2026-10-22 (trace-b6-boss-v4, B6's dragon arena, slot 8):
+the frame replay seeds BossCamera (0x25d560, 0x1b0 bytes; BossCam points at
+it), BossCameraMode, the BCAM record (BossCamData), CurTransmitter,
+Cur3DTransmitter, BossCamMode, DoShake's globals and the window eye, runs
+main's dispatch after game_main and compares the boss and StdCam records and
+the window matrix: 250/250. The one fix: CameraLimitPlayerDpos 0x1a2428 with
+BossCameraMode set runs CamLimitPlayerDpos(BossCam) — CalcFrustrumNormals
+from the boss record's +0xec yaw and +0xe0 look into its +0x40 planes, then
+NewCamLimitPlayerDpos against them, the displacement's y restored, result 1
+(not for a dead or dying boss of type 0x24/0x25/0x29 while gold is active;
+BOSS_CAM_TEST is 0 in the data). The port clipped against the StdCam's
+planes, so the boss record's planes were never written and the player's
+edge limit used a stale camera.
 
 ## Trigger cameras
 

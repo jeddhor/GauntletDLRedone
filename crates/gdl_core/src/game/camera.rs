@@ -2553,6 +2553,10 @@ impl super::Game {
     /// world_update 0x163480's start-of-stage block (game modes 0x4010 and
     /// 0x400c): the entry effect and sound once, then cam_wait 1 three
     /// seconds after WorldStartTime. Fog (InitFog / FogFadeIn) is presentation.
+    pub fn world_update_stage_start_pub(&mut self) -> R<()> {
+        self.world_update_stage_start()
+    }
+
     pub(crate) fn world_update_stage_start(&mut self) -> R<()> {
         let g = &self.globals;
         if g.paused != 0 || g.help != 0 || !(g.game_mode == 0x4010 || g.game_mode == 0x400c) || g.start_of_stage == 0 {

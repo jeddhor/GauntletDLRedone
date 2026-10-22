@@ -19,7 +19,7 @@ GLOBALS = ['Time', 'SPF', 'ATime', 'AnimTimeScale', 'vb_elapsed', 'AuxLevels', '
            'quit_level', 'auto_exit_flag', 'someone_wants_to_exit', 'firstgetidx', 'disable_player_controls',
            # Camera state main's dispatch reads (boss camera, transmitters, DoShake).
            'BossCameraMode', 'BossCam', 'BossCamMode', 'CurTransmitter', 'Cur3DTransmitter', 'shaking', 'shake_type',
-           'shake_priority', 'shake_delay', 'shake_count', 'shake_rad']
+           'shake_priority', 'shake_delay', 'shake_count', 'shake_rad', 'ZOOM_FRAMES', 'resetStdCam', 'WorldStartTime']
 
 
 def elf_symbols(names):

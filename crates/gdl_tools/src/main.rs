@@ -1980,9 +1980,19 @@ fn run() -> Result<(), Box<dyn Error>> {
                                 count: gw("shake_count")?,
                                 radius: f32::from_bits(gw("shake_rad")? as u32),
                             };
+                            // StdCamStartUpdate's ZOOM_FRAMES and resetStdCam
+                            // (traces from trace-g1-newgame-v3).
+                            let zoom = bp.get("ZOOM_FRAMES").map(|v| hexb(v).map(|b| word(&b) as i32)).transpose()?;
+                            let reset = bp.get("resetStdCam").map(|v| hexb(v).map(|b| word(&b) as i32)).transpose()?;
                             if let Some(c) = game.std_camera.as_mut() {
                                 c.cur3d = cur3d;
                                 c.shake = shake;
+                                if let Some(z) = zoom {
+                                    c.zoom_frames = z;
+                                }
+                                if let Some(r) = reset {
+                                    c.reset_std = r;
+                                }
                                 if 0xac <= win.len() {
                                     c.pb.eye = [fl(&win[0xa0..]), fl(&win[0xa4..]), fl(&win[0xa8..])];
                                 }
@@ -2135,7 +2145,19 @@ fn run() -> Result<(), Box<dyn Error>> {
                     ) = item_side.clone();
                     seed_all(game)?;
                     game.rng.state = seed;
-                    let mut res = if items_mode { game.process_items() } else { Ok(()) };
+                    // world_update's stage-start block (cam_wait 2 → 1 three
+                    // seconds after WorldStartTime; traces from
+                    // trace-g1-newgame-v4).
+                    let mut res = Ok(());
+                    if let Some(w) = b["player"].get("WorldStartTime") {
+                        game.world_start_time = f32::from_le_bytes(hexb(w)?[..4].try_into()?);
+                        if game.globals.paused == 0 && game.globals.help == 0 {
+                            res = game.world_update_stage_start_pub();
+                        }
+                    }
+                    if res.is_ok() {
+                        res = if items_mode { game.process_items() } else { Ok(()) };
+                    }
                     if res.is_ok() {
                         res = game.do_enemies(&visible);
                     }

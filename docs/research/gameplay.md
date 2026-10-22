@@ -625,3 +625,9 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   - StartFXTree (0x17d7b0) writes +0x50 (the AnimInfo loop word) only on
     its positive-time and zero-frame paths; otherwise InitAnim's value, the
     first sequence's repeat flag, stays (the dragon's header 102 loops).
+  - With the camera state probed (trace-b6-boss-v4) the frame replay also
+    runs main's camera dispatch after each update: the boss camera 250/250
+    after porting CameraLimitPlayerDpos's boss branch (camera.md "Boss
+    camera"). The same stage on G1's new game (trace-g1-newgame-v4, with
+    world_update's stage-start block) checks the StdCam through the
+    stage-start zoom: 250/250 in every part.
