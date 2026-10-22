@@ -610,8 +610,10 @@ mod tests {
         let mut m = Menu::new(128, 128);
         m.saves = vec![Entry { slot: 1, label: "PELE".into() }];
         assert_eq!(m.input(Key::Accept), None);
-        assert_eq!(m.input(Key::Accept), None);
-        assert!(matches!(m.page, Page::Select { at: 0 }));
+        // The title's Start: the select screen (init_player_select(0)).
+        assert_eq!(m.input(Key::Accept), Some(Action::StartSelect));
+        // DEBUG (GDL_DEBUG_NATIVE_SELECT): the native pages.
+        m.page = Page::Select { at: 0 };
         m.input(Key::Down);
         m.input(Key::Accept);
         assert!(matches!(m.page, Page::Class { at: 6 }));
