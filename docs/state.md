@@ -106,9 +106,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    G1 from its new-game capture 250/250 (the replay now tries neighbouring
    rand call counts); B6's dragon boss 250/250 in every part (slot 8 via
    do_exit's wave skip; newcam_mode, Cam[0]'s up vector and the effect
-   loop word fixed). Next: more bosses (via --skip-wave from slots 3–7:
-   A5 0x105 with the chimera's children, G5 0x704, K5 0xb04), statue
-   activations (golem/gargoyle), and the boss fight to its death.
+   loop word fixed); the frame replay's camera stage checks the boss camera
+   (B6 250/250, CameraLimitPlayerDpos's boss branch ported) and the StdCam
+   stage-start zoom (G1 250/250); G5's lich 250/250 once critter SFX follow
+   their node. Next: more bosses (--skip-wave, staging slot 9: A5 0x105 with
+   the chimera's children, K5 0xb04, D5, C5, I5, J5, E2/F2 Skorne, H4
+   Garm), statue activations (golem/gargoyle), a boss fight to its death.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

@@ -85,6 +85,12 @@ warp-*.json and screenshots in private/reports):
 | 6 | w7l1-newgame-v1.p2s | (45.07, −6.43, −112.70), world 7 | G1 new game after its start |
 | 7 | w11l1-newgame-v2.p2s | world 11, 1800 vblanks | K2, the moving ship (SKY's LEVL record 0), after its start |
 | 8 | w2l6-boss-v1.p2s | from slot 3: player 0 written onto B1's exit (−8.578, 139.0, −68.06) and skip_wave = 0x10205 (do_exit's wave skip to MOUNT record 5), 1400 vblanks | B6, the dragon's arena, in play (exit → map 0x400f → load 0x400c → 0x4010 by ~1400) |
+| 9 (staging) | w7l5-boss-v1.p2s | from slot 6: player 0 onto G1's exit (118.28, 86.8, −472.5), skip_wave 0x10704, 1000 vblanks | G5, the lich's crypt, in play |
+
+Slot 9 is a staging slot (tools/python/reference_slots.py): `--stage NAME`
+copies a preserved capture into it for reference_trace.py / reference_warp.py,
+and it is overwritten (by a stage or a `--save-slot 9`) only while it holds a
+byte-identical copy of some preserved capture, so no state is ever lost.
 
 reference_trace.py and reference_screenshot.py accept these slots; each run
 first checks the PCSX2 slot file against its preserved capture.

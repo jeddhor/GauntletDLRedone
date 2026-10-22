@@ -631,3 +631,11 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
     camera"). The same stage on G1's new game (trace-g1-newgame-v4, with
     world_update's stage-start block) checks the StdCam through the
     stage-start zoom: 250/250 in every part.
+- G5 (the lich's crypt; staged capture w7l5-boss-v1 from slot 6 through
+  G1's exit with skip_wave 0x10704; trace-g5-boss-v1: idle, Up toward the
+  lich, two throws, Up, Left; the boss activates at ~step 200): whole-update
+  replay (replay-frame-g5-v2.json) 250/250 in every part, camera included.
+  The one divergence was the lich's attack effect (header 99) at step 166:
+  SFX attached to a critter node keep their offset as a local translation
+  and follow the node (critters.md); the port had spawned them at the world
+  position.

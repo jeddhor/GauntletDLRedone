@@ -128,6 +128,11 @@ moves and the player's two throws at it: critters 250/250 with no critter
 change needed; the boss level's fixes were the camera-side ones (gameplay.md
 "B6").
 
+trace-g5-boss-v1 (G5 reached from slot 6 through G1's exit and skip_wave
+0x10704, staged capture w7l5-boss-v1): the lich (BossType 0x29) from before
+its activation through its first attacks: critters, camera and every other
+part 250/250 once its attack effects followed their critter node (above).
+
 Found by the comparison:
 - ProcessCritter starts with GetWorldMat(+0x70 node → +0x10) and ends (every
   surviving path, LAB_00198ef0) with CopyMat4(+0x10 → node) and
@@ -166,8 +171,13 @@ Found by the comparison:
   0x112a30 — 2026-10-22). Key gaps of 256+
   frames use a direct float reciprocal (sample_channels_long_gaps,
   HYPOTHESIS).
-- Effects parented to a node are spawned at its world position and do not
-  follow it. Visual-only SFXX (particles, texture mods) are not simulated;
+- Effects parented to a critter node (CritterDoSfxSub's SfxSetParent: SFX
+  flag 0x800 the +0xcc root's MB parent, 1 the +0xcc root, otherwise the
+  +0xdc transition node, for SFX with flags 0x801 or an attaching caller)
+  keep the SFX offset as their local translation and follow the node:
+  ProcessEffects recomputes their world transform from it every update
+  (since 2026-10-22, trace-g5-boss-v1; previously spawned at the world
+  position and left there). Visual-only SFXX (particles, texture mods) are not simulated;
   every SFXX with a custom effect header gets a real effect slot as in the
   original (owner = critter ID | 0x1000).
 - Custom effects (InitCustomEffectSub 0x179aa8) take EffectHeaders 0x61 + n,
