@@ -1411,6 +1411,9 @@ struct Sim {
     /// game mode 0x400e: an in-game movie and where play goes on after it.
     movie: Option<MovieRun>,
     movie_done: Option<MovieThen>,
+    /// game mode 0x4014 (init_over / do_over) and its end.
+    over: Option<gdl_core::game::movie::GameOver>,
+    over_done: bool,
 }
 
 /// The full-screen movie frame (HUD layer, above the other blits).
@@ -3191,7 +3194,8 @@ fn simulate(
     }
     // game_main in the Tower: a controller pressing Start joins through
     // the select screen (check_active_players → init_player_select(1)).
-    if sim.game.globals.cur_world == 0xd && sim.game.hud.optmenu_active == 0 && sim.game.globals.start_of_stage == 0 {
+    // (Not in game mode 0x4014: do_over's branch runs no join check.)
+    if sim.game.globals.cur_world == 0xd && sim.game.hud.optmenu_active == 0 && sim.game.globals.start_of_stage == 0 && sim.over.is_none() {
         let g = &mut sim.game;
         let joined = g.update_controls(&ports).and_then(|_| g.join_check(&session.pdats));
         match joined {
@@ -3213,6 +3217,13 @@ fn simulate(
         g.do_players().map(|_| ())
     });
     sim.updates += 1;
+    // game mode 0x4014: do_over after the world, items, enemies, players.
+    if let Some(mut over) = sim.over.take() {
+        if sim.game.do_over(&mut over) {
+            sim.over_done = true;
+        }
+        sim.over = Some(over);
+    }
     // DEBUG (presentation checks): GDL_DEBUG_HELP=<id> raises NewHelp(id,
     // player 0) once, 60 updates into the level. Not a game feature.
     if sim.updates == 60
@@ -4819,7 +4830,7 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         let pdats = world.resource::<Session>().pdats.clone();
         select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
     }
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -5033,7 +5044,18 @@ fn act(world: &mut EcsWorld, action: Action) {
                     session.banner = Some((1.5, "Returning to the Tower".into()));
                 }
             }
-            Action::QuitGame => end_game(world),
+            // quit_game → OptionsDone → init_over (the game-over sequence).
+            Action::QuitGame => {
+                world.resource_mut::<Ui>().paused = false;
+                if let Some(mut sim) = world.get_resource_mut::<Sim>() {
+                    if sim.over.is_none() {
+                        let over = sim.game.init_over();
+                        sim.over = Some(over);
+                    }
+                } else {
+                    end_game(world);
+                }
+            }
             Action::OpenInventory => {
                 let text = inventory_text(&world.resource::<Sim>().game.players[0]);
                 let mut front = world.resource_mut::<Front>();
@@ -5167,9 +5189,19 @@ fn front_system(world: &mut EcsWorld) {
     }
     if screen == Screen::Playing {
         // game_main: no active player left (each declined to continue) →
-        // init_over → the title.
-        if world.get_resource::<Sim>().is_some_and(|s| (0..4).all(|k| s.game.players[k].i32_(0xfc) == 0)) {
+        // init_over; do_over's end: EndTower, fail_movie_show and
+        // init_attract_mode(0x8002) (the FAIL movie, then the sequence).
+        if world.get_resource::<Sim>().is_some_and(|s| s.over_done) {
             end_game(world);
+            let mut front = world.resource_mut::<Front>();
+            front.attract.fail_movie_show = true;
+            start_attract(&mut front, 0x8002);
+            return;
+        }
+        if world.get_resource::<Sim>().is_some_and(|s| s.over.is_none() && (0..4).all(|k| s.game.players[k].i32_(0xfc) == 0)) {
+            let mut sim = world.resource_mut::<Sim>();
+            let over = sim.game.init_over();
+            sim.over = Some(over);
             return;
         }
         if world.get_resource::<Sim>().is_some_and(|s| s.message_box.is_some()) {

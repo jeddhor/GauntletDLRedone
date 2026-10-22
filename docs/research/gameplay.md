@@ -109,9 +109,9 @@ closure; the interim player driver), ProcessEffects.
   rotation; PlayerGetTarget origin = +0x70.
 - Magic button triggers use_potion directly (the original raises event 0x20000
   from the magic action's animation).
-- Hit-spark/visual effects are presentation; LoadPlyrData is not ported, so
-  derived combat words (+0x128 damage, +0x12c speed) are not recomputed after
-  a level-up.
+- Hit-spark/visual effects are presentation; the derived combat words
+  (+0x118..+0x12c) follow the attributes each update (PlayerProcessPowerups'
+  check_player_atts), so a level-up takes effect at once.
 - Later levels keep the carried player record; player 1 is placed at the
   start locator (place_player, get_player_pos's single path); other players
   through load_player_geo → get_player_pos(k, 1) (player.md).

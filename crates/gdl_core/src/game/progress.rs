@@ -5,9 +5,9 @@
 //! +0x114 attribute words, +0x9ac + 0x18 × character per-character bonuses,
 //! +0x800 turbo meter, +0x8c8 attack state. PlayerUpdateAtts reads the class
 //! record (PlayerData[player], loaded by LoadPlyrData): +0x28..+0x44 base
-//! and cap pairs. LoadPlyrData itself is not ported; the class record of the
-//! start state is used (single-class session). Derived combat words such as
-//! +0x128 (missile damage) are not recomputed from the new attributes.
+//! and cap pairs, the player's ClassData (the host loads each player's
+//! class record). The derived combat words +0x118..+0x12c follow the new
+//! attributes through PlayerProcessPowerups' check_player_atts each update.
 use super::{Event, Game, R};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
 

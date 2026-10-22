@@ -567,3 +567,19 @@ card check. GUI: SONY screen, MIDWAY/OPENING/TITLE2, title; credits via
 GDL_DEBUG_CREDITS. Not ported: the flybys (init_flyby/do_flyby: an
 attract level under the old Cam system; passed over), the card-check
 messages for a missing, unformatted or full card, the "Version" text.
+
+## Game over (2026-10-22)
+
+init_over 0x127e70 (game_main when active_players is 0, or quit_game after
+OptionsDone): game mode 0x4014, BGMusicStop, AudioStopAll, AudioEndGame
+(empty), timer1 = 0xf0, timer2 = 0, every player inactivated,
+active_players 0, TriggerCameraEnd. In 0x4014 game_main runs
+world_update, do_items, do_enemies, do_players and do_over 0x127ee8:
+AudioGameOver 0x15e228 (AudioFX 0x1005a, 0xe0, 0x14) as timer2 passes 60,
+DrawStringText(centred, y 0x78, font 6, white, entry 0xa9 "GAME OVER") at
+DrawStringScale 2.0 with the message text cut to (timer2 − 60) >> 3
+letters, and once timer1 runs out EndTower, fail_movie_show = 1 and
+init_attract_mode(0x8002) — the FAIL movie, then the attract sequence
+(the title only through Start). Ported (gdl_core::game::movie::GameOver,
+the client's sim.over); the Tower's join check does not run in 0x4014.
+GUI: Quit Game → GAME OVER over the Tower → FAIL.

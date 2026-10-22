@@ -105,6 +105,8 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (SONY screen + card check, MIDWAY/OPENING/TITLE2 and the class movies,
    group shots, credits; flybys passed over — hud.md). Movie frames now
    rebind their material each frame (in-game movies showed a frozen frame).
+   2026-10-22: game over (init_over/do_over: GAME OVER over the running
+   level, then the FAIL movie and the attract sequence), also for Quit Game.
 
 ---
 

@@ -71,3 +71,56 @@ impl Game {
         None
     }
 }
+
+/// init_over / do_over (game mode 0x4014): timer1 counts down from 0xf0
+/// vblanks, timer2 up (AudioGameOver at 60, the "GAME OVER" letters one per
+/// 8 vblanks after that).
+#[derive(Debug, Clone, Copy)]
+pub struct GameOver {
+    pub timer1: i32,
+    pub timer2: i32,
+}
+
+impl Game {
+    /// init_over 0x127e70 (no players left, or Quit Game): game mode 0x4014,
+    /// BGMusicStop, AudioStopAll, AudioEndGame (empty), the timers, every
+    /// player inactivated, active_players 0, TriggerCameraEnd.
+    pub fn init_over(&mut self) -> GameOver {
+        self.globals.game_mode = 0x4014;
+        self.globals.paused = 0;
+        self.bg_music_stop();
+        self.audio_stop_all();
+        for k in 0..4 {
+            self.inactivate_player(k);
+        }
+        self.globals.active_players = 0;
+        self.trigger_camera_end();
+        GameOver { timer1: 0xf0, timer2: 0 }
+    }
+
+    /// do_over 0x127ee8 after world_update/do_items/do_enemies/do_players:
+    /// AudioGameOver (0x1005a, 0xe0, 0x14) as timer2 passes 60, DrawStringText
+    /// (centred, y 0x78, font 6, white, entry 0xa9) at DrawStringScale 2.0
+    /// cut to (timer2 − 60) >> 3 letters (0..9), and timer1. True once
+    /// timer1 ran out: EndTower, fail_movie_show = 1, init_attract_mode
+    /// (0x8002) — the host's.
+    pub fn do_over(&mut self, over: &mut GameOver) -> bool {
+        let vb = self.globals.vb_elapsed;
+        let before = over.timer2;
+        over.timer2 += vb;
+        if before < 0x3c && 0x3b < over.timer2 {
+            // AudioGameOver 0x15e228: AudioFX(0x1005a, 0xe0, 0x14).
+            self.sfx(0x1_005a, None, 0xe0, 0x14);
+        }
+        let n = ((over.timer2 - 0x3c) >> 3).clamp(0, 9) as usize;
+        let blits = self.hud.string_text_prefix_blits(-0x100, 0x78, 6, 0xffffff, 0xa9, 0, 2.0, n);
+        self.hud.push_temp(blits);
+        if self.globals.paused == 0 {
+            over.timer1 -= vb;
+            if over.timer1 < 1 {
+                return true;
+            }
+        }
+        false
+    }
+}
