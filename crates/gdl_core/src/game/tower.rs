@@ -417,15 +417,31 @@ impl Game {
     /// MBTreeSetFlags(node, bits, 0) on a named world node (presentation).
     pub fn world_node_set_flags(&mut self, name: &str, bits: u32) {
         if let Some(i) = self.find_world_object(name) {
-            self.node_mb_set[i] |= bits;
-            self.node_mb_clear[i] &= !bits;
-            self.node_state_version = self.node_state_version.wrapping_add(1);
+            self.node_set_flags_at(i, bits);
         }
     }
 
     /// MBTreeClearFlags(node, bits, 0) on a named world node.
     pub fn world_node_clear_flags(&mut self, name: &str, bits: u32) {
         if let Some(i) = self.find_world_object(name) {
+            self.node_clear_flags_at(i, bits);
+        }
+    }
+
+    /// MBTreeSetFlags(node, bits, 0) on world node `i`.
+    pub(crate) fn node_set_flags_at(&mut self, i: usize, bits: u32) {
+        let (Some(s), Some(c)) = (self.node_mb_set.get(i), self.node_mb_clear.get(i)) else { return };
+        if s & bits != bits || c & bits != 0 {
+            self.node_mb_set[i] |= bits;
+            self.node_mb_clear[i] &= !bits;
+            self.node_state_version = self.node_state_version.wrapping_add(1);
+        }
+    }
+
+    /// MBTreeClearFlags(node, bits, 0) on world node `i`.
+    pub(crate) fn node_clear_flags_at(&mut self, i: usize, bits: u32) {
+        let (Some(s), Some(c)) = (self.node_mb_set.get(i), self.node_mb_clear.get(i)) else { return };
+        if c & bits != bits || s & bits != 0 {
             self.node_mb_clear[i] |= bits;
             self.node_mb_set[i] &= !bits;
             self.node_state_version = self.node_state_version.wrapping_add(1);
@@ -903,12 +919,15 @@ impl Game {
     }
 
     /// MBTreeSetAlpha(world node, a, 1).
-    fn world_node_set_alpha(&mut self, node: Option<usize>, a: i32) {
+    pub(crate) fn world_node_set_alpha(&mut self, node: Option<usize>, a: i32) {
         if let Some(n) = node
             && let Some(v) = self.node_alpha.get_mut(n)
         {
-            *v = Some(a.clamp(0, 0xff) as u8);
-            self.node_state_version = self.node_state_version.wrapping_add(1);
+            let a = Some(a.clamp(0, 0xff) as u8);
+            if *v != a {
+                *v = a;
+                self.node_state_version = self.node_state_version.wrapping_add(1);
+            }
         }
     }
 

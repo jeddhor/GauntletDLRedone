@@ -1362,10 +1362,35 @@ impl Game {
             if flags & 0x800 != 0 {
                 moving = false; // world particle systems only
             } else if tf & 0x10 != 0 {
-                // Fade objects: visibility byte +0x35 and alpha (presentation).
-                let shown = if tf & 0x20 == 0 { b16 & 0xf == 0 } else { b16 & 0x2f != 0 };
-                self.items.object_visible[o] = shown;
-                self.items.object_exclusion[o] = if shown { -1 } else { 0 };
+                // Fade objects (0x154a18): the condition fades the tree out
+                // (+0x35 = 0xff) and hides it (MBTreeSetFlags 2) once its
+                // transparency passes 0xf7; otherwise MBTreeClearFlags(2)
+                // and the transparency falls back to 0. Transparency
+                // = 0xff − node +0x53 (MBTreeSetAlpha(tree, a, 1)); 8 per
+                // vblank, immediate during start_of_stage.
+                let out = if tf & 0x20 == 0 { b16 & 0xf == 0 } else { b16 & 0x2f != 0 };
+                self.items.object_exclusion[o] = if out { -1 } else { 0 };
+                let mut a = self.node_alpha.get(o).copied().flatten().map_or(0, i32::from);
+                let start = self.globals.start_of_stage != 0;
+                let step = self.globals.vb_elapsed * 8;
+                if out {
+                    if a < 0xff {
+                        a = if start { 0xff } else { a + step };
+                        if 0xf7 < a {
+                            self.node_set_flags_at(o, 2);
+                            a = 0xff;
+                        } else {
+                            self.node_clear_flags_at(o, 2);
+                        }
+                        self.world_node_set_alpha(Some(o), a);
+                    }
+                } else {
+                    self.node_clear_flags_at(o, 2);
+                    if a != 0 {
+                        a = if start { 0 } else { (a - step).max(0) };
+                        self.world_node_set_alpha(Some(o), a);
+                    }
+                }
                 moving = false;
             } else if flags & 0x200_0000 == 0 {
                 if tf & 8 != 0 || on < 2 {

@@ -265,10 +265,6 @@ pub enum Event {
     /// (DoPlayerAction swing/throw actions; the tree's role is not
     /// identified yet, research/player.md).
     PlayerTreeFlags { player: usize, flags: u32, set: bool },
-    /// do_players' MBPosLightNew for the player (levels with LEVL flag 8):
-    /// player_lightrad/attn at the attention point + player_lightdy, colour
-    /// player_light_color[+4].
-    PlayerLight { player: usize },
 }
 
 pub struct Game {
@@ -519,6 +515,7 @@ pub struct Game {
     pub node_state_version: u32,
     /// InitLighting / DoLighting / SetAmbientSpecial state (game::lighting).
     pub lighting: lighting::Lighting,
+    pub player_light: lighting::PlayerLightTables,
     pub sounds: sound::SoundTables,
     pub log: setup::FrameLog,
 }

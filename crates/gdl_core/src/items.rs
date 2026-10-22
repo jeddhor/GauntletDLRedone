@@ -241,10 +241,8 @@ pub struct ItemWorld {
     /// WORLDS node child (+0x2e) and next-sibling (+0x2c) links.
     pub object_child: Vec<Option<usize>>,
     pub object_next: Vec<Option<usize>>,
-    /// Render-node translation y of each object (item_wobj_inity + y once moved)
-    /// and the +0x35 visibility byte of fade objects.
+    /// Render-node translation y of each object (item_wobj_inity + y once moved).
     pub object_node_y: Vec<f32>,
-    pub object_visible: Vec<bool>,
     /// Runtime +0x35 exclusion byte (ProcessItemWobjs rewrites it for wobjs).
     pub object_exclusion: Vec<i8>,
     /// MaxItems = instances + 500 (AddItemInstList).
@@ -330,7 +328,6 @@ impl ItemWorld {
             wanim_to_end: Vec::new(),
             alpha_full: Vec::new(),
             object_node_y: collision.objects.iter().map(|o| o.position[1]).collect(),
-            object_visible: vec![true; collision.objects.len()],
             object_exclusion: collision.objects.iter().map(|o| o.exclusion).collect(),
             world_has_gates: 0,
             rune_item: None,

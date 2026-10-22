@@ -117,6 +117,11 @@ pub struct DisplayToLinear {
     /// MAGH 3 and frame-mode raster lines).
     pub offset_x: f32,
     pub offset_y: f32,
+    /// 1: the GS frame's PSMCT16S + DTHE output (FRAME_1 PSM 0x0a, DTHE 1,
+    /// DIMX 0x6071243571603524, COLCLAMP 1 in the Tower and G1 dumps):
+    /// clamp(c + DM[y & 3][x & 3]) >> 3 per PS2 pixel, shown as v << 3.
+    /// Only the final value is quantised (each GS write truncates).
+    pub dither: f32,
 }
 
 impl bevy::core_pipeline::fullscreen_material::FullscreenMaterial for DisplayToLinear {

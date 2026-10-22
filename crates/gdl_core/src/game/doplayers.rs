@@ -753,8 +753,17 @@ impl Game {
                             self.players[k].set_f32(o, v);
                         }
                         if self.level.first().is_some_and(|b| b & 8 != 0) {
-                            // MBPosLightNew(player_lightrad, attn, +0x60 + dy, colour).
-                            self.events.push(super::Event::PlayerLight { player: k });
+                            // MBPosLightNew(player_lightrad, player_lightattn,
+                            // +0x60 + (0, player_lightdy, 0), player_light_color[+4]).
+                            let t = &self.player_light;
+                            let p = self.players[k].v3(0x60);
+                            let light = super::lighting::PosLight {
+                                radius: t.radius,
+                                attenuation: t.attenuation,
+                                position: [p[0], add(p[1], t.dy)?, p[2]],
+                                color: t.color.get(self.players[k].u32_(4) as usize).copied().unwrap_or([0.0; 3]),
+                            };
+                            self.lighting.pos_lights.push(light);
                         }
                     }
                     if self.globals.quest_item_state.wrapping_sub(2) < 2 {

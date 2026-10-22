@@ -524,6 +524,7 @@ impl Game {
     pub fn flyby_step(&mut self, f: &mut Flyby) -> bool {
         self.frame_main += 1;
         self.main_audio(self.globals.vb_elapsed);
+        self.do_lighting();
         self.hud.begin_frame();
         self.set_player_vars();
         let spf = self.globals.spf;
@@ -555,7 +556,6 @@ impl Game {
         {
             self.log.note("flyby camera", &e);
         }
-        self.do_lighting();
         done
     }
 

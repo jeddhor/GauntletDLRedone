@@ -1298,8 +1298,10 @@ fn present_scene_light(sim: Res<Sim>, mut last: Local<Option<([f32; 8], usize)>>
 
 /// ProcessEffects' MBPosLightNew for effects with an SfxSetLight radius
 /// (slot +0x10 × sfx_lightradmul 1.0, attenuation sfx_lightattn 2.0, at the
-/// effect + 1 up, colour slot +0..+8), nearest 8 to the camera, on lit
-/// materials. HYPOTHESIS: the life fade of the radius is not applied.
+/// effect + 1 up, colour slot +0..+8) and game code's lights (do_players'
+/// dark-level light), nearest 8 to the camera, on every material
+/// (pbDrawObject runs pbSetupPosLights for each object). HYPOTHESIS: the
+/// life fade of the radius is not applied.
 fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
     let g = &sim.game;
     let mut lights: Vec<[f32; 8]> = Vec::new();
@@ -1313,6 +1315,11 @@ fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, mut mater
         let p = Vec3::new(n.position[0], n.position[1] + 1.0, n.position[2]) * MIRROR;
         let c = r.v3(0);
         lights.push([p.x, p.y, p.z, radius, c[0], c[1], c[2], 2.0]);
+    }
+    // Game code's MBPosLightNew (do_players' dark-level light).
+    for l in &g.lighting.pos_lights {
+        let p = Vec3::from_array(l.position) * MIRROR;
+        lights.push([p.x, p.y, p.z, l.radius, l.color[0], l.color[1], l.color[2], l.attenuation]);
     }
     if let Some(cam) = &g.std_camera {
         let eye = Vec3::from_array(cam.pb.eye) * MIRROR;
@@ -1329,8 +1336,9 @@ fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, mut mater
         pos[k] = Vec4::new(l[0], l[1], l[2], l[3]);
         col[k] = Vec4::new(l[4], l[5], l[6], l[7]);
     }
-    for (_, m) in materials.iter_mut() {
-        if m.lit {
+    let stale: Vec<_> = materials.iter().filter(|(_, m)| m.params.plight_pos != pos || m.params.plight_col != col).map(|(id, _)| id).collect();
+    for id in stale {
+        if let Some(m) = materials.get_mut(id) {
             m.params.plight_pos = pos;
             m.params.plight_col = col;
         }
@@ -1366,14 +1374,9 @@ fn present_node_flags(sim: Res<Sim>, mut seen: Local<Option<u32>>, mut q: Query<
 /// 0x10000000) are hidden with their meshes.
 fn hide_exploded_nodes(sim: Res<Sim>, mut nodes: Query<(Entity, &WorldNode, &NodeChain, &mut Visibility)>, mut was: Local<HashMap<Entity, bool>>) {
     let objs = &sim.game.items.objects;
-    let visible = &sim.game.items.object_visible;
     let g = &sim.game;
     for (e, n, chain, mut vis) in &mut nodes {
-        let gone = objs.get(n.node).is_some_and(|o| o.flags_10 & 0x1000_0000 != 0);
-        // ProcessItemWobjs' fade objects (trigger kind 0x10xx) hide with
-        // their subtree (MBTreeSetAlpha on the object's tree).
-        let faded = chain.0.iter().any(|&(i, _)| visible.get(i).is_some_and(|v| !*v));
-        let off = gone || faded;
+        let off = objs.get(n.node).is_some_and(|o| o.flags_10 & 0x1000_0000 != 0);
         if off && *vis != Visibility::Hidden {
             *vis = Visibility::Hidden;
         } else if !off && was.get(&e).copied().unwrap_or(false) {
@@ -2034,7 +2037,8 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
         bevy::render::view::Hdr,
         bevy::core_pipeline::tonemapping::DebandDither::Disabled,
         // The last camera: decode the frame's display values once.
-        gdl_client::DisplayToLinear { enabled: 1.0, offset_x: 0.0, offset_y: 0.0 },
+        // GDL_NO_DITHER=1: present without the GS frame's 16-bit quantisation.
+        gdl_client::DisplayToLinear { enabled: 1.0, offset_x: 0.0, offset_y: 0.0, dither: if std::env::var_os("GDL_NO_DITHER").is_some() { 0.0 } else { 1.0 } },
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: bevy::camera::ScalingMode::Fixed { width: 512.0, height: 384.0 },
             ..OrthographicProjection::default_2d()
@@ -2390,7 +2394,7 @@ fn spawn_level(
                 }
                 k = parent.get(&a).copied();
             }
-            if !has_object {
+            if !has_object || debug_hidden(&node.label) {
                 continue;
             }
             let hidden = node_hidden(&chain, &[], &[]);
@@ -2444,6 +2448,14 @@ fn spawn_level(
             commands.entity(root).add_child(e);
         }
     }
+}
+
+/// GDL_DEBUG_HIDE=<label,...>: world nodes not spawned (render research).
+fn debug_hidden(label: &str) -> bool {
+    static HIDE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    HIDE.get_or_init(|| std::env::var("GDL_DEBUG_HIDE").map(|v| v.split(',').map(str::to_owned).collect()).unwrap_or_default())
+        .iter()
+        .any(|h| h == label)
 }
 
 /// The GDL_DEBUG_CAMERA override: [eye, up, forward] in original space.
@@ -5960,7 +5972,9 @@ fn advance_level(
     }
     // do_player_select done: init_next_level (the Tower).
     if std::mem::take(&mut sim.select_done) {
-        let tower = sim.select_next.take().or_else(|| session.levels.iter().position(|l| l.world == 0xd));
+        // DEBUG: GDL_DEBUG_LEVEL=<name> also replaces the Tower here.
+        let debug = std::env::var("GDL_DEBUG_LEVEL").ok().and_then(|n| session.levels.iter().position(|l| l.name == n));
+        let tower = sim.select_next.take().or(debug).or_else(|| session.levels.iter().position(|l| l.world == 0xd));
         session.next = tower;
         session.banner = Some((0.0, String::new()));
     }

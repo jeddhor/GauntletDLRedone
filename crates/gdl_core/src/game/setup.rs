@@ -492,6 +492,7 @@ impl Game {
             node_alpha: vec![None; inp.world.nodes.len()],
             node_state_version: 0,
             lighting: Default::default(),
+            player_light: super::lighting::PlayerLightTables::from_elf(inp.elf)?,
             enemy_slot_names: (0..8)
                 .map(|k| {
                     let name = types.data[k].and_then(|d| inp.wdata.enemies.get(d)).map(|e| {
@@ -673,6 +674,8 @@ impl Game {
         self.vibe_fresh = [false; 4];
         // main: AudioQueUpdate / AudioPoll before game_main.
         self.main_audio(self.globals.vb_elapsed);
+        // main: DoLighting after AudioQueUpdate/AudioPoll, before game_main.
+        self.do_lighting();
         // MBResetBlits after the previous frame's render: temp blits and
         // font messages are per frame.
         self.hud.begin_frame();
@@ -754,8 +757,6 @@ impl Game {
         self.modify_thermometer();
         // game_main: BGMusicUpdate.
         self.bg_music_update();
-        // main: DoLighting once per frame.
-        self.do_lighting();
     }
 
     /// do_enemies with the camera's visibility tests (the flyby's update).

@@ -9,6 +9,7 @@ struct Settings {
     enabled: f32,
     offset_x: f32,
     offset_y: f32,
+    dither: f32,
 };
 @group(0) @binding(2) var<uniform> settings: Settings;
 
@@ -27,5 +28,16 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
-    return vec4(srgb_to_linear(clamp(c.rgb, vec3(0.0), vec3(1.0))), c.a);
+    var rgb = clamp(c.rgb, vec3(0.0), vec3(1.0));
+    if settings.dither > 0.5 {
+        // PSMCT16S frame with DTHE 1: each write stores
+        // clamp(c + DM[y & 3][x & 3], 0, 255) >> 3 (DIMX 0x6071243571603524)
+        // and the PCRTC shows v << 3. Only the final value is quantised.
+        var dm = array<f32, 16>(-4.0, 2.0, -3.0, 3.0, 0.0, -2.0, 1.0, -1.0, -3.0, 3.0, -4.0, 2.0, 1.0, -1.0, 0.0, -2.0);
+        let p = vec2<u32>(clamp(floor(uv * vec2(640.0, 448.0)), vec2(0.0), vec2(639.0, 447.0)));
+        let d = dm[(p.y & 3u) * 4u + (p.x & 3u)];
+        let v = clamp(floor(rgb * 255.0 + 0.001) + d, vec3(0.0), vec3(255.0));
+        rgb = floor(v / 8.0) * 8.0 / 255.0;
+    }
+    return vec4(srgb_to_linear(rgb), c.a);
 }

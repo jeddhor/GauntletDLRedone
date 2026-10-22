@@ -297,7 +297,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     if args.len() == 2 && args[0] == "levl-list" {
-        // levl-list WDATA.WAD: each LEVL record's code, +0x34 movie name, +4 flags
+        // levl-list WDATA.WAD: each LEVL record's code, +0x34 movie name, +0 flags
+        // (bit 3: do_players' dark-level player light), +4 flags
         // (bit 2: NextAttractWave's attract levels) and its CAMS record's +0x26
         // attract_cam_mode / +0x28 (InitCamera's flyby branch) (stdout).
         let w = gdl_formats::wdata::WorldData::parse(&bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?)?;
@@ -307,7 +308,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let cam = w.cameras.get(l.camera_index.max(0) as usize).map(|c| {
                 (i16::from_le_bytes([c.raw[0x26], c.raw[0x27]]), f32::from_le_bytes(c.raw[0x28..0x2c].try_into().unwrap_or([0; 4])))
             });
-            println!("{k} {} movie {:?} flags04 {:#x} cams {} attract_cam {:?} boss {:#x}", l.code, m, l.word_04, l.camera_index, cam, l.boss_type);
+            println!("{k} {} movie {:?} flags00 {:#x} flags04 {:#x} cams {} attract_cam {:?} boss {:#x}", l.code, m, l.flags_00, l.word_04, l.camera_index, cam, l.boss_type);
         }
         return Ok(());
     }

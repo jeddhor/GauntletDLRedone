@@ -48,7 +48,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Chrome (−3) environment mapping from setChrome (VU1 UV use HYPOTHESIS).
    Tree-node texture scrolls (CalcTexScroll / MBTreeSetUVScaleAdd).
    Step 4 rendering items from the plan are ported; open hypotheses are
-   listed in research/unknowns.md (VU1 microcode unread).
+   listed in research/unknowns.md.
+   2026-10-22 (user: "lighting effects are all wrong"): ProcessItemWobjs
+   fade objects were inverted (the Tower's lit podium and its green beams
+   showed at a new game's start; fixed from the instructions); the GS
+   frame's PSMCT16S + DTHE output in DisplayToLinear; VU1 microcode read
+   (tools/python/vu_disasm.py): point-light formula, the 128/255 colour
+   clamps; DoLighting moved before game_main with LEVL flag 8 (S5) and the
+   do_players player light. Tower vs reference at the same camera:
+   private/reports/render-tower-compare-v2.txt.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

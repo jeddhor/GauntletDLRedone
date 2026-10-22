@@ -39,6 +39,30 @@ struct GsParams {
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var overlay_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(6) var overlay_sampler: sampler;
 
+// Point lights: VU1 microcode (Tower state vu1MicroMem.bin, pairs 652..716
+// and 1026..1090; docs/research/rendering.md). Per light, skipped when the
+// vertex faces away or lies outside the radius: colour × min(7.5 ×
+// attenuation × (1 − d²/r²) × cosθ / d, 1) — the 7.5 is the VU normal scale
+// (5-bit unpack, ITOF4 − 7.5) against positions and lights × 8. Evaluated
+// per fragment here (the VU lights vertices).
+fn point_lights(n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+    var pl = vec3(0.0);
+    for (var i = 0u; i < 8u; i = i + 1u) {
+        let lp = params.plight_pos[i];
+        if lp.w > 0.0 {
+            let v = lp.xyz - p;
+            let d = max(length(v), 0.001);
+            let fall = 1.0 - (d * d) / (lp.w * lp.w);
+            let cos_t = dot(n, v / d);
+            if fall > 0.0 && cos_t > 0.0 {
+                let k = min(7.5 * params.plight_col[i].a * fall * cos_t / d, 1.0);
+                pl = pl + params.plight_col[i].rgb * k;
+            }
+        }
+    }
+    return pl;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var rgb = params.tint.rgb;
@@ -50,23 +74,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if params.light_dir.w > 0.5 {
         let n = normalize(in.world_normal);
         let d = max(dot(n, params.light_dir.xyz), 0.0);
-        // Point lights. HYPOTHESIS (VU1 microcode unread): colour ×
-        // (1 − distance / radius)^attenuation × N·L, added to the light sum.
-        var pl = vec3(0.0);
-        for (var i = 0u; i < 8u; i = i + 1u) {
-            let lp = params.plight_pos[i];
-            if lp.w > 0.0 {
-                let v = lp.xyz - in.world_position.xyz;
-                let dist = length(v);
-                if dist < lp.w {
-                    let f = pow(1.0 - dist / lp.w, max(params.plight_col[i].a, 1.0));
-                    pl = pl + params.plight_col[i].rgb * f * max(dot(n, v / max(dist, 0.001)), 0.0);
-                }
-            }
-        }
-        rgb = rgb * min(vec3(1.0), vec3(params.light.a + params.scale.y) + d * params.light.rgb + pl);
+        // VU1 program A: min(ambient + light, 128) + point lights, ≤ 255.
+        let base = min(vec3(1.0), vec3(params.light.a + params.scale.y) + d * params.light.rgb);
+        rgb = rgb * min(base + point_lights(n, in.world_position.xyz), vec3(255.0 / 128.0));
     } else {
-        rgb = rgb * max(1.0 + params.scale.x, 0.0);
+        // VU1 program B (vertex colours, lightmap pass): min(colour × scale,
+        // 128) + point lights, ≤ 255. HYPOTHESIS: the scale is
+        // MBLightmapMod / MBNoShadeMod's 1 + add.
+        let base = min(rgb * max(1.0 + params.scale.x, 0.0), vec3(1.0));
+        rgb = min(base + point_lights(normalize(in.world_normal), in.world_position.xyz), vec3(255.0 / 128.0));
     }
     let cf = rgb;
     let af = alpha;

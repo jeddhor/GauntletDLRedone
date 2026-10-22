@@ -73,9 +73,11 @@ nodes skipped, CameraFace on translation-only nodes with the StdCam eye/rows).
 
 Presentation choices (not fidelity claims): one folded pass (translucent
 lightmapped texels multiply the background by the lightmap in the GS but not
-here); blending is in floating point (the GS truncates to 8 bits); level-0 textures
-only (the mip chain and per-draw K are not used); the GS's integer
-truncation is not modelled; nested CameraFace nodes use the nearest one.
+here); blending is in floating point; level-0 textures only (the mip chain
+and per-draw K are not used); the GS frame's 16-bit truncation is applied
+once to the final value (DisplayToLinear, see "GS output stage"), not per
+draw; nested CameraFace nodes use the nearest one; VU1 lighting is
+evaluated per fragment (the VU lights vertices).
 
 ## Verification
 
@@ -156,8 +158,16 @@ structure and a PSMCT16S render target (FRAME PSM 0x0a, two buffers).
   modelled node (file-hidden ones too) with its ancestor chain and applies
   flag 2 (subtree) / 1 (node) whenever the state changes.
 - ProcessItemWobjs fade objects (trigger kind 0x10xx, e.g. the Tower's
-  L1LITPODIUM, record 205, trigger 41) hide with their subtree when
-  items.object_visible is false.
+  L1LITPODIUM, record 205, trigger 41; branch at 0x154a18, read from the
+  instructions 2026-10-22): the condition (kind bit 0x20 clear: +0x16 & 0xf
+  == 0; set: +0x16 & 0x2f != 0) FADES THE TREE OUT: +0x35 = 0xff, the
+  transparency (0xff − node +0x53 under flag 0x200) rises by 8 × vb_elapsed
+  (0xff at once during start_of_stage) and above 0xf7 MBTreeSetFlags(tree,
+  2) hides it; otherwise MBTreeClearFlags(tree, 2) and the transparency
+  falls back to 0. Transparency goes through MBTreeSetAlpha(tree, a, 1)
+  (+0x53 = ~a, flag 0x200 for a ≥ 1). The earlier port had the visibility
+  inverted: the Tower's lit podium (with the green beams over Sumner) was
+  drawn from a new game's start while the reference hides it.
 - MBSetupObject distance alpha for MB flags 0x100400 (alpha 255/100 or
   255/200 × view depth) on per-entity materials.
 - Package tree nodes (items, missiles, enemy missiles) carry their MB flags
@@ -264,9 +274,14 @@ they keep their vertex colours. The VU1 microcode was not read.
   decays (× 0.6 once AmbientSpecialTime passed, 0 below 0.05);
   AmbientSpecialCurValue follows it by +0.05 / −0.25 per frame;
   MBSetAmbient(clamp(Ambient · GlobalInten + current, 0, 1)),
-  MBLightmapMod(1, current), MBNoShadeMod(1, current). LEVL flag 8 (forced
-  darkness with player lights) is set by no shipped level (all 52 LEVL
-  records have flags 0). SetAmbientSpecial callers: the class specials'
+  MBLightmapMod(1, current), MBNoShadeMod(1, current). LEVL +0 flag 8
+  (DoLighting forces AmbientSpecialValue = CurValue = −1, so ambient 0 and
+  the lightmap/no-shade scale 0; do_players adds the player light) is set
+  only by S5 (+0 = 0xc; S1..S4 and S6..S9 have 0x4, every other record 0;
+  gdl_tools levl-list, 2026-10-22). main calls DoLighting after
+  AudioQueUpdate/AudioPoll and before game_main (0x1001e0), so lights made
+  by game_main are drawn that frame and deleted by the next DoLighting
+  (MBPosLightDeleteAll); Game::step runs it in that order. SetAmbientSpecial callers: the class specials'
   DAMG flags (−0.8/−0.6/−0.4), the quest item (−0.8), A5/F2 lightning
   (+0.5 for 0.1 s; GauntWorldInit hides A5XPXLNC_LNING1..4 /
   F2XPNC_LNING1..4, each flashing for 0.2 s every 5 + Random(10) s).
@@ -312,11 +327,14 @@ they keep their vertex colours. The VU1 microcode was not read.
   (2 × +0xc or +8, plight_color[class]), barrel explosions (2 × blast,
   red) and suicide explosions (20, red); ProcessEffects lights every live
   effect with MBPosLightNew(radius × sfx_lightradmul 1.0 × fade,
-  sfx_lightattn 2.0, position + 1 up, colour); pbSetupPosLights picks up to
-  12 lights within reach of each lit object. gdl_play passes the nearest 8
-  to lit materials. HYPOTHESES: falloff (1 − d/r)^attenuation × N·L, no life
-  fade. Not set yet: StartMagicFX, StartComboFX, StartFamiliarFireBall and
-  EnemyStartMissile lights; the dark-level player light.
+  sfx_lightattn 2.0, position + 1 up, colour). do_players' dark-level light
+  (LEVL flag 8): MBPosLightNew(player_lightrad 20, player_lightattn 10,
+  attention point + (0, player_lightdy 10, 0), player_light_color[colour
+  +4]) — ELF 0x220f10..0x220f58, colours (2,2,1.5) (1.5,1.5,2) (2,1.5,1.5)
+  (1.5,2,1.5); Game::lighting.pos_lights. The VU1 formula is in "VU1
+  microcode". gdl_play passes the nearest 8 to the camera to every
+  material. HYPOTHESIS: no life fade. Not set yet: StartMagicFX,
+  StartComboFX, StartFamiliarFireBall and EnemyStartMissile lights.
 - Critter shadows: CritterInitGeo calls CritterAddShadow 0x193400 for types
   with +0x5c bit 0: SHADOW<n>L1 (shadowdesc; n = slot + 1, slots ≥ 3 → 2)
   of the critter's model, MBNewObject flags 0x880, z mod −32, at the
@@ -367,3 +385,75 @@ model's BOMB texture shows the SFX package's BOMB00 + k, k stepping 0..4
 every AFrame (rate 1). The client tags the weapon meshes and replaces
 their texture each update (the BOMB record itself is a placeholder that
 drew magenta).
+
+## GS output stage (2026-10-22, both dumps)
+
+FRAME_1 is PSMCT16S (PSM 0x0a, FBW 10, double buffer at 0x46/0) in the G1
+and Tower dumps, with DTHE 1, COLCLAMP 1 and DIMX 0x6071243571603524 (the
+4×4 matrix −4 2 −3 3 / 0 −2 1 −1 / −3 3 −4 2 / 1 −1 0 −2). Every pixel write
+stores clamp(c + DM[y & 3][x & 3], 0, 255) >> 3 per channel and the display
+shows v << 3 (the reference snapshot peaks at 248). The lightmapped world's
+base draws set FBA_1 = 1 (textures 185, 404, 502, 123, 415 in the Tower
+dump), so the lightmap pass's DATE/DATM test passes wherever the base wrote;
+draws with FBA 0 (characters, effects) keep the texel alpha's bit 7, which
+the keep-A pass tests. gdl_play quantises the final frame once per PS2 pixel
+in DisplayToLinear (GDL_NO_DITHER=1 disables); the per-draw truncations
+(base then lightmap, stacked additive glows) are not modelled, which leaves
+dark lightmapped surfaces about 3 per channel brighter than the reference.
+
+## VU1 microcode (2026-10-22, Tower state)
+
+vu1MicroMem.bin from private/reference/captures/tower-newgame-v1.p2s (state
+SHA-256 c42371e3…d81f; micro memory e2905fc1…29eb, data memory
+c1bf889d…ac62; private/reference/captures/tower-vu1/) disassembled with
+tools/python/vu_disasm.py (PCSX2 DisVUmicro.h/DisVUops.h tables; checked
+against the documented VU0 fqdist pairs 68..75) into
+private/reports/vu1-tower-disasm-v1.txt. A dispatcher at pairs 0..400 jumps
+through program addresses in the uploaded object header (JR vi03 after ILW
+264(vi12)); trace markers (T bit + ISW to 6(vi00)) are spread through the
+code. Two programs light vertices:
+
+- Program A (colourless parts; vertex loop to pair 763): base = min(vf09 ×
+  vf19.x + vf12, 128) (light colour × the directional term + ambient), then
+  the point lights are added and the sum is clamped to 255 before FTOI0 —
+  point lights can take a part to twice its texture colour.
+- Program B (vertex colours, base + lightmap pass; pairs 841..1180): base =
+  min(vertex colour × vf12, 128), plus the point lights, clamped to 255; the
+  same colour is written for both passes (STQ from vf23 and vf24).
+- Light loop (pairs 652..716 and 1026..1090): vi05 = mem[1].x steps down by
+  2 to 38 (pbSetupPosLights uploads the lights to VU address 0x26, two
+  quadwords each). pbWinSetupPosLights packs each MBPosLightNew slot
+  (colour +0, position +0x10, radius +0x20, attenuation +0x24) as position
+  with w = 1 / (64 r²), colour × 128 with w = attenuation × (+0xc0, 1.0 from
+  pbResetLights; MBPosLightScale has no callers) × 8, reach r; positions are
+  taken into object space × 8. Per light: Δ = light − vertex, f = 1 −
+  |Δ|²/(64 r²), skipped when Δ·N < 0 or f < 0 (FMAND on the sign flags),
+  else added: min(colour·128 × attenuation·8 × f × (Δ·N) / |Δ|², colour·128).
+  Vertices arrive as ITOF4 positions (raw / 16 = 8 × the parser's raw / 128)
+  and ITOF4 − 7.5 normals (5-bit unpack << 3: 7.5 × the parser's c/15 − 1),
+  so in world units the gain is min(7.5 × attenuation × (1 − d²/r²) ×
+  cosθ / d, 1) of the light colour. pb_do_poslights (0x272004) is 1 and only
+  pbDrawObject reads it: every object gets the lights within its reach,
+  world draws included.
+- gdl_play: lit materials min(min(ambient + N·L light, 1) + Σ, 255/128);
+  vertex-coloured materials min(min(colour × (1 + add), 1) + Σ, 255/128).
+  HYPOTHESIS: vf12 of program B is MBLightmapMod/MBNoShadeMod's 1 + add
+  (the setup at pairs 168..250 combines VU memory 18, 37 and 0.z; its data
+  is not traced). The clamp matches the reference: the Tower's crystal
+  glows (ambient adds) fell from 281/256 to 227/198 against 231/195.
+
+## Tower lighting comparison (2026-10-22)
+
+Native pinned to the reference camera (GDL_DEBUG_CAMERA with
+tower-newgame-v1-camera.json) against tower-newgame-v1-viewport.png,
+64×32-block means: private/reports/render-tower-compare-v2.txt (native
+frames render-tower-native-v2-fade.png, -final.png). Overall mean RGB
+(reference 33.5/24.5/10.3): 47.9/39.5/22.9 before, 44.4/34.5/18.6 after the
+fade fix, 39.5/29.7/13.9 with the 16-bit output, 38.0/27.8/13.3 with the VU1
+clamps. Pixel checks (texel × vertex colour × lightmap, alpha-tested decal
+texels skipped): native equals the data formula on the floor and podium
+(e.g. FLOOR_CYL#08 43,42,37 vs 42,42,37); the reference is 3..8 lower per
+channel (per-draw truncation). Open: the reference's L1LINE154/131 emblem
+shows dark texel-edge outlines native lacks (same TEX1: MMAG linear, LOD
+< 0). S5 with the player light: render-s5-player-light-v1.png (no
+reference capture of S5).

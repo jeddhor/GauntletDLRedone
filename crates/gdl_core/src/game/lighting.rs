@@ -5,6 +5,7 @@
 //! `lightmap_add` (MBLightmapMod(1, AmbientSpecialCurValue)) as
 //! presentation inputs.
 use super::{Game, R};
+use gdl_formats::elf::Elf;
 use crate::numeric::{add_guarded_rz as add, mul_rz as mul, sub_guarded_rz as sub};
 
 /// Ambient 0x249050, GlobalInten 0x24904c, AmbientSpecialTime/Value/CurValue
@@ -22,6 +23,45 @@ pub struct Lighting {
     /// DoLighting's outputs: MBSetAmbient's value and MBLightmapMod's add.
     pub ambient_out: f32,
     pub lightmap_add: f32,
+    /// MBPosLightNew lights of the frame from game code (do_players' dark
+    /// level light), cleared by DoLighting's MBPosLightDeleteAll. Effect
+    /// lights (ProcessEffects) are read from the effect slots.
+    pub pos_lights: Vec<PosLight>,
+}
+
+/// MBPosLightNew(radius, attenuation, position, colour).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PosLight {
+    pub radius: f32,
+    pub attenuation: f32,
+    pub position: [f32; 3],
+    pub color: [f32; 3],
+}
+
+/// do_players' dark-level light: player_light_color 0x220f10 (a vec4 per
+/// colour index), player_lightattn 0x220f50, player_lightrad 0x220f54 and
+/// player_lightdy 0x220f58.
+#[derive(Clone, Debug, Default)]
+pub struct PlayerLightTables {
+    pub color: Vec<[f32; 3]>,
+    pub attenuation: f32,
+    pub radius: f32,
+    pub dy: f32,
+}
+
+impl PlayerLightTables {
+    pub fn from_elf(elf: &Elf) -> Result<Self, Box<dyn std::error::Error>> {
+        let f = |b: &[u8]| -> Vec<f32> { b.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect() };
+        let one = |n: &str| -> Result<f32, Box<dyn std::error::Error>> {
+            f(elf.object(n)?).first().copied().ok_or_else(|| format!("{n}: empty").into())
+        };
+        Ok(Self {
+            color: f(elf.object("player_light_color")?).chunks_exact(4).map(|c| [c[0], c[1], c[2]]).collect(),
+            attenuation: one("player_lightattn")?,
+            radius: one("player_lightrad")?,
+            dy: one("player_lightdy")?,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -135,13 +175,20 @@ impl Game {
         Ok(())
     }
 
-    /// DoLighting: the special decays (× 0.6 once its time passed, 0 below
-    /// 0.05), the current value follows it by at most +0.05 / −0.25 per call;
+    /// DoLighting: MBPosLightDeleteAll; LEVL flag 8 (the dark level S5)
+    /// forces the special and its current value to −1, otherwise the
+    /// special decays (× 0.6 once its time passed, 0 below 0.05); the
+    /// current value follows it by at most +0.05 / −0.25 per call;
     /// ambient = clamp(Ambient · GlobalInten + current, 0, 1).
     pub fn do_lighting(&mut self) {
         let time = self.globals.time;
+        let dark = self.level.first().is_some_and(|b| b & 8 != 0);
         let l = &mut self.lighting;
-        if l.special_value != 0.0 && l.special_time < time {
+        l.pos_lights.clear();
+        if dark {
+            l.special_cur = -1.0;
+            l.special_value = -1.0;
+        } else if l.special_value != 0.0 && l.special_time < time {
             l.special_value = mul(l.special_value, 0.6).unwrap_or(0.0);
             if l.special_value.abs() < 0.05 {
                 l.special_value = 0.0;
