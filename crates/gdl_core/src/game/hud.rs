@@ -1042,6 +1042,13 @@ impl Hud {
         }
         out
     }
+    /// init_got_it 0x12afe8: every pickup notice cleared (blits removed).
+    pub fn init_got_it(&mut self) {
+        for g in &mut self.got_it {
+            *g = GotIt::default();
+        }
+    }
+
     /// add_got_it 0x12b060: the first free of 0x18 notices, for the kinds
     /// do_got_it has a picture for.
     pub fn add_got_it(&mut self, player: usize, kind: i32, amount: i32) {

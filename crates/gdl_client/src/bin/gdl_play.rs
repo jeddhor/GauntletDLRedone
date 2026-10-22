@@ -2216,7 +2216,7 @@ fn present_particles(
 /// record steps run first: load_player_geo/load_player (profile::level_start)
 /// and PlayerSaveState (the Tower: without the backup copy; the
 /// Underworld 0xc: not called).
-fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box<dyn Error>> {
+fn build_game(session: &Session, idx: usize, carry: &Record, returning: bool) -> Result<Game, Box<dyn Error>> {
     let elf = gdl_formats::elf::Elf::parse(&session.elf_bytes)?;
     let lv = &session.levels[idx];
     let wdata = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&lv.wdata)?)?;
@@ -2230,7 +2230,9 @@ fn build_game(session: &Session, idx: usize, carry: &Record) -> Result<Game, Box
     }
     let game_wave = lv.world << 8 | lv.index as i32;
     profile::level_start(&mut record, &session.pdats, &session.action_map, game_wave, session.heart_rate).map_err(|e| e.to_string())?;
-    if lv.world != 0xc {
+    // init_next_level: PlayerSaveState except in a treasure room (world 12)
+    // and on the return from one (LoadStage).
+    if lv.world != 0xc && !returning {
         profile::player_save_state(&mut record, lv.world != 0xd, lv.world, lv.index as i32, &session.controls);
     }
     // DEBUG (Sumner shard/rune speech checks): GDL_DEBUG_SHARDS=<hex> /
@@ -3523,6 +3525,7 @@ fn present_hud(
         if sim.shop.is_none() && sim.map.is_none() {
             list.extend(sim.game.health_meter_blits());
             list.extend(sim.game.thermometer_blits());
+            list.extend(sim.game.wave_timer_blits());
         }
         // ScrollMessageBox runs (modal) before the trigger camera it precedes.
         if sim.game.trigger_view_active() && sim.message_box.is_none() {
@@ -3849,7 +3852,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             colour,
             carried: [0, -1, -1, -1, -1, 0xd, 0],
         };
-        let mut game = build_game(&session, idx, &record)?;
+        let mut game = build_game(&session, idx, &record, false)?;
         // player_get_from_save: the saved control options into PlayerControl
         // (+0x2c style, +0x30 vibration, +0x38 auto attack, +0x34 auto aim).
         for (o, v) in [0x2c, 0x30, 0x38, 0x34].into_iter().zip(session.controls) {
@@ -4714,7 +4717,12 @@ fn advance_level(
         }
         Ok(())
     });
-    let built = loaded.and_then(|_| build_game(&session, idx, &carry));
+    // skip_wave 13..0xffff: the return from a treasure room to recorded_wave
+    // (init_next_level → LoadStage); the stage record crosses the load.
+    let skip = sim.game.globals.skip_wave;
+    let stage = sim.game.stage_save.clone();
+    let returning = (13..=0xffff).contains(&skip) && stage.is_some();
+    let built = loaded.and_then(|_| build_game(&session, idx, &carry, returning));
     // EnterTower: TowerStartPos = −1 once used.
     if session.levels[idx].world == 0xd {
         session.tower_start = None;
@@ -4724,6 +4732,15 @@ fn advance_level(
             // The controls state carries across levels; co-op players keep
             // their records and enter beside player 1.
             game.controls = controls;
+            match (&stage, returning) {
+                (Some(st), true) => {
+                    if let Err(e) = game.load_stage(st) {
+                        sim.error = Some(format!("LoadStage: {}", e.0));
+                    }
+                }
+                (st, false) => game.stage_save = st.clone(),
+                _ => {}
+            }
             for (k, rec) in coop_carry.iter().enumerate() {
                 let Some(rec) = rec else { continue };
                 game.players[k + 1] = rec.clone();

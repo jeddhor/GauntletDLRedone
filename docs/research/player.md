@@ -219,3 +219,37 @@ start_magic sets damage flag 0x800000 for casters past level 0x18. With it:
   kind 1 subtype 9, +0xf0 = 0x4000/0x2000/0x1000/0x8000, +0xf8 = 240.0)
   instead of coins.
 - Checked: 51-level pad sweep sw22 clean.
+
+## Treasure rooms (world 12, 2026-10-21)
+
+- run_play now configures world 12 (SECRET.WAD, S1–S9; previously
+  unreachable natively).
+- A secret exit (item type 9 subtype 0x32) touched while skip_wave < 3:
+  +0xd8 bit 0, skip_wave = +0xf0 + 3, SaveStage 0x1914b8(item, first
+  touching player, its +0x50) and init_got_it; skip_wave > 2 makes everyone
+  leave (someone_wants_to_exit → DoAutoExit).
+- do_exit destinations by skip_wave: 2 the current wave, 3..11 0xc00 |
+  (skip − 3), 12 the Tower, 13..0xffff recorded_wave, ≥ 0x10000 skip −
+  0x10000; ±1 (Next/PrevWorldLevel) only from the debug menu (set_wave /
+  set_advance have no code callers) and stay unsupported.
+- SaveStage keeps recorded_wave, secret_pos/leader, ≤ 0x400 item
+  (status, kind) pairs (the exit, empty slots and open chests as gone) and
+  the item world objects' +0x16/+0x17; init_next_level with skip_wave
+  13..0xffff runs LoadStage 0x1916a0 (leader at secret_pos, statuses back,
+  changed types or spent generators gone, trigger bytes back) and skips
+  PlayerSaveState. gdl_play carries the record through the level load
+  (Game::stage_save). HYPOTHESIS: the camera returns settled on the
+  player (SaveAllRecords' camera copy is not kept).
+- Timed levels (LEVL +0 flag 4): init_wave_timer / do_wave_timer /
+  modify_sandglass — WaveTimer = LEVL +0xc + 0.99 counting down outside
+  the stage start, pause and help; per-second AudioSecretTimer ticks,
+  AudioTimeRunsOut at 8, AudioCountDown below 6; at 0 skip_wave = 0xd
+  (back to recorded_wave). The sandglass blits TIMER, TIMER_SAND (two
+  cropped halves), SAND_ANIM.
+- Treasure-room gold: PlayersGiveSecretCoin 0x177690 (+0x908 coins,
+  +0x900 = secret_char[level] + 0x200, +0x904 = 60; at MaxLevelCoins the
+  unlock bit 1 << (char − 8) in +0x9a8, then AudioSecretChar, the AllCoins
+  scroll and WaveTimer = 1, WaveComplete = 1); AudioPickupGold's
+  bronze/silver/gold voices by value.
+- Checked headlessly: S1–S9 load and run (sandglass expiry auto-exits);
+  the secret-exit → room → return trip has not been played through.

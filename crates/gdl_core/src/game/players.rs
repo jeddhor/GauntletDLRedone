@@ -521,13 +521,29 @@ impl Game {
             }
             let v = self.players[p].u32_(0x88c);
             self.players[p].set_u32(0x890, v);
-            if 3 <= self.globals.skip_wave || self.globals.skip_wave < 0 {
-                return super::unsupported("do_exit skip_wave destination");
-            }
-            if self.globals.skip_wave != 0 {
-                return super::unsupported("do_exit Next/PrevWorldLevel");
-            }
-            self.players[p].set_i32(0x808, dest);
+            // The destination by skip_wave: 2 the current wave (dest < 0),
+            // 3..=11 world 12 level skip − 3 (a treasure room), 12 the
+            // Tower, 13..0xffff recorded_wave (the return), 0x10000+ the
+            // wave skip − 0x10000; ±1 (Next/PrevWorldLevel) come from the
+            // debug menu only.
+            let skip = self.globals.skip_wave;
+            let to = match skip {
+                0 => dest,
+                1 | -1 => return super::unsupported("do_exit Next/PrevWorldLevel (debug menu)"),
+                2 => {
+                    if dest < 0 {
+                        self.globals.cur_world << 8 | (self.globals.cur_level & 0xff)
+                    } else {
+                        dest
+                    }
+                }
+                3..=11 => (skip - 3) & 0xff | 0xc00,
+                12 => super::boss::TOWER_WAVE,
+                13..=0xffff => self.stage_save.as_ref().map_or(super::boss::TOWER_WAVE, |s| s.recorded_wave),
+                s if 0x10000 <= s => s - 0x10000,
+                _ => dest,
+            };
+            self.players[p].set_i32(0x808, to);
             // SetSkinFX(0.4, TextureExit, 10, 1): the exit glow.
             super::skin::set_skin_fx(&mut self.players[p], 0x7b4, f32::from_bits(0x3ecc_cccd), super::skin::SkinTex::Exit, 10, 1.0);
         }

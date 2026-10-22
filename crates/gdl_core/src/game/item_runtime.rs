@@ -866,10 +866,22 @@ impl Game {
         let sub_ = self.items.definitions[r.definition()].subtype();
         if sub_ == 0x32 {
             // ProcessItems case 9, subtype 0x32: idle until a player touched it.
-            if r.u32_(0xf4) == 0 {
+            let touched = r.u32_(0xf4);
+            if touched == 0 {
                 return Ok(());
             }
-            return unsupported("wave exit (subtype 0x32, SaveStage)");
+            // A secret exit: once, while no other destination is pending,
+            // skip_wave = +0xf0 + 3 (world 12 level +0xf0) and SaveStage
+            // with the first touching player as leader; the notices go.
+            if self.globals.skip_wave < 3 && r.u16_(0xd8) & 1 == 0 {
+                let p = (0..4).find(|&k| touched >> k & 1 != 0).unwrap_or(0);
+                self.items.records[slot].or_u16(0xd8, 1);
+                self.globals.skip_wave = i32::from(r.u8_(0xf0)) + 3;
+                let at = self.players[p].v3(0x50);
+                self.save_stage(slot, p, at);
+                self.hud.init_got_it();
+            }
+            return Ok(());
         }
         let mut alive = 0u32;
         let mut exiting = 0;

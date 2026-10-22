@@ -38,9 +38,11 @@ pub mod setup;
 pub mod shopflow;
 pub mod skin;
 pub mod thermometer;
+pub mod wavetimer;
 pub mod tower;
 pub mod world_anim;
 pub mod sound;
+pub mod stage;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
 use crate::item_collision::DynGrid;
@@ -404,6 +406,14 @@ pub struct Game {
     /// boss1_items 0x25d250 (SkorneSpewItems): name, +0xf4 value, +0xf0
     /// word, +0xf8 word.
     pub boss1_items: Vec<(Vec<u8>, i32, u32, u32)>,
+    /// SaveStage's record of the level left through a secret exit (the
+    /// host carries it to the return; LoadStage).
+    pub stage_save: Option<stage::StageSave>,
+    /// WaveTimerMax and the sandglass view (wavetimer.rs).
+    pub wave_timer: wavetimer::WaveTimer,
+    /// secret_char 0x23f5a8: the secret character each treasure room's
+    /// coins unlock (by level index).
+    pub secret_char: Vec<i32>,
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).

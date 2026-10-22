@@ -57,7 +57,7 @@ def audio_config():
 
 REALMS = {'A': (1, 'CASTLE'), 'B': (2, 'MOUNT'), 'C': (3, 'DESERT'), 'D': (4, 'FOREST'), 'E': (5, 'TEMPLE'),
           'F': (6, 'HELL'), 'G': (7, 'TOWN'), 'H': (8, 'BATTLE'), 'I': (9, 'ICE'), 'J': (10, 'DREAM'),
-          'K': (11, 'SKY'), 'L': (0xd, 'TOWER')}  # ELF worlddatas 0x23deb0
+          'K': (11, 'SKY'), 'S': (12, 'SECRET'), 'L': (0xd, 'TOWER')}  # ELF worlddatas 0x23deb0
 
 
 def levl_records(wdata):
@@ -208,7 +208,7 @@ def main():
         records = [r for r in records if f'LEVELS/LEVEL{r[1]}/WORLDS.PS2' in known]
         if first:
             records = [r for r in records if r[1] >= first.upper()] or records
-        title = 'The Poison Fields' if letter == 'G' else ('The Tower' if letter == 'L' else f'{wad.title()} realm ({letter})')
+        title = 'The Poison Fields' if letter == 'G' else ('The Tower' if letter == 'L' else ('Treasure room' if letter == 'S' else f'{wad.title()} realm ({letter})'))
         realm_m = realm_monsters(wdata, [r[0] for r in records], known)
         for t, prefix in realm_m:
             monsters[t] = prefix
@@ -232,7 +232,9 @@ def main():
     # The Tower (hub) first, then every realm; exits and the boss's
     # TowerWave choose the next level by destination wave.
     levels = realm_levels('L')
-    for letter in 'ABCDEFGHIJK':
+    # World 12 (SECRET.WAD, S1..S9): the treasure rooms the secret exits
+    # (item type 9 subtype 0x32: skip_wave = +0xf0 + 3) lead to.
+    for letter in 'ABCDEFGHIJKS':
         levels += realm_levels(letter)
     config = dict(
         sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), levels=levels,

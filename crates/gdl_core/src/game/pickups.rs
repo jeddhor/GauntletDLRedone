@@ -100,6 +100,41 @@ impl Game {
         pl.set_i32(p::GOLD, if 99_999 < gold { 99_999 } else { gold });
     }
 
+    /// PlayersGiveSecretCoin 0x177690: each player in state 1 counts a coin
+    /// (+0x908) and shows secret_char[level] + 0x200 (+0x900) for 60 (+0x904);
+    /// with MaxLevelCoins reached every active player unlocks bit
+    /// 1 << (character − 8) of +0x9a8.
+    fn players_give_secret_coin(&mut self) -> bool {
+        let max = self.globals.max_level_coins;
+        let Some(&ch) = usize::try_from(self.globals.cur_level).ok().and_then(|l| self.secret_char.get(l)) else { return false };
+        if ch < 0 {
+            return false;
+        }
+        let mut all = false;
+        for k in 0..4 {
+            let r = &mut self.players[k];
+            if r.i32_(0xfc) != 1 {
+                continue;
+            }
+            let n = r.i32_(0x908) + 1;
+            r.set_i32(0x908, n);
+            r.set_i32(0x900, ch + 0x200);
+            r.set_f32(0x904, 60.0);
+            if max <= n {
+                all = true;
+            }
+        }
+        if all {
+            for k in 0..4 {
+                let r = &mut self.players[k];
+                if r.i32_(0xfc) == 1 {
+                    r.set_u16(0x9a8, r.u16_(0x9a8) | (1u32 << ((ch - 8) & 0x1f)) as u16);
+                }
+            }
+        }
+        all
+    }
+
     /// heal_player: 0 = already full, 1 = capped, 2 = healed.
     pub fn heal_player(&mut self, amount: f32, player: usize) -> R<i32> {
         let pl = &mut self.players[player];
@@ -516,9 +551,15 @@ impl Game {
                 self.got_it(idx, def.subtype(), amount);
                 self.players[player].set_u16(p::STATUS_934, 1);
                 if self.globals.cur_world == 0xc {
-                    return unsupported("secret-world coin (PlayersGiveSecretCoin)");
-                }
-                if 0x18 < amount {
+                    if self.players_give_secret_coin() {
+                        // AudioSecretChar (AudioVQueAdd4 0x3b0025), the
+                        // "AllCoins" scroll, the room's timer to 1 s.
+                        self.queue(0x3b_0025, 0xe0, 2);
+                        self.events.push(Event::ScrollNamed { player_mask: u32::MAX, name: "AllCoins", line: Some(0), audio: 0x3b_0025 });
+                        self.globals.wave_timer = 1.0;
+                        self.globals.wave_complete = 1;
+                    }
+                } else if 0x18 < amount {
                     self.help(0x11, idx);
                     if 0 <= df {
                         stolen(self, df);

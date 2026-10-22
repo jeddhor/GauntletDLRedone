@@ -450,6 +450,9 @@ impl Game {
             good_wiz_alpha: 0,
             auto_exit_timer: 0,
             spew_items: Vec::new(),
+            stage_save: None,
+            wave_timer: Default::default(),
+            secret_char: inp.elf.object("secret_char")?.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect(),
             boss1_items: {
                 let b = inp.elf.object("boss1_items")?;
                 b.chunks_exact(0x1c)
@@ -597,7 +600,8 @@ impl Game {
             // init_next_level → EnterTower after the items are placed.
             game.enter_tower().map_err(|e| format!("EnterTower: {}", e.0))?;
         }
-        // init_next_level: init_thermometer.
+        // init_next_level: init_wave_timer, init_thermometer.
+        game.init_wave_timer().map_err(|e| format!("init_wave_timer: {}", e.0))?;
         game.init_thermometer(inp.world.min, inp.world.max);
         Ok(game)
     }
@@ -717,7 +721,11 @@ impl Game {
         if let Err(e) = self.camera_step() {
             self.log.note("camera", &e);
         }
-        // game_main: modify_thermometer before world_update (drawn here).
+        // game_main: do_wave_timer; modify_thermometer before world_update
+        // (drawn here).
+        if let Err(e) = self.do_wave_timer() {
+            self.log.note("do_wave_timer", &e);
+        }
         self.modify_thermometer();
         // main: DoLighting once per frame.
         self.do_lighting();

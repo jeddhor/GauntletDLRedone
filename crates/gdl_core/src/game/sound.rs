@@ -384,12 +384,22 @@ impl Game {
         let pan = Self::tab(&self.sounds.pantab, p);
         self.sfx2(0x25, pan, 0x7f, 0x42);
     }
-    pub fn audio_pickup_gold(&mut self, p: usize, _amount: i32) -> R<()> {
-        if self.globals.cur_world == 0xc {
-            return super::unsupported("AudioPickupGold tower coin tables");
-        }
+    /// AudioPickupGold 0x1609b8(player, amount): 0x26, in a treasure room
+    /// the player's coin voice by value (bronze.493 for 50, silver.494 for
+    /// 100, gold.495 otherwise: 0x3b0000 + 3 × player + 0/1/2).
+    pub fn audio_pickup_gold(&mut self, p: usize, amount: i32) -> R<()> {
+        let id = if self.globals.cur_world == 0xc {
+            let k = match amount {
+                0x32 => 0,
+                100 => 1,
+                _ => 2,
+            };
+            0x3b_0000 + 3 * (p as i32 & 3) + k
+        } else {
+            0x26
+        };
         let pan = Self::tab(&self.sounds.pantab, p);
-        self.sfx2(0x26, pan, 0x7f, 0x42);
+        self.sfx2(id, pan, 0x7f, 0x42);
         Ok(())
     }
 
