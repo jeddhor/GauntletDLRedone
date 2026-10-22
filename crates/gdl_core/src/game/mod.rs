@@ -16,6 +16,7 @@ pub mod doplayers;
 pub mod damage;
 pub mod effects;
 pub mod exitflow;
+pub mod flyby;
 pub mod movie;
 pub mod goodwiz;
 pub mod hints;

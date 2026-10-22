@@ -14,8 +14,9 @@ pub enum AttractEntry {
     Credits,
     /// 0x8001/0x8002 init_movie: "/MPEG2/<name>.pss".
     Movie { name: String },
-    /// 0x8003/0x8006/0x8008 init_flyby (a level under the old camera).
-    Flyby,
+    /// 0x8003/0x8006/0x8008 init_flyby: attract_wave's level under the
+    /// old camera (game/flyby.rs).
+    Flyby { wave: i32 },
     /// 0x8004 init_screen2d(table): table 0 the SONY screen and the card
     /// check, else the group shot while the next flyby level loads.
     Screen2D { table: i32 },
@@ -38,6 +39,27 @@ pub struct Attract {
     pub did_mc_check: i32,
     pub fail_movie_show: bool,
     pub mode: i32,
+    /// attract_wave 0x249528 (−1 at boot) and DAT_0020f96c, the wave it
+    /// falls back to (0; set_wave is a debug-menu handler).
+    pub wave: i32,
+    pub first_wave: i32,
+    /// transmitter1/2 0x23f2b8/0x23f2bc: the flyby's transmitter globals,
+    /// kept from one flyby to the next.
+    pub transmitters: (i32, i32),
+    /// worlddatas 0x23deb0 in table order for NextAttractWave (the host
+    /// fills each world's LEVL +4 flags; none: no WDATA).
+    pub worlds: Vec<AttractWorld>,
+}
+
+/// One worlddatas entry as NextAttractWave reads it.
+#[derive(Debug, Clone, Default)]
+pub struct AttractWorld {
+    /// +0: the world number (the wave's high byte).
+    pub number: i32,
+    /// +0x10 (WDATA loaded) and the LEVL +4 flags of its levels (+0x14 the count).
+    pub levels: Option<Vec<u16>>,
+    /// +0x28: the next level to try.
+    pub cursor: usize,
 }
 
 fn cstr_at(elf: &Elf, p: u32) -> Option<String> {
@@ -56,7 +78,88 @@ impl Attract {
         let tab = (0..t.len() / 8).map(|k| (w(t, 2 * k), w(t, 2 * k + 1))).collect();
         let m = elf.object("attract_movies").map_err(|e| e.to_string())?;
         let movies = (0..m.len() / 16).map(|k| std::array::from_fn(|j| cstr_at(elf, w(m, 4 * k + j) as u32))).collect();
-        Ok(Self { tab, movies, next_idx: 0, count: 0, movie_idx: 0, did_mc_check: 0, fail_movie_show: false, mode: 0 })
+        let wd = elf.object("worlddatas").map_err(|e| e.to_string())?;
+        let worlds = (0..wd.len() / 0x2c).map(|k| AttractWorld { number: w(wd, 11 * k), levels: None, cursor: w(wd, 11 * k + 10).max(0) as usize }).collect();
+        let word = |name: &str| -> Result<i32, String> {
+            let b = elf.object(name).map_err(|e| e.to_string())?;
+            Ok(w(b, 0))
+        };
+        let first_wave = elf.read(0x20_f96c, 4).map(|b| w(b, 0)).map_err(|e| e.to_string())?;
+        Ok(Self {
+            tab,
+            movies,
+            next_idx: 0,
+            count: 0,
+            movie_idx: 0,
+            did_mc_check: 0,
+            fail_movie_show: false,
+            mode: 0,
+            wave: -1,
+            first_wave,
+            transmitters: (word("transmitter1")?, word("transmitter2")?),
+            worlds,
+        })
+    }
+
+    /// next_attract_wave 0x182618 (RestartReq 0, AuxLevels 0): the next
+    /// attract level after attract_wave, or DAT_0020f96c before the first.
+    fn next_attract_wave(&mut self) {
+        if 0 <= self.wave {
+            if let Some(w) = self.next_attract_level(self.wave) {
+                self.wave = w;
+            }
+        } else {
+            self.wave = self.first_wave;
+        }
+    }
+
+    /// NextAttractWave 0x1623e0: from the world of `wave`, the next world
+    /// with world data (in worlddatas order), its levels from the +0x28
+    /// cursor, the first with LEVL +4 bit 2; the cursor moves past it.
+    /// None when no world data was supplied.
+    pub fn next_attract_level(&mut self, wave: i32) -> Option<i32> {
+        let n = self.worlds.len();
+        if n == 0 || self.worlds.iter().all(|w| w.levels.is_none()) {
+            return None;
+        }
+        let from = self.worlds.iter().position(|w| w.number == wave >> 8).unwrap_or(0);
+        let mut k = from;
+        let mut stop = from;
+        // The original loops until a world has an attract level; bounded here.
+        for _ in 0..=n {
+            loop {
+                k = (k + 1) % n;
+                if self.worlds[k].levels.is_some() || k == stop {
+                    break;
+                }
+            }
+            let flags = self.worlds[k].levels.clone().unwrap_or_default();
+            let count = flags.len();
+            let mut start = self.worlds[k].cursor;
+            if count <= start {
+                start = 0;
+            }
+            let mut l = start;
+            loop {
+                if flags.get(l).is_some_and(|f| f & 2 != 0) {
+                    break;
+                }
+                l += 1;
+                if count <= l {
+                    l = 0;
+                }
+                if l == start {
+                    break;
+                }
+            }
+            stop = k;
+            if flags.get(l).is_some_and(|f| f & 2 != 0) {
+                let next = if count <= l + 1 { 0 } else { l + 1 };
+                self.worlds[k].cursor = next;
+                return Some(self.worlds[k].number << 8 | (l as i32 & 0xff));
+            }
+        }
+        None
     }
 
     fn mode_at(&self, k: usize) -> i32 {
@@ -108,6 +211,12 @@ impl Attract {
             }
         }
         let table = self.tab.get(idx).map_or(0, |e| e.1);
+        if matches!(self.mode, 0x8003 | 0x8006 | 0x8008) {
+            self.next_attract_wave();
+        }
+        if self.wave < 0 {
+            self.wave = self.first_wave;
+        }
         match self.mode {
             0x8001 | 0x8002 => {
                 // init_movie: attract_movies[table][movie_idx], else entry 0.
@@ -115,7 +224,7 @@ impl Attract {
                 let name = row.and_then(|r| r[self.movie_idx.clamp(0, 3) as usize].clone().or_else(|| r[0].clone())).unwrap_or_default();
                 AttractEntry::Movie { name }
             }
-            0x8003 | 0x8006 | 0x8008 => AttractEntry::Flyby,
+            0x8003 | 0x8006 | 0x8008 => AttractEntry::Flyby { wave: self.wave },
             0x8004 => {
                 if table == 0 {
                     self.did_mc_check = 1;
@@ -304,7 +413,31 @@ mod tests {
         let tab = vec![(0x8004, 0), (0x8001, 0), (0x8002, 1), (0x8002, 2), (0x8009, 1), (0x8004, 1), (0x8008, 0), (0x8002, 3), (0x8004, 2), (0x8008, 0), (0x8000, 0), (0x8002, 4), (-1, 0)];
         let row = |n: [&str; 4]| n.map(|s| Some(s.to_string()));
         let movies = vec![row(["midway"; 4]), row(["opening"; 4]), row(["title2"; 4]), row(["war_dwa", "val_kni", "wiz_sor", "jes_arc"]), row(["fail"; 4])];
-        Attract { tab, movies, next_idx: 0, count: 0, movie_idx: 0, did_mc_check: 0, fail_movie_show: false, mode: 0 }
+        // worlddatas numbers (castle … sky, tower, secret, test) with the
+        // attract levels' LEVL +4 flags of this disc (A2 = CASTLE index 2,
+        // B5 = MOUNT index 4, … — levl-list).
+        let world = |number: i32, attract: Option<usize>, count: usize| AttractWorld {
+            number,
+            levels: (number != 0).then(|| (0..count).map(|k| if Some(k) == attract { 3 } else { 1 }).collect()),
+            cursor: 0,
+        };
+        let worlds = vec![
+            world(1, Some(2), 6),
+            world(2, Some(4), 6),
+            world(3, Some(3), 5),
+            world(4, Some(0), 5),
+            world(5, None, 2),
+            world(6, Some(0), 2),
+            world(7, Some(0), 5),
+            world(8, Some(1), 4),
+            world(9, Some(3), 5),
+            world(10, Some(1), 6),
+            world(11, Some(3), 5),
+            world(13, Some(0), 1),
+            world(12, None, 2),
+            world(0, None, 0),
+        ];
+        Attract { tab, movies, next_idx: 0, count: 0, movie_idx: 0, did_mc_check: 0, fail_movie_show: false, mode: 0, wave: -1, first_wave: 0, transmitters: (0, 0), worlds }
     }
 
     fn movie(n: &str) -> AttractEntry {
@@ -324,10 +457,10 @@ mod tests {
                 movie("title2"),
                 AttractEntry::Titlescreen,
                 AttractEntry::Screen2D { table: 1 },
-                AttractEntry::Flyby,
+                AttractEntry::Flyby { wave: 0x102 },
                 movie("war_dwa"),
                 AttractEntry::Screen2D { table: 2 },
-                AttractEntry::Flyby,
+                AttractEntry::Flyby { wave: 0x204 },
             ]
         );
         // Credits (count & 0xf != 0xf) and fail (no failed game) are skipped;
@@ -336,6 +469,22 @@ mod tests {
         assert_eq!(second[0], movie("midway"));
         assert_eq!(second[3], AttractEntry::Screen2D { table: 1 });
         assert_eq!(second[5], movie("val_kni"));
+        assert_eq!(second[4], AttractEntry::Flyby { wave: 0x303 });
+    }
+
+    /// Synthetic: NextAttractWave walks the worlds in worlddatas order past
+    /// those without an attract level (temple) and wraps after the tower
+    /// (secret and test have none).
+    #[test]
+    fn attract_waves_cycle() {
+        let mut a = attract();
+        let mut w = 0;
+        let mut seen = Vec::new();
+        for _ in 0..12 {
+            w = a.next_attract_level(w).unwrap();
+            seen.push(w);
+        }
+        assert_eq!(seen, vec![0x102, 0x204, 0x303, 0x400, 0x600, 0x700, 0x801, 0x903, 0xa01, 0xb03, 0xd00, 0x102]);
     }
 
     #[test]

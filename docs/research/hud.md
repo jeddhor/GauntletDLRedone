@@ -171,8 +171,8 @@ z: far behind); titleglow = GLOWCROP_00 (TITLE OBJECTS name table; the
 GLOWCROP_ header record precedes the frames) at (0xc0, 0) 0x80 × 0x80,
 frame (titleglow_frame >> 2) % 10, fading in over 60 vblanks, shown while no
 menu or the title menu is up. do_titlescreen draws DrawGlowText(1.0,
-"Press Start") at y 0x140 until the title menu opens. Native: the
-attract-mode timeout and the flyby are not ported.
+"Press Start") at y 0x140 until the title menu opens. The attract-mode
+timeout and the flybys are ported (Movies section).
 
 ## Sumner's hints
 
@@ -490,7 +490,14 @@ init_next_level (the Tower). NATIVE: the host store is one formatted PS2
 card in slot 1 whose eight files are store slots 0..7; its Gauntlet
 directory exists once a file is saved or after "Create Save File"; free
 space shows 8 MB less its files; keyboard letters type into player 1's
-name. The SELECT 3D scene behind the columns is not drawn. GUI check: A1
+name. The picture behind the columns (castle, moon, fog) is the column
+art itself — setup_tex's S1_plyr<n>/S2_plyr<n> halves from the "select"
+package (SelectLoadStart → MBOX_BGLoadModelStart("select")); nothing in
+init/do_player_select draws a tree. Actual check (2026-10-22):
+reference-select-screen-v1.png (Tower → Manage Character) against the
+native select screen — the same castle art in the inactive columns. The
+fixed camera of modes 0x8009/0x400b/0x4012 (main's MBCameraUpdate) only
+moves the 3D view hidden under these full-screen blits. GUI check: A1
 exit → tally/shop → player 1 at Save…Done → Done → the Tower; in the Tower
 player 2 pressed Start (U), chose New, the default name JUSTIN and the
 Jester: the Tower reloaded with both players, each with its own model and
@@ -564,9 +571,34 @@ alpha 0x80 − value/2 over 16 lines at each edge, the scroll + 1 + finished
 sections per frame; done when nothing is drawn or timer1 > 0x1517).
 Synthetic tests: the boot cycle order, the forced credits, the 18-frame
 card check. GUI: SONY screen, MIDWAY/OPENING/TITLE2, title; credits via
-GDL_DEBUG_CREDITS. Not ported: the flybys (init_flyby/do_flyby: an
-attract level under the old Cam system; passed over), the card-check
-messages for a missing, unformatted or full card, the "Version" text.
+GDL_DEBUG_CREDITS. Not ported: the card-check messages for a missing,
+unformatted or full card, the "Version" text.
+
+Flybys (2026-10-22; gdl_core::game::flyby, camera.md "Old camera"): for a
+flyby entry init_attract_mode calls next_attract_wave (attract_wave −1 at
+boot → DAT_0020f96c = 0; then NextAttractWave 0x1623e0: from the world of
+attract_wave, the next worlddatas entry with world data, its levels from the
++0x28 cursor, the first with LEVL +4 bit 2). This disc's attract levels in
+that order: A2 B5 C4 D1 F1 G1 H2 I4 J2 K1 L1 (Temple and the Secret world
+have none). init_flyby → new_attract_mode(0x8008, attract_wave) builds the
+level with no player (controls_remove_active_player; the panels are not set
+up) and InitCamera(0) starts the old camera at StartAttTransmitter.
+game_main's 0x8008 case runs world_update, do_items, do_enemies,
+enemy_update (DoTexMods only) and do_flyby: timer1 += vb_elapsed unless
+JoyLevels & 0x300000 is held; exit_attract once flyby_seq_done > 0x1e (the
+transmitter path ran out) or timer1 > 0xe10, then init_attract_mode(−1);
+ProcessEffects; DrawGlowText(1.0, "Press Start") at y 0x140. set_logo(1)'s
+MBOX_NewBlit("LOGO_B", 0x170, −0x130) shows nothing in the reference.
+Actual reference (2026-10-22, turbo, private/reports/
+reference-attract-flyby-v1-*.png, reference-attract-cycle-v1-sheet.png):
+the flybys show C4, D1, F1, G1 in turn (the order above, continuing from
+earlier attract runs), live enemies, "Press Start" centred at the bottom,
+no panels, the 3D view over the whole frame. Native: actual-disc headless
+flybys of all eleven attract levels end by the path's end
+(game-run-flyby-<level>-v1.json, 316–981 updates); GUI: C4 and A2 flybys
+with Press Start, Start → the title, the end → the next attract entry.
+DEBUG: GDL_DEBUG_FLYBY=<level> starts with that level's flyby. Not compared
+with a reference camera trace.
 
 ## Game over (2026-10-22)
 

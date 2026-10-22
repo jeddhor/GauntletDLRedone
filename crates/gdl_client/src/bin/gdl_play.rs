@@ -74,12 +74,16 @@ impl bevy::camera::CameraProjection for Ps2Projection {
     }
 }
 
-/// The 3D viewport: the top 384/448 of the window (the PS2 frame's rows
-/// above the 64-row viewport inset).
-fn ps2_viewport(windows: Query<&Window>, mut cams: Query<&mut Camera, With<FollowCamera>>) {
+/// The 3D viewport: the PS2 frame's rows above the window's bottom inset
+/// (64 of 448 in play — InitCamera's WindowBottomLim; none in the flyby).
+fn ps2_viewport(windows: Query<&Window>, sim: Option<Res<Sim>>, mut cams: Query<&mut Camera, With<FollowCamera>>) {
     let Ok(w) = windows.single() else { return };
     let (width, height) = (w.physical_width(), w.physical_height());
-    let rows = ((height as u64 * 384) / 448) as u32;
+    let (frame, inset) = sim
+        .as_ref()
+        .and_then(|s| s.game.std_camera.as_ref())
+        .map_or((448.0, 64.0), |c| (c.window.frame[1] as f32, c.window.viewport[3] + c.window.viewport[2]));
+    let rows = (height as f32 * (frame - inset) / frame).round() as u32;
     if let Ok(mut cam) = cams.single_mut() {
         let want = bevy::camera::Viewport { physical_position: UVec2::ZERO, physical_size: UVec2::new(width.max(1), rows.max(1)), ..default() };
         if cam.viewport.as_ref().is_none_or(|v| v.physical_size != want.physical_size) {
@@ -377,6 +381,8 @@ struct Front {
     /// TEXT/HINTS_E.ROM and the hint pad's state (HintMenu, next_*_hint).
     hints_rom: gdl_formats::textrom::TextRom,
     hints: gdl_core::game::hints::Hints,
+    /// init_flyby: the attract level to build (front_system has the world).
+    flyby_request: Option<usize>,
 }
 
 /// The running attract entry (game modes 0x8000..0x8008; the title screen
@@ -385,12 +391,14 @@ enum AttractRun {
     /// Screen2D table 0: the SONY screen during the card check.
     Card(gdl_core::game::attract::CardCheck),
     /// Screen2D tables 1/2: the group shot for screen2dtimeleft vblanks
-    /// (NATIVE: no flyby level loads behind it).
+    /// (NATIVE: the next flyby level loads when the flyby starts).
     Group { left: i32 },
     /// init_movie / do_movie: "/MPEG2/<name>.pss".
     Movie { name: String, player: Option<gdl_client::movie::MoviePlayer>, tried: bool },
     /// init_credits / do_credits.
     Credits,
+    /// init_flyby / do_flyby: the level runs on the Playing screen.
+    Flyby,
 }
 
 /// Front-end text (menus) drawn over everything.
@@ -1417,6 +1425,9 @@ struct Sim {
     /// game mode 0x4014 (init_over / do_over) and its end.
     over: Option<gdl_core::game::movie::GameOver>,
     over_done: bool,
+    /// game mode 0x8008: the attract flyby and its end (exit_attract).
+    flyby: Option<gdl_core::game::flyby::Flyby>,
+    flyby_done: bool,
 }
 
 /// The full-screen movie frame (HUD layer, above the other blits).
@@ -1556,10 +1567,10 @@ fn present_movie(
     *showing = true;
 }
 
-/// init_attract_mode(param) and the entry it starts. NATIVE: the flybys
-/// (a level under the old Cam system, not ported) are passed over; the
-/// title screen is the front end's Press Start page (init_titlescreen and
-/// its timer 0x708).
+/// init_attract_mode(param) and the entry it starts. The flyby's level
+/// (attract_wave) is built by front_system; a wave without a configured
+/// level is passed over. The title screen is the front end's Press Start
+/// page (init_titlescreen and its timer 0x708).
 fn start_attract(front: &mut Front, param: i32) {
     use gdl_core::game::attract::AttractEntry;
     let mut p = param;
@@ -1568,7 +1579,13 @@ fn start_attract(front: &mut Front, param: i32) {
         p = -1;
         front.attract_clock = 0.0;
         front.attract_run = match entry {
-            AttractEntry::Flyby => continue,
+            AttractEntry::Flyby { wave } => match front.base.levels.iter().position(|l| l.world == wave >> 8 && l.index as i32 == wave & 0xff) {
+                Some(i) => {
+                    front.flyby_request = Some(i);
+                    Some(AttractRun::Flyby)
+                }
+                None => continue,
+            },
             AttractEntry::Titlescreen => {
                 front.menu.page = gdl_client::menu::Page::PressStart;
                 front.title_timeout = 1800.0;
@@ -1709,7 +1726,7 @@ fn run_attract(
             front.credits.timer += vb;
             next = done || 0x1517 < front.credits.timer;
         }
-        None => {}
+        Some(AttractRun::Flyby) | None => {}
     }
     if std::env::var_os("GDL_DEBUG_ATTRACT").is_some() {
         let kind = match &front.attract_run {
@@ -1717,6 +1734,7 @@ fn run_attract(
             Some(AttractRun::Group { left }) => format!("group {left}"),
             Some(AttractRun::Movie { name, player, .. }) => format!("movie {name} {}", player.as_ref().map_or("none", |p| if p.playing() { "playing" } else { "ended" })),
             Some(AttractRun::Credits) => format!("credits {}", front.credits.scroll),
+            Some(AttractRun::Flyby) => "flyby".into(),
             None => "title".into(),
         };
         let b = front.attract_blits.last().map(|b| (b.tex, b.x, b.y, b.w, b.h, b.rgba, b.z, b.crop));
@@ -3127,6 +3145,20 @@ fn simulate(
     }
     let me = Vec3::from_array(sim.game.players[0].v3(0x50));
     let right = sim.game.std_camera.as_ref().map_or(presentation.basis[0], |c| Vec3::from_array(c.pb.cam_rows[0]));
+    // game mode 0x8008: the attract flyby (game_main's flyby case, do_camera).
+    if let Some(mut f) = sim.flyby.take() {
+        if let Err(e) = sim.game.update_controls(&ports) {
+            sim.error = Some(format!("controls: {}", e.0));
+        }
+        sim.game.globals.vb_elapsed = 2;
+        if sim.game.flyby_step(&mut f) {
+            sim.flyby_done = true;
+        }
+        sim.flyby = Some(f);
+        let new: Vec<Event> = sim.game.events.drain(..).collect();
+        play_audio(&mut audio, &new, me, right);
+        return;
+    }
     // game mode 0x400e: do_gamemovie (controls polled; the game waits).
     if let Some(mut run) = sim.movie.take() {
         let vb = sim.game.globals.vb_elapsed;
@@ -4073,7 +4105,7 @@ fn present_player(
 /// then the level's packages: a presentation choice — the panel labels are
 /// unique across them) and the FONTS/*.FNT files of font_desc, then the
 /// panels' reset/level-start setup.
-fn init_hud(game: &mut Game, sources: &Sources, session: &Session, front: &Front, sets: &mut HudSets) {
+fn init_hud(game: &mut Game, sources: &Sources, session: &Session, front: &Front, sets: &mut HudSets, panels: bool) {
     let (catalog, english) = (&front.catalog, &front.english);
     let mut keys = vec!["STATIC".to_string()];
     // The players' model packages ("#k"), then the level's.
@@ -4097,7 +4129,11 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, front: &Front
         })
         .collect();
     let fonts = load_fonts(catalog, game.hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default());
-    game.hud_init(tex, fonts, Some(english.clone()));
+    if panels {
+        game.hud_init(tex, fonts, Some(english.clone()));
+    } else {
+        game.hud_resources(tex, fonts, Some(english.clone()));
+    }
     game.hud.scrolls = Some(front.scrolls.clone());
     if !game.hud.missing.is_empty() {
         eprintln!("panel textures not found: {:?}", game.hud.missing);
@@ -4739,6 +4775,55 @@ fn start_select(world: &mut EcsWorld) -> Result<(), Box<dyn Error>> {
     start_session(world, None)
 }
 
+/// A session, its sources and the slot starts build_game takes.
+type SessionParts = (Session, Sources, [Option<SlotStart>; 4]);
+
+/// The session for level `idx` with player 1's `record` (the other players
+/// out): packages, sources and the slot starts build_game takes.
+fn session_for(front: &Front, record: &Record, controls: profile::ControlOptions, idx: usize, slot: u32) -> Result<SessionParts, Box<dyn Error>> {
+    let (pc, model_pkg, sfx_pkg) = load_char(front, CharKey::of(record))?;
+    let b = &front.base;
+    let first = &b.levels[idx];
+    let mut packages = HashMap::new();
+    let first_labels = load_level_packages(&mut packages, &b.package_cfg, first)?;
+    let character_labels: Vec<String> = sfx_pkg.objects.definitions.iter().chain(pc.character.objects.definitions.iter()).map(|d| d.label.clone()).collect();
+    packages.insert(pc.sfx_name.clone(), sfx_pkg);
+    packages.insert(pc.model_name.clone(), model_pkg);
+    let session = Session {
+        elf_bytes: front.elf_bytes.clone(),
+        package_cfg: b.package_cfg.clone(),
+        start: b.start.clone(),
+        world: World::parse(&gdl_client::bounded_read(&first.worlds)?)?,
+        level: load_package(&first.package)?,
+        levels: b.levels.clone(),
+        world_number: first.world,
+        title: first.title.clone(),
+        last_world: 0,
+        tower_start: None,
+        prefs: front.menu.prefs,
+        current: idx,
+        monster_paths: b.monster_paths.clone(),
+        anim_paths: b.anim_paths.clone(),
+        audio_rom: b.audio_rom.clone(),
+        object_labels: first_labels.into_iter().chain(b.shared_labels.iter().cloned()).chain(character_labels).collect(),
+        banner: None,
+        next: None,
+        finished: None,
+        slot,
+        controls,
+        pdats: front.pdats.clone(),
+        heart_rate: front.heart_rate,
+        carried: [0, -1, -1, -1, -1, 0xd, 0],
+    };
+    let sources = Sources { players: [Some(pc), None, None, None], packages, monsters: b.monsters.clone() };
+    let mut records: [Record; 4] = std::array::from_fn(|_| Record::zeroed(record.0.len()));
+    records[0] = record.clone();
+    let mut controls4 = [[0u32; 4]; 4];
+    controls4[0] = session.controls;
+    let slots = slot_starts(front, &sources, &records, &controls4)?;
+    Ok((session, sources, slots))
+}
+
 /// Build the session and the Tower game: from save `slot`, or (None) with a
 /// cleared player 1 who enters the select screen.
 fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn Error>> {
@@ -4758,7 +4843,6 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
                 (record, [0, 2, 1, 1], None, 0)
             }
         };
-        let (pc, model_pkg, sfx_pkg) = load_char(front, CharKey::of(&record))?;
         let b = &front.base;
         // DEBUG (automated render comparisons): GDL_DEBUG_LEVEL=<name> starts
         // in that level instead of the Tower. Not a game feature.
@@ -4767,54 +4851,17 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
             .and_then(|n| b.levels.iter().position(|l| l.name == n))
             .or_else(|| b.levels.iter().position(|l| l.world == 0xd))
             .unwrap_or(0);
-        let first = &b.levels[idx];
         if let Ok(n) = std::env::var("GDL_DEBUG_LEVEL") {
-            eprintln!("DEBUG level {n}: starting in {} (index {idx})", first.name);
+            eprintln!("DEBUG level {n}: starting in {} (index {idx})", b.levels[idx].name);
         }
-        let mut packages = HashMap::new();
-        let first_labels = load_level_packages(&mut packages, &b.package_cfg, first)?;
-        let character_labels: Vec<String> = sfx_pkg.objects.definitions.iter().chain(pc.character.objects.definitions.iter()).map(|d| d.label.clone()).collect();
-        packages.insert(pc.sfx_name.clone(), sfx_pkg);
-        packages.insert(pc.model_name.clone(), model_pkg);
-        let session = Session {
-            elf_bytes: front.elf_bytes.clone(),
-            package_cfg: b.package_cfg.clone(),
-            start: b.start.clone(),
-            world: World::parse(&gdl_client::bounded_read(&first.worlds)?)?,
-            level: load_package(&first.package)?,
-            levels: b.levels.clone(),
-            world_number: first.world,
-            title: first.title.clone(),
-            last_world: 0,
-            tower_start: None,
-            prefs: front.menu.prefs,
-            current: idx,
-            monster_paths: b.monster_paths.clone(),
-            anim_paths: b.anim_paths.clone(),
-            audio_rom: b.audio_rom.clone(),
-            object_labels: first_labels.into_iter().chain(b.shared_labels.iter().cloned()).chain(character_labels).collect(),
-            banner: None,
-            next: None,
-            finished: None,
-            slot,
-            controls,
-            pdats: front.pdats.clone(),
-            heart_rate: front.heart_rate,
-            carried: [0, -1, -1, -1, -1, 0xd, 0],
-        };
-        let sources = Sources { players: [Some(pc), None, None, None], packages, monsters: b.monsters.clone() };
-        let mut records: [Record; 4] = std::array::from_fn(|_| Record::zeroed(record.0.len()));
-        records[0] = record.clone();
-        let mut controls4 = [[0u32; 4]; 4];
-        controls4[0] = session.controls;
-        let slots = slot_starts(front, &sources, &records, &controls4)?;
+        let (session, sources, slots) = session_for(front, &record, controls, idx, slot)?;
         let mut game = build_game(&session, idx, &slots, false)?;
         // player_get_from_save: the saved control options into PlayerControl
         // (+0x2c style, +0x30 vibration, +0x38 auto attack, +0x34 auto aim).
         for (o, v) in [0x2c, 0x30, 0x38, 0x34].into_iter().zip(session.controls) {
             game.controls.control[0].set_u32(o, v);
         }
-        init_hud(&mut game, &sources, &session, front, &mut hud_sets);
+        init_hud(&mut game, &sources, &session, front, &mut hud_sets, true);
         (session, sources, game, recovered)
     };
     let attention = Vec3::from_array(game.players[0].v3(0x810));
@@ -4836,7 +4883,7 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         let pdats = world.resource::<Session>().pdats.clone();
         select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
     }
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -4849,6 +4896,59 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
     *world.resource_mut::<Ui>() = Ui { started: true, paused: false, details: false };
     *world.resource_mut::<Screen>() = Screen::Playing;
     Ok(())
+}
+
+/// init_attract_mode's flyby entry (init_flyby): the attract level `idx`
+/// with no player in play (player 1's record cleared and inactive; the
+/// game's HUD gets textures and fonts only) under the old camera.
+fn start_flyby(world: &mut EcsWorld, idx: usize) -> Result<(), Box<dyn Error>> {
+    let mut hud_sets = HudSets::default();
+    let (session, sources, game, flyby) = {
+        let front = world.resource::<Front>();
+        let mut record = Record::zeroed(0x2b00);
+        profile::clear_player(&mut record, true, false, &front.pdats).map_err(|e| e.to_string())?;
+        let (session, sources, slots) = session_for(front, &record, [0, 2, 1, 1], idx, 0)?;
+        let mut game = build_game(&session, idx, &slots, false)?;
+        init_hud(&mut game, &sources, &session, front, &mut hud_sets, false);
+        let elf = gdl_formats::elf::Elf::parse(&front.elf_bytes)?;
+        let yaw_off0 = elf.object("yaw_off").ok().and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap_or([0; 4])));
+        // SetMaxFPS(30): vb_elapsed 2 at the attract's 30 Hz.
+        game.globals.vb_elapsed = 2;
+        let flyby = game.init_flyby(front.attract.transmitters, yaw_off0).map_err(|e| e.0)?;
+        (session, sources, game, flyby)
+    };
+    world.insert_resource(sources);
+    world.insert_resource(session);
+    world.insert_resource(hud_sets);
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
+    world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
+    if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
+        a.stop_all();
+    }
+    *world.resource_mut::<Ui>() = Ui { started: true, paused: false, details: false };
+    *world.resource_mut::<Screen>() = Screen::Playing;
+    Ok(())
+}
+
+/// The flyby's end (exit_attract / Start): the level goes, the transmitter
+/// globals stay with the attract sequence.
+fn end_flyby(world: &mut EcsWorld) {
+    let t = world.get_resource::<Sim>().and_then(|s| s.flyby.as_ref().map(|f| (f.transmitter1, f.transmitter2)));
+    let roots: Vec<Entity> = world.query_filtered::<Entity, With<MirrorRoot>>().iter(world).collect();
+    for r in roots {
+        world.despawn(r);
+    }
+    world.remove_resource::<Sim>();
+    world.remove_resource::<Session>();
+    world.remove_resource::<Sources>();
+    if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
+        a.stop_all();
+    }
+    *world.resource_mut::<Ui>() = Ui::default();
+    *world.resource_mut::<Screen>() = Screen::Front;
+    if let Some(t) = t {
+        world.resource_mut::<Front>().attract.transmitters = t;
+    }
 }
 
 /// Quit Game (init_over: every player inactivated) → the title.
@@ -5215,6 +5315,31 @@ fn front_system(world: &mut EcsWorld) {
     let screen = *world.resource::<Screen>();
     let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
     let (keys, toggle) = menu_keys(world, naming);
+    if screen == Screen::Front
+        && let Some(idx) = world.resource_mut::<Front>().flyby_request.take()
+    {
+        if let Err(e) = start_flyby(world, idx) {
+            let mut front = world.resource_mut::<Front>();
+            front.menu.status = format!("flyby: {e}");
+            start_attract(&mut front, -1);
+        }
+        return;
+    }
+    if screen == Screen::Playing && world.get_resource::<Sim>().is_some_and(|s| s.flyby.is_some()) {
+        // do_flyby: exit_attract → init_attract_mode(−1); Start (or accept)
+        // leaves the attract sequence for the title screen.
+        let start = toggle || keys.contains(&Key::Accept);
+        if start || world.resource::<Sim>().flyby_done {
+            end_flyby(world);
+            let mut front = world.resource_mut::<Front>();
+            if start {
+                exit_attract(&mut front);
+            } else {
+                start_attract(&mut front, -1);
+            }
+        }
+        return;
+    }
     if screen == Screen::Front {
         // attract_advance / do_movie's new_start: Start (or accept) leaves
         // the attract sequence for the title screen.
@@ -5522,7 +5647,15 @@ fn run() -> Result<(), Box<dyn Error>> {
         let tex = ui_hud.lookup("CREDITS");
         ui_hud.font_init_special(f, tex);
     }
-    let attract = gdl_core::game::attract::Attract::from_elf(&elf)?;
+    let mut attract = gdl_core::game::attract::Attract::from_elf(&elf)?;
+    // worlddatas +0x10: the worlds whose WDATA is loaded, with their LEVL
+    // +4 flags (NextAttractWave's attract levels).
+    for w in attract.worlds.iter_mut() {
+        if let Some(l) = levels.iter().find(|l| l.world == w.number) {
+            let wd = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&l.wdata)?)?;
+            w.levels = Some(wd.levels.iter().map(|r| r.word_04).collect());
+        }
+    }
     let credits = gdl_core::game::attract::Credits::from_elf(&elf)?;
     let mut front = Front {
         menu: {
@@ -5567,6 +5700,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         attract_clock: 0.0,
         hints_rom: gdl_formats::textrom::TextRom::parse(&catalog_hints)?,
         hints: Default::default(),
+        flyby_request: None,
         base: Base {
             package_cfg,
             start,
@@ -5586,7 +5720,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     // title.
     // GDL_DEBUG_CREDITS starts with init_attract_mode(0x8000) (the
     // credits, as both shoulder buttons held do).
-    if std::env::var_os("GDL_DEBUG_CREDITS").is_some() {
+    // GDL_DEBUG_FLYBY=<level name> starts with that level's flyby.
+    if let Some(i) = std::env::var("GDL_DEBUG_FLYBY").ok().and_then(|n| front.base.levels.iter().position(|l| l.name == n)) {
+        front.attract.did_mc_check = 2;
+        front.flyby_request = Some(i);
+        front.attract_run = Some(AttractRun::Flyby);
+    } else if std::env::var_os("GDL_DEBUG_CREDITS").is_some() {
         start_attract(&mut front, 0x8000);
     } else if std::env::var_os("GDL_NO_ATTRACT").is_none() {
         start_attract(&mut front, -1);
@@ -5926,7 +6065,7 @@ fn advance_level(
                 a.stop_all();
             }
             session.current = idx;
-            init_hud(&mut game, &sources, &session, &front, &mut hud_sets);
+            init_hud(&mut game, &sources, &session, &front, &mut hud_sets, true);
             sim.game = game;
             for e in &old {
                 commands.entity(e).despawn();

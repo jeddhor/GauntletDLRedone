@@ -297,12 +297,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     if args.len() == 2 && args[0] == "levl-list" {
-        // levl-list WDATA.WAD: each LEVL record's code and +0x34 movie name (stdout).
+        // levl-list WDATA.WAD: each LEVL record's code, +0x34 movie name, +4 flags
+        // (bit 2: NextAttractWave's attract levels) and its CAMS record's +0x26
+        // attract_cam_mode / +0x28 (InitCamera's flyby branch) (stdout).
         let w = gdl_formats::wdata::WorldData::parse(&bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?)?;
         for (k, l) in w.levels.iter().enumerate() {
             let m = &l.raw[0x34..0x44];
             let m = String::from_utf8_lossy(&m[..m.iter().position(|&b| b == 0).unwrap_or(m.len())]).into_owned();
-            println!("{k} {} movie {:?}", l.code, m);
+            let cam = w.cameras.get(l.camera_index.max(0) as usize).map(|c| {
+                (i16::from_le_bytes([c.raw[0x26], c.raw[0x27]]), f32::from_le_bytes(c.raw[0x28..0x2c].try_into().unwrap_or([0; 4])))
+            });
+            println!("{k} {} movie {:?} flags04 {:#x} cams {} attract_cam {:?}", l.code, m, l.word_04, l.camera_index, cam);
         }
         return Ok(());
     }
@@ -1165,6 +1170,34 @@ fn run() -> Result<(), Box<dyn Error>> {
             file.write_all(b"\n")?;
             return Ok(());
         }
+        if opts.contains_key("flyby") {
+            // flyby=1: init_flyby on this level (the attract's 30 Hz: vb 2,
+            // SPF 1/30) and the flyby's updates; the camera path per update.
+            game.globals.vb_elapsed = 2;
+            game.globals.spf = 1.0 / 30.0;
+            let mut f = game.init_flyby((0, 0), 0.0).map_err(|e| e.0)?;
+            let mut path = Vec::new();
+            let mut end = None;
+            for k in 0..frames {
+                game.globals.vb_elapsed = 2;
+                if game.flyby_step(&mut f) {
+                    end = Some(k);
+                    break;
+                }
+                if k % 5 == 0 {
+                    path.push(serde_json::json!({"update":k,"eye":f.cam.eye,"attention":f.cam.attention,"pyr":f.cam.pyr,
+                        "t1":f.transmitter1,"t2":f.transmitter2,"current":f.current,"gravity":f.gravity,"seq_done":f.seq_done,"timer1":f.timer1,
+                        "enemies":game.enemies.iter().filter(|e| e.i32_(0xc8) != 0).count()}));
+                }
+            }
+            let report = serde_json::json!({"scope":"actual disc level, native flyby (init_flyby/do_flyby, old Cam[0] transmitter path); not compared with a reference trace",
+                "end_update":end,"path":path,"attract_transmitters":game.std_camera.as_ref().map(|c| c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.word_02])).collect::<Vec<_>>()),
+                "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>()});
+            let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
+            serde_json::to_writer_pretty(&mut file, &report)?;
+            file.write_all(b"\n")?;
+            return Ok(());
+        }
         let mut samples = Vec::new();
         // DEBUG spawn=TYPE:LEVEL:AI:FRAME[:DX:DZ[:DY]][;...]: generate_enemy beside
         // player 0 at that update; `spawned` traces the first one every 5 updates.
@@ -1296,6 +1329,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             .map(|k| { let r = &game.items.records[k]; serde_json::json!([k, r.i16_(0xf0), r.u16_(0xd8), r.position()]) })
             .collect();
         let report = serde_json::json!({"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,
+            "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
+                "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
             "critter_files":game.critter_data.files.iter().map(|f| serde_json::json!({"name":f.name,"trees":f.trees,"model":f.model.is_some()})).collect::<Vec<_>>(),
             "critter_etypes":game.critter_data.etypes.iter().map(|r| r.iter().map(|t| t.map(|t| [t.0, t.1])).collect::<Vec<_>>()).collect::<Vec<_>>(),

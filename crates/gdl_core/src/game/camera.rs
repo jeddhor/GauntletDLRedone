@@ -325,6 +325,13 @@ pub struct Camera {
     pub start_list: Vec<Option<usize>>,
     #[serde(default)]
     pub found: i32,
+    /// StartAttTransmitter 0x238508 (the attract-start transmitter, locator
+    /// kind 3), read by InitCamera's flyby branch.
+    #[serde(default)]
+    pub start_att: Option<usize>,
+    /// CAMS +0x26: attract_cam_mode for InitCamera's flyby branch.
+    #[serde(default)]
+    pub attract_cam_mode: i16,
 }
 
 fn wrap(v: f32) -> R<f32> {
@@ -544,6 +551,8 @@ impl Camera {
             cam0_mat: None,
             start_list: set.start_list,
             found: set.found,
+            start_att: set.start_att,
+            attract_cam_mode: params.raw.get(0x26..0x28).map_or(0, |b| i16::from_le_bytes([b[0], b[1]])),
         })
     }
 
@@ -767,6 +776,12 @@ impl Camera {
         pitch_vec3(-pitch, yaw_vec3(-yaw, FVECTOR)?)
     }
 
+    /// LookInDirection 0x1d.. (the same algorithm as CamLookInDir) for the
+    /// old camera.
+    pub(crate) fn look_in_dir_pub(c: &mut Record, dir: V3) -> R<()> {
+        Self::look_in_dir(c, dir)
+    }
+
     /// CamLookInDir 0x113a38: matrix rows from a direction.
     fn look_in_dir(c: &mut Record, dir: V3) -> R<()> {
         let mut d = dir;
@@ -808,8 +823,20 @@ impl Camera {
     /// MBWindowProjection): window camera rows and pb eye/direction.
     fn camera_update(&mut self, c: &mut Record) -> R<()> {
         self.mb_camera_update(c);
+        self.set_window_hang(c.f32_(o::HANG))?;
+        let deg = mul(mul(c.f32_(o::HANG), 180.0)?, INV_PI)?;
+        let aspect = c.f32_(o::ASPECT);
+        if 0.0 < aspect {
+            self.pb.fov = deg;
+            self.pb.aspect = div(1.0, aspect)?;
+        }
+        Ok(())
+    }
+
+    /// MBWindowSetHang 0x1d0eb8: the window's horizontal/vertical angles
+    /// (and the pb field of view, aspect 1).
+    pub(crate) fn set_window_hang(&mut self, hang: f32) -> R<()> {
         self.pb.proj_dirty = true;
-        let hang = c.f32_(o::HANG);
         let k = mul(div(self.window.mbox_height, self.window.frame[1] as f32)?, 0.75)?;
         if 0.0 < hang {
             let t = tanf(mul(hang, 0.5)?)?;
@@ -823,11 +850,6 @@ impl Camera {
         let deg = mul(mul(hang, 180.0)?, INV_PI)?;
         self.pb.fov = deg;
         self.pb.aspect = 1.0;
-        let aspect = c.f32_(o::ASPECT);
-        if 0.0 < aspect {
-            self.pb.fov = deg;
-            self.pb.aspect = div(1.0, aspect)?;
-        }
         Ok(())
     }
 
@@ -884,6 +906,10 @@ impl Camera {
 
     /// MBCameraUpdate 0x1c3bc0 alone: matrix w lanes, window camera rows,
     /// pb eye and direction (camera part dirty).
+    pub(crate) fn mb_camera_update_pub(&mut self, c: &mut Record) {
+        self.mb_camera_update(c);
+    }
+
     fn mb_camera_update(&mut self, c: &mut Record) {
         for k in 0..3 {
             c.set_f32(o::MAT + 0x10 * k + 0xc, 0.0);
@@ -2310,6 +2336,10 @@ impl super::Game {
     /// The window camera other systems read: MboxWinPtr +0x90/+0x98 for
     /// PlayerMotion and the MBWorldSphereClip view (planes from the start
     /// state's window constants).
+    pub(crate) fn sync_view_pub(&mut self) {
+        self.sync_view();
+    }
+
     fn sync_view(&mut self) {
         let Some(cam) = &self.std_camera else { return };
         let (fx, fz) = cam.forward_xz();

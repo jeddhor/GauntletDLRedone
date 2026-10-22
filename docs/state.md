@@ -113,9 +113,13 @@ original (PCSX2 reference on Xvfb :191, private captures):
    called and the port had skipped — suicide-bomber flight never fired);
    golem audio (SetEnemyAudio 0x1d, AudioEnemyWalk/GolemBorn/GolemSwing).
    Logics 8/9/11/12/13/20/21/22 are selected by no disc data
-   (enemy-logic-scan-v1.json). game-run spawn= DEBUG option. Remaining in
-   this plan: team moves, attract flybys, the select screen's camera, the
-   inventory exit swirl, vibration (gameplay.md "Not ported").
+   (enemy-logic-scan-v1.json). game-run spawn= DEBUG option.
+   2026-10-22: the attract flybys (flyby.rs: InitCamera's flyby branch and
+   the old Cam[0] transmitter path, do_flyby, NextAttractWave; the window
+   without the 64-row inset) — reference cycle captured; headless flybys of
+   all eleven attract levels; GUI checked. The select screen's "scene" is
+   its column art (already drawn; hud.md). Remaining in this plan: team
+   moves, the inventory exit swirl, vibration (gameplay.md "Not ported").
 
 ---
 

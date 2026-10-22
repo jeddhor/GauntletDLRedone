@@ -177,9 +177,9 @@ with a reference.
 ## Not ported (known)
 
 Unreachable move logics above; team moves (PlayerSetParent /
-PlayerFacePlayer); the attract flybys (do_camera with game_mode & 0x8000);
-the select screen's fixed camera (MBCameraUpdate of 0x2a1e40); the
-inventory exit swirl; vibration.
+PlayerFacePlayer); the inventory exit swirl; vibration. (The front-end fixed camera of modes
+0x8009/0x400b/0x4012 only moves a view hidden under full-screen blits —
+hud.md.)
 - move_logic16 0x13ecd8 (ranged 0x18 attacks on the +0x334 timer; inside
   0.6 × range it backs off with action 0x16 at speed 0.8 until beyond 0.8 ×
   range), AudioDemonFireBall 0x15fcb8.

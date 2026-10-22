@@ -122,9 +122,45 @@ PlayerMotion port.
 The pb window values (frame 640×448, screen 512×384, depth 1..0xffffff,
 offset 2048/2048, near 1, far 65536, viewport insets 0/0/0/64, up (0,1,0),
 MboxWinPtr height 384) are the values both captures hold; MBWindowInit
-0x1d0fc8 sets the frame/height defaults, the source of the 64-pixel bottom
-inset and the 384 height is not yet identified. Other player counts are a
-HYPOTHESIS.
+0x1d0fc8 sets the frame/height defaults. The 64-pixel bottom inset and the
+384 height come from InitCamera's window: WindowBottomLim 0x40 (0x2a when
+MBScreenHeight is 0x100) in its level branch, ChangeWindow 0x1675a0 →
+MBWindowSetRegion 0x1d0a00(0, 640, 448, 64) → viewport insets 0/0/0/64 and
+MboxWinPtr +0x18 = 448 − 64. Outside the level branch (the flyby, the
+select screen, the boss/world-select modes) WindowBottomLim is 0: no inset,
+height 448. Other player counts are a HYPOTHESIS.
+
+## Old camera: the attract flyby (2026-10-22)
+
+The older Cam array (Cam 0x23e4f0, six × 0x1a0: +0 active, +0x10 matrix
+rows with row 3 at +0x40, +0x70 eye, +0x90/+0xa0 eye/attention deltas,
++0xb0 pitch/yaw/roll, +0xd0 radius, +0xd4, +0xdc start counter, +0xf8 mode,
++0x104 submode, +0x140 attention) runs for game_mode & 0x8000 through
+do_camera 0x1738e8. Ported for the flyby only (gdl_core::game::flyby):
+InitCamera's 0x8008 branch with attract_cam_mode (CAMS +0x26) −1 and a
+StartAttTransmitter (locator kind 3): eye and pitch/yaw/roll from that
+transmitter, radius 20, set_camera_mode(0, 2, 1), cam_orient_to,
+att_receive_yaw / att_dest_pyr, att_move_pitch/yaw = adp/ady,
+default_pitch = dest_pitch = the pitch, yaw_dest = yaw_off[0], the window
+above, MBWindowSetHang(60°). Per update: change_camera_mode (vb_elapsed 1
+for the first two), move_camera mode 2 → MoveCam_flyby_mode: att_rotate_camera
+(yaw toward yaw_dest by vb × att_unit_dy in rot_dir, snapping on arrival or
+a ±π crossing) around att_receive_yaw (the two nearest unvisited attract
+transmitters, flag 1 with +2 set; gravity = d1/(d1+d2), 1 from 0.3, 1 −
+(g − 0.3)·8 from 0.2; the destination by the eye's progress along them;
+turn rates capped at 0.6°/0.36° per vblank, changing by ≤ 0.05°/0.03°; the
+transmitter left behind gets +2 = 0), att_dest_pyr (get_pitch/get_yaw from
+transmitter2 to the eye), the eye moving 0.2 per vblank along the eased
+att_move_pitch/yaw (velocity ±0.5°, step 0.05°), default_pitch easing to
+dest_pitch, attention = eye + radius along the pitch/yaw (fix_radius);
+flyby_seq_done counts once transmitter1 = transmitter2. get_attn_pos keeps
+the attention (submode 1), cam_orient_to = LookInDirection (CameraSupervisor
+returns for mode ≠ 3; no shake), ProcCamera (zero deltas, row 3 = eye),
+MBCameraUpdate(row 3, matrix). transmitter1/2 are globals kept between
+flybys. Every attract level on the disc has CAMS +0x26 = −1 and a
+StartAttTransmitter; attract_cam_mode 0 (drift) and 1 (orbit) are not
+ported (Unsupported). Synthetic tests: receive_yaw's choice, gravity and
+visited marks; get_pitch's sign.
 
 ## Verification
 
@@ -156,8 +192,9 @@ window constants) are taken from it. world_update's start-of-stage block
 after 3 s), do_enemies' stage-start idle actions and do_players' stage-start
 branch (no PlayerMotion while cam_wait and start_of_stage are set) are
 ported. The client draws with the pb projection (separate horizontal and
-vertical tangents) in the top 384/448 of the window, matching the reference
-layout where the player panels occupy the bottom 64 rows.
+vertical tangents) in the frame rows above the window's bottom inset (the
+top 384/448 in play, matching the reference layout where the player panels
+occupy the bottom 64 rows; the whole frame in the flyby).
 
 ## Boss camera (BossCameraUpdate 0x1a1bc0)
 

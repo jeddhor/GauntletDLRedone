@@ -2070,6 +2070,14 @@ impl Game {
     /// The client's textures and fonts, then reset_players' panel part and
     /// init_next_level's (setup_player_display for every box,
     /// SetPlayerWindows(0)).
+    /// The attract flyby's HUD: textures and fonts only (no player displays;
+    /// the reference flyby shows no panels).
+    pub fn hud_resources(&mut self, textures: Vec<TexSet>, fonts: Vec<Option<Font>>, text: Option<gdl_formats::textrom::TextRom>) {
+        self.hud.missing.clear();
+        self.hud.text = text;
+        self.hud.set_resources(textures, fonts);
+    }
+
     pub fn hud_init(&mut self, textures: Vec<TexSet>, fonts: Vec<Option<Font>>, text: Option<gdl_formats::textrom::TextRom>) {
         self.hud.missing.clear();
         self.hud.text = text;

@@ -752,6 +752,18 @@ impl Game {
         self.do_lighting();
     }
 
+    /// do_enemies with the camera's visibility tests (the flyby's update).
+    pub(crate) fn do_enemies_camera(&mut self) -> R<()> {
+        let camera_visible = |g: &Game, k: usize| -> (bool, bool) {
+            let Some(cam) = &g.camera else { return (true, true) };
+            let rec = &g.enemies[k];
+            let r = rec.f32_(enemies::e::WIDTH) + rec.f32_(enemies::e::WIDTH);
+            let p = rec.v3(enemies::e::ATTENTION);
+            (cam.sphere_visible(r, p).unwrap_or(false), cam.sphere_visible(r + 15.0, p).unwrap_or(false))
+        };
+        self.do_enemies(&camera_visible)
+    }
+
     /// Copy the item system's runtime object state into the collision world.
     pub fn sync_collision(&mut self) {
         for o in 0..self.collision.objects.len() {
