@@ -53,11 +53,19 @@ Native (2026-10-22): the item clocks follow that order (realm package,
 POWERUPS, the level's own); before, POWERUPS was not searched, so keys, gems,
 food, treasure and scrolls had no clock and never animated (the renderer
 already fell back to POWERUPS for their models). Not modelled: the enemy
-package fallback for generators (no G1 generator needs it) and the placed
-DEATH (kind 4) atree that SetItem's statue path takes from the enemy package.
+package fallback for generators (no G1 generator needs it). Statues (kind 4,
+2026-10-22): SetItem's statue path calls SetItemGeo with
+AtreeMatch(package, name, 1) — GAR_STATUE in the model of CritterTypeLoaded(7,
+0), GOL_STATUE in enemy_anim[0x1d] (else CritterTypeLoaded(3, 0)'s model),
+DEATHSTATUE1 (levels 0/1) or DEATHSTATUE2 (2/3) in enemy_anim[0x1e]; native
+ItemWorld::statue_tree names it and setup adds those trees to the item tree
+library (trace-A1-statue-v2: the gargoyle statue's awakening clip times its
++0xda countdown). Generator stage changes (DamageItem kind 3) swap to the
+tree or model "GEN_<prefix><level>" (ItemGenDesc 0x151308) and delete the
+item when neither exists (gameplay.md "Statues").
 No label occurs in both POWERUPS and an ITEMS package; realm I and level I5
 share BRIDGEPAD (I5 is a boss level, so only item_anim2 is loaded there).
-SetItem calls SetItemGeo only for kinds other than 4 and 13, kind 12 only
+SetItem calls SetItemGeo only for kinds other than 4 (statues aside) and 13, kind 12 only
 for subtype 2, and never for an instance whose flag byte +3 has bit 2;
 items created later (AddItemSub: drops, spawned pickups) get their tree and
 clock the same way. Tower trace check (trace-tower-v1, step 0): the items

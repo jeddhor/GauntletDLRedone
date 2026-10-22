@@ -256,6 +256,13 @@ StdCam record, which BossCameraUpdate does not write, so boss arenas were
 drawn from the level-start eye with the boss camera's rotation (the player
 at the screen's top edge in A5).
 
+The frame replay also rebuilds the previous frame's pbCalcMatrices for the
+seeded view (MBWindowSetHang + pb update): MBWorldToScreen reads +0x2d0
+(viewport × projection × view), which its lazy refresh never recomputes, and
+CamGetPlayerAvgPos's screen-space path (flag 1) goes through it
+(trace-A1-statue-v2 steps 1..15 diverged until then; the earlier traces' own
+load-time camera happened to be close).
+
 Trace-checked 2026-10-22 (trace-b6-boss-v4, B6's dragon arena, slot 8):
 the frame replay seeds BossCamera (0x25d560, 0x1b0 bytes; BossCam points at
 it), BossCameraMode, the BCAM record (BossCamData), CurTransmitter,

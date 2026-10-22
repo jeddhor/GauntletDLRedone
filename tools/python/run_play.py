@@ -115,7 +115,10 @@ def critter_files(level, world, known, wdata_bytes):
             raw = bytes.fromhex(enemies[d]['raw']) if isinstance(enemies[d]['raw'], str) else bytes(enemies[d]['raw'])
             gar = raw[0x10:0x18].split(b'\0')[0].decode()
     out = []
-    for k in sorted(set(types['kind'])):
+    # LoadGauntWorldStart loads them in EnemyType slot order (A1: golem,
+    # general, gargoyle), which orders their custom effect headers
+    # (InitCustomEffectSub; trace-A1-statue-v2 step 319).
+    for k in dict.fromkeys(types['kind']):
         if k == 0x1d:
             name = {9: 'GOLEMI', 6: 'GOLEMF'}.get(world, 'GOLEM')
         elif k == 0x20:

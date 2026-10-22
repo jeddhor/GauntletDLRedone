@@ -57,6 +57,23 @@ impl Game {
             }
         }
         self.crit_mut(i).rec.set_i16(0x484, idx);
+        if flags & 0x800 != 0 {
+            // AtreeMatch(model, "GMETER", 1) → AtreeInit(tree, +0x488): the
+            // overhead meter's AnimInfo at +0x48c (InitAnimInfo + InitAnim(0);
+            // the tree, its links and the RED_FILLE node +0x4d0 are guest
+            // pointers; the meter itself is presentation). trace-A1-statue-v2
+            // step 231, the gargoyle.
+            let t = self.crit(i).ty;
+            if let Some(model) = self.critter_data.files[t.0].model.clone()
+                && let Some(k) = model.0.trees.iter().position(|tr| tr.label == "GMETER")
+            {
+                let clips = super::setup::clips_of(&model.0, k);
+                let nodes = model.0.trees[k].nodes.len() as i32;
+                if let Ok(clock) = super::setup::atree_init_clock(&clips, self.globals.atime, self.globals.anim_time_scale) {
+                    super::setup::write_anim_info(&mut self.crit_mut(i).rec, 0x48c, &clock, clips.len(), nodes);
+                }
+            }
+        }
     }
 
     /// CritterUpdateHealthMeter(i): HealthMeterUpdate(health) for its meter.

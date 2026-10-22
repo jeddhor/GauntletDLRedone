@@ -181,6 +181,10 @@ pub struct EnemyAnimData {
     /// (type, level) trees with a type-1 node: AnimateATree's DoAnimation
     /// turns a nonzero reset byte into 2 (OANIM-only trees never do).
     pub tree_animated: std::collections::HashSet<(i32, i32)>,
+    /// (type, label) → clips, a type-1 node, node count of the package's
+    /// statue trees (SetItem's AtreeMatch: GOL_STATUE in enemy_anim[0x1d],
+    /// DEATHSTATUE1/2 in enemy_anim[0x1e]).
+    pub statue_trees: std::collections::HashMap<(i32, String), (Vec<crate::animation_clock::ClipTiming>, bool, i32)>,
 }
 
 /// InitActions: action names (EE 0x23f8c8 list) → sequence index and +0x20 word.
@@ -886,10 +890,12 @@ impl Game {
         Ok(())
     }
 
-    /// move_logic17 0x13eba8 / move_logic23 0x13da78: stationary, face the
-    /// target and request the ranged attack (action 0x18) within range and
-    /// ±10 height; logic 23 waits for its +0x334 cooldown.
-    fn move_logic_turret(&mut self, i: usize, cooldown: bool) -> R<()> {
+    /// move_logic23 0x13da78 (logics 0x11 and 0x17): stationary, face the
+    /// target and, within range and ±10 height, count the +0x334 cooldown
+    /// down by vb_elapsed, then request the ranged attack (action 0x18).
+    /// (move_logic17 0x13eba8, the same without the cooldown, and
+    /// move_logic26 0x13d598 have no caller in this build.)
+    fn move_logic23(&mut self, i: usize) -> R<()> {
         if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
             self.format_brain(i);
         }
@@ -899,7 +905,7 @@ impl Game {
             let dy = sub(self.ef(i, 0x44), self.players[p].f32_(0x54))?;
             if self.enemies[i].i16_(0x2f0) != 0 && self.ef(i, 0x290) <= self.ef(i, 0x314) && (-10.0..=10.0).contains(&dy) {
                 let c = self.enemies[i].i32_(0x334);
-                if cooldown && 0 < c {
+                if 0 < c {
                     self.enemies[i].set_i32(0x334, c - self.globals.vb_elapsed);
                 } else {
                     self.request_enemy_action(i, 0x18);
@@ -1521,80 +1527,6 @@ impl Game {
         Ok(())
     }
 
-    /// move_logic26 0x13d598: keep away from the target player (within ±10
-    /// in y): back off (action 0x16 away, + offset_step5 steps after
-    /// contacts) once closer than half of +0x314, stop at 0.8 × +0x314, else
-    /// action 0x18 on the +0x334 timer; no target → wander logic 5/6.
-    fn move_logic26(&mut self, i: usize) -> R<()> {
-        let mut off = 0.0f32;
-        let contact_before = self.enemies[i].i32_(0x36c);
-        if self.found_suicide_bomber(i)? {
-            self.enemies[i].set_i16(e::LOGIC, 0x18);
-            return self.do_ai(i);
-        }
-        if self.enemies[i].i16_(0x2f2) == 0 || self.enemies[i].i16_(0x288) < 0 {
-            self.enemies[i].set_i16(e::LOGIC, (i as i16 & 1) + 5);
-            return self.do_ai(i);
-        }
-        if self.enemies[i].i16_(e::LOGIC) != self.enemies[i].i16_(0x328) {
-            self.format_brain(i);
-        }
-        let f = self.get_face_ang(i, true)?;
-        self.enemies[i].set_f32(0x260, f);
-        let in_reach = match usize::try_from(self.enemies[i].i16_(0x288)) {
-            Ok(p) if self.enemies[i].i16_(0x2f0) != 0 => {
-                let dy = sub(self.ef(i, 0x44), self.players[p].f32_(0x54))?;
-                (-10.0..=10.0).contains(&dy)
-            }
-            _ => false,
-        };
-        if in_reach {
-            let d = self.ef(i, 0x290);
-            let keep = self.ef(i, 0x314);
-            if self.enemies[i].i32_(0x330) == 0 {
-                if d <= mul(keep, 0.5)? {
-                    self.enemies[i].set_i32(0x330, 1);
-                }
-            } else if mul(keep, f32::from_bits(0x3f4c_cccd))? < d {
-                self.enemies[i].set_i32(0x330, 0);
-            } else if 0 < self.enemies[i].i32_(0x36c) {
-                let k = self.enemies[i].i32_(0x338);
-                if k < 8 {
-                    off = *usize::try_from(k).ok().and_then(|k| self.offset_step5.get(k)).ok_or_else(|| super::Unsupported("offset_step5 index".into()))?;
-                    self.enemies[i].set_i32(0x338, k + 1);
-                    self.enemies[i].set_i32(0x36c, 0);
-                } else {
-                    self.enemies[i].set_i32(0x330, 0);
-                }
-            }
-            let t = self.enemies[i].i32_(0x334);
-            if t < 1 {
-                if self.enemies[i].i32_(0x330) == 0 {
-                    self.request_enemy_action(i, 0x18);
-                } else {
-                    let a = wrap(add(add(self.ef(i, 0x260), PI)?, off)?)?;
-                    self.set_enemy_trans(f32::from_bits(0x3f4c_cccd), a, i)?;
-                    self.request_enemy_action(i, 0x16);
-                    self.enemies[i].set_i32(0x36c, 0);
-                }
-            } else {
-                self.enemies[i].set_i32(0x334, t - self.globals.vb_elapsed);
-            }
-        }
-        let y = self.turn_enemy_ang(self.ef(i, 0x260), i)?;
-        self.enemies[i].set_f32(0x258, y);
-        self.do_enemy_move(i)?;
-        if self.enemies[i].i16_(0x294) != 0 {
-            self.enemies[i].set_i32(0x36c, 0);
-        }
-        if contact_before < 1 && 0 < self.enemies[i].i32_(0x36c) {
-            let h = self.ef(i, 0x260);
-            self.enemies[i].set_f32(0x268, h);
-            self.enemies[i].set_i32(0x338, 0);
-        }
-        Ok(())
-    }
-
     /// move_logic02 (+45°, then logic 4) and move_logic04 (−45°, then
     /// logic 2): face the target player, else step the heading every
     /// brain period; after four steps switch to the sibling logic.
@@ -1658,13 +1590,16 @@ impl Game {
             0x13 => self.move_logic19(i)?,
             0xe => self.move_logic14(i)?,
             0xf => self.move_logic15(i)?,
-            0x10 => self.move_logic16(i)?,
-            0x11 => self.move_logic_turret(i, false)?,
-            0x17 => self.move_logic_turret(i, true)?,
+            // do_ai's jump table 0x2a7a30 (checked entry by entry): 0x10 and
+            // 0x1a run move_logic16, 0x11 and 0x17 move_logic23 (the +0x334
+            // cooldown), 0x19 kill_enemy; move_logic17/26 are not in it
+            // (trace-A1-statue-v2 step 87: a relocated logic-0x11 grunt).
+            0x10 | 0x1a => self.move_logic16(i)?,
+            0x11 | 0x17 => self.move_logic23(i)?,
             0x18 => self.move_logic24(i)?,
+            0x19 => self.kill_enemy(i)?,
             0x1b => self.move_logic27(i)?,
             0x1c => self.move_logic28(i)?,
-            0x1a => self.move_logic26(i)?,
             0x1d => self.move_logic29(i)?,
             0x1e => self.move_logic30(i)?,
             0x1f => self.move_logic31(i)?,
@@ -2723,7 +2658,7 @@ impl Game {
     }
 
     /// AnimateATree on the native clock; true when the requested clip took over.
-    fn animate_enemy(&mut self, i: usize, clip: u16, mode: i32) -> R<bool> {
+    pub(crate) fn animate_enemy(&mut self, i: usize, clip: u16, mode: i32) -> R<bool> {
         let Some(anim) = self.enemy_anims.get(i).cloned().flatten() else {
             return unsupported("enemy animation clock not initialised");
         };

@@ -547,7 +547,9 @@ impl ReferenceCritters {
     /// struct's +0x14/+0x18/+0x1c/+0x2c (no critter code reads them back;
     /// the 0x15c loads in CritterDamage/CritterDamagePlayer/CritterGolemAI
     /// are the global 0x22015c).
-    const RESIDUE: [usize; 4] = [0x154, 0x158, 0x15c, 0x16c];
+    /// +0x6c: the w of MulVec4Mat3's VU0 result (vmaddz with dest xyz, then
+    /// sqc2 of the whole register) — register residue.
+    const RESIDUE: [usize; 5] = [0x154, 0x158, 0x15c, 0x16c, 0x6c];
 
     fn live(&self, k: usize) -> bool {
         k < self.num && self.slots.get(k).is_some_and(|r| Self::word(r, 4) != 0)
@@ -557,9 +559,12 @@ impl ReferenceCritters {
     /// AnimInfo links +0x80..+0x8c and +0xc0/+0xc4, CritterInitGeo's +0xcc,
     /// the shadow +0xd0, the nodes +0xd4/+0xd8/+0xdc/+0xe8, the move effect
     /// node +0xe0 (CritterDoTransition's MBRemoveNode), the chain
-    /// +0xb60/+0xb64 and each collision node's +0/+4/+8.
+    /// +0xb60/+0xb64, CritterAddHealthMeter's GMETER atree +0x488 with its
+    /// AnimInfo links +0x48c..+0x494/+0x4c8/+0x4cc and RED_FILLE node +0x4d0,
+    /// and each collision node's +0/+4/+8.
     fn pointer_words(ncol: usize) -> Vec<usize> {
-        let mut v = vec![0x04, 0x70, 0x80, 0x84, 0x88, 0x8c, 0xc0, 0xc4, 0xcc, 0xd0, 0xd4, 0xd8, 0xdc, 0xe0, 0xe8, 0xb60, 0xb64];
+        let mut v = vec![0x04, 0x70, 0x80, 0x84, 0x88, 0x8c, 0xc0, 0xc4, 0xcc, 0xd0, 0xd4, 0xd8, 0xdc, 0xe0, 0xe8, 0xb60, 0xb64,
+                         0x488, 0x48c, 0x490, 0x494, 0x4c8, 0x4cc, 0x4d0];
         for c in 0..ncol {
             v.extend([0x540 + 0x60 * c, 0x544 + 0x60 * c, 0x548 + 0x60 * c]);
         }
@@ -1956,7 +1961,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                             continue;
                         }
                         let r = &game.enemies[k];
-                        let level = (1..=3).find(|l| {
+                        // EnemyDesc levels 1..7 (4..7 the lettered trees: A1's
+                        // placed logic-23 grunt is one).
+                        let level = (1..=7).find(|l| {
                             game.enemy_anim_data.trees.get(&(t, *l)).is_some_and(|(_, tab)| {
                                 tab.iter().enumerate().all(|(i, (idx, v))| r.i32_(0xe8 + 8 * i) == *idx && r.i32_(0xec + 8 * i) == *v)
                             })
@@ -2064,6 +2071,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                             game.globals.cur3d_transmitter = cur3d;
                             game.boss_cam_mode = gw("BossCamMode")?;
                         }
+                        game.replay_frame_matrices().map_err(|e| e.0)?;
                         // Cam[0]'s matrix (traces from trace-b6-boss-v3).
                         if let Some(c0) = bp.get("cam0") {
                             let m = hexb(c0)?;

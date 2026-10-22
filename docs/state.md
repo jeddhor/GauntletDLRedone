@@ -117,8 +117,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    boss levels"). A5's chimera with its three heads, D5 and I5 through
    activation: 250/250 in every part (object nodes compose through every
    ancestor; NewWorldObject's 0x100 flag rule; head reset byte and
-   look-at). Next: statue activations (golem/gargoyle), a boss fight to its
-   death.
+   look-at). A1's gargoyle statue (warped capture w1l1-statue-v1) 250/250 in
+   every part: statue trees through SetItemGeo, spawned critters' AnimInfo
+   and GMETER, do_ai's real jump table (0x11 → move_logic23, 0x1a →
+   move_logic16), init_enemy's AnimateATree, the generator stage change's
+   DeleteItem, critter files in EnemyType slot order, the replay's frame
+   matrices. Next: golem/general/Death statues, a boss fight to its death.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

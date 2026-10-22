@@ -275,6 +275,10 @@ pub struct ItemWorld {
     /// critter trees), 13, 12 other than subtype 2, nor an instance with flag
     /// byte +3 bit 2 (fixture: the Tower's BRIDGEPAD triggers have no atree).
     pub geo: Vec<bool>,
+    /// A statue's tree (SetItem's AtreeMatch for placed golems, gargoyles
+    /// and Death statues), in place of the definition's: GAR_STATUE,
+    /// GOL_STATUE, DEATHSTATUE1/2.
+    pub statue_tree: Vec<Option<&'static str>>,
 }
 
 /// WPitchMat3/WYawMat3/WRollMat3 0x1d5228/0x1d5178/0x1d52d8 on rows 0..2.
@@ -357,6 +361,7 @@ impl ItemWorld {
             sound_node: Vec::new(),
             sound_anchor: Vec::new(),
             geo: Vec::new(),
+            statue_tree: Vec::new(),
         })
     }
 
@@ -565,6 +570,10 @@ impl ItemWorld {
         if self.geo.len() <= slot {
             self.geo.resize(slot + 1, false);
         }
+        if self.statue_tree.len() <= slot {
+            self.statue_tree.resize(slot + 1, None);
+        }
+        self.statue_tree[slot] = None;
         self.geo[slot] = !(matches!(kind, 4 | 13) || kind == 12 && subtype != 2) && iu8(3) & 2 == 0;
         r.set_f32(0xc8, d.f32_(0x1c));
         r.set_f32(0xcc, add(d.f32_(0x20), 1.0)?);
@@ -695,44 +704,63 @@ impl ItemWorld {
                 }
                 let t = self.get_enemy_type(i32::from(r.i16_(0xf0)), r.i8_(0xf2)) as i16;
                 r.set_i16(0xf0, t);
-                // Statues: model selection is presentation; the record effects are
-                // +0xd8 bit 0 cleared, +0xf2 level and +0xf8 bit 0.
+                // Statues: +0xd8 bit 0 cleared, +0xf2 level and +0xf8 bit 0,
+                // and the statue tree SetItemGeo takes (AtreeMatch of
+                // GAR_STATUE / GOL_STATUE / DEATHSTATUE1|2 in the critter or
+                // enemy package; trace-A1-statue-v2: the gargoyle statue's
+                // awakening clip sets +0xda before it spawns).
                 let s = &self.session;
                 let mut statue_level = None;
+                let mut tree = None;
                 match t {
                     0x20 => {
                         if s.critter_7_loaded {
                             r.set_u16(0xd8, r.u16_(0xd8) & 0xfffe);
+                            tree = Some("GAR_STATUE");
                         }
                         statue_level = Some(1);
                     }
                     0x1d if s.golem_statue_anim => {
                         r.set_u16(0xd8, r.u16_(0xd8) & 0xfffe);
+                        tree = Some("GOL_STATUE");
                         statue_level = Some(1);
                     }
                     0x1d => {
                         if s.critter_3_loaded {
                             r.set_u16(0xd8, r.u16_(0xd8) & 0xfffe);
+                            tree = Some("GOL_STATUE");
                         }
                         statue_level = Some(1);
                     }
                     0x1e if s.death_statue_anim => {
                         r.set_u16(0xd8, r.u16_(0xd8) & 0xfffe);
                         match r.i8_(0xf2) {
-                            0 => statue_level = Some(1),
+                            0 => {
+                                statue_level = Some(1);
+                                tree = Some("DEATHSTATUE1");
+                            }
                             1 => {
                                 r.set_u32(0xf8, r.u32_(0xf8) | 1);
                                 statue_level = Some(1);
+                                tree = Some("DEATHSTATUE1");
                             }
-                            2 => statue_level = Some(2),
+                            2 => {
+                                statue_level = Some(2);
+                                tree = Some("DEATHSTATUE2");
+                            }
                             3 => {
                                 r.set_u32(0xf8, r.u32_(0xf8) | 1);
                                 statue_level = Some(2);
+                                tree = Some("DEATHSTATUE2");
                             }
                             _ => {}
                         }
                     }
                     _ => {}
+                }
+                if let Some(name) = tree {
+                    self.statue_tree[slot] = Some(name);
+                    self.geo[slot] = iu8(3) & 2 == 0;
                 }
                 if let Some(l) = statue_level {
                     r.set_u8(0xf2, l);

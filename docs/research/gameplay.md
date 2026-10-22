@@ -24,9 +24,9 @@ closure; the interim player driver), ProcessEffects.
   levels 4–7 use EnemyDesc letters A/B/S/F from ELF 0x22d858), do_ai with
   move_logic00/02/04/05/06/07/18 (and the logics below), blocked00/07, attacks, collisions,
   damage_enemy, damage_player. Other realms: move_logic14 0x13f320 (strafe,
-  re-aim at π/4 + n·π/12 after four turns or a >π/2 miss), move_logic17
-  0x13eba8 / move_logic23 0x13da78 (stationary, ranged action 0x18 within
-  +0x314 and ±10 height; 23 waits on its +0x334 cooldown), move_logic30
+  re-aim at π/4 + n·π/12 after four turns or a >π/2 miss), move_logic23
+  0x13da78 for logics 0x11 and 0x17 (stationary, ranged action 0x18 within
+  +0x314 and ±10 height after its +0x334 cooldown), move_logic30
   0x13cd40 (move_logic00 with a randomised attack period from level_data+0xc0
   × 90, action 0xc or 0x10 at level ≥ 2).
 - Generator placement (generator field block at item +0xf0): place_logic12
@@ -162,7 +162,13 @@ Reachability (private/reports/enemy-logic-scan-v1.json, all 51 levels):
 generator AI values 0/2/4/7/0xe/0x1c/0x1d/0x1e, placed-enemy AI values
 0/3/7/0xf/0x10/0x11/0x12/0x13/0x17/0x1a/0x1b, plus enemy_fix_ai,
 enemy_logic_num and the cathedral/hell tables (7/0x11/0x12/0x13/0x17/0x1b/
-0x1e/0x1f/3). All are ported. Logics 8, 9, 0xb, 0xc, 0xd, 0x14, 0x15, 0x16
+0x1e/0x1f/3). All are ported. do_ai's jump table (0x2a7a30, read entry by
+entry 2026-10-22) is not one function per logic: 0x10 and 0x1a run
+move_logic16, 0x11 and 0x17 move_logic23, 0x19 kill_enemy; move_logic17
+0x13eba8 and move_logic26 0x13d598 have no caller or pointer anywhere in the
+ELF (the port had run 0x11 as move_logic17 and 0x1a as move_logic26;
+trace-A1-statue-v2: a placed logic-0x11 grunt's +0x334 counts down by
+vb_elapsed). Logics 8, 9, 0xb, 0xc, 0xd, 0x14, 0x15, 0x16
 and blocked08/10/20 are selected by no disc data and stay unported (do_ai
 reports Unsupported); the golem enemy path cannot run on this disc because
 MONSTERS/GOLEM is absent (generate_enemy −5), so golems are critters.
@@ -204,7 +210,7 @@ hud.md.)
   PlayerGiveLegendItem, PlayerGiveCrystal, PlayerGiveGargItem, StartGemFX;
   ScrollMessageBox is a UI event), random chest content (RandItemIdx),
   shot switch chains (DamageItem kind 5 subtype 0x1f), move_logic03 (flee,
-  get_face_ang2) and move_logic26, CurWorld 10 generator sounds 0x2c0024 /
+  get_face_ang2), CurWorld 10 generator sounds 0x2c0024 /
   0x2c0025, Death's touch (do_enemy_attack type 0x1e, AddExp kind -2 =
   amount × LevelDeltaExp × 0.01, StartDeathFX) and dissolve, the time-stop
   and trigger-camera enemy paths of do_enemies, MaxStopTime.
@@ -686,3 +692,37 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
     heads, which CritterCopyAnim leaves at move −1).
   - reference_enemies.py reads node tables of up to 256 entries (the
     chimera's tree has 176; its heads share the root's table).
+- Statues (2026-10-22, actual disc). w1l1-statue-v1.p2s: slot 4 (A1)
+  with player 0 written beside the gargoyle statue (item 134 at (−75, 0.1,
+  32.7); written to (−75, 0, 42.7), a WARPED capture, 250 vblanks);
+  trace-A1-statue-v2: Down+Left past the statue, two throws, idle. The
+  contact sets +0xf8 bit 0 (step 57), the statue marks +0xd8 bit 0 and asks
+  for clip 1 (+0xde, step 59), the awakening clip's switch sets +0xda = 170
+  (step 61), and once it runs out (step 231) CritterNewInst(7) spawns the
+  gargoyle and the item is deleted. Whole-update replay
+  (replay-frame-A1statue-r32.json): 250/250 in every part, the spawned
+  gargoyle included. Fixed on the way:
+  - SetItem gives statues their tree through SetItemGeo (GAR_STATUE in the
+    model of CritterTypeLoaded(7, 0); GOL_STATUE in enemy_anim[0x1d] or the
+    golem critter's model; DEATHSTATUE1/2 in enemy_anim[0x1e]) — the port
+    had none, so the gargoyle spawned at once (items.md).
+  - CritterInitGeo's AtreeInit (InitAnimInfo + InitAnim(0): +0x90 the clip
+    count, +0xa0 0, +0xac 1.0, +0xbc the node count) and
+    CritterAddHealthMeter's GMETER tree (TYPE +0x5c bit 0x800; AnimInfo at
+    +0x48c; its links and RED_FILLE node are guest pointers) for spawned
+    critters; +0x6c is MulVec4Mat3's VU0 register residue (dest xyz).
+  - do_ai's dispatch (above) and init_enemy's final AnimateATree(+0x80, 0,
+    2) (a placed grunt without a START sequence ends its spawn update with
+    reset byte 0).
+  - DamageItem's generator stage change: ItemGenDesc ("GEN_<prefix><level>")
+    then AtreeMatchAnyHeader → ReplaceItemAtreeHeader, else
+    ItemFindMBObjectL1 → MBSetObject, else DeleteItem(item, 0): a destroyed
+    LOW generator has no GEN_LOW0, so it is deleted before +0xd8 &= 0xfffe
+    (0xfffe in the record; the port kept the generator).
+  - Critter files load in EnemyType slot order (LoadGauntWorldStart), which
+    orders their custom effect headers (A1: golem, general, gargoyle; the
+    tools sorted them).
+  - The replay rebuilds pbCalcMatrices for the seeded view (MBWorldToScreen
+    reads +0x2d0, which its lazy refresh leaves; camera.md) and seeds enemy
+    clocks for the lettered trees (EnemyDesc levels 4..7: A1's placed
+    logic-23 grunt).

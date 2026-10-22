@@ -44,6 +44,9 @@ pub struct EnemyTables {
     pub cathedral_ai: [i32; 4],
     pub hell_enemy: [i32; 4],
     pub hell_ai: [i32; 4],
+    /// enemy_table 0x22c7a0 (44 × 0x24): type +0 and its prefix +0x14
+    /// (EnemyTypePrefix 0x136fa8 searches it by type).
+    pub prefix: Vec<(i32, String)>,
 }
 
 fn floats(b: &[u8]) -> Vec<f32> {
@@ -77,6 +80,12 @@ impl EnemyTables {
             cathedral_ai: four("cathedral_rand_ai")?,
             hell_enemy: four("hell_rand_enemy")?,
             hell_ai: four("hell_rand_ai")?,
+            prefix: elf
+                .object("enemy_table")?
+                .chunks_exact(0x24)
+                .take(0x2c)
+                .map(|r| (i32::from_le_bytes(r[0..4].try_into().unwrap()), r[0x14..0x24].iter().take_while(|c| **c != 0).map(|c| char::from(*c)).collect()))
+                .collect(),
         };
         if t.height.len() != 34 || t.logic_num.len() != 34 {
             return Err("enemy table size".into());
@@ -500,6 +509,14 @@ impl Game {
         self.enemy_update_offsets(i)?;
         let y = self.enemies[i].f32_(0x44);
         self.enemies[i].set_f32(0x2a8, y);
+        // init_enemy's last step 0x138e2c: AnimateATree(+0x80, 0, 2) when the
+        // atree exists (the shadow node copy before it is presentation). An
+        // animated tree's DoAnimation leaves the reset byte 2, which the next
+        // AnimateATree clears (trace-A1-statue-v2 step 87: a placed grunt
+        // without a START sequence).
+        if self.enemy_anims.get(i).is_some_and(Option::is_some) {
+            self.animate_enemy(i, 0, 2)?;
+        }
         Ok(())
     }
 

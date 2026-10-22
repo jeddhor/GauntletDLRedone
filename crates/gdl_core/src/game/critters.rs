@@ -836,7 +836,15 @@ impl Game {
         }
         self.critter_set_yaw_matrix(i)?;
         let t = self.crit(i).ty;
-        // AtreeInit: the tree root is node 0, parented to the critter node.
+        // AtreeInit: the tree root is node 0, parented to the critter node;
+        // InitAnimInfo + InitAnim(0) into the +0x84 AnimInfo
+        // (trace-A1-statue-v2 step 231: +0x90 the clip count, +0xa0 0, +0xac
+        // 1.0, +0xbc the node count).
+        let clips = self.crit(i).clips.clone();
+        let nodes = self.crit(i).locals.len() as i32;
+        let clock = super::setup::atree_init_clock(&clips, self.globals.atime, self.globals.anim_time_scale)?;
+        self.crit_mut(i).clock = clock;
+        super::setup::write_anim_info(&mut self.crit_mut(i).rec, 0x84, &clock, clips.len(), nodes);
         self.critter_geo_nodes(i);
         let floor_off = CritterFile::f32_(self.ctype(t), 0xb0);
         let (col, _) = self.collision.floor_collide(5.0, 4.0, -1000.0, pos, false, 2)?;

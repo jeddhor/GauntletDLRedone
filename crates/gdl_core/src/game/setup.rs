@@ -110,6 +110,9 @@ pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animat
         let s = tree.sequences.first();
         data.other_trees.insert((t, tree.label.clone()), (s.map_or(0, |s| s.frames), s.map_or(0, |s| s.timing_factor), s.map_or(0, |s| s.repeat)));
         data.tree_index.insert((t, tree.label.clone()), k);
+        if tree.label.contains("STATUE") {
+            data.statue_trees.insert((t, tree.label.clone()), (clips_of(anim, k), tree.nodes.iter().any(|n| n.node_type == 1), tree.nodes.len() as i32));
+        }
     }
     for (k, tree) in anim.trees.iter().enumerate() {
         let Some(level) = (1..=7).find(|&l| enemy_desc(prefix, l) == tree.label) else { continue };
@@ -122,6 +125,49 @@ pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animat
         data.tree_nodes.insert((t, level), tree.nodes.len() as i32);
         if tree.nodes.iter().any(|n| n.node_type == 1) {
             data.tree_animated.insert((t, level));
+        }
+    }
+}
+
+/// SetItem's statue trees (AtreeMatch(package, name, 1)): GAR_STATUE in the
+/// model of CritterTypeLoaded(7, 0); GOL_STATUE in enemy_anim[0x1d], else in
+/// CritterTypeLoaded(3, 0)'s model; DEATHSTATUE1/2 in enemy_anim[0x1e]. They
+/// join the item tree library under their labels (the statue's own package
+/// takes precedence, as its AtreeMatch names it).
+fn add_statue_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32)>, enemy: &EnemyAnimData, critters: &[super::critters::CritterInput]) {
+    fn model_of(critters: &[super::critters::CritterInput], kind: i16) -> Option<std::sync::Arc<(Animations, Vec<u8>)>> {
+        critters
+            .iter()
+            .find(|(_, wad, _)| {
+                wad.types.iter().any(|t| {
+                    let d = i16::from_le_bytes([t[0x50], t[0x51]]);
+                    i16::from_le_bytes([t[0x52], t[0x53]]) == 0
+                        && usize::try_from(d).ok().and_then(|d| wad.descs.get(d)).is_some_and(|d| i16::from_le_bytes([d[0x20], d[0x21]]) == kind)
+                })
+            })
+            .and_then(|(_, _, m)| m.clone())
+    }
+    fn put(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32)>, name: &str, entry: (Vec<ClipTiming>, bool, i32)) {
+        lib.insert(name.to_string(), entry.0);
+        nodes.insert(name.to_string(), (entry.1, entry.2));
+    }
+    let from_model = |kind: i16, name: &str| -> Option<(Vec<ClipTiming>, bool, i32)> {
+        let m = model_of(critters, kind)?;
+        let k = m.0.trees.iter().position(|t| t.label == name)?;
+        let t = &m.0.trees[k];
+        Some((clips_of(&m.0, k), t.nodes.iter().any(|n| n.node_type == 1), t.nodes.len() as i32))
+    };
+    let from_enemy = |t: i32, name: &str| enemy.statue_trees.get(&(t, name.to_string())).cloned();
+    if let Some(e) = from_model(7, "GAR_STATUE") {
+        put(lib, nodes, "GAR_STATUE", e);
+    }
+    let golem = if enemy.trees.keys().any(|k| k.0 == 0x1d) { from_enemy(0x1d, "GOL_STATUE") } else { from_model(3, "GOL_STATUE") };
+    if let Some(e) = golem {
+        put(lib, nodes, "GOL_STATUE", e);
+    }
+    for name in ["DEATHSTATUE1", "DEATHSTATUE2"] {
+        if let Some(e) = from_enemy(0x1e, name) {
+            put(lib, nodes, name, e);
         }
     }
 }
@@ -152,6 +198,58 @@ fn derive_enemy_load(types: &crate::level::EnemyTypes, anims: &EnemyAnimData, ca
         *note = Some(format!("derived enemy_load differs from the captured G1 table for types {differ:?} (no package supplied, or another level)"));
     }
     out
+}
+
+/// AtreeInitSub's InitAnimInfo 0x110750 and InitAnim(sequence 0) with the
+/// library present: the AnimInfo zeroed with reset byte 1, then the first
+/// sequence started now (SetItemGeo's items, CritterInitGeo's critters,
+/// CritterAddHealthMeter's GMETER tree).
+pub fn atree_init_clock(clips: &[ClipTiming], now: f32, anim_time_scale: f32) -> R<ClockState> {
+    let mut c = fresh_clock();
+    c.sequence = 0;
+    c.previous_sequence = 0;
+    c.reset_byte = 1;
+    c.mode_bits = 0;
+    if let Some(first) = clips.first().copied() {
+        c = crate::animation_clock::initialize(
+            c,
+            crate::animation_clock::ClockInit {
+                sequence: 0,
+                frames: first.frames,
+                timing_factor: first.timing_factor,
+                repeat: first.repeat,
+                start_frame: 0,
+                enabled_word: 1,
+                playback_scale: 1.0,
+                blend_duration: 0.0,
+                now,
+                anim_time_scale,
+            },
+        )
+        .map_err(|e| super::Unsupported(format!("InitAnim: {e:?}")))?;
+    }
+    Ok(c)
+}
+
+/// An AnimInfo written into a record at `base` (the critter/enemy +0x84
+/// layout: +0xc clip count, +0x28 1.0, +0x38 the tree's node count).
+pub fn write_anim_info(r: &mut Record, base: usize, c: &ClockState, count: usize, nodes: i32) {
+    r.set_i16(base + 0xc, count as i16);
+    r.set_u16(base + 0xe, c.sequence);
+    r.set_u8(base + 0x12, c.reset_byte);
+    r.set_u8(base + 0x13, c.option_bits);
+    r.set_f32(base + 0x14, c.blend_fraction);
+    r.set_f32(base + 0x18, c.frame);
+    r.set_u16(base + 0x1c, c.previous_sequence);
+    r.set_u16(base + 0x1e, c.enabled_word);
+    r.set_f32(base + 0x20, c.start_time);
+    r.set_f32(base + 0x24, c.blend_end_time);
+    r.set_f32(base + 0x28, 1.0);
+    r.set_f32(base + 0x2c, c.period_scale);
+    r.set_f32(base + 0x30, c.last_time);
+    r.set_u16(base + 0x34, c.loop_word);
+    r.set_u16(base + 0x36, c.mode_bits);
+    r.set_i32(base + 0x38, nodes);
 }
 
 /// A fresh animation clock that the first AnimateTree selection initialises.
@@ -397,6 +495,8 @@ impl Game {
         // GauntWorldInit 0x162e90: WldBtm = world min y − 4.5.
         globals.world_bottom = crate::numeric::sub_guarded_rz(inp.world.min[1], 4.5)?;
         globals.boss_type = level.boss_type;
+        let (mut item_lib, mut item_nodes) = (inp.item_anims.clone(), inp.item_anim_nodes.clone());
+        add_statue_trees(&mut item_lib, &mut item_nodes, &inp.enemy_anims, &inp.critters);
         let mut game = Game {
             globals,
             level: level_raw.clone(),
@@ -464,8 +564,8 @@ impl Game {
             quest_item_timer: 0.0,
             combo_effects: inp.elf.object("ComboEffects").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
             item_anims: vec![None; item_count],
-            item_anim_lib: inp.item_anims.clone(),
-            item_anim_nodes: inp.item_anim_nodes.clone(),
+            item_anim_lib: item_lib,
+            item_anim_nodes: item_nodes,
             camera: None,
             camera_rest: None,
             newcam_mode: 0,

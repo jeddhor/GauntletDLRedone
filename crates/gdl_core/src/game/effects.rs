@@ -1547,8 +1547,21 @@ impl Game {
                         if r.u8_(0xf7).wrapping_sub(0x1c) < 2 || r.u8_(0xf7) == 0x1e {
                             r.set_u8(0xf7, 0);
                         }
-                        // ItemGenDesc + model/tree swap: presentation (GEN_<prefix><level>).
-                        self.events.push(Event::ItemModel { slot, level });
+                        // ItemGenDesc 0x151308 then AtreeMatchAnyHeader /
+                        // ItemFindMBObjectL1 (0x15ac7c..): the new level's
+                        // tree replaces the item's, else its model
+                        // (presentation); with neither DeleteItem(item, 0)
+                        // (trace-A1-statue-v2 step 239: no GEN_LOW0 model, so
+                        // the masked +0xd8 below reads 0xfffe).
+                        let name = self.item_gen_desc(slot);
+                        if self.item_anim_lib.contains_key(&name) {
+                            self.replace_item_atree(slot, &name);
+                            self.events.push(Event::ItemModel { slot, level });
+                        } else if self.mb_object_exists(&name)? || self.mb_object_exists(&format!("{name}L1"))? || self.mb_object_exists(&format!("{name}L1ROOT"))? {
+                            self.events.push(Event::ItemModel { slot, level });
+                        } else {
+                            self.delete_item(slot, false);
+                        }
                         if level == 0 {
                             self.items.records[slot].and_u16(0xd8, 0xfffe);
                             self.items.records[slot].set_i8(0xe3, -1);
@@ -2375,6 +2388,22 @@ impl Game {
             self.start_fx_no_loop(0x1e, pos)?;
         }
         Ok(())
+    }
+
+    /// ItemGenDesc 0x151308: "GEN_SPECIAL<+0xf6>" for +0xf0 < −1, else
+    /// "GEN_<EnemyTypePrefix(+0xf0)><+0xf6>". Its "BOSSGEN" test reads the
+    /// caller's uninitialised name buffer; taken as not matching
+    /// (HYPOTHESIS).
+    fn item_gen_desc(&self, slot: usize) -> String {
+        let r = &self.items.records[slot];
+        let level = r.u8_(0xf6);
+        let t = r.i16_(0xf0);
+        if t < -1 {
+            return format!("GEN_SPECIAL{level}");
+        }
+        // EnemyTypePrefix returns 0 for an unknown type: sprintf's "(null)".
+        let prefix = self.enemy_tables.prefix.iter().find(|(k, _)| *k == i32::from(t)).map_or("(null)", |(_, p)| p.as_str());
+        format!("GEN_{prefix}{level}")
     }
 
     /// MBOX_FindObject_Sub over the loaded object tables (objcmp = strncmp 15).

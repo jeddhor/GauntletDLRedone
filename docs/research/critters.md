@@ -7,7 +7,9 @@ critter/boss family 0x191850–0x1a1fa8 (exports in private/reports/ghidra-critt
 golem-type kind 8, 210 updates) and B6's dragon (a boss, CritterBossAI, 250
 updates) match the reference ("Reference comparison" below), as do all
 eleven bosses through their activation, the chimera (A5) with its three
-child heads included; golem and gargoyle statues are not compared yet. Native port: gdl_core game/critters.rs (types,
+child heads included, and A1's gargoyle statue from its awakening through
+the spawn (gameplay.md "Statues"); golem and general statues and Death
+statues are not compared yet. Native port: gdl_core game/critters.rs (types,
 loading, instances, pose), critter_ai.rs (per-frame AI), critter_hits.rs
 (attacks, damage, hit tests); tree_pose.rs evaluates the skeleton.
 

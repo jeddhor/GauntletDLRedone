@@ -2371,6 +2371,21 @@ impl super::Game {
         self.sync_view();
     }
 
+    /// Replay hook: the previous frame's pbCalcMatrices for the seeded view
+    /// (MBWorldToScreen reads +0x2d0, which its lazy refresh does not
+    /// rebuild; trace-A1-statue-v2 step 1 projected through the native's own
+    /// load-time camera).
+    pub fn replay_frame_matrices(&mut self) -> R<()> {
+        if let Some(c) = self.std_camera.as_mut() {
+            let hang = c.std.f32_(o::HANG);
+            c.set_window_hang(hang)?;
+            c.pb.cam_dirty = true;
+            let w = c.window.clone();
+            c.pb.update(&w)?;
+        }
+        Ok(())
+    }
+
     /// Replay hook: the culling view and the window rows (pb cam_rows, read
     /// as CreateDirMatrix's up by ProcessEffects) from the MB window's camera
     /// matrix (MboxWinPtr +0x70..+0x9c rows, +0xa0 eye), whichever camera

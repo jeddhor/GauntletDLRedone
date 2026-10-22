@@ -177,35 +177,16 @@ impl Game {
             self.item_anims[slot] = None;
             return Ok(());
         }
-        let name = String::from_utf8_lossy(self.items.definitions[r.definition()].name()).into_owned();
+        let name = match self.items.statue_tree.get(slot).copied().flatten() {
+            Some(t) => t.to_string(),
+            None => String::from_utf8_lossy(self.items.definitions[r.definition()].name()).into_owned(),
+        };
         let (animated, nodes) = self.item_anim_nodes.get(&name).copied().unwrap_or((false, 0));
         self.item_anims[slot] = self.item_anim_lib.get(&name).map(|clips| ItemAnim { clock: super::setup::fresh_clock(), clips: clips.clone(), current: 0, animated });
         if let Some(a) = self.item_anims[slot].as_mut() {
-            // AtreeInitSub's InitAnimInfo 0x110750: the AnimInfo zeroed with
-            // reset byte 1 and +0x28/+0x2c 1.0 (record +0xac, +0xb0); +0x38
-            // (record +0xbc) the tree's node count.
-            a.clock.sequence = 0;
-            a.clock.previous_sequence = 0;
-            a.clock.reset_byte = 1;
-            a.clock.mode_bits = 0;
-            // ... and its InitAnim(sequence 0) with the library present.
-            if let Some(c) = a.clips.first().copied() {
-                a.clock = crate::animation_clock::initialize(
-                    a.clock,
-                    crate::animation_clock::ClockInit {
-                        sequence: 0,
-                        frames: c.frames,
-                        timing_factor: c.timing_factor,
-                        repeat: c.repeat,
-                        start_frame: 0,
-                        enabled_word: 1,
-                        playback_scale: 1.0,
-                        blend_duration: 0.0,
-                        now: self.globals.atime,
-                        anim_time_scale: self.globals.anim_time_scale,
-                    },
-                )?;
-            }
+            // AtreeInit: InitAnimInfo (+0x28/+0x2c 1.0 = record +0xac/+0xb0;
+            // +0x38 = record +0xbc the node count) and InitAnim(0).
+            a.clock = super::setup::atree_init_clock(&a.clips, self.globals.atime, self.globals.anim_time_scale)?;
             let r = &mut self.items.records[slot];
             r.set_f32(0xac, 1.0);
             r.set_i32(0xbc, nodes);
