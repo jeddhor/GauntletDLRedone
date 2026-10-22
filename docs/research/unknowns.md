@@ -43,6 +43,8 @@ replaced by a plausible gameplay rule or generated asset.
 | Audio track timing | The EE voice queue is ported (audio_queue.rs); a queued sound's track (AudioTrackSet, the IOP's reply) is taken as allocated and set at the next frame's AudioPoll | Trace audioTrackData after an AudioQueUpdate start in a reference capture |
 | Boss instance after death | BossCamBossCalc reads the freed boss instance; its last bytes stand in | Read BossCritInst's bytes after a boss kill in a capture |
 | Effect tree colour | MBTreeSetColor (node +0x64, flag 0x100) is drawn as a modulation like MBBlitSetColor (block flash) | Trace the 0x100 path in the draw (setPrimColor / VU1) |
+| Cross-package texture search | MBCopyTexture/MBOX_FindTexture by name: own package first, then the level's load list (HYPOTHESIS); used for SFX weapon textures | Trace MBOX_FindTexture's package walk |
+| Held-object hiding (+0x708) | PlayerProcessPowerups hides the hand weapon and the WEAP_HOLD effect while +0x708 holds an object; the native client always shows them | Export the +0x708 writers |
 | Multi-player start positions | get_player_pos / try_location ported from instructions; actual-disc headless runs only | Two-pad reference run: compare players 2–4's start records and a respawn |
 | Select scene | The SELECT 3D scene behind the select columns is not drawn | Port LoadTowerAndSelect's select model and its camera |
 | Good-wizard sequence | Ported (goodwiz.rs); not compared with a reference boss kill | Capture a reference boss kill and compare GoodWizard states and auto_exit_timer |

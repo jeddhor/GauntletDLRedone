@@ -232,6 +232,45 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "anim-trees" {
+        // anim-trees ANIM.PS2 NEW_REPORT.json: tree labels with the first
+        // sequence's frames and timing factor.
+        let b = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let a = gdl_formats::animation::Animations::parse(&b)?;
+        let trees: Vec<_> = a
+            .trees
+            .iter()
+            .enumerate()
+            .map(|(k, t)| {
+                let s = t.sequences.first();
+                serde_json::json!({"index":k,"label":t.label,"nodes":t.nodes.len(),"node_list":t.nodes.iter().map(|n| {
+                    // A type-4 node's particle record: tree +0 header offset +
+                    // the node's sequence info offset (as gdl_play reads it).
+                    let ptex = (n.node_type == 4).then(|| -> String {
+                        let base = t.file_offset as usize;
+                        let Some(h0) = b.get(base..base + 4).map(|v| u32::from_le_bytes(v.try_into().unwrap()) as usize) else { return "no header".into() };
+                        let at = base + h0 + n.sequence_info_offset as usize;
+                        let Some(rec) = b.get(at..at + gdl_core::psys::RECORD) else { return format!("record {at:#x} past {:#x}", b.len()) };
+                        match gdl_core::psys::Psys::new_world(0, rec, &[], None, true) {
+                            Ok(p) => format!("texture {:?}", p.texture),
+                            Err(e) => format!("new_world: {e}"),
+                        }
+                    });
+                    serde_json::json!({"label":n.label,"type":n.node_type,"flags":n.flags,"model_flags":n.model_flags,"parent":n.parent,"pos":n.initial_position,"psys_texture":ptex,"raw_len":n.raw.len()})
+                }).collect::<Vec<_>>(),"prefix":t.prefix,"sequences":t.sequences.len(),"frames":s.map(|s| s.frames),"timing":s.map(|s| s.timing_factor)})
+            })
+            .collect();
+        let mods: Vec<_> = gdl_formats::animation::texmods(&b)?
+            .iter()
+            .map(|m| serde_json::json!({"owner":m.owner,"target_name":m.target_name,"frame_name":m.frame_name,"target":m.target,"frame_base":m.frame_base,"count":m.count,"divisor":m.divisor}))
+            .collect();
+        let report = serde_json::json!({"source_sha256":hash(&b),"trees":trees,"texmods":mods});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "audio-inspect" {
         // audio-inspect FILE(.VBK|.ADS|AUDATPS2.ROM) NEW_REPORT.json: tables + decoded lengths.
         let b = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
@@ -871,6 +910,20 @@ fn run() -> Result<(), Box<dyn Error>> {
             game.classes[0].sfxx = data.chunk("SFXX").map(|c| c.bytes.clone()).unwrap_or_default();
             game.classes[0].damg = data.chunk("DAMG").map(|c| c.bytes.clone()).unwrap_or_default();
         }
+        if opts.contains_key("sfx") {
+            // PLAYERS/<CLS>/SFX<COL>/ANIM.PS2 of player 0: InitPlayerMissiles'
+            // WeapThrowFx (load_player).
+            let a = anim_of("sfx")?;
+            game.classes[0].sfx_trees = a.trees.iter().map(|t| (t.label.clone(), t.sequences.first().map_or(0, |s| s.frames), t.sequences.first().map_or(0, |s| s.timing_factor))).collect();
+            game.init_player_missiles(0);
+            eprintln!("WeapThrowFx[0] = {:?}", game.effects.weap_throw_fx[0]);
+        }
+        if let Some(v) = opts.get("weapon") {
+            // DEBUG: a kind-5 weapon powerup "TYPE:SECONDS" for player 0.
+            let (t, secs) = v.split_once(':').ok_or("weapon=TYPE:SECONDS")?;
+            let class = game.classes[0].clone();
+            game.add_powerup(0.0, secs.parse()?, 0, 5, t.parse()?, &class).map_err(|e| e.0)?;
+        }
         if let Some(v) = opts.get("plevel") {
             // DEBUG: player 0's level (+0x2ac0).
             game.players[0].set_i32(0x2ac0, v.parse()?);
@@ -937,6 +990,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 r.set_u32(4, k as u32);
                 game.players[k] = r;
                 game.classes[k] = game.classes[0].clone();
+                game.init_player_missiles(k);
                 game.player_clips[k] = game.player_clips[0].clone();
                 let (start, yaw) = game.player_start;
                 game.place_player(k, start, yaw).map_err(|e| e.0)?;
@@ -1114,16 +1168,17 @@ fn run() -> Result<(), Box<dyn Error>> {
                     g.update_controls(&pads)?;
                     g.do_players().map(|_| ())
                 });
-                if f % 15 == 0 || f + 1 == frames {
+                if f % 15 == 0 || f + 1 == frames || (opts.contains_key("weapon") && f % 3 == 0) {
                     let r = &game.players[0];
                     samples.push(serde_json::json!({"frame":f,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
                         "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),"floor_y":r.f32_(0x88c),"water_y":r.f32_(0x8a4),
-                        "turbo":r.f32_(0x800),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
+                        "turbo":r.f32_(0x800),"weapon_flags":r.u32_(0x130),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
                         "legend":r.i32_(0x80c),"quest":game.globals.quest_item_state,"boss_dead":game.globals.boss_is_dead,
                         "good_wizard":game.globals.good_wizard,"wiz":[game.good_wiz.alpha,game.good_wiz.speech_idx,game.good_wiz.speech_frame],"wiz_pos":game.good_wiz.matrix.map(|m| m[3]),
                         "auto_exit":[game.auto_exit_timer,game.globals.auto_exit_flag],"que":[game.audio_que.entries[0].len(),game.audio_que.entries[1].len()],
                         "exit":[game.players_done,game.exit_ready],"level_done":game.level_done,"shards":r.u16_(0x1a24),"boss_cam":game.boss_camera.as_ref().map(|c| [c.rec.v3(gdl_core::game::camera::o::EYE), c.rec.v3(gdl_core::game::camera::o::TARGET)]),
                         "boss_health":usize::try_from(game.boss_crit_inst - 1).ok().and_then(|b| game.critters.get(b)).and_then(|c| c.as_ref()).map(|c| c.rec.f32_(0x4f4)),
+                        "effects":(0..game.effects.num).filter(|&k| 0.0 < game.effects.slots[k].f32_(0x68)).map(|k| serde_json::json!({"slot":k,"kind":game.effects.slots[k].u32_(0x60),"link":game.effects.slots[k].i16_(0xe8),"visual":game.effects.nodes[k].map(|n| format!("{:?}", n.visual)),"follow":game.effects.nodes[k].and_then(|n| n.follow)})).collect::<Vec<_>>(),
                         "others":(1..4).filter(|&k| game.globals.active_players >> k & 1 != 0).map(|k| serde_json::json!({"player":k,"pos":game.players[k].v3(0x50),"state":game.players[k].i32_(0xfc),"health":game.players[k].f32_(0x1a10)})).collect::<Vec<_>>()}));
                 }
                 continue;

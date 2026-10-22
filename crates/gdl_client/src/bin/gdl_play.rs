@@ -1,13 +1,15 @@
 //! INTERIM PLAYTEST build with the front end (M17 interim) and native
-//! saves (M18): title → player select (saved characters, a new character
-//! of any of the eight base classes and colours, or the PS2 capture's
-//! character imported) → the Tower and every realm, with the original pause
-//! menus and saving through the Tower's Manage Character entry.
+//! saves (M18): title → the original player-select screen (saved
+//! characters on the native card, new characters, Hidden codes; the PS2
+//! capture's character import behind GDL_DEBUG_NATIVE_SELECT) → the Tower
+//! and every realm, with the original pause menus, shop, map and Manage
+//! Character.
 //!
 //! Characters: the original save region and class records (game::profile:
 //! player_get_from_save / player_store_in_save / level start), the class
 //! model players/<cls>/<colour><level/10>0, the class clips
-//! players/<cls>/anim and the thrown missile <PlayerMissileDesc>_THROW<n>.
+//! players/<cls>/anim, the SFX package players/<cls>/sfx<colour> and the
+//! thrown missile <PlayerMissileDesc>_THROW<n>.
 //! Saves: gdl_core::save (versioned envelopes, backups, recovery).
 //!
 //! Simulation: game_main order with the ported item/enemy/effect systems and
@@ -17,8 +19,8 @@
 //! Presentation: GS-equivalent materials and display-space blending
 //! (gs.wgsl, blit.wgsl), the StdCam camera, original HUD/menus/front end
 //! (game::hud, optmenu, select); enemy frame objects from OANIM entries.
-//! Still interim: missiles drawn with the SFXYEL WEAP_TW_Y rest pose. Audio: original
-//! banks and music through gdl_client::audio (approximate mixing).
+//! Audio: original banks and music through gdl_client::audio (approximate
+//! mixing).
 use bevy::{core_pipeline::tonemapping::Tonemapping, ecs::system::RunSystemOnce, ecs::world::World as EcsWorld, prelude::*, sprite::Anchor};
 use gdl_client::menu::{Action, Entry, Key, Menu};
 use gdl_core::{
@@ -127,8 +129,10 @@ fn tree_node_psys(anim_bytes: &[u8], tree: &gdl_formats::animation::Tree, node: 
     }
     let base = tree.file_offset as usize;
     let header0 = u32::from_le_bytes(anim_bytes.get(base..base + 4)?.try_into().ok()?) as usize;
-    let at = base.checked_add(header0)?.checked_add(node.sequence_info_offset as usize)?;
-    let record = anim_bytes.get(at..at + gdl_core::psys::RECORD)?.to_vec();
+    // AtreeNodeInit adds node +0x34 as a signed word (records may precede
+    // the header-0 base, e.g. the SFX packages' WEAP_HOLD/WEAP_TW psys).
+    let at = usize::try_from((base as i64).checked_add(header0 as i64)?.checked_add(i64::from(node.sequence_info_offset))?).ok()?;
+    let record = anim_bytes.get(at..at.checked_add(gdl_core::psys::RECORD)?)?.to_vec();
     let f = |o: usize| f32::from_le_bytes(node.raw[o..o + 4].try_into().unwrap());
     Some(TreePsys { record, dir: [f(0x14), f(0x18), f(0x1c)] })
 }
@@ -1543,7 +1547,22 @@ fn build_library(
     }
     let texmods = gdl_formats::animation::texmods(&pkg.anim_bytes).unwrap_or_default();
     let unresolved = set.unresolved.iter().map(|&i| i as u16).collect();
-    Library { by_label, textures: set.labels, record_images: set.record_images, label_index: set.label_index, texmods, by_index: parts, index_of, unresolved }
+    let (mut textures, mut label_index) = (set.labels, set.label_index);
+    // A texmod target without TEXDEF texels (record flags 0x20, e.g. the SFX
+    // packages' REDWEAPTEX, filled from WEAPONS' frames) is still found by
+    // its name (+0x04): MBOX_FindTexture for particle textures.
+    for tm in &texmods {
+        let Ok(t) = u16::try_from(tm.target) else { continue };
+        let name = tm.target_name.to_uppercase();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(img) = set.record_images.get(&t) {
+            textures.entry(name.clone()).or_insert_with(|| img.clone());
+        }
+        label_index.entry(name).or_insert(t);
+    }
+    Library { by_label, textures, record_images: set.record_images, label_index, texmods, by_index: parts, index_of, unresolved }
 }
 
 /// The OANIM frames of a package's trees (InitOAnimList / DoObjAnimation):
@@ -1631,8 +1650,6 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
     ));
 }
 
-/// The character body of every player slot (co-op players use player 1's
-/// model: their character select is not ported).
 /// player_rhand[class] (ELF table of label pointers): the hand node the
 /// held weapon hangs from (load_player).
 fn player_rhand(elf_bytes: &[u8], class: u32) -> Option<String> {
@@ -1652,6 +1669,58 @@ struct SpecialTexmod {
     base: String,
     frames: u32,
     rate: u32,
+}
+
+/// PlayerProcessPowerups' held-weapon effect (+0x6bc): with a weapon
+/// powerup (+0x130 & 0xf), ReplaceTree of WeapHoldFxTree[player][type] —
+/// the SFX package's "WEAP_HOLD_<DmgTypeDesc>" — under the right-hand node
+/// (+0x6a8) at PlayerData +0x68 + tier × 12, scaled by +0xe0 + tier × 12
+/// when its x is non-zero (tier = level / 10); deleted without one. The
+/// trees are static (no frames on the disc).
+#[derive(Component)]
+struct HoldFx {
+    slot: usize,
+    key: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn present_hold_fx(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    libs: Res<Libraries>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut variants: ResMut<PartVariants>,
+    mut pending: ResMut<PendingTreePsys>,
+    mut q: Query<(Entity, &mut HoldFx, &mut Visibility)>,
+) {
+    let g = &sim.game;
+    for (e, mut h, mut vis) in &mut q {
+        let r = &g.players[h.slot];
+        let t = (r.u32_(0x130) & 0xf) as usize;
+        let tier = (r.i32_(0x2ac0) / 10).clamp(0, 9) as usize;
+        let label = g.effects.tables.dmg_type_desc.get(t).filter(|d| !d.is_empty()).map(|d| format!("WEAP_HOLD_{d}"));
+        let key = label.as_ref().map(|l| format!("{l}:{tier}"));
+        if h.key != key {
+            commands.entity(e).despawn_related::<Children>();
+            if let (Some(label), Some(pc)) = (&label, sources.players[h.slot].as_ref()) {
+                let raw = &g.classes[h.slot].raw;
+                let f = |o: usize| raw.get(o..o + 4).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+                let at = Vec3::new(f(0x68 + 12 * tier), f(0x6c + 12 * tier), f(0x70 + 12 * tier));
+                let sc = Vec3::new(f(0xe0 + 12 * tier), f(0xe4 + 12 * tier), f(0xe8 + 12 * tier));
+                let tf = Transform { translation: at, scale: if sc.x != 0.0 { sc } else { Vec3::ONE }, ..default() };
+                let holder = commands.spawn((tf, Visibility::Inherited)).id();
+                commands.entity(e).add_child(holder);
+                let parts = tree_parts(&sources, &libs, &pc.sfx_name, label);
+                if std::env::var("GDL_DEBUG_FX").is_ok() {
+                    eprintln!("HoldFx {} {label} in {}: {} parts at {at:?} scale {sc:?}", h.slot, pc.sfx_name, parts.len());
+                }
+                spawn_parts(&mut commands, holder, parts, &mut materials, &mut variants, &mut pending);
+            }
+            h.key = key;
+        }
+        *vis = if h.key.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+    }
 }
 
 fn present_special_texmods(sim: Res<Sim>, libs: Res<Libraries>, q: Query<(Entity, &SpecialTexmod)>, mut req: ResMut<MatRequests>, mut step: Local<(u64, u32)>) {
@@ -1721,6 +1790,8 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
             }
         }
         if rhand.as_deref() == Some(node.label.as_str()) {
+            let hold = commands.spawn((HoldFx { slot, key: None }, RigNode(pose, slot), Transform::default(), Visibility::Hidden)).id();
+            commands.entity(body).add_child(hold);
             for (mesh, material) in &weapon {
                 let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot))).id();
                 // load_player: the Jester's (class & 7 == 7) held bomb gets
@@ -1776,7 +1847,7 @@ fn refresh_characters(
         let Some(pc) = sources.players[k].as_ref() else { continue };
         sim.game.player_clips[k] = setup::clips_of(&pc.clips, 0);
         if let Ok(c) = class_data_of(&front, key.class) {
-            sim.game.classes[k] = c;
+            sim.game.classes[k] = with_sfx_trees(c, &sources, k);
         }
         for (e, b) in &bodies {
             if b.0 == k {
@@ -2000,7 +2071,7 @@ struct TexModState {
 /// −2/−3 become texture shifts; fades (−4/−5) and −6 are not ported.
 fn spawn_texmods(commands: &mut Commands, anim: &[u8], set: &gdl_client::MaterialSet) {
     let list = gdl_formats::animation::texmods(anim).unwrap_or_default();
-    spawn_texmod_list(commands, &list, &set.label_index, &set.record_images);
+    spawn_texmod_list(commands, &list, &set.label_index, &set.record_images, &[]);
 }
 
 /// SetupItemTexMods / SetupWeaponPowerupTexMods: the texture modifiers of
@@ -2008,7 +2079,10 @@ fn spawn_texmods(commands: &mut Commands, anim: &[u8], set: &gdl_client::Materia
 fn spawn_package_texmods(commands: &mut Commands, libraries: &Libraries, names: &[String]) {
     for name in names {
         if let Some(lib) = libraries.0.get(name) {
-            spawn_texmod_list(commands, &lib.texmods, &lib.label_index, &lib.record_images);
+            // MBCopyTexture's by-name frames may be another package's (the
+            // SFX packages' weapon textures are WEAPONS' REDWEAPTEX01..).
+            let others: Vec<&Library> = names.iter().filter(|n| *n != name).filter_map(|n| libraries.0.get(n)).collect();
+            spawn_texmod_list(commands, &lib.texmods, &lib.label_index, &lib.record_images, &others);
         }
     }
 }
@@ -2018,6 +2092,7 @@ fn spawn_texmod_list(
     list: &[gdl_formats::animation::TexMod],
     label_index: &HashMap<String, u16>,
     record_images: &HashMap<u16, Handle<Image>>,
+    others: &[&Library],
 ) {
     let mut mods = Vec::new();
     for tm in list.iter().filter(|t| t.owner == -1) {
@@ -2027,10 +2102,20 @@ fn spawn_texmod_list(
             -2 | -3 => TexModKind::Scroll { target: target_image.id(), v: tm.frame_base == -3 },
             -6..=-4 => continue,
             base => {
-                let base = if base == -1 { label_index.get(&tm.frame_name.to_uppercase()).map(|&i| i32::from(i)) } else { Some(base) };
-                let Some(base) = base else { continue };
+                // −1: MBOX_FindTexture by name — this package first, then the
+                // others in load order (HYPOTHESIS: the search order).
+                let name = tm.frame_name.to_uppercase();
+                let found = if base == -1 {
+                    label_index
+                        .get(&name)
+                        .map(|&i| (i32::from(i), record_images))
+                        .or_else(|| others.iter().find_map(|l| l.label_index.get(&name).map(|&i| (i32::from(i), &l.record_images))))
+                } else {
+                    Some((base, record_images))
+                };
+                let Some((base, images)) = found else { continue };
                 let n = i32::from(tm.count).abs().max(1);
-                let frames: Vec<_> = (0..n).filter_map(|k| u16::try_from(base + k).ok().and_then(|i| record_images.get(&i)).cloned()).collect();
+                let frames: Vec<_> = (0..n).filter_map(|k| u16::try_from(base + k).ok().and_then(|i| images.get(&i)).cloned()).collect();
                 if frames.is_empty() {
                     continue;
                 }
@@ -2508,6 +2593,8 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
         game.init_player_anim(0).map_err(|e| e.0)?;
         game.controls.assign(0, 0);
         game.control_options[0] = slots[0].as_ref().map_or([0; 4], |s| s.controls);
+        // load_player → InitPlayerMissiles (WeapThrowFx).
+        game.init_player_missiles(0);
         // The other players in play: load_player_geo → get_player_pos(k, 1)
         // beside the first earlier one (new_offset_start), else at the start
         // (place_player first sets up the record and node at the start).
@@ -2520,6 +2607,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
             game.player_clips[k] = slot.clips.clone();
             game.init_player_anim(k).map_err(|e| e.0)?;
             game.control_options[k] = slot.controls;
+            game.init_player_missiles(k);
             game.globals.active_players |= 1 << k;
         }
         // init_next_level: init_game_cam + StdCamInit(0) after the players.
@@ -2588,7 +2676,7 @@ fn slot_starts(front: &Front, sources: &Sources, records: &[Record; 4], controls
             record: records[k].clone(),
             clips: setup::clips_of(&pc.clips, 0),
             action_map: front.tables.action_map(&pc.clips),
-            class: class_data_of(front, records[k].u32_(0xc).min(16))?,
+            class: with_sfx_trees(class_data_of(front, records[k].u32_(0xc).min(16))?, sources, k),
             controls: controls[k],
         });
     }
@@ -2789,6 +2877,31 @@ fn simulate(
         r.set_i32(0x148, 6);
         r.set_f32(0x14c, 0.0);
         r.set_u32(0x150, f);
+    }
+    // DEBUG: GDL_DEBUG_FX=1 logs the live effect slots every 10 updates.
+    if std::env::var("GDL_DEBUG_FX").is_ok() && sim.updates.is_multiple_of(10) {
+        let g = &sim.game;
+        let live: Vec<String> = (0..g.effects.num)
+            .filter(|&k| 0.0 < g.effects.slots[k].f32_(0x68))
+            .map(|k| {
+                let n = g.effects.nodes[k];
+                format!("{k}:{:?}/{:?}/{:?}", n.map(|n| n.visual), n.and_then(|n| n.follow), n.map(|n| n.position))
+            })
+            .collect();
+        if !live.is_empty() {
+            eprintln!("FX {} {}", sim.updates, live.join(" "));
+        }
+    }
+    // DEBUG: GDL_DEBUG_WEAPON=<type 1..4>:<seconds> gives player 1 a kind-5
+    // weapon powerup once (update 600), e.g. 1:60 for the red weapon.
+    if sim.updates == 600
+        && let Some((t, secs)) = std::env::var("GDL_DEBUG_WEAPON").ok().and_then(|v| v.split_once(':').and_then(|(t, s)| Some((t.parse::<u32>().ok()?, s.parse::<f32>().ok()?))))
+    {
+        let class = sim.game.classes[0].clone();
+        if let Err(e) = sim.game.add_powerup(0.0, secs, 0, 5, t, &class) {
+            sim.error = Some(format!("GDL_DEBUG_WEAPON: {}", e.0));
+        }
+        eprintln!("GDL_DEBUG_WEAPON: type {t} for {secs} s; WeapThrowFx {:?}", sim.game.effects.weap_throw_fx[0]);
     }
     // DEBUG: GDL_DEBUG_BOSS_KILL=<update> deals lethal CritterDamage to the
     // boss (Game::debug_damage_boss) from that update on, once a second
@@ -3081,9 +3194,18 @@ fn present_world(
                     *vis = Visibility::Hidden;
                     continue;
                 };
-                let m = node.matrix;
-                let mut tf = record_transform([Vec3::from_array(m[0]), Vec3::from_array(m[1]), Vec3::from_array(m[2])], Vec3::from_array(node.position));
-                tf.scale *= node.scale * Vec3::from_array(node.stretch);
+                let node_tf = |n: &gdl_core::game::effects::EffectNode| {
+                    let m = n.matrix;
+                    let mut tf = record_transform([Vec3::from_array(m[0]), Vec3::from_array(m[1]), Vec3::from_array(m[2])], Vec3::from_array(n.position));
+                    tf.scale *= n.scale * Vec3::from_array(n.stretch);
+                    tf
+                };
+                let mut tf = node_tf(&node);
+                // MBNodeSetParent onto another effect's node (the throw effect
+                // on its missile): that node's transform first.
+                if let Some(parent) = node.follow.and_then(|k| g.effects.nodes.get(k).copied().flatten()) {
+                    tf = node_tf(&parent).mul_transform(tf);
+                }
                 match node.visual {
                     Visual::Missile { player } => {
                         let Some(throw) = sources.players.get(player).and_then(|p| p.as_ref()).or(sources.players[0].as_ref()).map(|p| p.throw.clone()) else {
@@ -3098,24 +3220,34 @@ fn present_world(
                         let parts = fresh.then(|| missile_parts(&sources, &libs, &throw));
                         (Some(key), parts, tf)
                     }
-                    // EffectHeaders[h]: a tree of WEAPONS (0), POWERUPS (1) or
-                    // critter file n's model (2 + n); posed per frame below.
-                    Visual::Header(h) => {
-                        let Some(Some(head)) = g.effects.tables.headers.get(h) else {
-                            *vis = Visibility::Hidden;
-                            continue;
+                    // EffectHeaders[h] (or a tree outside them): a tree of
+                    // WEAPONS (0), POWERUPS (1), critter file n's model
+                    // (2 + n), player p's SFX package (0x40 + p) or an item
+                    // package (0x80 + n); posed per frame below.
+                    Visual::Header(_) | Visual::Tree(_) => {
+                        let (h, head) = match node.visual {
+                            Visual::Tree(t) => (usize::MAX, t),
+                            Visual::Header(h) => match g.effects.tables.headers.get(h) {
+                                Some(Some(head)) => (h, *head),
+                                _ => {
+                                    *vis = Visibility::Hidden;
+                                    continue;
+                                }
+                            },
+                            _ => unreachable!(),
                         };
                         let pkg = match head.source {
                             0 => Some("WEAPONS".to_string()),
                             1 => Some("POWERUPS".to_string()),
                             n if 0x80 <= n => items.get(usize::from(n - 0x80)).cloned(),
+                            n if 0x40 <= n => sources.players.get(usize::from(n - 0x40)).and_then(|p| p.as_ref()).map(|p| p.sfx_name.clone()),
                             n => session.levels[session.current].critters.get(n as usize - 2).and_then(|c| c.2.clone()),
                         };
                         let Some(pkg) = pkg else {
                             *vis = Visibility::Hidden;
                             continue;
                         };
-                        let key = format!("H{h}:{}", node.start.to_bits());
+                        let key = format!("H{h}:{}:{}:{}", head.source, head.tree, node.start.to_bits());
                         if slot.key.as_deref() != Some(key.as_str()) {
                             commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing, slot: slot.index });
                         }
@@ -4126,6 +4258,18 @@ fn class_data_of(front: &Front, class: u32) -> Result<ClassData, Box<dyn Error>>
     Ok(c)
 }
 
+/// ClassData with player `k`'s SFX package trees (InitCustomEffect's own
+/// package for WeapThrowFx).
+fn with_sfx_trees(mut c: ClassData, sources: &Sources, k: usize) -> ClassData {
+    c.sfx_trees = sources.players[k]
+        .as_ref()
+        .and_then(|pc| sources.packages.get(&pc.sfx_name))
+        .and_then(|pkg| pkg.anim.as_ref())
+        .map(|a| a.trees.iter().map(|t| (t.label.clone(), t.sequences.first().map_or(0, |s| s.frames), t.sequences.first().map_or(0, |s| s.timing_factor))).collect())
+        .unwrap_or_default();
+    c
+}
+
 /// A player's character loaded for `key`, with its model and SFX packages
 /// (for the caller's package cache and libraries).
 fn load_char(front: &Front, key: CharKey) -> Result<(PlayerChar, Package, Package), Box<dyn Error>> {
@@ -4961,7 +5105,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 front_system,
                 ps2_viewport,
-                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
@@ -5042,8 +5186,6 @@ fn advance_level(
     {
         start_shop(&mut sim, &front, k);
     }
-    // do_shop finished: init_player_select(2) (not ported: straight on) and
-    // init_next_level into the Tower.
     // do_shop finished: init_player_select(2) (game_main: unless the shop
     // was skipped), then init_next_level into the Tower.
     if let Some(k) = sim.shop_done.take() {

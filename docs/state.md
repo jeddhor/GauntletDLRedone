@@ -92,6 +92,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    another player, blocker damage), get_screen_pos on Cam[0] with the
    InitCamera screen limits, SetPlayerStartPos's StartTransmitter by start
    id (research/player.md, camera.md). Headless: game-run players=N, fall=F.
+   2026-10-22: PlayerStartMissile's ballista/boss elec/acid/0x400 paths,
+   InitPlayerMissiles' WeapThrowFx (weapon-powerup throw effects riding the
+   missile), the held-weapon WEAP_HOLD effect, texmod targets named for
+   particle textures with frames from other packages, signed psys record
+   offsets (gameplay.md, rendering.md). gdl_tools anim-trees inspector.
 
 ---
 

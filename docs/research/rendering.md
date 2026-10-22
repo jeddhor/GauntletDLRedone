@@ -237,9 +237,22 @@ they keep their vertex colours. The VU1 microcode was not read.
 - Type-4 tree nodes are particle systems (AtreeNodeInit → InitPsysData →
   MBNewWorldPsys with a3 = 1, no name): the record at the tree's header[0]
   base + node +0x34 (e.g. SFXRED's POOLFIRE weapon flames, SFXYEL's
-  YEL_DUST throw trails), direction at node +0x14. gdl_play spawns them with
-  item/effect/missile trees; the emitter follows an anchor in the slot's
-  hierarchy and stops emitting while hidden.
+  YEL_DUST throw trails), direction at node +0x14. Node +0x34 is a signed
+  word: the SFX packages' WEAP_HOLD_* / WEAP_TW_* psys records lie 0x518
+  bytes before the header-0 base (the client dropped them until 2026-10-22).
+  gdl_play spawns them with item/effect/missile trees; the emitter follows
+  an anchor in the slot's hierarchy and stops emitting while hidden.
+- Texmod targets without texels (bitmap record flags 0x20, e.g. SFX<col>'s
+  REDWEAPTEX/PIXIE_R/LIGHT) are named by their texmod's +0x04 target name,
+  and a −1 frame base is found by name in another loaded package
+  (MBCopyTexture: REDWEAPTEX01.. are WEAPONS records). HYPOTHESIS: the
+  search order (own package, then the level's load list).
+- PlayerProcessPowerups' held-weapon effect: with a weapon powerup
+  (+0x130 & 0xf) WeapHoldFxTree[player][type] ("WEAP_HOLD_<DmgTypeDesc>" of
+  the SFX package) hangs under the right hand (+0x6a8) at PlayerData +0x68 +
+  tier × 12, scaled by +0xe0 + tier × 12 when non-zero (tier = level / 10);
+  without a powerup it is deleted. gdl_play draws it (HoldFx). Not
+  modelled: the +0x708 held object hiding it.
 
 ## Not yet implemented
 

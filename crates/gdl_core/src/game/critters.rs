@@ -496,7 +496,17 @@ impl Game {
                 EffectHeader { source: 2 + f as u8, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor) }
             })
         });
-        let Some(h) = found.or_else(|| self.effects.tables.shared_header(name)) else { return -1 };
+        self.register_custom_effect(found, name)
+    }
+
+    /// InitCustomEffectSub's search after the caller's package (`own`):
+    /// weapon_anim, powerup_anim and the item packages; the next custom
+    /// EffectHeaders entry (0x61 + n, at most 0x79 of them).
+    pub(crate) fn register_custom_effect(&mut self, own: Option<EffectHeader>, name: &str) -> i32 {
+        if name.is_empty() {
+            return -1;
+        }
+        let Some(h) = own.or_else(|| self.effects.tables.shared_header(name)) else { return -1 };
         let n = self.effects.custom_effects;
         if 0x78 < n {
             return -1;

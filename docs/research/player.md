@@ -112,7 +112,7 @@ first child under the chained critter's +0xd4 node.
 Team moves (0x58..0x5a, 0x88..0x93, PlayerSetParent/
 PlayerFacePlayer), thunder
 hammer / breath / familiar events (0x2000000, 0x1000000, 0x10000000 with
-+0x138 0x80), PlayerDamagePlayer (versus), players in states 2/3 (selecting/joining), inactivate_player,
++0x138 0x80), players in states 2/3 (selecting/joining), inactivate_player,
 setup_player_display, PlayerProcessFamiliar/Scale for boss state 5, rotating
 Milestones: AddLocatorInstList's kind-5 locators (FloorPos drop + 0.5),
 update_player_milestone's +0x950 history. Floor parents with rotation use
@@ -310,6 +310,22 @@ players/<class>/<colour> for classes 8..16, players/<class>/<code> for a
 Hidden descriptor or Sumner's "sum"; clips and SFX of class & 7) and the
 game gets each class's clips and ClassData. The old co-op join (a copy of
 player 1) is gone.
+
+## Versus targeting and damage (GamePrefs mode 2)
+
+PlayerGetTarget 0x146990: in mode 2, after enemies/critters/generators, any
+other player in state 1 inside the 0.707 cone (3-D dot with the facing)
+whose distance less its +0x828 radius is shorter wins the distance; `out`
+keeps the last examined player's direction and the target stays −1. With a
+target and a kind-7 item at +0x880, ItemCollSub from the origin to 2 × the
+radius towards the given target's position refuses the target (target −1,
+range); the target position is only set for a target passed in (a target
+found by closest_enemy would read uninitialised stack: Unsupported).
+PlayerMotion's melee with no target and no item in mode 2 calls
+PlayerDamagePlayer 0x1473e8: the nearest other player in state 1 in the
+cone within the attacker's radius + 2 (less its radius) takes
+damage_player(damage, k, 2, flags, dir), dir being the loop's last
+direction. Ported from instructions; not exercised (no versus run).
 
 ## Player placement (get_player_pos 0x14cef8)
 

@@ -69,11 +69,12 @@ pub mod fx {
 
 /// One EffectHeaders entry (InitEffect: AtreeMatch of EffectInfo's name in
 /// weapon_anim, else powerup_anim) with its first sequence's timing.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct EffectHeader {
     /// 0 = WEAPONS/ANIM.PS2 (weapon_anim), 1 = POWERUPS/ANIM.PS2 (powerup_anim),
-    /// 2 + n = the model of critter file n (InitCustomEffect), 0x80 + n =
-    /// the level's n-th item package (item_anim, item_anim2).
+    /// 2 + n = the model of critter file n (InitCustomEffect), 0x40 + p =
+    /// player p's SFX package (PlayerModelData +0x48), 0x80 + n = the
+    /// level's n-th item package (item_anim, item_anim2).
     pub source: u8,
     pub tree: usize,
     pub frames: i16,
@@ -103,6 +104,10 @@ pub struct EffectNode {
     /// ~value): presentation.
     pub tint: Option<u32>,
     pub alpha: Option<i32>,
+    /// MBNodeSetParent to another effect's node with an identity local
+    /// matrix (PlayerStartMissile's weapon-powerup throw effect on its
+    /// missile): drawn at that node, scaled with it.
+    pub follow: Option<usize>,
 }
 
 /// An effect node parented to a player node: local position and rotation.
@@ -124,6 +129,10 @@ pub enum Visual {
     /// FamiliarSpit[player] (the class SFX package's FAMILIAR_SPIT) or, for
     /// the phoenix, weapon_anim's PHOENIX_FBALL.
     Familiar { player: usize, phoenix: bool },
+    /// A tree outside EffectHeaders (AtreeMatch at InitPlayerMissiles:
+    /// BallistaTree SUPERARROW, BossElecTree BOSSG_ELEC, BossAcidTree
+    /// BOSSG_ACID of weapon_anim) or EffectHeaders[0]'s tree as a missile.
+    Tree(EffectHeader),
 }
 
 /// Static ELF tables read by the missile code.
@@ -153,6 +162,16 @@ pub struct EffectTables {
     pub enemy_missile_desc: [String; 3],
     /// Tree labels of weapon_anim/powerup_anim for InitCustomEffect (exact match).
     pub shared: Vec<EffectHeaderLabel>,
+    /// BallistaMissileInfo 0x24ee40, BossElecMissileInfo 0x24ee70,
+    /// BossAcidMissileInfo 0x24eea0 (12 words each).
+    pub ballista_info: [u32; 12],
+    pub boss_elec_info: [u32; 12],
+    pub boss_acid_info: [u32; 12],
+    /// pojo_offset 0x24ef00: the +0x138 0x400 missile origin offset.
+    pub pojo_offset: V3,
+    /// DmgTypeDesc 0x24de40: "", "RED", "BLU", "YEL", "GRE" (weapon
+    /// powerup types 0..4).
+    pub dmg_type_desc: [String; 5],
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +233,18 @@ impl EffectTables {
             let raw = &d[8 * k..8 * k + 8];
             String::from_utf8_lossy(&raw[..raw.iter().position(|&b| b == 0).unwrap_or(8)]).into_owned()
         });
+        let twelve = |n: &str| -> Result<[u32; 12], Box<dyn std::error::Error>> {
+            let w = words(elf.object(n)?);
+            w.get(..12).and_then(|w| w.try_into().ok()).ok_or_else(|| format!("{n} size").into())
+        };
+        let (ballista_info, boss_elec_info, boss_acid_info) = (twelve("BallistaMissileInfo")?, twelve("BossElecMissileInfo")?, twelve("BossAcidMissileInfo")?);
+        let po = words(elf.object("pojo_offset")?);
+        let pojo_offset: V3 = std::array::from_fn(|k| f32::from_bits(po.get(k).copied().unwrap_or(0)));
+        let dt = elf.object("DmgTypeDesc")?;
+        let dmg_type_desc = std::array::from_fn(|k| {
+            let raw = dt.get(8 * k..8 * k + 8).unwrap_or(&[]);
+            String::from_utf8_lossy(&raw[..raw.iter().position(|&b| b == 0).unwrap_or(raw.len())]).into_owned()
+        });
         let mut shared = Vec::new();
         for (source, a) in [(0u8, weapon_anim), (1, powerup_anim)] {
             for (k, t) in a.trees.iter().enumerate() {
@@ -224,7 +255,26 @@ impl EffectTables {
                 });
             }
         }
-        Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects, shield_effects, throw_magic_effects, mclr_idx, light_color, enemy_missile_info, enemy_missile_desc, shared })
+        Ok(Self {
+            missile_info,
+            wall_hit,
+            spread,
+            exp,
+            headers,
+            magic_effects,
+            shield_effects,
+            throw_magic_effects,
+            mclr_idx,
+            light_color,
+            enemy_missile_info,
+            enemy_missile_desc,
+            shared,
+            ballista_info,
+            boss_elec_info,
+            boss_acid_info,
+            pojo_offset,
+            dmg_type_desc,
+        })
     }
 
     /// The level's item packages (item_anim, item_anim2), searched after
@@ -244,6 +294,11 @@ impl EffectTables {
     pub fn shared_header(&self, name: &str) -> Option<EffectHeader> {
         self.shared.iter().find(|h| h.label == name).map(|h| h.header)
     }
+
+    /// AtreeMatch(weapon_anim, name).
+    pub fn weapon_tree(&self, name: &str) -> Option<EffectHeader> {
+        self.shared.iter().find(|h| h.header.source == 0 && h.label == name).map(|h| h.header)
+    }
 }
 
 /// Native effect state carried by [`Game`].
@@ -259,6 +314,10 @@ pub struct Effects {
     pub pmissile: [i32; 5],
     /// NumCustomEffects (InitCustomEffectSub).
     pub custom_effects: usize,
+    /// WeapThrowFx 0x24f148: per player, the custom effect of each weapon
+    /// powerup type ("WEAP_TW_<c>" of DmgTypeDesc; −1 for type 0 or when
+    /// missing), set by InitPlayerMissiles.
+    pub weap_throw_fx: [[i32; 5]; 4],
 }
 
 impl Effects {
@@ -272,6 +331,7 @@ impl Effects {
             tables,
             pmissile: [-1; 5],
             custom_effects: 0,
+            weap_throw_fx: [[-1; 5]; 4],
         }
     }
 }
@@ -483,6 +543,7 @@ impl Game {
             target: None,
             tint: None,
             alpha: None,
+            follow: None,
         });
         let r = self.fx_mut(i);
         r.set_u32(0x14, 1);
@@ -597,24 +658,59 @@ impl Game {
         Ok(i)
     }
 
+    /// InitPlayerMissiles 0x18efe0's WeapThrowFx: InitCustomEffect(the
+    /// player's SFX package, "WEAP_TW_<c>") for DmgTypeDesc types 1..4 (the
+    /// throw trees, WEAP_HOLD_<type>, the familiar and breath trees are
+    /// presentation looked up by the host).
+    pub fn init_player_missiles(&mut self, p: usize) {
+        for t in 0..5 {
+            let desc = self.effects.tables.dmg_type_desc[t].clone();
+            let Some(c) = desc.chars().next() else {
+                self.effects.weap_throw_fx[p][t] = -1;
+                continue;
+            };
+            let name = format!("WEAP_TW_{c}");
+            let own = self.classes[p].sfx_trees.iter().position(|(l, _, _)| *l == name).map(|k| {
+                let (_, frames, timing) = self.classes[p].sfx_trees[k];
+                EffectHeader { source: 0x40 + p as u8, tree: k, frames, timing }
+            });
+            self.effects.weap_throw_fx[p][t] = self.register_custom_effect(own, &name);
+        }
+    }
+
     /// PlayerStartMissile(distance, power, player, direction, flags, origin mode).
     pub fn player_start_missile(&mut self, distance: f32, power: f32, player: usize, dir: &mut V3, flags: u32, origin_mode: u32) -> R<i32> {
         let pl = self.players[player].clone();
-        if pl.u32_(0x138) & 0xc400 != 0 || flags & 0x210_0000 == 0x10_0000 {
-            return unsupported("boss/ballista/familiar missile info");
-        }
+        let r138 = pl.u32_(0x138);
         let class = pl.u32_(8) as usize;
-        let info = *self.effects.tables.missile_info.get(class).ok_or_else(|| Unsupported(format!("missile class {class}")))?;
+        let me = pl.u32_(0) as usize;
+        let ballista = flags & 0x210_0000 == 0x10_0000;
+        // The missile info: BossElec (+0x138 0x8000), BossAcid (0x4000), the
+        // ballista (flag 0x100000 without 0x2000000), else the class's.
+        let t = &self.effects.tables;
+        let (info, special) = if r138 & 0x8000 != 0 {
+            (t.boss_elec_info, true)
+        } else if r138 & 0x4000 != 0 {
+            (t.boss_acid_info, true)
+        } else if ballista {
+            (t.ballista_info, true)
+        } else {
+            (*t.missile_info.get(class).ok_or_else(|| Unsupported(format!("missile class {class}")))?, false)
+        };
         let damage = mul(power, pl.f32_(0x128))?;
-        let offset = match origin_mode {
-            1 => self.classes[player].missile_origin_5c,
-            2 => self.classes[player].missile_origin_158,
-            _ => [0.0; 3],
+        let offset = if r138 & 0x400 != 0 {
+            Some(self.effects.tables.pojo_offset)
+        } else {
+            match origin_mode {
+                1 => Some(self.classes[player].missile_origin_5c),
+                2 => Some(self.classes[player].missile_origin_158),
+                _ => None,
+            }
         };
         // MulVecMat3(offset, out, player matrix +0x20).
         let m = [pl.v3(0x20), pl.v3(0x30), pl.v3(0x40)];
         let mut o = [0.0f32; 3];
-        if origin_mode == 1 || origin_mode == 2 {
+        if let Some(offset) = offset {
             for (c, oc) in o.iter_mut().enumerate() {
                 *oc = add(add(mul(offset[0], m[0][c])?, mul(offset[1], m[1][c])?)?, mul(offset[2], m[2][c])?)?;
             }
@@ -653,6 +749,24 @@ impl Game {
             *dir = [mul(distance, dir[0])?, mul(distance, dir[1])?, mul(distance, dir[2])?];
             calc_target_dir(speed, div(1.0, speed)?, f32::from_bits(info[8]), -0.5, dir)?;
         }
+        // The missile tree; the special ones add effect flag 0x10000.
+        let tree_of = |g: &Game, label: &str| -> R<Visual> {
+            g.effects.tables.weapon_tree(label).map(Visual::Tree).ok_or_else(|| Unsupported(format!("weapon_anim tree {label}")))
+        };
+        let (mut visual, sfx_flags) = if r138 & 0x8000 != 0 {
+            (tree_of(self, "BOSSG_ELEC")?, 0x1_0000)
+        } else if r138 & 0x4000 != 0 {
+            (tree_of(self, "BOSSG_ACID")?, 0x1_0000)
+        } else if r138 & 0x400 != 0 {
+            // FamiliarSpit[4]: weapon_anim's PHOENIX_FBALL.
+            (Visual::Familiar { player, phoenix: true }, 0x1_0000)
+        } else if ballista {
+            (tree_of(self, "SUPERARROW")?, 0)
+        } else {
+            (Visual::Missile { player }, 0)
+        };
+        let wtype = (flags & 0xf) as usize;
+        let throw_fx = self.effects.weap_throw_fx.get(me).and_then(|w| w.get(wtype)).copied().unwrap_or(-1);
         let multi = flags & 0x48_0000;
         let wide = flags & 0x40_0000;
         let spread = self.effects.tables.spread;
@@ -666,28 +780,58 @@ impl Game {
             }
             let (c, s) = (spread[k as usize], spread[5 + k as usize]);
             let d = [add(mul(dir[0], c)?, mul(dir[2], s)?)?, dir[1], add(mul(-dir[0], s)?, mul(dir[2], c)?)?];
-            // PLACEHOLDER: WeapThrowFx[player][flags & 0xf] (InitPlayerMissiles'
-            // "WEAP_TW_<type>" custom effects) is not loaded; classes 2/6 with
-            // a weapon powerup would use it as the missile header and parent
-            // it to the missile. The ordinary missile is used and the gap is
-            // logged (not a fidelity result).
-            if (class == 2 || class == 6) && flags & 0xf != 0 {
-                self.log.note("PlayerStartMissile", &Unsupported("PLACEHOLDER WeapThrowFx weapon-powerup throw effect (ordinary missile used)".into()));
+            // Classes 2/6 with a throw effect and the class info fly
+            // EffectHeaders[0]'s tree under it.
+            if (class == 2 || class == 6) && 0 <= throw_fx && !special {
+                if let Some(h) = self.effects.tables.headers.first().copied().flatten() {
+                    visual = Visual::Tree(h);
+                } else {
+                    return unsupported("effect header 0 as a missile tree");
+                }
             }
-            let slot = self.start_missile(speed, damage, player as i32 + 1, start, d, flags, &info, k, 0, Visual::Missile { player })?;
-            let mut scale = 1.0;
-            if 1.0 < power {
-                scale = mul(power, 1.0)?;
+            let mut slot = self.start_missile(speed, damage, me as i32 + 1, start, d, flags, &info, k, sfx_flags, visual)? as i32;
+            if !special && 0 <= throw_fx {
+                // StartFXSub(0, WeapThrowFx, 0, 0, 0x881880 / 0x81880) on the
+                // missile: linked (+0xe8) and parented while the missile lives.
+                let fx = self.start_fx_sub(0.0, throw_fx as usize, None, 0)?;
+                let mut keep = false;
+                if fx != slot {
+                    if 0.0 < self.fx(slot as usize).f32_(fx::END) {
+                        if 0 <= fx {
+                            self.fx_mut(slot as usize).set_i16(fx::LINK, fx as i16);
+                            if let Some(n) = self.effects.nodes[fx as usize].as_mut() {
+                                n.follow = Some(slot as usize);
+                            }
+                        }
+                        keep = true;
+                    } else {
+                        self.delete_effect(slot as usize, true);
+                        slot = fx;
+                    }
+                }
+                if !keep {
+                    if 0 <= slot {
+                        self.delete_effect(slot as usize, true);
+                    }
+                    slot = -1;
+                }
             }
-            if 0x62 < pl.i32_(0x2ac0) {
-                scale = mul(scale, f32::from_bits(0x3f99_999a))?;
+            if 0 <= slot {
+                // PlayerMissileTreeInfo +4's MBTreeSetFlags: presentation.
+                let mut scale = 1.0;
+                if 1.0 < power {
+                    scale = mul(power, 1.0)?;
+                }
+                if 0x62 < pl.i32_(0x2ac0) {
+                    scale = mul(scale, f32::from_bits(0x3f99_999a))?;
+                }
+                if scale != 1.0
+                    && let Some(n) = self.effects.nodes[slot as usize].as_mut()
+                {
+                    n.scale = mul(n.scale, scale)?;
+                }
             }
-            if scale != 1.0
-                && let Some(n) = self.effects.nodes[slot].as_mut()
-            {
-                n.scale = mul(n.scale, scale)?;
-            }
-            self.effects.pmissile[k as usize] = slot as i32;
+            self.effects.pmissile[k as usize] = slot;
             k += 1;
             if 4 < k {
                 return Ok(k);
@@ -944,19 +1088,17 @@ impl Game {
     }
 
     /// PlayerGetTarget(player, origin, facing, out direction, target, item).
-    pub fn player_get_target(&self, p: usize, origin: V3, facing: V3, out: &mut V3, target: &mut i32, item: &mut Option<usize>) -> R<f32> {
-        if self.globals.pvp_mode == 2 {
-            return unsupported("PlayerGetTarget player-vs-player");
-        }
+    pub fn player_get_target(&mut self, p: usize, origin: V3, facing: V3, out: &mut V3, target: &mut i32, item: &mut Option<usize>) -> R<f32> {
         let range = if self.boss_crit_inst != 0 { 200.0 } else { 30.0 };
         let mut d = range;
-        let pl = &self.players[p];
-        let mut target_pos = [0.0; 3];
+        let pl = self.players[p].clone();
+        // fStack_f0: the given target's position (stack garbage otherwise).
+        let mut target_pos: Option<V3> = None;
         if (0..0x10000).contains(target) {
             let en = &self.enemies[*target as usize];
             if en.i32_(e::TYPE) != 0x1f {
-                target_pos = en.v3(e::COLLISION);
-                *out = v_sub(target_pos, origin)?;
+                target_pos = Some(en.v3(e::COLLISION));
+                *out = v_sub(en.v3(e::COLLISION), origin)?;
                 d = sub(normal_vector(out)?, en.f32_(e::WIDTH))?;
                 if (0.0 < d || en.i32_(e::TYPE) == 0x1e) && dot3(*out, facing)? < 0.5 {
                     d = range;
@@ -965,7 +1107,7 @@ impl Game {
         } else if 0x10000 <= *target {
             let k = (*target & 0xffff) as usize;
             if self.critters.get(k).is_some_and(Option::is_some) {
-                target_pos = self.crit(k).rec.v3(super::critters::c::COL);
+                target_pos = Some(self.crit(k).rec.v3(super::critters::c::COL));
                 d = self.critter_get_target_sub(f32::from_bits(0x3f34_fdf4), 0.0, k, origin, facing, out)?;
             }
         }
@@ -1005,6 +1147,26 @@ impl Game {
                 d = dg;
             }
         }
+        // Versus (GamePrefs mode 2): another player in state 1 within the
+        // 0.707 cone shortens the distance (its +0x828 radius off); `out`
+        // keeps the last examined player's direction, the target stays.
+        if self.globals.pvp_mode == 2 && range <= d {
+            let mut best = d;
+            for k in 0..4 {
+                if k == p || self.players[k].i32_(0xfc) != 1 {
+                    continue;
+                }
+                *out = v_sub(self.players[k].v3(0x50), origin)?;
+                let dist = normal_vector(out)?;
+                if f32::from_bits(0x3f34_fdf4) <= dot3(*out, facing)? {
+                    let dk = sub(dist, self.players[k].f32_(0x828))?;
+                    if dk < best {
+                        best = dk;
+                    }
+                }
+            }
+            d = best;
+        }
         if range <= d {
             *target = -1;
             let pc = pl.v3(0x70);
@@ -1017,13 +1179,27 @@ impl Game {
             out[2] = cosf(pl.f32_(0xdc))?;
             normal_vector(out)?;
         }
+        // A target behind the player's kind-7 item (+0x880): ItemCollSub
+        // from the origin to 2 × radius towards the target's position.
         if 0 <= *target
             && let Some(it) = pl.u32_(0x880).checked_sub(1).map(|v| v as usize)
             && self.items.definitions[self.items.records[it].definition()].kind() == 7
         {
-            return unsupported("PlayerGetTarget blocking item (kind 7) check");
+            let Some(tp) = target_pos else {
+                return unsupported("PlayerGetTarget kind-7 check without a given target (fStack_f0 uninitialised)");
+            };
+            let mut v = v_sub(tp, origin)?;
+            normal_vector(&mut v)?;
+            let r = pl.f32_(0x828);
+            let k = add(r, r)?;
+            let probe = [add(mul(k, v[0])?, origin[0])?, add(mul(k, v[1])?, origin[1])?, add(mul(k, v[2])?, origin[2])?];
+            let env = self.collide_env();
+            let c = crate::item_collision::item_coll_sub(&self.items, &mut self.collision, &env, it, origin, probe, None, r, pl.f32_(0x82c))?;
+            if 0.0 <= c {
+                *target = -1;
+                d = range;
+            }
         }
-        let _ = target_pos;
         Ok(d)
     }
 

@@ -50,6 +50,11 @@ pub struct ClassData {
     pub sfxx: Vec<u8>,
     #[serde(default, with = "super::record::hex_bytes")]
     pub damg: Vec<u8>,
+    /// The player's SFX package (PlayerModelData +0x48, "SFX<colour>" of
+    /// the base class): tree labels with the first sequence's frames and
+    /// timing factor (InitCustomEffect searches it first).
+    #[serde(default)]
+    pub sfx_trees: Vec<(String, i16, i16)>,
 }
 
 impl ClassData {
@@ -68,6 +73,7 @@ impl ClassData {
             missile_origin_158: [f(0x158), f(0x15c), f(0x160)],
             sfxx: Vec::new(),
             damg: Vec::new(),
+            sfx_trees: Vec::new(),
         })
     }
 }

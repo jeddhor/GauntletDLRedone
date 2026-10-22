@@ -1427,7 +1427,7 @@ impl Game {
                         match *item {
                             None => {
                                 if self.globals.pvp_mode == 2 {
-                                    return unsupported("PlayerDamagePlayer (versus mode)");
+                                    self.player_damage_player(dmg, p, f1f0, flags)?;
                                 }
                             }
                             Some(it) => self.player_damage_item(dmg, p, it, flags)?,
@@ -1597,6 +1597,38 @@ impl Game {
         } else {
             1.0
         }
+    }
+
+    /// PlayerDamagePlayer 0x1473e8(damage, player, facing, flags): the
+    /// nearest other player in state 1 inside the 0.707 cone whose distance
+    /// less its +0x828 radius is below the attacker's radius + 2 takes
+    /// damage_player(damage, k, 2, flags, dir) — dir is the last examined
+    /// player's direction (the loop's vector), as in the original.
+    fn player_damage_player(&mut self, damage: f32, p: usize, facing: V3, flags: u32) -> R<()> {
+        let mut best = add(self.players[p].f32_(0x828), 2.0)?;
+        let mut found = None;
+        let mut dir = [0.0f32; 3];
+        let at = self.players[p].v3(0x50);
+        for k in 0..4 {
+            if k == p || self.players[k].i32_(0xfc) != 1 {
+                continue;
+            }
+            let o = self.players[k].v3(0x50);
+            dir = [sub(o[0], at[0])?, sub(o[1], at[1])?, sub(o[2], at[2])?];
+            let dist = crate::collision::normal_vector(&mut dir)?;
+            let dot = add(add(mul(dir[0], facing[0])?, mul(dir[1], facing[1])?)?, mul(dir[2], facing[2])?)?;
+            if f32::from_bits(0x3f34_fdf4) <= dot {
+                let dk = sub(dist, self.players[k].f32_(0x828))?;
+                if dk < best {
+                    best = dk;
+                    found = Some(k);
+                }
+            }
+        }
+        if let Some(k) = found {
+            self.damage_player(damage, k, 2, flags, Some(dir))?;
+        }
+        Ok(())
     }
 
     /// The team-move parenting switch on the class (0x14c44c).

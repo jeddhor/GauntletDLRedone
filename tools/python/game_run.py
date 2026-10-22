@@ -52,6 +52,7 @@ def main():
     ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
     ap.add_argument('--boss-health', help='DEBUG: set the boss critter health')
     ap.add_argument('--teleport', help='DEBUG: start player 0 at x,y,z')
+    ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
     ap.add_argument('--fall', help='DEBUG: player 0 drops below the world bottom at this update')
     ap.add_argument('--players', help='players in play (copies of player 0 without input, placed by load_player_geo)')
     a = ap.parse_args()
@@ -107,7 +108,8 @@ def main():
     if a.script:
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
     if a.pads:
-        cmd += [f'clips={clips}', f'pads={a.pads}']
+        [sfx] = resolve(['PLAYERS/SOR/SFXYEL/ANIM.PS2'])
+        cmd += [f'clips={clips}', f'pads={a.pads}', f'sfx={sfx}']
     if a.replay:
         cmd += [f'clips={clips}', f'replay={a.replay}']
     if a.potions:
@@ -120,6 +122,8 @@ def main():
         cmd += [f'players={a.players}']
     if a.fall:
         cmd += [f'fall={a.fall}']
+    if a.weapon:
+        cmd += [f'weapon={a.weapon}']
     if a.legend:
         cmd += ['legend=1']
     if a.plevel:

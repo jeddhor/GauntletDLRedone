@@ -63,6 +63,20 @@ closure; the interim player driver), ProcessEffects.
   MissileCollideEnemy, WeaponWall/ItemCollide, SfxSkipItem, DamageItem
   (generator levels), ProcessEffects missile mode and the area (blast) mode for
   enemies and items.
+- PlayerStartMissile 0x18f9a8 (2026-10-22): the missile info is
+  BossElecMissileInfo 0x24ee70 (+0x138 0x8000), BossAcidMissileInfo 0x24eea0
+  (0x4000), BallistaMissileInfo 0x24ee40 (flags & 0x2100000 == 0x100000) or
+  PlayerMissileInfo[class]; +0x138 0x400 throws from pojo_offset 0x24ef00.
+  Trees: BOSSG_ELEC / BOSSG_ACID / PHOENIX_FBALL (effect flag 0x10000),
+  SUPERARROW for the ballista, else the class throw tree. InitPlayerMissiles
+  registers WeapThrowFx[player][type] = InitCustomEffect(SFX package,
+  "WEAP_TW_<c>") for DmgTypeDesc 0x24de40 ("", RED, BLU, YEL, GRE); with the
+  class info and a weapon powerup each missile gets StartFXSub(throw effect)
+  linked at +0xe8 and parented to it (deleted with it when the missile is
+  already gone), and the Wizard/Sorceress (classes 2/6) fly EffectHeaders[0]
+  (NULLFX) under it. Headless: game-run sfx=… weapon=1:60
+  (game-run-weapon-G1-v2.json: WeapThrowFx [−1, 109..112], the follower
+  linked to its missile and deleted at the hit).
 - Enemy missiles: shoot_missile, EnemyStartMissile (EnemyMissileInfo
   0x24de80, trees "<PREFIX>_ARROW/BOMB/FBALL" per InitEnemyMissiles; a missing
   tree returns no missile as Errorf does), MissileCollidePlayer and the
