@@ -364,10 +364,26 @@ impl ReferenceEffects {
         }
     }
 
-    fn seed(&self, game: &mut gdl_core::game::Game, items_base: u32, atime: f32) {
+    /// A node parented to player 0's tree (node +0x74 within 0x400 of the
+    /// player's +0x80 node, e.g. its child): the native EffectParent.
+    fn player_parent(n: &[u8], player_node: u32) -> Option<gdl_core::game::effects::EffectParent> {
+        let par = u32::from_le_bytes(n[0x74..0x78].try_into().unwrap());
+        if player_node == 0 || par < player_node || player_node + 0x400 <= par {
+            return None;
+        }
+        let f = |o: usize| f32::from_le_bytes(n[o..o + 4].try_into().unwrap());
+        let v = |o: usize| [f(o), f(o + 4), f(o + 8)];
+        Some(gdl_core::game::effects::EffectParent { player: 0, local: v(0x30), local_matrix: [v(0), v(0x10), v(0x20)] })
+    }
+
+    fn seed(&self, game: &mut gdl_core::game::Game, items_base: u32, atime: f32, player_node: u32) {
         for (k, raw) in self.slots.iter().enumerate().take(game.effects.slots.len()) {
             game.effects.slots[k] = gdl_core::game::record::Record(Self::native(raw, items_base));
-            game.effects.nodes[k] = self.nodes.get(&k).map(|n| Self::node(n, atime));
+            game.effects.nodes[k] = self.nodes.get(&k).map(|n| {
+                let mut node = Self::node(n, atime);
+                node.parent = Self::player_parent(n, player_node);
+                node
+            });
         }
         game.effects.num = self.num;
         game.effects.sfx_id = self.sfx_id;
@@ -399,7 +415,12 @@ impl ReferenceEffects {
             match (game.effects.nodes[k].as_ref(), self.nodes.get(&k)) {
                 (Some(nn), Some(rn)) => {
                     let rn = Self::node(rn, 0.0);
-                    let pairs = [("position", nn.position, rn.position), ("row0", nn.matrix[0], rn.matrix[0]), ("row1", nn.matrix[1], rn.matrix[1]), ("row2", nn.matrix[2], rn.matrix[2])];
+                    // A parented node: the traced matrix is the local one.
+                    let (pos, m) = match nn.parent {
+                        Some(par) => (par.local, par.local_matrix),
+                        None => (nn.position, nn.matrix),
+                    };
+                    let pairs = [("position", pos, rn.position), ("row0", m[0], rn.matrix[0]), ("row1", m[1], rn.matrix[1]), ("row2", m[2], rn.matrix[2])];
                     for (name, a, b) in pairs {
                         if a.map(f32::to_bits) != b.map(f32::to_bits) {
                             out.push(serde_json::json!({"effect":k,"node":name,"native":a,"reference":b}));
@@ -1230,7 +1251,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         // SetPlayerWindows) as gdl_play's init_hud runs them, without textures:
         // WritePlayerInfo keeps its record words (+0x904 show timer, meter
         // time) in headless runs too.
-        game.hud_init(Vec::new(), Vec::new(), None);
+        // text=TEXT/ENGLISH.ROM (GameText): NewHelp's logic (help pause,
+        // seen marks, voice lines) runs with it; the layout is not drawn.
+        let text = match opts.get("text") {
+            Some(p) => Some(gdl_formats::textrom::TextRom::parse(&bounded_read(Path::new(p), 4 * 1024 * 1024)?)?),
+            None => None,
+        };
+        game.hud_init(Vec::new(), Vec::new(), text);
         // Optional scripted player: sim=START_SIM.json clips=SOR_CLIPS.PS2 script=LEVELS_HEX:UPDATES,...
         let mut driver = match (opts.get("sim"), opts.get("script")) {
             (Some(sim_path), Some(_)) => {
@@ -1285,6 +1312,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let a = anim_of("sfx")?;
             game.classes[0].sfx_trees = a.trees.iter().map(|t| (t.label.clone(), t.sequences.first().map_or(0, |s| s.frames), t.sequences.first().map_or(0, |s| s.timing_factor))).collect();
             game.init_player_missiles(0);
+            game.resolve_plyr_data(0);
             eprintln!("WeapThrowFx[0] = {:?}", game.effects.weap_throw_fx[0]);
         }
         if let Some(v) = opts.get("weapon") {
@@ -1366,6 +1394,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 game.players[k] = r;
                 game.classes[k] = game.classes[0].clone();
                 game.init_player_missiles(k);
+                game.resolve_plyr_data(k);
                 game.player_clips[k] = game.player_clips[0].clone();
                 game.player_rigs[k] = game.player_rigs[0].clone();
                 let (start, yaw) = game.player_start;
@@ -1697,11 +1726,25 @@ fn run() -> Result<(), Box<dyn Error>> {
                         gl.camera_90 = fl(&win[0x90..]);
                         gl.camera_98 = fl(&win[0x98..]);
                         let atime = gl.atime;
-                        fx_b.seed(game, items_base, atime);
+                        let player_node = word(&hexb(&bp["player0"])?[0x80..]);
+                        fx_b.seed(game, items_base, atime, player_node);
                         // AddEnemyHitCol's alternating blood (traces from
                         // trace-fight-g1-v5).
                         if let Some(v) = b["enemies"].get("sfx_ene_bloodidx") {
                             game.sfx_ene_bloodidx = word(&hexb(v)?);
+                        }
+                        // NewHelp/DoHelp's globals (traces from trace-varied-g1-v2).
+                        if b["enemies"].get("help_flag").is_some() {
+                            let gw = |n: &str| -> Result<i32, Box<dyn Error>> { Ok(word(&hexb(&b["enemies"][n])?) as i32) };
+                            let h = &mut game.hud.help;
+                            h.flag = gw("help_flag")? != 0;
+                            h.num = gw("help_num")?;
+                            h.player = gw("help_player")?.clamp(0, 3) as usize;
+                            h.time = gw("help_time")?;
+                            h.interval = gw("help_interval")?;
+                            h.interval_idx = gw("help_interval_idx")?.max(0) as usize;
+                            h.lv = gw("help_lv")?;
+                            h.testflag = gw("help_testflag")? != 0;
                         }
                         // world_update's DoWorldAnimation from the traced
                         // entries (+6 flags, +8 frame) and object words (traces

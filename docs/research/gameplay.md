@@ -445,3 +445,20 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   alternation needs sfx_ene_bloodidx as an input; and GauntWorldInit's
   world_update before AddItemInstList, whose DoWorldAnimation poses the
   moving floors that PlaceItem parents items on (items.md).
+- Varied trace (trace-varied-g1-v2: the key pickup, throws that break a
+  barrel, Square's class special 0x63, Circle + Up, Triangle; 175
+  updates; pad keys K/J/I/L = Cross/Square/Triangle/Circle): enemies,
+  player 0, effects and world animation all 175/175
+  (replay-frame-varied-g1-v8.json). Found and fixed on the way:
+  ResolvePlyrData 0x14d978 (LoadPlyrData's second call in load_player)
+  was not ported — every class SFXX entry's +8 effect header and +0xc
+  sound stayed the disc words, so class specials (SOR_PWRA1 …) started no
+  effect and played no sound; now the custom effects are registered after
+  WeapThrowFx (fixture: 117.. after 113..116) and the sounds resolved by
+  name; the class SFX VU0 transforms (MulVecMat3 / MulVecMat4 in DoPlyrSfx,
+  DoPlyrSfxSub and PlyrSfxDoDamageSub) use the VU adder; ProcessItems'
+  opened-chest loop compares each enemy's +0x354 (find_closest_chest's
+  slot) with the enemy index, as the original does; headless runs load
+  TEXT/ENGLISH.ROM so NewHelp's logic (seen marks, help pause) runs, and
+  the replays seed the help globals; player-parented effect nodes are
+  compared by their local matrix.

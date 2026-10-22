@@ -939,8 +939,11 @@ impl Game {
             } else if r.u32_(0xfc) == 0 && sub_ != 0x2b && sub_ != 0x2f {
                 self.delete_item(slot, false);
             }
+            // 0x155d4c: +0x354 (find_closest_chest's chest slot, 0-based) is
+            // compared with the ENEMY index k, not this chest's slot, as the
+            // original does (trace-varied-g1-v2 step 168: enemy 0 holding 0).
             for k in 0..self.enemies.len() {
-                if self.enemies[k].i32_(0x354) == slot as i32 + 1 {
+                if self.enemies[k].i32_(0x354) == k as i32 {
                     let rec = &mut self.enemies[k];
                     rec.set_u32(0x350, 0);
                     rec.set_i32(0x354, -1);

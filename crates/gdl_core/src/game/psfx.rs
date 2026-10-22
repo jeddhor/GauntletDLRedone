@@ -77,10 +77,63 @@ fn mul_vec_mat3(v: V3, m: &[V3; 3]) -> R<V3> {
     Ok([col(0)?, col(1)?, col(2)?])
 }
 
+/// MulVecMat3 0x1d5c30 on VU0: vmulax / vmadday / vmaddz (round toward
+/// zero, the VU adder rather than the EE FPU's).
+fn vu_mul_vec_mat3(v: V3, m: &[V3; 3]) -> R<V3> {
+    use crate::numeric::add_rz;
+    let col = |c: usize| -> R<f32> { Ok(add_rz(add_rz(mul(m[0][c], v[0])?, mul(m[1][c], v[1])?)?, mul(m[2][c], v[2])?)?) };
+    Ok([col(0)?, col(1)?, col(2)?])
+}
+
+/// MulVecMat4 0x1d5b98 on VU0: MulVecMat3's accumulation plus the
+/// translation row (vmaddw with vf0.w = 1).
+fn vu_mul_vec_mat4(v: V3, m: &[V3; 3], t: V3) -> R<V3> {
+    use crate::numeric::add_rz;
+    let r = vu_mul_vec_mat3(v, m)?;
+    Ok([add_rz(r[0], t[0])?, add_rz(r[1], t[1])?, add_rz(r[2], t[2])?])
+}
+
 impl Game {
     fn player_rows(&self, p: usize) -> [V3; 3] {
         let r = &self.players[p];
         [r.v3(0x20), r.v3(0x30), r.v3(0x40)]
+    }
+
+    /// ResolvePlyrData 0x14d978 (LoadPlyrData's second call in load_player,
+    /// after InitPlayerMissiles) → PlayerSfxInitData 0x14ddd8: every SFXX
+    /// entry's +8 and +0xc become −1, then PlayerSfxInit 0x14dc38 per entry:
+    /// without flags 0xf000100, +8 = InitCustomEffect(the player's SFX
+    /// package, name +0x10, z-mod +0x30, alpha +0x32); without 0xf000000 and
+    /// with a name at +0x20, +0xc = AudioFindSound(name, 15 bytes). Texture-
+    /// mod and particle entries resolve presentation handles (left −1). The
+    /// disc words are not effect headers (fixture: SOR_PWRA1 → 117, …).
+    pub fn resolve_plyr_data(&mut self, p: usize) {
+        let mut t = std::mem::take(&mut self.classes[p].sfxx);
+        let n = t.len() / 0x50;
+        for k in 0..n {
+            t[k * 0x50 + 8..k * 0x50 + 0x10].fill(0xff);
+        }
+        for k in 0..n {
+            let e = t[k * 0x50..(k + 1) * 0x50].to_vec();
+            let flags = u32_at(&e, 0);
+            let cstr = |b: &[u8]| -> String { String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]).into_owned() };
+            if flags & 0xf00_0100 == 0 {
+                let name = cstr(&e[0x10..0x20]);
+                let own = self.classes[p].sfx_trees.iter().position(|(l, _, _)| *l == name).map(|i| {
+                    let (_, frames, timing) = self.classes[p].sfx_trees[i];
+                    super::effects::EffectHeader { source: 0x40 + p as u8, tree: i, frames, timing }
+                });
+                let h = self.register_custom_effect(own, &name);
+                t[k * 0x50 + 8..k * 0x50 + 0xc].copy_from_slice(&h.to_le_bytes());
+            }
+            if flags & 0xf00_0000 == 0 && e[0x20] != 0 {
+                let name = &e[0x20..0x30];
+                let len = name.iter().position(|&c| c == 0).unwrap_or(16).min(15);
+                let id = self.items.session.sound_names.iter().find(|(s, _)| s.iter().take(15).eq(name[..len].iter())).map_or(-1, |(_, id)| *id);
+                t[k * 0x50 + 0xc..k * 0x50 + 0x10].copy_from_slice(&id.to_le_bytes());
+            }
+        }
+        self.classes[p].sfxx = t;
     }
 
     fn psfx(&self, p: usize, i: usize) -> R<Vec<u8>> {
@@ -231,13 +284,11 @@ impl Game {
         let off = [f32_at(rec, 0x2c), f32_at(rec, 0x30), f32_at(rec, 0x34)];
         let pos = if !local {
             match *extra {
-                None => {
-                    let w = mul_vec_mat3(off, &rows)?;
-                    let base = self.players[p].v3(0x50);
-                    [add(w[0], base[0])?, add(w[1], base[1])?, add(w[2], base[2])?]
-                }
+                // PlyrSfxDoDamageSub: MulVecMat4 with the player's matrix,
+                // or MulVecMat3 then FPU adds onto the extra point.
+                None => vu_mul_vec_mat4(off, &rows, self.players[p].v3(0x50))?,
                 Some(e) => {
-                    let w = mul_vec_mat3(off, &rows)?;
+                    let w = vu_mul_vec_mat3(off, &rows)?;
                     [add(e[0], w[0])?, add(e[1], w[1])?, add(e[2], w[2])?]
                 }
             }
@@ -402,7 +453,8 @@ impl Game {
                 // PsfxDoTexmodNode / PsfxDoParticle: presentation.
             } else if flags & 0x200 == 0 {
                 let off = [f32_at(&srec, 0x34), f32_at(&srec, 0x38), f32_at(&srec, 0x3c)];
-                let o = if local { off } else { mul_vec_mat3(off, &self.player_rows(p))? };
+                // DoPlyrSfx 0x14e5c4: MulVecMat3 (VU0).
+                let o = if local { off } else { vu_mul_vec_mat3(off, &self.player_rows(p))? };
                 let at = if flags & 1 != 0 {
                     local = true;
                     o
@@ -462,8 +514,8 @@ impl Game {
             (self.players[p].v3(0x50), self.player_rows(p), None)
         } else if flags & 0x40 != 0 {
             let w = if local {
-                let v = mul_vec_mat3(pos, &rows)?;
-                [add(v[0], base[0])?, add(v[1], base[1])?, add(v[2], base[2])?]
+                // DoPlyrSfxSub 0x14e318: MulVecMat4 (VU0) with the matrix.
+                vu_mul_vec_mat4(pos, &rows, base)?
             } else {
                 pos
             };

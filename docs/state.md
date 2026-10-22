@@ -78,6 +78,9 @@ original (PCSX2 reference on Xvfb :191, private captures):
    effects array (gameplay.md): enemies and effects 270/270 on both traces;
    fixed effect spin/CreateDirMatrix, missile streak words, SetSkinFX
    integer words, generator hit/death effects, load-time world_update.
+   Varied trace 175/175 everywhere after porting ResolvePlyrData (class
+   specials had no effects or sounds), VU0 MulVecMat3/4 in the class SFX
+   code, the opened-chest enemy loop, and NewHelp in headless runs.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

@@ -102,6 +102,8 @@ def main():
     cmd = [TOOLS, 'game-run', str(w), str(wd), str(index), str(ELF), GAME_START, str(ia),
            str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}', f'pdata={pdata}']
     cmd += [f'{t}={path}:{p}' for (t, p), path in zip(monsters, mons)]
+    [text] = resolve(['TEXT/ENGLISH.ROM'])
+    cmd += [f'text={text}']
     # HYPOTHESIS: the MBOX object tables loaded for the level (the original
     # load list is not traced); used by MBOX_FindObject_Sub lookups.
     obj = [n for n in [f'LEVELS/LEVEL{a.world}{a.level}/OBJECTS.PS2', f'ITEMS/LEVEL{a.world}{a.level}/OBJECTS.PS2',
@@ -121,6 +123,11 @@ def main():
     if a.pads:
         [sfx] = resolve(['PLAYERS/SOR/SFXYEL/ANIM.PS2'])
         cmd += [f'clips={clips}', f'pads={a.pads}', f'sfx={sfx}']
+    if a.replay or a.enemy_replay:
+        # The traced player's class SFX package (the fixture's sorceress,
+        # yellow): InitPlayerMissiles' custom effects.
+        [sfx] = resolve(['PLAYERS/SOR/SFXYEL/ANIM.PS2'])
+        cmd += [f'sfx={sfx}']
     if a.replay:
         cmd += [f'clips={clips}', f'replay={a.replay}']
     if a.enemy_replay:

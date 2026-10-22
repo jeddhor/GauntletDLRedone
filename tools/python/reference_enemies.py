@@ -18,7 +18,8 @@ import struct
 from reference_player import elf_symbols
 
 ENEMY_GLOBALS = ['BossIndex', 'SuicideBomberIndex', 'CurWorld', 'level_data', 'Items', 'WorldBase', 'frame_main',
-                 'sfx_ene_bloodidx']
+                 'sfx_ene_bloodidx', 'help_flag', 'help_num', 'help_player', 'help_time', 'help_interval',
+                 'help_interval_idx', 'help_lv', 'help_testflag']
 ENEMY_SIZE = 0x3b0
 ENEMY_COUNT = 25
 

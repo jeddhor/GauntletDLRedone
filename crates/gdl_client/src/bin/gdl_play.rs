@@ -3032,6 +3032,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
         game.control_options[0] = slots[0].as_ref().map_or([0; 4], |s| s.controls);
         // load_player → InitPlayerMissiles (WeapThrowFx).
         game.init_player_missiles(0);
+        game.resolve_plyr_data(0);
         // The other players in play: load_player_geo → get_player_pos(k, 1)
         // beside the first earlier one (new_offset_start), else at the start
         // (place_player first sets up the record and node at the start).
@@ -3046,6 +3047,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
             game.init_player_anim(k).map_err(|e| e.0)?;
             game.control_options[k] = slot.controls;
             game.init_player_missiles(k);
+            game.resolve_plyr_data(k);
             game.globals.active_players |= 1 << k;
         }
         // init_next_level: init_game_cam + StdCamInit(0) after the players.
