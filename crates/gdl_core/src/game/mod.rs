@@ -35,6 +35,7 @@ pub mod pickups;
 pub mod players;
 pub mod powerups;
 pub mod profile;
+pub mod pselect;
 pub mod progress;
 pub mod psfx;
 pub mod record;
@@ -168,6 +169,10 @@ pub struct Globals {
     pub skip_wave: i32,
     pub quit_level: i32,
     pub demo_mode: i32,
+    /// codes_enabled 0x22019c (0 in the ELF; Hidden entries with +0x20
+    /// need > 1).
+    #[serde(default)]
+    pub codes_enabled: i32,
     pub active_players: i32,
     pub auto_exit_flag: i32,
     pub someone_wants_to_exit: i32,
@@ -218,6 +223,9 @@ pub enum Event {
     /// `pan`: a fixed pan (0..0xfe, 0x7f centre; AudioSFX2 / the queue)
     /// when there is no position.
     Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, pan: Option<i32> },
+    /// change_player: player `player`'s class, colour or descriptor
+    /// changed (the host swaps the model; replace_player_geo).
+    PlayerModel { player: usize },
     /// AudioLOOP(id, position, volume, priority): a looping sound.
     LoopSound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32 },
     /// BossDeath's boss key effect (BossKeySfx) at a position.
@@ -370,6 +378,9 @@ pub struct Game {
     /// Controller state (PlayerControl records, plr_* words) and the ELF
     /// control tables (remap, rep_speed, SpecialData, JoyAng/JoyMag).
     pub controls: pad::Controls,
+    /// Each player's controller options (style, vibration, auto aim, auto
+    /// attack) as player_store_in_save stores them.
+    pub control_options: [profile::ControlOptions; 4],
     pub control_tables: Option<pad::ControlTables>,
     /// WorldStartTime 0x2c2c88 (GauntWorldInit: Time at level init).
     pub world_start_time: f32,

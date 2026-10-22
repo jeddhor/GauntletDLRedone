@@ -403,6 +403,7 @@ impl Game {
             disable_player_controls: 0,
             // InitPlayerControls state; the front end carries it across levels.
             controls: Default::default(),
+            control_options: [[0; 4]; 4],
             control_tables: Some(super::pad::ControlTables::from_elf(inp.elf)?),
             item_active_dist: s.extra.item_active_dist,
             mode_950: s.extra.mode_950,

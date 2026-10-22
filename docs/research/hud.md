@@ -464,3 +464,34 @@ snd1–4.517–520), transport / world explosion / world hit by world, the good
 wizard's lines (gwiz_sidx), the thermometer's rune hints. Background
 music (stage areas and parts, map and shop music, boss attention) and the
 kind-0xd world sounds are described in audio.md.
+
+## Player-select screen (2026-10-21)
+
+game/pselect.rs ports init_player_select 0x1851b0 / do_player_select
+0x188228 with setup_sel_menu, do_sel_menu, do_optmenu 0x10c4f8, the column
+blits (setup_tex, init_blit_fx, serve_blits, update_class_spec,
+update_class_attr), the name entry (InitGetName / get_initials / DoGetName:
+'0'..'9', '@' = end, 'A'..'Z', '_'; an empty name takes default_names),
+set_hidden_player 0x12f500 (the 27 Hidden codes and Cheats), LimitSeltype
+(Sumner 0x10 with +0x9a8 bit 8), useable_class (classes 8.. need +0x9a8
+bit class − 8; locked ones show the "shadw" art and the pulsing question
+mark), player_selected / change_player / init_player_change and the
+memory-card states. Each column runs its own state at +0x2ad4 (New/Load;
+Save/Change/Load/Quit/Done; quit question; name; class/colour; card;
+format/create; no data; file list; loading; writing). Tables from the ELF:
+sel_def_menu, sel_new/active/yesno_entries, sel_xpos, sel_bg_pos, the
+sel_msg_* and sel_attr_* words, hs_name_column/cx, flash_pal,
+saveFileSize 0x47400. Entry points: after the shop
+(init_player_select(2): finished players at menu 1), the Tower menu's
+Manage Character (DoOptions 0xd → mode 1), and game_main in the Tower when
+an unassigned controller presses Start (check_active_players → mode 1).
+Done (psel_done > 8 with everyone chosen and no blit effect running) →
+init_next_level (the Tower). NATIVE: the host store is one formatted PS2
+card in slot 1 whose eight files are store slots 0..7; its Gauntlet
+directory exists once a file is saved or after "Create Save File"; free
+space shows 8 MB less its files; keyboard letters type into player 1's
+name. The SELECT 3D scene behind the columns is not drawn. GUI check: A1
+exit → tally/shop → player 1 at Save…Done → Done → the Tower; in the Tower
+player 2 pressed Start (U), chose New, the default name JUSTIN and the
+Jester: the Tower reloaded with both players, each with its own model and
+panel.

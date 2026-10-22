@@ -19,6 +19,8 @@ pub struct CueTables {
     pub turbo_c: Vec<i32>,
     pub walk: Vec<i32>,
     pub click2: Vec<i32>,
+    /// snd.277 0x23d420 (AudioClick).
+    pub click: Vec<i32>,
     pub map_dot: Vec<i32>,
     pub tally: Vec<i32>,
     pub runes: Vec<i32>,
@@ -45,6 +47,43 @@ impl Game {
     /// AudioCursorSelect 0x1606c8: AudioFX(0x11, 0x7f, 3).
     pub fn audio_cursor_select(&mut self) {
         self.sfx(0x11, None, 0x7f, 3);
+    }
+
+    /// AudioCursorV 0x160698 / AudioCursorH 0x1606a8 / AudioCursorChar
+    /// 0x1606b8 / AudioMenuExit 0x1606d8: AudioFX(0xd / 0xe / 0xf / 0x10,
+    /// 0x7f, 3).
+    pub fn audio_cursor_v(&mut self) {
+        self.sfx(0xd, None, 0x7f, 3);
+    }
+    pub fn audio_cursor_h(&mut self) {
+        self.sfx(0xe, None, 0x7f, 3);
+    }
+    pub fn audio_cursor_char(&mut self) {
+        self.sfx(0xf, None, 0x7f, 3);
+    }
+    pub fn audio_menu_exit(&mut self) {
+        self.sfx(0x10, None, 0x7f, 3);
+    }
+
+    /// AudioClick 0x15f008(player, k): AudioSFX2(snd.277[k], pan, 0x7f, 0x7d).
+    pub fn audio_click(&mut self, p: usize, k: i32) {
+        let id = at(&self.sounds.cues.click, i64::from(k));
+        self.sfx2(id, self.pan_of(p), 0x7f, 0x7d);
+    }
+
+    /// AudioSelect 0x15ce80(k): the select-screen music 0xc0000 (AudioFX at
+    /// volMusic, priority 1) for k = 1, killed otherwise
+    /// (audio_select_state; AudioLoadStage of the select bank is the
+    /// host's).
+    pub fn audio_select(&mut self, k: i32) {
+        if self.sounds.audio_select_state != k {
+            if k == 1 {
+                self.sfx(0xc_0000, None, 100, 1);
+            } else {
+                self.kill_sound(0xc_0000);
+            }
+            self.sounds.audio_select_state = k;
+        }
     }
 
     /// AudioBuzzer 0x160688: AudioFX(10, 0x7f, 0x30).

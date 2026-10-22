@@ -295,3 +295,20 @@ A1's exit → Stats → Shop → class stats → inventory → the Tower (welcom
 Sumner); the Tower's 0x100 portal → A1. The client's earlier shortcut
 (exit → the map of the exit's destination) is gone; F9 keeps it as a
 DEBUG skip.
+
+## Players joining (2026-10-21)
+
+check_active_players (and_edges with allow_assignments: assign_controller
+binds an unassigned port that pressed Start to a free player slot) runs in
+the select screen and, in game_main, only in the Tower; realm levels take
+no new players. A selected player (state 3) is activated by do_players
+(activate_player 0x1310e0: state 1, the others' destination +0x808, a 5 s
+kind-9 powerup outside the stage start, every enemy's +0x340 cleared, at
+the end of a stage straight to state 5); advance_ok holds the level end
+while only selecting players remain. The client loads each player's
+character (load_player_model: players/<class>/<colour><tier>0,
+players/<class>/<colour> for classes 8..16, players/<class>/<code> for a
+Hidden descriptor or Sumner's "sum"; clips and SFX of class & 7) and the
+game gets each class's clips and ClassData. PLACEHOLDER: get_player_pos's
+multi-player start offsets are not ported; extra players stand 3 units
+along x from player 1. The old co-op join (a copy of player 1) is gone.

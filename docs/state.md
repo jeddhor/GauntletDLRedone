@@ -68,9 +68,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    2026-10-21: the return to the Tower through the shop (init_shop /
    do_shop: piles, level panel, shopping, inventory, final stats) and the
    realm map between levels (init_mapscreen / do_mapscreen).
-   Remaining: init_player_select(2),
-   select-screen memory-card/join flow and the Tower scene
-   behind it, credits, movies. 2026-10-21: Control Style, Screen Adjust. 2026-10-21: the ICON_ARROW selector.
+   2026-10-21: the player-select screen (pselect.rs: every column state,
+   name entry, Hidden codes, card states on the native store), its entry
+   points (after the shop, Manage Character, joining in the Tower) and
+   per-player characters in the client. Remaining: the title's select
+   (still the native pages), the SELECT scene behind the columns,
+   credits, attract mode, movies. 2026-10-21: Control Style, Screen Adjust. 2026-10-21: the ICON_ARROW selector.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.
    2026-10-21: the Audio* cue placeholders, background music (areas,

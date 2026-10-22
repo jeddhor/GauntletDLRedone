@@ -605,7 +605,19 @@ impl Game {
                         self.kill_player(k)?;
                     }
                 }
-                2 | 3 => return unsupported(format!("player state {state} (selecting / joining)")),
+                // 2: choosing on the select screen; 3: chosen — activated
+                // here once nothing loads in the background (not during
+                // the boss camera modes 0x4013 / 0x4017). advance_ok holds
+                // the level end while nobody else plays.
+                2 | 3 => {
+                    self.player_check_floor(k)?;
+                    if state == 3 && !matches!(self.globals.game_mode, 0x4013 | 0x4017) {
+                        self.activate_player(k)?;
+                    }
+                    if !self.advance_ok(k) {
+                        result = false;
+                    }
+                }
                 0xb => {
                     if self.globals.game_mode == 0x4010 && self.players[k].i32_(0x2ad4) == 1 {
                         let ed = self.controls.control[k].u32_(8);
@@ -653,5 +665,48 @@ impl Game {
             self.do_got_it();
         }
         Ok(result)
+    }
+
+    /// advance_ok(p): false when no other player is past the select
+    /// screen (every other slot in state 0, 2 or 3).
+    fn advance_ok(&self, p: usize) -> bool {
+        (0..4).any(|k| k != p && !matches!(self.players[k].i32_(0xfc), 0 | 2 | 3))
+    }
+
+    /// activate_player 0x1310e0(p): state 1 with the others' destination;
+    /// in play (0x4010): load_player_geo (the host places the model), a
+    /// 5 s kind-9 powerup (flags 4) outside the stage start, every enemy's
+    /// +0x340 cleared, at the end of the stage the player leaves with the
+    /// others (state 5), the camera target (add_target) and Start's edge
+    /// consumed. LoadPlyrData / del_player_blits are the host's.
+    pub(crate) fn activate_player(&mut self, p: usize) -> R<()> {
+        self.players[p].set_i32(0xfc, 1);
+        let dest = self.other_players_next_level(p);
+        self.players[p].set_i32(0x808, dest);
+        if self.globals.game_mode == 0x4010 {
+            if self.globals.start_of_stage == 0 {
+                let class = self.classes[p].clone();
+                self.add_powerup(0.0, 5.0, p, 9, 4, &class)?;
+            }
+            for e in &mut self.enemies {
+                e.set_i32(0x340, 0);
+            }
+            let end = self.globals.end_of_stage;
+            if end != 0 || 9 < self.exit_state || self.globals.game_mode == 0x4016 {
+                for q in 0..4 {
+                    let st = self.players[q].i32_(0xfc);
+                    if end != 0 || st == 5 {
+                        if (4..=5).contains(&st) {
+                            let d = self.players[q].i32_(0x808);
+                            self.players[p].set_i32(0x808, d);
+                        }
+                        self.players[p].set_i32(0xfc, 5);
+                    }
+                }
+            }
+            let e = self.controls.control[p].u32_(8) & !0x40000;
+            self.controls.control[p].set_u32(8, e);
+        }
+        Ok(())
     }
 }

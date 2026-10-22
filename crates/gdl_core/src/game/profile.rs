@@ -39,6 +39,10 @@ impl Pdats {
         let b = self.0.get(class as usize).filter(|b| o + 4 <= b.len()).ok_or_else(|| format!("no PDAT for class {class}"))?;
         Ok(f32::from_le_bytes(b[o..o + 4].try_into().unwrap()))
     }
+    /// A PDAT float of a class (PlayerData +o).
+    pub fn value(&self, class: u32, o: usize) -> Result<f32, String> {
+        self.f(class, o)
+    }
     pub fn get(&self, class: u32) -> Option<&[u8]> {
         self.0.get(class as usize).map(Vec::as_slice)
     }
@@ -59,6 +63,15 @@ impl From<UnsupportedNumericDomain> for ProfileError {
         Self::Numeric(e)
     }
 }
+impl From<ProfileError> for super::Unsupported {
+    fn from(e: ProfileError) -> Self {
+        super::Unsupported(match e {
+            ProfileError::Numeric(n) => format!("profile numeric: {n:?}"),
+            ProfileError::Data(d) => format!("profile: {d}"),
+        })
+    }
+}
+
 impl From<String> for ProfileError {
     fn from(e: String) -> Self {
         Self::Data(e)

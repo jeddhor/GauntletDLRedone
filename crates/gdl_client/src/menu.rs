@@ -40,11 +40,12 @@ pub enum Action {
     /// Import the PS2 capture character into a new slot.
     Import,
     Resume,
-    Save,
     QuitLevel,
     QuitGame,
     Exit,
     Volumes { music: u8, sfx: u8 },
+    /// Tower menu → Manage Character (the select screen).
+    ManageCharacter,
     /// Tower menu → Shop: the host fills `shop` and opens the page.
     OpenShop,
     /// Buy shop entry `idx` (0 = leave).
@@ -77,7 +78,6 @@ pub enum Page {
     Colour { class: u32, at: usize },
     Name { class: u32, colour: u8, name: String },
     Paused { tower: bool, at: usize },
-    Manage { at: usize },
     ConfirmQuit { at: usize },
     Shop { at: usize },
     Inventory,
@@ -254,7 +254,7 @@ impl Menu {
     }
 
     pub fn is_paused(&self) -> bool {
-        matches!(self.page, Page::Paused { .. } | Page::Manage { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory | Page::Hints { .. } | Page::HintText { .. } | Page::Submenu { .. } | Page::Choice { .. })
+        matches!(self.page, Page::Paused { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory | Page::Hints { .. } | Page::HintText { .. } | Page::Submenu { .. } | Page::Choice { .. })
     }
 
     pub fn input(&mut self, key: Key) -> Option<Action> {
@@ -480,7 +480,9 @@ impl Menu {
                     Key::Back => return Some(Action::Resume),
                     Key::Accept => match names[at] {
                         "Settings" => self.page = Page::Options { at: 0, back: Box::new(page) },
-                        "Manage Character" => self.page = Page::Manage { at: 0 },
+                        // DoOptions 0xd: init_player_select(1) with this
+                        // player at the select screen's menu 1.
+                        "Manage Character" => return Some(Action::ManageCharacter),
                         "Quit Game" => self.page = Page::ConfirmQuit { at: 0 },
                         "Quit Level" => return Some(Action::QuitLevel),
                         "Shop" => return Some(Action::OpenShop),
@@ -491,18 +493,6 @@ impl Menu {
                 }
                 None
             }
-            Page::Manage { at } => match key {
-                Key::Up | Key::Down => {
-                    self.page = Page::Manage { at: wrap(at, 2, key == Key::Up) };
-                    None
-                }
-                Key::Accept if at == 0 => Some(Action::Save),
-                Key::Accept | Key::Back => {
-                    self.page = Page::Paused { tower: true, at: 1 };
-                    None
-                }
-                _ => None,
-            },
             Page::Shop { at } => match key {
                 Key::Up | Key::Down => {
                     self.page = Page::Shop { at: wrap(at, self.shop.len().max(1), key == Key::Up) };
@@ -578,7 +568,6 @@ impl Menu {
                 name
             ),
             Page::Paused { tower, at } => list("PAUSED", &s(if *tower { &TOWER_MENU } else { &GAME_MENU }), *at),
-            Page::Manage { at } => list("MANAGE CHARACTER", &s(&["Save Character", "Back"]), *at),
             Page::Shop { at } => {
                 // A window of 12 lines around the cursor.
                 let first = at.saturating_sub(6).min(self.shop.len().saturating_sub(12));
@@ -640,8 +629,7 @@ mod tests {
         assert_eq!(m.input(Key::Accept), Some(Action::Import));
         m.pause(true);
         m.input(Key::Down);
-        m.input(Key::Accept);
-        assert_eq!(m.input(Key::Accept), Some(Action::Save));
+        assert_eq!(m.input(Key::Accept), Some(Action::ManageCharacter));
         m.pause(true);
         m.input(Key::Up);
         m.input(Key::Accept);

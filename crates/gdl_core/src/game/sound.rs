@@ -139,6 +139,7 @@ impl SoundTables {
                 turbo_c: t(0x23_d180, 32)?,
                 walk: t(0x23_d3f8, 40)?,
                 click2: t(0x23_d428, 8)?,
+                click: t(0x23_d420, 8)?,
                 map_dot: t(0x23_ce30, 56)?,
                 tally: t(0x23_ce68, 56)?,
                 runes: t(0x23_cea0, 44)?,
