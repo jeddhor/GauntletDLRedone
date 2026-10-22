@@ -1447,13 +1447,7 @@ impl Game {
                 self.sfx_set_physics_pub(k, 0.0, power, None, None);
                 self.sfx_set_damage(k, mul(kf, 25.0)?, power, 0.0, flags, owner);
                 let f4 = mul(power, f32::from_bits(0x3daa_aaab))?;
-                let f3 = if f4 < 0.33 {
-                    0.33
-                } else if 1.0 < f4 {
-                    1.0
-                } else {
-                    f4
-                };
+                let f3 = f4.clamp(0.33, 1.0);
                 if let Some(n) = self.effects.nodes[k].as_mut() {
                     n.stretch = [f3, 1.0, f3];
                 }
