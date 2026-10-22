@@ -14,6 +14,7 @@ pub mod critters;
 pub mod doplayers;
 pub mod damage;
 pub mod effects;
+pub mod exitflow;
 pub mod goodwiz;
 pub mod heal;
 pub mod healthmeter;
@@ -398,6 +399,8 @@ pub struct Game {
     /// done and AudioStillPlaying clear): the level may end.
     pub players_done: bool,
     pub exit_ready: bool,
+    /// game_main's explicit next wave before init_mapscreen (−1 none).
+    pub map_preload: i32,
     /// vb_counter 0x2a1c78 (vblanks; the fixture's value at load).
     pub vb_counter: u32,
     pub audio_que: audio_queue::AudioQueue,

@@ -80,10 +80,9 @@ original (PCSX2 reference on Xvfb :191, private captures):
    simulation (level/shop/map exits and the good wizard wait on it), the
    good wizard after a boss (goodwiz.rs: model, captions, speech, exit),
    PlayerGiveShard, StartBlockFX/StartGenFX, boss meters hidden at
-   BossDeath, the boss-arena camera eye fix. Next: game_main's exit flow
-   (every realm exit → init_shop(0) → the Tower; next_world /
-   other_players_next_level / EndTower → the map) instead of the client's
-   interim next-level shortcut.
+   BossDeath, the boss-arena camera eye fix. game_main's level end and
+   next_world (exitflow.rs): realm exits → tally/shop → the Tower; Tower
+   portals → the map → the level (docs/research/player.md).
 
 ---
 

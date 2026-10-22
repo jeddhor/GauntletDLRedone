@@ -72,32 +72,6 @@ impl Game {
         self.critter_damage(1.0e6, b, 0, 0, None, None, 0)
     }
 
-    /// game_main's destination once the level ends without a pending
-    /// do_exit destination (the boss auto exit): TowerWave (init_shop(0)),
-    /// the next level after world 12 and levels (5, 0) / (6, 0); with all
-    /// players dead TowerWave. BossType 0x2b / 0x2c play their movie first
-    /// (init_gamemovie; movies are not ported) and then TowerWave.
-    pub fn game_main_exit_wave(&self) -> i32 {
-        let g = &self.globals;
-        let all_dead = (0..4).all(|k| matches!(self.players[k].i32_(0xfc), 0 | 0xb));
-        let returning = (13..=0xffff).contains(&g.skip_wave);
-        let tower = super::boss::TOWER_WAVE;
-        if all_dead {
-            return tower;
-        }
-        if returning {
-            return self.stage_save.as_ref().map_or(tower, |s| s.recorded_wave);
-        }
-        if g.quit_level != 0 || !(g.skip_wave == 0 || g.skip_wave == 0xc) || g.boss_type == 0x2b || g.boss_type == 0x2c {
-            return tower;
-        }
-        let (w, l) = (g.cur_world, g.cur_level);
-        if w == 0xc || (w == 5 && l == 0) || (w == 6 && l == 0) {
-            return (w << 8 | (l & 0xff)) + 1;
-        }
-        tower
-    }
-
     /// StartGoodWizard.
     pub(crate) fn start_good_wizard(&mut self) {
         self.globals.good_wizard = 1;

@@ -419,6 +419,7 @@ impl Game {
             level_done: None,
             players_done: false,
             exit_ready: false,
+            map_preload: -1,
             vb_counter: s.extra.vb_counter,
             audio_que: Default::default(),
             attract_audio: false,
@@ -731,9 +732,6 @@ impl Game {
         // level's end (the host's transition); ProcessEffects is skipped.
         if self.players_done && !self.audio_still_playing() {
             self.exit_ready = true;
-            if self.level_done.is_none() {
-                self.level_done = Some(self.game_main_exit_wave());
-            }
         } else if let Err(e) = self.process_effects() {
             self.log.note("ProcessEffects", &e);
         }

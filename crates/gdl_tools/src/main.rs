@@ -1126,7 +1126,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             .map(|(k, r)| serde_json::json!({"slot":k,"name":String::from_utf8_lossy(game.items.definitions[r.definition()].name()),
                 "type":r.i16_(0xf0),"count":r.i8_(0xf2),"max":r.i8_(0xf3),"level":r.i8_(0xf6),"logic":r.i8_(0xf7),
                 "d8":r.u16_(0xd8),"pos":r.v3(0x60)})).collect();
-        let report = serde_json::json!({"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,
+        // Exit items (kind 9): slot, +0xf0 destination wave, +0xd8 flags.
+        let exits: Vec<_> = (0..game.items.records.len())
+            .filter(|&k| game.items.definitions[game.items.records[k].definition()].kind() == 9)
+            .map(|k| { let r = &game.items.records[k]; serde_json::json!([k, r.i16_(0xf0), r.u16_(0xd8), r.position()]) })
+            .collect();
+        let report = serde_json::json!({"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
             "critter_files":game.critter_data.files.iter().map(|f| serde_json::json!({"name":f.name,"trees":f.trees,"model":f.model.is_some()})).collect::<Vec<_>>(),
             "critter_etypes":game.critter_data.etypes.iter().map(|r| r.iter().map(|t| t.map(|t| [t.0, t.1])).collect::<Vec<_>>()).collect::<Vec<_>>(),

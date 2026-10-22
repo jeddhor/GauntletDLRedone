@@ -268,3 +268,30 @@ start_magic sets damage flag 0x800000 for casters past level 0x18. With it:
   to the title. In single player the wave ends on the frame the player
   reaches 0xb (do_players reports it done), so the prompt only matters
   while others play.
+
+## Level end (game_main, 2026-10-21)
+
+game::exitflow ports game_main 0x125280's level-end branch and next_world
+0x1250f0. The level ends once do_players reports every player done and
+AudioStillPlaying is clear (`Game::exit_ready`). Leaving a realm level by
+its exit (skip_wave 0) goes to TowerWave → init_shop(0): the tally, the
+shop and the final stats, then the Tower (shop_setup's LoadTowerAndSelect
+loads it; init_next_level enters it). The exit item's destination is kept
+in the player's +0x808 but does not choose the next level here. From the
+Tower, the portal taken (do_exit → +0x808) leads through EndTower,
+next_world (the largest +0x808 of the players not in state 0/2) and the
+map (init_mapscreen(0x78, 0)) to that level. Secret exits (skip_wave 3..11)
+go through the map to world 12; the stage return (skip_wave 13..0xffff)
+to recorded_wave (map with skip); world 12 and levels (5, 0) / (6, 0) go
+on to the next level index unless a player recorded a destination; boss
+types 0x2b / 0x2c play their movie first (init_gamemovie, not ported: the
+client enters the Tower). PlayersSetWaveFinished(PrevWorld, PrevLevel)
+runs unless every player is dead. Exit destinations on the disc (game-run
+`exits`): A1 → 0x105, A2 → −1, A6 → 0x102 and the secret 0xc02; the
+Tower has one portal per realm level, the first shown and the rest hidden
+by HideExits until reached. Every LEVL record has +4 bit 0 set, so
+NextWorldLevel's step in next_world never applies (guarded). GUI checks:
+A1's exit → Stats → Shop → class stats → inventory → the Tower (welcome,
+Sumner); the Tower's 0x100 portal → A1. The client's earlier shortcut
+(exit → the map of the exit's destination) is gone; F9 keeps it as a
+DEBUG skip.

@@ -26,6 +26,7 @@ use gdl_core::{
     player_class::ClassTables,
     save::SaveStore,
 };
+use gdl_core::game::exitflow::LevelEnd;
 use gdl_formats::{animation::Animations, objects::Objects, texdef::TextureTable, world::World};
 use serde_json::Value;
 use std::{collections::HashMap, error::Error, path::Path};
@@ -1339,6 +1340,8 @@ struct Sim {
     shop: Option<(gdl_core::game::shopflow::ShopFlow, usize)>,
     /// game mode 0x400f before the next level of a realm (init_mapscreen).
     map: Option<(gdl_core::game::mapscreen::MapScreen, usize)>,
+    /// F9 (DEBUG): the pending exit skips game_main's level end.
+    debug_skip: bool,
     /// The level to load once the shop or map screen finished.
     shop_done: Option<usize>,
 }
@@ -2938,7 +2941,7 @@ fn present_world(
 /// init_mapscreen for level `k`: its WDATA MAPS record (LEVL +0x5c) and
 /// the MAPS/level<code> package as a HUD texture set. False when the map
 /// package cannot be loaded (the caller goes straight on).
-fn start_map(sim: &mut Sim, sources: &mut Sources, sets: &mut HudSets, front: &Front, session: &Session, k: usize) -> bool {
+fn start_map(sim: &mut Sim, sources: &mut Sources, sets: &mut HudSets, front: &Front, session: &Session, k: usize, skip: bool) -> bool {
     let lv = &session.levels[k];
     let code = lv.name.clone();
     let map = (|| -> Option<[f32; 18]> {
@@ -2955,7 +2958,7 @@ fn start_map(sim: &mut Sim, sources: &mut Sources, sets: &mut HudSets, front: &F
     let set = gdl_client::hud_texture_set(&key, &sources.packages[&key].objects);
     sim.game.hud.add_texture_set(set);
     sets.keys.push(key);
-    let m = sim.game.init_mapscreen(0x78, false, &code, map);
+    let m = sim.game.init_mapscreen(0x78, skip, &code, map);
     sim.map = Some((m, k));
     true
 }
@@ -3987,7 +3990,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -4739,6 +4742,7 @@ fn advance_level(
         };
         sim.game.level_done = Some(next);
         sim.game.exit_ready = true;
+        sim.debug_skip = true;
     }
     if session.banner.is_none()
         && session.finished.is_none()
@@ -4746,38 +4750,63 @@ fn advance_level(
         && sim.game.exit_ready
         && let Some(wave) = sim.game.level_done.take()
     {
-        let world = wave >> 8;
-        let level = (wave & 0xff) as usize;
         let name = session.levels[session.current].name.clone();
-        // game_main → PlayersSetWaveFinished(PrevWorld, PrevLevel) for the
-        // level just completed (realm progress, tower exits).
-        let (cw, cl) = (session.world_number, session.levels[session.current].index as i32);
-        let (l90, l92) = (sim.game.level_i16(0x90), sim.game.level_i16(0x92));
-        sim.game.players_set_wave_finished(cw, cl, l90, l92);
-        if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world)
-            && session.levels[k].world == 0xd
-            && session.world_number != 0xd
-        {
-            // game_main: an exit to TowerWave goes through init_shop(0).
-            start_shop(&mut sim, &front, k);
-        } else if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world)
-            && start_map(&mut sim, &mut sources, &mut hud_sets, &front, &session, k)
-        {
-            // game_main → init_mapscreen(0x78, skip) for the next level
-            // (init_gamemovie afterwards: movies are not ported).
-        } else if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world) {
-            session.next = Some(k);
-            let to = if session.levels[k].world == session.world_number { session.levels[k].name.clone() } else { format!("{} {}", session.levels[k].title, session.levels[k].name) };
-            session.banner = Some((3.0, format!("{name} COMPLETE - entering {to}")));
-        } else if wave == gdl_core::game::boss::TOWER_WAVE {
-            session.finished = Some(format!(
-                "{} COMPLETE!\nThe boss is defeated; the game would return to the hub (not ported yet).\nThanks for testing! (Esc to quit)",
-                session.title
-            ));
+        let tower = session.levels.iter().position(|l| l.world == 0xd);
+        // game_main's level end (game::exitflow); F9 (DEBUG) goes straight
+        // to its wave instead.
+        let (wave, skip) = if std::mem::take(&mut sim.debug_skip) {
+            let (cw, cl) = (session.world_number, session.levels[session.current].index as i32);
+            let (l90, l92) = (sim.game.level_i16(0x90), sim.game.level_i16(0x92));
+            sim.game.players_set_wave_finished(cw, cl, l90, l92);
+            (Some(wave), false)
         } else {
-            session.finished = Some(format!(
-                "{name} COMPLETE. The exit leads to wave {wave:#x}; that level (boss/hub) is not ported yet. Thanks for testing! (Esc to quit)"
-            ));
+            match sim.game.game_main_level_end() {
+                LevelEnd::Over => (None, false),
+                // TowerWave → init_shop(0): the tally and shop, then the Tower.
+                LevelEnd::Shop => {
+                    if let Some(k) = tower {
+                        start_shop(&mut sim, &front, k);
+                    }
+                    (None, false)
+                }
+                // init_gamemovie (movies are not ported), then game_wave =
+                // TowerWave: init_next_level into the Tower.
+                LevelEnd::Movie(_) => {
+                    session.next = tower;
+                    session.banner = Some((0.0, String::new()));
+                    (None, false)
+                }
+                LevelEnd::Map { skip } => match sim.game.next_world_wave() {
+                    Ok(w) => (Some(w), skip),
+                    Err(e) => {
+                        sim.error = Some(format!("next_world: {}", e.0));
+                        (None, false)
+                    }
+                },
+            }
+        };
+        if let Some(wave) = wave {
+            let world = wave >> 8;
+            let level = (wave & 0xff) as usize;
+            if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world)
+                && session.levels[k].world == 0xd
+                && session.world_number != 0xd
+            {
+                // (F9) an exit to TowerWave goes through init_shop(0).
+                start_shop(&mut sim, &front, k);
+            } else if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world)
+                && start_map(&mut sim, &mut sources, &mut hud_sets, &front, &session, k, skip)
+            {
+                // init_mapscreen(0x78, skip) towards next_world's wave.
+            } else if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world) {
+                session.next = Some(k);
+                let to = if session.levels[k].world == session.world_number { session.levels[k].name.clone() } else { format!("{} {}", session.levels[k].title, session.levels[k].name) };
+                session.banner = Some((3.0, format!("{name} COMPLETE - entering {to}")));
+            } else {
+                session.finished = Some(format!(
+                    "{name} COMPLETE. The exit leads to wave {wave:#x}, which is not in this build's level list. Thanks for testing! (Esc to quit)"
+                ));
+            }
         }
     }
     let Some((left, text)) = session.banner.clone() else { return };
