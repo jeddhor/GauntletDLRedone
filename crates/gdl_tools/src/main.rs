@@ -396,6 +396,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         for (k, e) in rom.entries.iter().enumerate() {
             println!("{k} {} font {} scale {} {:?}", e.name, e.font, e.scale, e.lines);
         }
+        for (k, (name, entries)) in rom.lists.iter().enumerate() {
+            println!("list {k} {name} {entries:?}");
+        }
         return Ok(());
     }
     if args.len() == 3 && args[0] == "world-anim-eval" {

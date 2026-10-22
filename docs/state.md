@@ -107,6 +107,7 @@ original (PCSX2 reference on Xvfb :191, private captures):
    rebind their material each frame (in-game movies showed a frozen frame).
    2026-10-22: game over (init_over/do_over: GAME OVER over the running
    level, then the FAIL movie and the attract sequence), also for Quit Game.
+   2026-10-22: Sumner's hint pad picks hints by progress (next_*_hint).
 
 ---
 

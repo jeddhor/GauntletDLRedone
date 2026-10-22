@@ -184,7 +184,7 @@ title); case 0x17 draws the hint with DrawScrollListText(hints, x −256,
 font 6) at DrawStringScale = the menu scale (0.667) in the menu's off
 colour. NATIVE: the client pages through every hint of a category and
 shows the hint_menu label as the title of the non-general categories;
-next_*_hint's progress-based choice is not ported. GDL_DEBUG_HINTS opens
+next_*_hint's choice is ported (see Sumner's hint pad below). GDL_DEBUG_HINTS opens
 the menu for presentation checks.
 
 ## Inventory (draw_fullscreen_inventory)
@@ -583,3 +583,28 @@ init_attract_mode(0x8002) — the FAIL movie, then the attract sequence
 (the title only through Start). Ported (gdl_core::game::movie::GameOver,
 the client's sim.over); the Tower's join check does not run in 0x4014.
 GUI: Quit Game → GAME OVER over the Tower → FAIL.
+
+## Sumner's hint pad (2026-10-22)
+
+HintMenu 0x10e800 (SumnerHintsActivate after 2 s at the pad): hints_inited
+→ next_general_hint(0) once; next_boss/legend/rune_hint(0) on every
+opening. DoOptions case 0x16 (hint_menu entries 0x27..0x2a):
+- 0x27 next_general_hint(1): from index 3 down while no player has all
+  gargoyle items of index − 1; the next line of GENERAL_HINTS[index]
+  (ScrollTextListNum), then the lower entries; title "A Hint for You".
+- 0x28 next_boss_hint(1) / 0x29 next_legend_hint(1): WorldOrder indices
+  1..10 (1..9) — open worlds whose shard (PlayerHasShard(-1, the world
+  number), as the original passes it) / legend item nobody holds, a second
+  pass any open world; the lines 0..num of BOSS_HINTS / LEGEND_HINTS[index]
+  where num = 1 + (any player's class word +0xd00 / +0xcfc has the world's
+  bit) + (+0xd02 / +0xcfe: 2); titles BOSSHINTDESCS / LEGENDHINTDESCS line
+  index.
+- 0x2a next_rune_hint(1): rune_idx_table 0x21ec20 order, unheld runes
+  first; RUNE_HINTS[rune − 1] lines by +0xcf8 / +0xcfa; title
+  RUNEHINTDESCS line rune − 1.
+DrawScrollListText(file 1 = HINTS_E.ROM, list 0 boss, 1 rune, 2 legend,
+3 general) at the entry's scale (0.8 for the boss/legend/rune lists).
+Ported (gdl_core::game::hints; the client's ShowHint). NATIVE: the lines
+are one centred block (the original steps stringtext_y + 16 from y 0x70).
+GUI: the four categories at a new game in the Tower (The Lich / Book of
+Protection / The First Runestone).

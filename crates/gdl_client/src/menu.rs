@@ -59,6 +59,10 @@ pub enum Action {
     /// Screen Adjust (DoOptions 0x12): pbScreenSetAdjust(dx, dy); `keep`
     /// stores them in GamePrefs words 3/4 (Accept).
     Screen { dx: i32, dy: i32, keep: bool },
+    /// hint_menu entry `list` accepted (DoOptions case 0x16): the host picks
+    /// the category's next hint, fills `hints[list]` and `hint_title` and
+    /// opens the page.
+    ShowHint { list: usize },
 }
 
 /// A save shown in the list.
@@ -196,6 +200,10 @@ pub struct Menu {
     pub inventory: String,
     /// Hint categories (hint_menu order) with their hint texts.
     pub hints: Vec<Vec<String>>,
+    /// The shown hint's title (a *HINTDESC line; None: "A Hint for You")
+    /// and its ROM entry's scale (StringInitSub: × DrawStringScale).
+    pub hint_title: Option<String>,
+    pub hint_scale: f32,
     /// GamePrefs words (0 sfx, 1 music, … 5 difficulty +0x14, 6 compass
     /// +0x18, 7 multiplayer +0x1c) and player 1's control options
     /// (style +0x2c, vibration +0x30, auto attack +0x38, auto aim +0x34).
@@ -225,7 +233,7 @@ fn list(title: &str, items: &[String], at: usize) -> String {
 
 impl Menu {
     pub fn new(music: u8, sfx: u8) -> Self {
-        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new(), prefs: [0; 8], screen: (0, 0), controls: [0; 4] }
+        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new(), hint_title: None, hint_scale: 1.0, prefs: [0; 8], screen: (0, 0), controls: [0; 4] }
     }
 
     /// The Select page's entries (for the original-style column menu).
@@ -517,7 +525,7 @@ impl Menu {
             Page::Hints { at } => {
                 match key {
                     Key::Up | Key::Down => self.page = Page::Hints { at: wrap(at, HINT_MENU.len(), key == Key::Up) },
-                    Key::Accept => self.page = Page::HintText { list: at, at: 0 },
+                    Key::Accept => return Some(Action::ShowHint { list: at }),
                     Key::Back => return Some(Action::Resume),
                     _ => {}
                 }
@@ -660,7 +668,10 @@ mod tests {
         let mut m = Menu::new(128, 128);
         m.hints = vec![vec!["a".into(), "b".into()], vec![], vec![], vec![]];
         m.page = Page::Hints { at: 0 };
-        m.input(Key::Accept);
+        // Accept asks the host for the category's next hint (ShowHint); the
+        // host then opens the text page.
+        assert_eq!(m.input(Key::Accept), Some(Action::ShowHint { list: 0 }));
+        m.page = Page::HintText { list: 0, at: 0 };
         assert!(m.text().contains("1/2"));
         m.input(Key::Accept);
         assert!(m.text().contains("2/2"));

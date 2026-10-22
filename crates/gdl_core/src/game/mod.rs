@@ -18,6 +18,7 @@ pub mod effects;
 pub mod exitflow;
 pub mod movie;
 pub mod goodwiz;
+pub mod hints;
 pub mod heal;
 pub mod healthmeter;
 pub mod hud;

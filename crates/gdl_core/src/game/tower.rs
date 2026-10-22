@@ -203,7 +203,7 @@ impl Game {
 
     /// WorldOpen(world): Temple/Hell/Battle need shards (Hell also all
     /// runes), the Tower is open, the rest need their crystals.
-    fn world_open(&self, world: i32) -> bool {
+    pub(crate) fn world_open(&self, world: i32) -> bool {
         match world {
             6 => self.players_have_shards(0x3fe) && self.player_has_rune(-1, 0xfff),
             5 => self.players_have_shards(0x1fe),

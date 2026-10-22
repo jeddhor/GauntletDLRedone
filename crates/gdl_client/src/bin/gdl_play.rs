@@ -374,6 +374,9 @@ struct Front {
     /// the attract modes' 30 Hz step clock (SetMaxFPS(0x1e)).
     title_timeout: f32,
     attract_clock: f32,
+    /// TEXT/HINTS_E.ROM and the hint pad's state (HintMenu, next_*_hint).
+    hints_rom: gdl_formats::textrom::TextRom,
+    hints: gdl_core::game::hints::Hints,
 }
 
 /// The running attract entry (game modes 0x8000..0x8008; the title screen
@@ -3239,8 +3242,11 @@ fn simulate(
         sim.game.players[0].set_i32(0x1a1c, exp);
         sim.game.players[0].set_i32(0x2ac0, gdl_core::player_class::exp_to_level(exp));
     }
-    // DEBUG: GDL_DEBUG_HINTS=1 opens Sumner's hint menu once.
-    if sim.updates == 60 && std::env::var("GDL_DEBUG_HINTS").is_ok() {
+    // DEBUG: GDL_DEBUG_HINTS=<update> opens Sumner's hint menu once at that
+    // update (1: update 60).
+    if let Ok(v) = std::env::var("GDL_DEBUG_HINTS")
+        && sim.updates == v.parse::<u64>().ok().filter(|&u| 1 < u).unwrap_or(60)
+    {
         sim.hint_menu = true;
     }
     // DEBUG: GDL_DEBUG_GOTIT=<kind>:<amount> raises add_got_it(0, …) once.
@@ -4431,17 +4437,17 @@ fn present_hud(
             front_list.extend(front.ui_hud.screen_adjust_blits());
         }
         if let gdl_client::menu::Page::HintText { list, at } = &front.menu.page {
-            // DoOptions case 0x16: "A Hint for You" (general); the other
-            // categories' titles (guardian/legend/rune names from
-            // HINTS_E.ROM) are NATIVE: the hint_menu label is shown.
-            menu.title = Some(if *list == 0 { "A Hint for You".to_string() } else { front.menus.get("hint_menu").and_then(|h| h.entries.get(*list)).map_or(String::new(), |e| e.label.clone()) });
+            // DoOptions case 0x16: "A Hint for You" (general) or the
+            // category's *HINTDESCS line (the guardian, legend item, rune).
+            menu.title = Some(if *list == 0 { "A Hint for You".to_string() } else { front.menu.hint_title.clone().unwrap_or_default() });
             if let Some(text) = front.menu.hints.get(*list).and_then(|h| h.get(*at)) {
                 // DrawScrollListText(hints, x −256, font 6) at DrawStringScale
-                // = the menu scale, in the menu's "off" colour.
+                // = the menu scale × the ROM entry's scale, in the menu's
+                // "off" colour (NATIVE: the block is centred at 0xd0).
                 let c = menu.rgb[0];
                 let colour = (c[0].clamp(0, 255) as u32) << 16 | (c[1].clamp(0, 255) as u32) << 8 | c[2].clamp(0, 255) as u32;
                 let lines: Vec<&str> = text.split('\n').collect();
-                front_list.extend(front.ui_hud.text_block_blits(menu.scale, 0xd0, 6, colour, &lines, 0));
+                front_list.extend(front.ui_hud.text_block_blits(menu.scale * front.menu.hint_scale, 0xd0, 6, colour, &lines, 0));
             }
         }
         front_list.extend(front.ui_hud.optmenu_blits(style, &menu, &state));
@@ -4998,7 +5004,11 @@ fn act(world: &mut EcsWorld, action: Action) {
     let result: Result<(), Box<dyn Error>> = (|| {
         match action {
             Action::Play { slot } => start_game(world, slot)?,
-            Action::StartSelect => start_select(world)?,
+            Action::StartSelect => {
+                // do_titlescreen's start: HintMenu(-1) (hints_inited = 0).
+                world.resource_mut::<Front>().hints = Default::default();
+                start_select(world)?
+            }
             Action::Create { class, colour, name } => {
                 let slot = {
                     let front = world.resource::<Front>();
@@ -5032,6 +5042,38 @@ fn act(world: &mut EcsWorld, action: Action) {
                         sim.select = Some(ps);
                     }
                     Err(e) => sim.error = Some(format!("init_player_select: {}", e.0)),
+                }
+            }
+            Action::ShowHint { list } => {
+                // DoOptions case 0x16: next_*_hint(1), the title (GetScrollText
+                // of BOSSHINTDESCS / LEGENDHINTDESCS / RUNEHINTDESCS) and the
+                // lines DrawScrollListText draws (HINTS_E.ROM lists 0..3).
+                let mut hints = std::mem::take(&mut world.resource_mut::<Front>().hints);
+                let shown = {
+                    let front = world.resource::<Front>();
+                    let rom = &front.hints_rom;
+                    let general = |i: i32| -> i32 {
+                        rom.lists.get(3).and_then(|(_, l)| l.get(usize::try_from(i).ok()?)).and_then(|&e| rom.entries.get(e)).map_or(0, |e| e.lines.len() as i32)
+                    };
+                    world.get_resource::<Sim>().map(|sim| sim.game.next_hint(&mut hints, list, &general))
+                };
+                let mut front = world.resource_mut::<Front>();
+                front.hints = hints;
+                if let Some(h) = shown {
+                    let rom = &front.hints_rom;
+                    let entry = rom.lists.get(h.list).and_then(|(_, l)| l.get(h.entry)).and_then(|&e| rom.entries.get(e));
+                    let lines: Vec<String> = h.lines.iter().filter_map(|&k| entry.and_then(|e| e.lines.get(k)).map(|l| l.replace('\r', ""))).collect();
+                    let title = h.title.and_then(|(e, l)| rom.entries.get(e).and_then(|e| e.lines.get(l)).map(|t| t.replace('\r', "")));
+                    let scale = entry.map_or(1.0, |e| e.scale);
+                    // NATIVE spacing: one empty line between hint lines (the
+                    // original steps stringtext_y + 16).
+                    let text = lines.join("\n\n");
+                    let n = front.menu.hints.len().max(list + 1);
+                    front.menu.hints.resize(n, Vec::new());
+                    front.menu.hints[list] = vec![text];
+                    front.menu.hint_title = title;
+                    front.menu.hint_scale = scale;
+                    front.menu.page = gdl_client::menu::Page::HintText { list, at: 0 };
                 }
             }
             Action::QuitLevel => {
@@ -5220,6 +5262,10 @@ fn front_system(world: &mut EcsWorld) {
             return;
         }
         if std::mem::take(&mut world.resource_mut::<Sim>().hint_menu) && !world.resource::<Ui>().paused {
+            // HintMenu: next_general_hint(0) once, the others every time.
+            let mut hints = std::mem::take(&mut world.resource_mut::<Front>().hints);
+            world.resource::<Sim>().game.hint_menu_open(&mut hints);
+            world.resource_mut::<Front>().hints = hints;
             world.resource_mut::<Front>().menu.page = gdl_client::menu::Page::Hints { at: 0 };
             world.resource_mut::<Ui>().paused = true;
             return;
@@ -5462,6 +5508,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     let controls_menu = gdl_core::game::optmenu::ControlsMenu::from_elf(&elf).ok();
+    let catalog_hints = catalog.read("TEXT/HINTS_E.ROM")?;
     // The attract screens' packages (init_screen2d's "sony" / "group1",
     // init_credits' "credits") as front texture sets 3–5, and the credits
     // font (FontInitSpecial("credits", 8): font 0xd).
@@ -5518,6 +5565,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         attract_pkgs,
         title_timeout: 1800.0,
         attract_clock: 0.0,
+        hints_rom: gdl_formats::textrom::TextRom::parse(&catalog_hints)?,
+        hints: Default::default(),
         base: Base {
             package_cfg,
             start,
@@ -5543,7 +5592,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         start_attract(&mut front, -1);
     }
     // hint_menu categories → HINTS_E.ROM lists (every line of every entry,
-    // in list order; NATIVE: next_*_hint's progress-based choice is not ported).
+    // in list order; replaced per category by next_*_hint when shown).
     let hints_rom = gdl_formats::textrom::TextRom::parse(&front.catalog.read("TEXT/HINTS_E.ROM")?)?;
     front.menu.hints = ["GENERAL_HINTS", "BOSS_HINTS", "LEGEND_HINTS", "RUNE_HINTS"]
         .iter()
