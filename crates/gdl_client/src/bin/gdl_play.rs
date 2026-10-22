@@ -2478,6 +2478,17 @@ fn simulate(
         r.set_f32(0x14c, 0.0);
         r.set_u32(0x150, f);
     }
+    // DEBUG: GDL_DEBUG_TELEPORT=x,y,z moves player 1 there once (update
+    // 600), e.g. onto a secret exit. Not a game feature.
+    if sim.updates == 600
+        && let Some(v) = std::env::var("GDL_DEBUG_TELEPORT").ok().map(|v| v.split(',').filter_map(|c| c.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+        && v.len() == 3
+    {
+        let yaw = sim.game.players[0].f32_(0x86c);
+        if let Err(e) = sim.game.place_player(0, [v[0], v[1], v[2]], yaw) {
+            sim.error = Some(format!("teleport: {}", e.0));
+        }
+    }
     let new: Vec<Event> = sim.game.events.drain(before..).collect();
     sim.game.events.clear();
     let me = Vec3::from_array(sim.game.players[0].v3(0x50));

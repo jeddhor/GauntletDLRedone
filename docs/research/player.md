@@ -251,8 +251,11 @@ start_magic sets damage flag 0x800000 for casters past level 0x18. With it:
   unlock bit 1 << (char − 8) in +0x9a8, then AudioSecretChar, the AllCoins
   scroll and WaveTimer = 1, WaveComplete = 1); AudioPickupGold's
   bronze/silver/gold voices by value.
-- Checked headlessly: S1–S9 load and run (sandglass expiry auto-exits);
-  the secret-exit → room → return trip has not been played through.
+- Checked headlessly: S1–S9 load and run (sandglass expiry auto-exits).
+  Played natively (gdl_play, GDL_DEBUG_LEVEL=A6 with the DEBUG
+  GDL_DEBUG_TELEPORT onto A6's SECRET_ICON): the exit leads to the
+  treasure room, the sandglass drains, and its expiry returns to A6 at the
+  exit. Not compared with the reference.
 
 ## Continue and game over (2026-10-21)
 
