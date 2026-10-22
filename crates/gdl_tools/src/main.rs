@@ -2069,7 +2069,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     game.item_anims.clone(),
                     game.items.geo.clone(),
                 );
-                for _ in 0..4 {
+                let attempt = |game: &mut gdl_core::game::Game, seed: u32| -> Result<Result<(), gdl_core::game::Unsupported>, Box<dyn Error>> {
                     if b["enemies"].get("help_flag").is_none() {
                         game.hud.help = help_before.clone();
                     }
@@ -2082,9 +2082,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                         game.item_anims,
                         game.items.geo,
                     ) = item_side.clone();
-                    seed_all(&mut game)?;
+                    seed_all(game)?;
                     game.rng.state = seed;
-                    res = if items_mode { game.process_items() } else { Ok(()) };
+                    let mut res = if items_mode { game.process_items() } else { Ok(()) };
                     if res.is_ok() {
                         res = game.do_enemies(&visible);
                     }
@@ -2094,6 +2094,33 @@ fn run() -> Result<(), Box<dyn Error>> {
                             res = game.process_effects();
                         }
                     }
+                    Ok(res)
+                };
+                // The native clock lives beside the record: write it back to
+                // the +0x84 AnimInfo for the comparison.
+                let write_back = |game: &mut gdl_core::game::Game| {
+                    for k in 0..25 {
+                        if let Some(Some(an)) = game.enemy_anims.get(k) {
+                            let c = an.clock;
+                            let r = &mut game.enemies[k];
+                            r.set_u16(0x92, c.sequence);
+                            r.set_u16(0xa0, c.previous_sequence);
+                            r.set_u8(0x96, c.reset_byte);
+                            r.set_u8(0x97, c.option_bits);
+                            r.set_u16(0xa2, c.enabled_word);
+                            r.set_u16(0xb8, c.loop_word);
+                            r.set_u16(0xba, c.mode_bits);
+                            r.set_f32(0x9c, c.frame);
+                            r.set_f32(0x98, c.blend_fraction);
+                            r.set_f32(0xa4, c.start_time);
+                            r.set_f32(0xa8, c.blend_end_time);
+                            r.set_f32(0xb0, c.period_scale);
+                            r.set_f32(0xb4, c.last_time);
+                        }
+                    }
+                };
+                for _ in 0..4 {
+                    res = attempt(&mut game, seed)?;
                     if game.rng.state == rand_after {
                         solved = true;
                         break;
@@ -2101,25 +2128,60 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let n = steps_between(seed, game.rng.state).unwrap_or(0);
                     seed = back(rand_after, n);
                 }
-                // The native clock lives beside the record: write it back to
-                // the +0x84 AnimInfo for the comparison.
-                for k in 0..25 {
-                    if let Some(Some(an)) = game.enemy_anims.get(k) {
-                        let c = an.clock;
-                        let r = &mut game.enemies[k];
-                        r.set_u16(0x92, c.sequence);
-                        r.set_u16(0xa0, c.previous_sequence);
-                        r.set_u8(0x96, c.reset_byte);
-                        r.set_u8(0x97, c.option_bits);
-                        r.set_u16(0xa2, c.enabled_word);
-                        r.set_u16(0xb8, c.loop_word);
-                        r.set_u16(0xba, c.mode_bits);
-                        r.set_f32(0x9c, c.frame);
-                        r.set_f32(0x98, c.blend_fraction);
-                        r.set_f32(0xa4, c.start_time);
-                        r.set_f32(0xa8, c.blend_end_time);
-                        r.set_f32(0xb0, c.period_scale);
-                        r.set_f32(0xb4, c.last_time);
+                write_back(&mut game);
+                // A solved seed fixes the call count, not the draw order: a
+                // wrong draw can change later consumers so that another count
+                // is self-consistent too (trace-g1-newgame-v1 step 364: a
+                // spawn direction decided whether the new enemy saw the
+                // player or wandered with one more rand). When the solution
+                // still differs, neighbouring counts are tried and the one
+                // matching the reference best is kept.
+                let mut alt_seed = false;
+                if solved {
+                    let after_player = if frame_mode { Some(hexb(&a["player"]["player0"])?) } else { None };
+                    let wi_after = if items_mode { Some(hexb(&a["enemies"]["WorldInfo"])?) } else { None };
+                    let score = |game: &gdl_core::game::Game| -> usize {
+                        let mut n = 0;
+                        for k in 0..25 {
+                            for o in (0..ESIZE).step_by(4) {
+                                if !pointer_words.contains(&o) && game.enemies[k].u32_(o) != word(&ea[k * ESIZE + o..]) {
+                                    n += 1;
+                                }
+                            }
+                        }
+                        if let Some(pa) = &after_player {
+                            for o in (0..0x2b00).step_by(4) {
+                                if !player_pointer_words.contains(&o) && !player_hud_words.contains(&o) && game.players[0].u32_(o) != word(&pa[o..]) {
+                                    n += 1;
+                                }
+                            }
+                            n += fx_before.compare(game, items_base).len();
+                        }
+                        if let Some(wi) = &wi_after {
+                            n += ref_before.compare(game, wi, items_base).len();
+                        }
+                        n
+                    };
+                    let base = score(&game);
+                    if 0 < base {
+                        let n0 = steps_between(seed, rand_after).unwrap_or(0);
+                        let mut best = (base, seed);
+                        for n in [n0.checked_sub(1), Some(n0 + 1), n0.checked_sub(2), Some(n0 + 2)].into_iter().flatten() {
+                            let s = back(rand_after, n);
+                            let r = attempt(&mut game, s)?;
+                            if r.is_err() || game.rng.state != rand_after {
+                                continue;
+                            }
+                            write_back(&mut game);
+                            let sc = score(&game);
+                            if sc < best.0 {
+                                best = (sc, s);
+                            }
+                        }
+                        alt_seed = best.1 != seed;
+                        seed = best.1;
+                        res = attempt(&mut game, seed)?;
+                        write_back(&mut game);
                     }
                 }
                 let mut diffs = Vec::new();
@@ -2182,7 +2244,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     *by_item_offset.entry(d["offset"].as_str().unwrap_or("?").to_string()).or_default() += 1;
                     *by_item_slot.entry(d["item"].as_u64().unwrap_or(u64::MAX)).or_default() += 1;
                 }
-                updates.push(serde_json::json!({"step":a["step"],"seed_solved":solved,"error":res.err().map(|e| e.0),
+                updates.push(serde_json::json!({"step":a["step"],"seed_solved":solved,"alt_seed":alt_seed,"error":res.err().map(|e| e.0),
                     "words_differing":diffs.len(),"diffs":diffs.iter().take(60).collect::<Vec<_>>(),
                     "item_words_differing":item_diffs.len(),"item_diffs":item_diffs.iter().take(60).collect::<Vec<_>>(),
                     "player_words_differing":player_diffs.len(),"player_diffs":player_diffs.iter().take(40).collect::<Vec<_>>(),

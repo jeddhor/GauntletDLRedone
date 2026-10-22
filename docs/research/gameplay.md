@@ -591,3 +591,17 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   handshake on critter clocks, and CritterNodePlayerCollide's knockback
   direction (t = a + b, then t + t at 0x19bd14 — the decompiler shows
   a + b + a + b).
+- G1 from its new-game capture (slot 6, trace-g1-newgame-v1: the stage
+  start, Up, Up+Left, two throws, Left; 500 vblanks): whole-update replay
+  (replay-frame-g1new-v2.json) 250/250 in every part. Step 364 was a
+  replay ambiguity, not a port error: the solved seed fixes the number of
+  rand calls, not their order. Two generators spawned into slots 8 and 9
+  (format_brain, then RandInt(8) for the first gendir direction, each);
+  with the native's 5-call seed the first spawn faced away from player 0
+  (orient_spawn: the generator's +0x100 plus the direction's +0x26c), its
+  find_closest_player cone test failed and move_logic_wander's
+  format_brain drew the fifth call — a self-consistent solution. The
+  reference's 4-call seed puts the spawn at gendir 4 (π/4), it sees the
+  player and keeps logic 7. The replay now tries neighbouring call counts
+  when a solved update still differs and keeps the closest
+  (results "alt_seed").
