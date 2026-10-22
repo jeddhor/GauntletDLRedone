@@ -80,6 +80,9 @@ pub struct EffectHeader {
     pub tree: usize,
     pub frames: i16,
     pub timing: i16,
+    /// The first sequence's repeat flag: InitAnim's AnimInfo loop word
+    /// (effect +0x50) that StartFXTree keeps on its frame-count path.
+    pub repeat: u16,
 }
 
 /// Native render node + animation tree of a slot (presentation reads it).
@@ -215,7 +218,7 @@ impl EffectTables {
             let find = |a: &Animations, source: u8| {
                 a.trees.iter().position(|t| t.label.as_bytes().eq_ignore_ascii_case(name)).map(|i| {
                     let s = a.trees[i].sequences.first();
-                    EffectHeader { source, tree: i, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor) }
+                    EffectHeader { source, tree: i, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor), repeat: s.map_or(0, |s| s.repeat) }
                 })
             };
             *h = find(weapon_anim, 0).or_else(|| find(powerup_anim, 1));
@@ -258,7 +261,7 @@ impl EffectTables {
                 let s = t.sequences.first();
                 shared.push(EffectHeaderLabel {
                     label: t.label.clone(),
-                    header: EffectHeader { source, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor) },
+                    header: EffectHeader { source, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor), repeat: s.map_or(0, |s| s.repeat) },
                 });
             }
         }
@@ -292,7 +295,7 @@ impl EffectTables {
             let s = t.sequences.first();
             self.shared.push(EffectHeaderLabel {
                 label: t.label.clone(),
-                header: EffectHeader { source: 0x80 + n, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor) },
+                header: EffectHeader { source: 0x80 + n, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor), repeat: s.map_or(0, |s| s.repeat) },
             });
         }
     }
@@ -533,7 +536,14 @@ impl Game {
     pub(crate) fn start_fx_tree(&mut self, time: f32, visual: Visual, frames: i16, timing: i16, position: Option<V3>, flags: u32) -> R<usize> {
         let i = self.find_effect_idx();
         let atime = self.globals.atime;
-        let mut looping = 0u16;
+        // +0x50 is the AnimInfo loop word: AtreeInitSub's InitAnim leaves
+        // the first sequence's repeat flag there, and StartFXTree overwrites
+        // it only on its time and zero-frame paths (0x17d7b0;
+        // trace-b6-boss-v3 step 408, the dragon's header 102).
+        let mut looping = match visual {
+            Visual::Header(h) => self.effects.tables.headers.get(h).copied().flatten().map_or(0, |x| x.repeat),
+            _ => 0,
+        };
         let end = if 0.0 < time {
             looping = 1;
             add(time, atime)?
@@ -701,9 +711,9 @@ impl Game {
                 continue;
             };
             let name = format!("WEAP_TW_{c}");
-            let own = self.classes[p].sfx_trees.iter().position(|(l, _, _)| *l == name).map(|k| {
-                let (_, frames, timing) = self.classes[p].sfx_trees[k];
-                EffectHeader { source: 0x40 + p as u8, tree: k, frames, timing }
+            let own = self.classes[p].sfx_trees.iter().position(|(l, _, _, _)| *l == name).map(|k| {
+                let (_, frames, timing, repeat) = self.classes[p].sfx_trees[k];
+                EffectHeader { source: 0x40 + p as u8, tree: k, frames, timing, repeat }
             });
             self.effects.weap_throw_fx[p][t] = self.register_custom_effect(own, &name);
         }
@@ -2071,8 +2081,8 @@ impl Game {
             }
             for (name, die) in [("GENHIT", false), ("GENDIE", true)] {
                 let own = self.enemy_anim_data.tree_index.get(&(ti, name.to_string())).map(|&k| {
-                    let (frames, timing) = self.enemy_anim_data.other_trees[&(ti, name.to_string())];
-                    EffectHeader { source: 0xc0 + t as u8, tree: k, frames, timing }
+                    let (frames, timing, repeat) = self.enemy_anim_data.other_trees[&(ti, name.to_string())];
+                    EffectHeader { source: 0xc0 + t as u8, tree: k, frames, timing, repeat }
                 });
                 let h = self.register_custom_effect(own, name);
                 if die {
@@ -2484,7 +2494,11 @@ impl Game {
                 moved = true;
             }
         } else {
-            let up = self.std_camera.as_ref().map(|c| c.pb.cam_rows[2]);
+            // CreateDirMatrix(…, 0x23e520): row 2 of Cam[0]'s matrix (Cam
+            // 0x23e4f0 + 0x30), which CamUpdate copies from the StdCam; the
+            // boss camera leaves it (w2l6-boss-v1: (0, −sin 1, −cos 1)).
+            // Before a level's first CamUpdate the window row stands in.
+            let up = self.std_camera.as_ref().map(|c| c.cam0_mat.map_or(c.pb.cam_rows[2], |m| m[2]));
             m = create_dir_matrix(self.fx(i).v3(fx::VELOCITY), up)?;
             moved = true;
         }

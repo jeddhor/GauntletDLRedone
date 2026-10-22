@@ -39,11 +39,13 @@ def elf_symbols(names):
 
 
 def player_probe(memory):
-    sym = elf_symbols(set(GLOBALS) | {'players', 'PlayerControl', 'MboxWinPtr', 'StdCamera', 'Options', 'PlayerRootNode'})
+    sym = elf_symbols(set(GLOBALS) | {'players', 'PlayerControl', 'MboxWinPtr', 'StdCamera', 'Options', 'PlayerRootNode', 'Cam'})
     player, control = sym['players'], sym['PlayerControl']
     win, = struct.unpack_from('<I', memory, sym['MboxWinPtr'])
-    blocks = {'player0': (player, 0x2b00), 'control': (control, 0xf0), 'win': (win, 0xa0),
-              'stdcam': (sym['StdCamera'], 0x1b0), 'options': (sym['Options'], 0x30)}
+    blocks = {'player0': (player, 0x2b00), 'control': (control, 0xf0), 'win': (win, 0xb0),
+              'stdcam': (sym['StdCamera'], 0x1b0), 'options': (sym['Options'], 0x30),
+              # Cam[0]'s matrix rows (Cam +0x10..+0x3c) and eye (+0x40..+0x4c).
+              'cam0': (sym['Cam'] + 0x10, 0x40)}
     blocks.update({g: (sym[g], 4) for g in GLOBALS})
     if any(a % 4 or n % 4 or n <= 0 for a, n in blocks.values()):
         raise ValueError('player blocks must be aligned')

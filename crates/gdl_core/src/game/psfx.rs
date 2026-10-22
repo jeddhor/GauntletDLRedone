@@ -119,9 +119,9 @@ impl Game {
             let cstr = |b: &[u8]| -> String { String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]).into_owned() };
             if flags & 0xf00_0100 == 0 {
                 let name = cstr(&e[0x10..0x20]);
-                let own = self.classes[p].sfx_trees.iter().position(|(l, _, _)| *l == name).map(|i| {
-                    let (_, frames, timing) = self.classes[p].sfx_trees[i];
-                    super::effects::EffectHeader { source: 0x40 + p as u8, tree: i, frames, timing }
+                let own = self.classes[p].sfx_trees.iter().position(|(l, _, _, _)| *l == name).map(|i| {
+                    let (_, frames, timing, repeat) = self.classes[p].sfx_trees[i];
+                    super::effects::EffectHeader { source: 0x40 + p as u8, tree: i, frames, timing, repeat }
                 });
                 let h = self.register_custom_effect(own, &name);
                 t[k * 0x50 + 8..k * 0x50 + 0xc].copy_from_slice(&h.to_le_bytes());

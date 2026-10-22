@@ -17,7 +17,8 @@ from virtual_display import environment
 
 KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L']
 SLOTS = {1: 'poison-fields-original.p2s', 2: 'tower-newgame-v1.p2s', 3: 'w2l1-newgame-v1.p2s',
-         4: 'w1l1-newgame-v1.p2s', 5: 'w11l1-newgame-v1.p2s', 6: 'w7l1-newgame-v1.p2s', 7: 'w11l1-newgame-v2.p2s'}
+         4: 'w1l1-newgame-v1.p2s', 5: 'w11l1-newgame-v1.p2s', 6: 'w7l1-newgame-v1.p2s', 7: 'w11l1-newgame-v2.p2s',
+         8: 'w2l6-boss-v1.p2s'}
 
 
 def main():

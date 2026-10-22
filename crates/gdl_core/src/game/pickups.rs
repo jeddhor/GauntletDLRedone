@@ -54,7 +54,7 @@ pub struct ClassData {
     /// the base class): tree labels with the first sequence's frames and
     /// timing factor (InitCustomEffect searches it first).
     #[serde(default)]
-    pub sfx_trees: Vec<(String, i16, i16)>,
+    pub sfx_trees: Vec<(String, i16, i16, u16)>,
 }
 
 impl ClassData {

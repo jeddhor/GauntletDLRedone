@@ -4780,7 +4780,7 @@ fn with_sfx_trees(mut c: ClassData, sources: &Sources, k: usize) -> ClassData {
         .as_ref()
         .and_then(|pc| sources.packages.get(&pc.sfx_name))
         .and_then(|pkg| pkg.anim.as_ref())
-        .map(|a| a.trees.iter().map(|t| (t.label.clone(), t.sequences.first().map_or(0, |s| s.frames), t.sequences.first().map_or(0, |s| s.timing_factor))).collect())
+        .map(|a| a.trees.iter().map(|t| (t.label.clone(), t.sequences.first().map_or(0, |s| s.frames), t.sequences.first().map_or(0, |s| s.timing_factor), t.sequences.first().map_or(0, |s| s.repeat))).collect())
         .unwrap_or_default();
     c
 }

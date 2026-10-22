@@ -108,7 +108,7 @@ pub fn enemy_desc(prefix: &str, level: i32) -> String {
 pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animations) {
     for (k, tree) in anim.trees.iter().enumerate() {
         let s = tree.sequences.first();
-        data.other_trees.insert((t, tree.label.clone()), (s.map_or(0, |s| s.frames), s.map_or(0, |s| s.timing_factor)));
+        data.other_trees.insert((t, tree.label.clone()), (s.map_or(0, |s| s.frames), s.map_or(0, |s| s.timing_factor), s.map_or(0, |s| s.repeat)));
         data.tree_index.insert((t, tree.label.clone()), k);
     }
     for (k, tree) in anim.trees.iter().enumerate() {
@@ -468,6 +468,7 @@ impl Game {
             item_anim_nodes: inp.item_anim_nodes.clone(),
             camera: None,
             camera_rest: None,
+            newcam_mode: 0,
             std_camera: {
                 let set = super::camera::build_transmitters(&inp.world.locators, g.cur_world).map_err(|e| format!("transmitters: {}", e.0))?;
                 match inp.wdata.cameras.get(level.camera_index as usize) {
@@ -678,6 +679,7 @@ impl Game {
         // The culling view comes from the StdCam once start_camera runs
         // (init_next_level: StdCamInit after the players are placed).
         game.camera_rest = Some(s.camera.clone());
+        game.newcam_mode = s.camera.newcam_mode;
         // GauntWorldInit 0x162e38: QuestItemState 1 for the first active
         // player holding this world's legend item (PlayerHasLegendItem).
         game.globals.quest_item_state = 0;

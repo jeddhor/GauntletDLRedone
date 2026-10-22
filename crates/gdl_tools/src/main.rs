@@ -1559,7 +1559,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             // PLAYERS/<CLS>/SFX<COL>/ANIM.PS2 of player 0: InitPlayerMissiles'
             // WeapThrowFx (load_player).
             let a = anim_of("sfx")?;
-            game.classes[0].sfx_trees = a.trees.iter().map(|t| (t.label.clone(), t.sequences.first().map_or(0, |s| s.frames), t.sequences.first().map_or(0, |s| s.timing_factor))).collect();
+            game.classes[0].sfx_trees = a.trees.iter().map(|t| (t.label.clone(), t.sequences.first().map_or(0, |s| s.frames), t.sequences.first().map_or(0, |s| s.timing_factor), t.sequences.first().map_or(0, |s| s.repeat))).collect();
             game.init_player_missiles(0);
             game.resolve_plyr_data(0);
             eprintln!("WeapThrowFx[0] = {:?}", game.effects.weap_throw_fx[0]);
@@ -1948,6 +1948,22 @@ fn run() -> Result<(), Box<dyn Error>> {
                             c.std = gdl_core::game::record::Record(hexb(&bp["stdcam"])?);
                         }
                         game.replay_sync_view();
+                        // Traces whose window block reaches the eye (+0xa0,
+                        // from trace-b6-boss-v2): the view the reference
+                        // culled with, also under the boss camera.
+                        let win = hexb(&bp["win"])?;
+                        if 0xac <= win.len() {
+                            let v = |o: usize| [fl(&win[o..]), fl(&win[o + 4..]), fl(&win[o + 8..])];
+                            game.replay_set_view([v(0x70), v(0x80), v(0x90)], v(0xa0));
+                        }
+                        // Cam[0]'s matrix (traces from trace-b6-boss-v3).
+                        if let Some(c0) = bp.get("cam0") {
+                            let m = hexb(c0)?;
+                            let v = |o: usize| [fl(&m[o..]), fl(&m[o + 4..]), fl(&m[o + 8..])];
+                            if let Some(c) = game.std_camera.as_mut() {
+                                c.cam0_mat = Some([v(0), v(0x10), v(0x20), v(0x30)]);
+                            }
+                        }
                     }
                     if frame_mode {
                         // Player 0 as the player replay seeds it: the floor link

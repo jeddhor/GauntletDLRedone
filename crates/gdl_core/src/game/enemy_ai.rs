@@ -172,7 +172,7 @@ pub struct EnemyAnimData {
     pub trees: std::collections::HashMap<(i32, i32), EnemyTree>,
     /// (type, tree label) of other trees in the type's package, e.g.
     /// "ZOM_ARROW" (InitEnemyMissiles matches "<PREFIX>_<desc>").
-    pub other_trees: std::collections::HashMap<(i32, String), (i16, i16)>,
+    pub other_trees: std::collections::HashMap<(i32, String), (i16, i16, u16)>,
     /// (type, tree label) → the tree's index in the type's package.
     pub tree_index: std::collections::HashMap<(i32, String), usize>,
     /// (type, level) → the tree's node count (AtreeInitSub: atree +0x3c,

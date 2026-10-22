@@ -380,6 +380,11 @@ pub struct Game {
     pub camera: Option<item_runtime::Camera>,
     /// The start camera parameters (the culling planes come from here).
     pub camera_rest: Option<setup::StartCamera>,
+    /// newcam_mode 0x21f130 as main's camera dispatch sets it every frame:
+    /// 2 under StdCamUpdate, 0 with a boss (BossCritInst, BossCameraUpdate)
+    /// or the old camera; unchanged while a trigger camera runs. ItemVisible
+    /// tests the camera target's distance only in modes 1 and 2.
+    pub newcam_mode: i32,
     /// The gameplay camera (StdCam module, research/camera.md).
     pub std_camera: Option<camera::Camera>,
     /// The boss camera (BossCameraInit per level; used while BossCritInst).

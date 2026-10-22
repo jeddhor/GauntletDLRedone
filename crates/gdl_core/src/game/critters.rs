@@ -540,7 +540,7 @@ impl Game {
         let found = f.and_then(|f| self.critter_data.files[f].model.as_ref().map(|m| (f, m))).and_then(|(f, m)| {
             m.0.trees.iter().position(|t| t.label == name).map(|k| {
                 let s = m.0.trees[k].sequences.first();
-                EffectHeader { source: 2 + f as u8, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor) }
+                EffectHeader { source: 2 + f as u8, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor), repeat: s.map_or(0, |s| s.repeat) }
             })
         });
         self.register_custom_effect(found, name)

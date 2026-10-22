@@ -84,6 +84,7 @@ warp-*.json and screenshots in private/reports):
 | 5 | w11l1-newgame-v1.p2s | (163.11, 5.91, 42.41), world 11 | still loading (mode 0x400e) — not for traces |
 | 6 | w7l1-newgame-v1.p2s | (45.07, −6.43, −112.70), world 7 | G1 new game after its start |
 | 7 | w11l1-newgame-v2.p2s | world 11, 1800 vblanks | K2, the moving ship (SKY's LEVL record 0), after its start |
+| 8 | w2l6-boss-v1.p2s | from slot 3: player 0 written onto B1's exit (−8.578, 139.0, −68.06) and skip_wave = 0x10205 (do_exit's wave skip to MOUNT record 5), 1400 vblanks | B6, the dragon's arena, in play (exit → map 0x400f → load 0x400c → 0x4010 by ~1400) |
 
 reference_trace.py and reference_screenshot.py accept these slots; each run
 first checks the PCSX2 slot file against its preserved capture.

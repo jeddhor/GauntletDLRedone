@@ -2279,6 +2279,13 @@ impl super::Game {
         let (mut wait, mut start) = (self.globals.cam_wait, self.globals.start_of_stage);
         let mode = self.globals.game_mode;
         let boss_path = matches!(mode, 0x4013 | 0x400d | 0x4017) || (mode & 0x8000 == 0 && self.boss_crit_inst != 0);
+        // main 0x1001e0: newcam_mode 0 for a boss or the old camera, 2 for
+        // StdCamUpdate (the 0x4013/0x400d/0x4017 modes leave it).
+        if mode & 0x8000 != 0 || (self.boss_crit_inst != 0 && !matches!(mode, 0x4013 | 0x400d | 0x4017)) {
+            self.newcam_mode = 0;
+        } else if !boss_path {
+            self.newcam_mode = 2;
+        }
         let r = (|| -> R<()> {
             if matches!(mode, 0x8009 | 0x400b | 0x4012) {
                 return unsupported("front-end fixed camera (MBCameraUpdate of 0x2a1e40)");
@@ -2346,9 +2353,31 @@ impl super::Game {
         if let Some(cam) = self.std_camera.as_mut() {
             let mut std = cam.std.clone();
             cam.mb_camera_update_pub(&mut std);
+            // CamUpdate's CopyMat4 of the StdCam matrix into Cam[0] (traces
+            // with a cam0 block override it).
+            cam.cam0_mat = Some([std.v3(o::MAT), std.v3(o::MAT + 0x10), std.v3(o::MAT + 0x20), std.v3(o::EYE)]);
             cam.std = std;
         }
         self.sync_view();
+    }
+
+    /// Replay hook: the culling view and the window rows (pb cam_rows, read
+    /// as CreateDirMatrix's up by ProcessEffects) from the MB window's camera
+    /// matrix (MboxWinPtr +0x70..+0x9c rows, +0xa0 eye), whichever camera
+    /// (StdCam, the boss camera, a trigger camera) wrote it; the target stays
+    /// the StdCam's.
+    pub fn replay_set_view(&mut self, basis: [V3; 3], eye: V3) {
+        if let Some(c) = self.std_camera.as_mut() {
+            c.pb.cam_rows = basis;
+        }
+        self.globals.camera_90 = basis[2][0];
+        self.globals.camera_98 = basis[2][2];
+        let target = self.std_camera.as_ref().map_or(eye, |c| c.std.v3(o::TARGET));
+        // main's dispatch for the seeded state (trigger cameras aside).
+        self.newcam_mode = if self.globals.game_mode & 0x8000 != 0 || self.boss_crit_inst != 0 { 0 } else { 2 };
+        if let Some(rest) = &self.camera_rest {
+            self.camera = Some(super::item_runtime::Camera { basis, eye, target, planes: rest.planes, newcam_mode: self.newcam_mode });
+        }
     }
 
     fn sync_view(&mut self) {
@@ -2362,7 +2391,7 @@ impl super::Game {
                 eye: cam.std.v3(o::EYE),
                 target: cam.std.v3(o::TARGET),
                 planes: rest.planes,
-                newcam_mode: 2,
+                newcam_mode: self.newcam_mode,
             });
         }
     }
