@@ -415,7 +415,12 @@ impl Game {
         let ds = self.items.definitions[d].subtype();
         if (chest_subtype == 0x30 && dk == 1 && ds == 1) || chest_subtype == 0x2f {
             if chest_subtype == 0x30 {
-                return unsupported("gold chest content model swap (chest_gold_info)");
+                // A random chest holding gold becomes the gold chest:
+                // chest_gold_info (InitItemInfoData: the last kind-2,
+                // subtype-0x2f definition); the CHESTSG tree swap
+                // (rand_chest_gold_atree) is presentation.
+                let gold = self.items.definitions.iter().rposition(|x| x.kind() == 2 && x.subtype() == 0x2f).ok_or_else(|| super::Unsupported("chest_gold_info".into()))?;
+                self.items.records[chest].set_u32(0, gold as u32);
             }
             let v = i32::from(self.items.definitions[d].i16_(0x40));
             self.items.records[chest].set_i32(0xf4, v);
@@ -437,6 +442,9 @@ impl Game {
         let dk = self.items.definitions[d].kind();
         let new = if dk == 1 && c.u32_(0xf8) != 0 {
             // Inside an open chest model node: created unplaced and parented.
+            // Unreachable in this build: SetItem clears a chest's +0xf8 and
+            // no store writes a node there (the stores to +0xf8 are in
+            // SetItem, OpenChest, PlayerItemCollision and DamageItem).
             let n = self.add_item_sub(d, None)?;
             self.items.records[chest].set_u32(0xfc, n as u32 + 1);
             self.items.records[n].set_u32(0xfc, chest as u32 + 1);
@@ -461,8 +469,13 @@ impl Game {
             let rr = &mut self.items.records[new];
             rr.set_u32(0xf8, rr.u32_(0xf8) | 1);
             if rr.i16_(0xf0) == 0x1e && self.items.session.death_statue_anim && c.i16_(0x100) != 0 {
-                return unsupported("death statue from a chest");
+                // A Death statue: +0xf2 = 2 with enemy_logic_num[0x1e]
+                // (MBTreeSetFlags(tree, 2) hides its tree: presentation).
+                rr.set_u8(0xf2, 2);
+                let logic = self.items.tables.enemy_logic_num.get(0x1e).copied().unwrap_or(0);
+                self.items.records[new].set_u8(0xf3, logic as u8);
             }
+            let rr = &mut self.items.records[new];
             rr.set_u16(0x102, 0xffff);
             return Ok(());
         }

@@ -1252,14 +1252,19 @@ impl Game {
             }
             2 => {
                 let content = self.items.records[slot].i16_(0xf0);
-                let death = 0 <= content
-                    && flags & 0x200 != 0
-                    && st != 0x2b
-                    && self.items.definitions.get(content as usize).is_some_and(|d| self.items.enemy_desc_type(d.name()) == 0x1e);
-                if death {
-                    return unsupported("DamageItem death-chest potion path");
-                }
-                if killed && self.items.records[slot].u16_(0xd8) & 0x200 != 0 {
+                let holds_death = 0 <= content && self.items.definitions.get(content as usize).is_some_and(|d| self.items.enemy_desc_type(d.name()) == 0x1e);
+                if holds_death && flags & 0x200 != 0 && st != 0x2b {
+                    // Magic kills the Death inside: the chest DEFINITION's
+                    // subtype (+4, shared data) becomes 1, the content APPLE
+                    // (kind 1, subtype 3), AudioDeathDies, +0xf2 = damage × 3;
+                    // the hit spark shows.
+                    self.items.definitions[def].set_i32(4, 1);
+                    let apple = self.items.find_info_index(1, 3, b"APPLE").ok_or_else(|| Unsupported("APPLE item".into()))?;
+                    self.items.records[slot].set_i16(0xf0, apple as i16);
+                    self.sfx3(0x65, at, 0x7f, 0x16)?;
+                    self.items.records[slot].set_i16(0xf2, mul(dmg, 3.0)? as i32 as i16);
+                    shown = true;
+                } else if killed && self.items.records[slot].u16_(0xd8) & 0x200 != 0 {
                     if self.items.records[slot].u16_(0xd8) & 1 == 0 {
                         self.items.records[slot].or_u16(0xd8, 1);
                         self.open_chest(slot, None)?;
@@ -1269,7 +1274,26 @@ impl Game {
                         }
                     }
                 } else if flags & 0x400 != 0 && 5.0 <= dmg {
-                    return unsupported("DamageItem magic on chest");
+                    // A blast on a chest: the time-bomb chest (0x2c) opens
+                    // (+0xde = +0xdc = 2); otherwise a Death chest releases
+                    // it, then the chest bursts (FX 0x1f, 0x21; debris
+                    // objects are presentation) and is deleted.
+                    if st == 0x2c {
+                        let r = &mut self.items.records[slot];
+                        r.set_u8(0xde, 2);
+                        r.set_u8(0xdc, 2);
+                        r.or_u16(0xd8, 1);
+                        self.open_chest(slot, None)?;
+                    } else {
+                        if holds_death {
+                            self.open_chest(slot, None)?;
+                        }
+                        // StartFXMat(…, item matrix): the translation +0x40.
+                        let item_pos = self.items.records[slot].v3(0x40);
+                        self.start_fx_no_loop(0x1f, item_pos)?;
+                        self.start_fx_no_loop(0x21, item_pos)?;
+                        self.delete_item(slot, true);
+                    }
                 }
             }
             3 => {
@@ -1801,21 +1825,29 @@ impl Game {
         r.set_i16(fx::OWNER, owner);
     }
 
-    /// StartExplosion 0x17e590(damage, matrix translation, kind) for the
-    /// barrel kinds 0x18 (radius 12, flags 0x421, +2 lift) and 0x19 (radius
-    /// 6.5, flags 0x800): StartFXMissile(0, kind, position, 0, 0x2b, 0, 4, 0)
-    /// then SfxSetDamage. ScaleFX/SfxSetMorph/SfxSetLight are presentation.
+    /// StartExplosion 0x17e590(damage, matrix translation, kind):
+    /// StartFXMissile(0, kind (0x1d: 0x16), position, 0, 0x2b, 0, 4, 0)
+    /// then SfxSetDamage(damage, blast, 0, flags, 0): 0x17 (4, 0x11), 0x18
+    /// barrels (12, 0x421, +2 lift, ScaleFX 1.75/1/1.75), 0x19 poison barrels
+    /// (6.5, 0x800, morph 0x1a/0x1b after 4 s, ScaleFX 3.5), 0x1d the
+    /// exploding chest (12, 0x421, +3, ScaleFX 2.5, plus effect 0x1d), others
+    /// (6, 0x421, ScaleFX 1.5); a red light of 2 × blast with flag 1.
     pub fn start_explosion(&mut self, damage: f32, position: V3, kind: u32) -> R<()> {
-        let (blast, flags, lift) = match kind {
-            0x18 => (12.0, 0x421u32, 2.0),
-            0x19 => (6.5, 0x800, 0.0),
-            k => return unsupported(format!("StartExplosion kind {k:#x}")),
+        // (blast, damage flags, lift, ScaleFX x/z with y 1).
+        let (blast, flags, lift, stretch) = match kind {
+            0x17 => (4.0, 0x11u32, 0.0, None),
+            0x18 => (12.0, 0x421, 2.0, Some(1.75)),
+            0x19 => (6.5, 0x800, 0.0, Some(3.5)),
+            0x1d => (12.0, 0x421, 3.0, Some(2.5)),
+            _ => (6.0, 0x421, 0.0, Some(1.5)),
         };
-        let h = self.effects.tables.headers.get(kind as usize).copied().flatten().ok_or_else(|| Unsupported(format!("effect header {kind:#x}")))?;
-        let i = self.start_fx_tree(0.0, Visual::Header(kind as usize), h.frames, h.timing, Some(position), 0x2b)?;
+        // Kind 0x1d (the exploding chest) draws header 0x16 and adds 0x1d.
+        let header = if kind == 0x1d { 0x16 } else { kind };
+        let h = self.effects.tables.headers.get(header as usize).copied().flatten().ok_or_else(|| Unsupported(format!("effect header {header:#x}")))?;
+        let i = self.start_fx_tree(0.0, Visual::Header(header as usize), h.frames, h.timing, Some(position), 0x2b)?;
         let flags = if 4 < flags & 0xf { flags & 0xffff_fff3 } else { flags };
         let r = self.fx_mut(i);
-        r.set_u32(fx::KIND, kind);
+        r.set_u32(fx::KIND, header);
         r.set_f32(fx::GRAVITY, 0.0);
         r.set_f32(fx::RADIUS, 0.0);
         r.set_i16(fx::HIT_FX, 0);
@@ -1828,8 +1860,19 @@ impl Game {
         r.set_i16(fx::OWNER, 0);
         if let Some(n) = self.effects.nodes[i].as_mut() {
             n.position[1] = add(n.position[1], lift)?;
+            if let Some(k) = stretch {
+                n.stretch = [k, 1.0, k];
+            }
         }
-        if flags & 1 != 0 {
+        if kind == 0x19 {
+            self.sfx_set_morph(i, 4.0, 0x1a, 0x1b);
+        }
+        if kind == 0x1d {
+            // StartFXSub(0, 0x1d, position) with the item's matrix
+            // (SfxSetMat: presentation).
+            self.start_fx_sub(0.0, 0x1d, Some(position), 0)?;
+        }
+        if kind == 0x1d || !matches!(kind, 0x17..=0x19) || flags & 1 != 0 {
             // SfxSetLight(2 × blast, light_color[0] red).
             self.sfx_set_light(i, blast + blast, [2.0, 0.0, 0.0]);
         }
@@ -2685,7 +2728,26 @@ impl Game {
                     self.delete_effect(i, true);
                     return Ok(());
                 }
-                return unsupported("chained effect (0x4000)");
+                // SfxSetMorph's chain: ChangeEffect to +0xc0; the end is
+                // +0x74 after now (or the new tree's length); then +0xc2
+                // follows, or the chain ends (flag 0x4000 and the blast
+                // cleared); the tree loops.
+                self.change_effect(i, next as usize);
+                let t = self.fx(i).f32_(fx::NEXT_TIME);
+                let end = if t <= 0.0 { add(self.header_duration(next as usize)?, atime)? } else { add(t, atime)? };
+                let r = self.fx_mut(i);
+                r.set_f32(fx::END, end);
+                r.set_f32(fx::DURATION, sub(end, atime)?);
+                if r.i16_(fx::NEXT_FX2) < 1 {
+                    r.and_u32(fx::FLAGS, 0xffff_bfff);
+                    r.set_f32(fx::BLAST, 0.0);
+                } else {
+                    let second = r.i16_(fx::NEXT_FX2);
+                    r.set_i16(fx::NEXT_FX, second);
+                    r.set_i16(fx::NEXT_FX2, 0);
+                    r.set_f32(fx::NEXT_TIME, 0.0);
+                }
+                r.set_u16(0x50, 1);
             }
         }
         if moved && let Some(n) = self.effects.nodes[i].as_mut() {

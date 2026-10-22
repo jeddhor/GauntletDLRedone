@@ -1037,10 +1037,13 @@ impl Game {
                 match pl {
                     Some(p) if self.players[p].u32_(0x134) & 0x8_0000 != 0 => {
                         if self.enemies[i].i16_(0x21a) == 2 {
-                            return unsupported("AddExp from the death statue");
+                            // A drained hit on Death (+0x21a == 2) with the
+                            // 0x80000 shield: AddExp(player, 1, −2).
+                            self.add_exp(p, 1, -2)?;
+                        } else {
+                            let v = add(self.players[p].f32_(0x1a10), 1.0)?;
+                            self.players[p].set_f32(0x1a10, v);
                         }
-                        let v = add(self.players[p].f32_(0x1a10), 1.0)?;
-                        self.players[p].set_f32(0x1a10, v);
                     }
                     Some(p) => self.help(0, p),
                     None => {}

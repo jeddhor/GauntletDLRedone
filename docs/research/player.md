@@ -138,3 +138,31 @@ MulMat4 with InvertMat4's rigid inverse.
   (header 0x33, parented) except in mode 1. Checked headlessly (G1 game
   runs with --potions: turbo + magic reaches mode 1, attack + magic modes
   2 and 3; no unsupported path); not yet compared with a capture.
+
+## Chests and explosions (2026-10-21)
+
+- OpenChest 0x1588a8: a random chest (subtype 0x30) holding gold becomes
+  the gold chest — its definition is replaced by chest_gold_info (the last
+  kind-2 subtype-0x2f definition; the CHESTSG tree swap is presentation)
+  and +0xf4 takes the gold amount. A Death statue from a chest whose
+  +0x100 ≠ 0 gets +0xf2 = 2 and +0xf3 = enemy_logic_num[0x1e] (the
+  `lbu` at 0x22d618). The content-node branch (+0xf8) is unreachable: no
+  store writes a node into a chest's +0xf8.
+- DamageItem 0x15a620 on chests: a potion blast (flag 0x200) on a chest
+  holding Death writes the chest DEFINITION's subtype to 1 (shared data),
+  swaps the content to APPLE, plays AudioDeathDies and sets +0xf2 =
+  damage × 3; a blast (flag 0x400, ≥ 5) opens the time-bomb chest (0x2c:
+  +0xde = +0xdc = 2) or releases a Death and destroys the chest (FX 0x1f,
+  0x21).
+- The time-bomb chest (ProcessItems, +0xdc == 2, subtype 0x2c):
+  StartExplosion(level +0xdc × 50, 0x1d), AudioBarrelExplode, DeleteItem,
+  NewHelp 0x89. StartExplosion now covers every kind (0x17, 0x18, 0x19 with
+  its 0x1a/0x1b morph after 4 s, 0x1d = header 0x16 plus effect 0x1d,
+  default) with the ScaleFX x/z stretch.
+- ProcessEffects' morph chain (flag 0x4000): ChangeEffect(+0xc0), end =
+  +0x74 or the new tree's length, then +0xc2 or the end of the chain
+  (0x4000 and the blast cleared); loops.
+- damage_enemy: a 0x80000-shield hit on a drained Death (+0x21a == 2)
+  calls AddExp(player, 1, −2).
+- Checked: the 51-level pad sweep (sw21 for B1 after the morph port; B1's
+  poison cloud now persists and the scripted player ends with less health).

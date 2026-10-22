@@ -822,9 +822,15 @@ impl Game {
         if r.i8_(0xdc) == 2 {
             let sub_ = self.items.definitions[r.definition()].subtype();
             if sub_ == 0x2c {
-                return unsupported("exploding chest (StartExplosion)");
-            }
-            if r.u32_(0xfc) == 0 && sub_ != 0x2b && sub_ != 0x2f {
+                // The time-bomb chest: StartExplosion(level +0xdc × 50, kind
+                // 0x1d), AudioBarrelExplode, DeleteItem, NewHelp 0x89.
+                let at = r.v3(0x60); // GetItemPos 0x153988
+                let dmg = mul(self.level_f32(0xdc), 50.0)?;
+                self.start_explosion(dmg, r.position(), 0x1d)?;
+                self.audio_barrel_explode(at)?;
+                self.delete_item(slot, false);
+                self.help(0x89, usize::MAX);
+            } else if r.u32_(0xfc) == 0 && sub_ != 0x2b && sub_ != 0x2f {
                 self.delete_item(slot, false);
             }
             for k in 0..self.enemies.len() {
