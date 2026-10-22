@@ -762,7 +762,8 @@ impl Game {
         self.do_player_action(p)?;
         if self.players[p].i32_(0x80c) < 4 {
             if self.players[p].u16_(0x93c) & 0x20 == 0 {
-                let at = self.players[p].i32_(0x8c8);
+                // param_1[0x232] - 1U < 10: an unsigned test (0 fails).
+                let at = self.players[p].u32_(0x8c8);
                 if at.wrapping_sub(1) < 10 && at != 7 && pc.u32_(4) & 0x5000 == 0 && pc.i32_(0x34) != 0 && scale == 0.0 && pc.f32_(0x28) == 0.0 {
                     want = atan2f(aim[0], aim[2])?;
                 }

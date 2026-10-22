@@ -315,7 +315,10 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   82). Fixed on the way: show_crystals' +0x904 timer uses the EE adder
   (sub_guarded_rz; plain subtraction was one ulp off), and headless game-run
   now runs init_next_level's player displays (hud_init without textures) so
-  WritePlayerInfo keeps its record words. Open: idle facing near targets
-  (from step 406 the native yaw moves by 1..3 ulps and from 492 turns while
-  the reference holds it), +0x894 at step 194. The 150-update walking trace
-  still replays 150/150.
+  WritePlayerInfo keeps its record words. Then: PlayerMotion's auto-aim
+  facing test `param_1[0x232] - 1U < 10` is unsigned (an attack type of 0
+  fails it); the port compared signed, so an idle player near a target kept
+  re-aiming — 268/270 equal (replay-player-combat-g1-v9.json). Open: +0x894
+  (the floor-slope pitch) at step 194 and +0x197c at step 496 (written in
+  the update a generator spawned; likely do_items). The 150-update walking
+  trace still replays 150/150.
