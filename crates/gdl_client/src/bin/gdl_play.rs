@@ -2754,7 +2754,7 @@ fn present_world(
                 };
                 let m = node.matrix;
                 let mut tf = record_transform([Vec3::from_array(m[0]), Vec3::from_array(m[1]), Vec3::from_array(m[2])], Vec3::from_array(node.position));
-                tf.scale *= node.scale;
+                tf.scale *= node.scale * Vec3::from_array(node.stretch);
                 match node.visual {
                     Visual::Missile { .. } => {
                         let key = format!("{}:{}", session.throw.1, node.start.to_bits());

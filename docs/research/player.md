@@ -118,3 +118,23 @@ setup_player_display, PlayerProcessFamiliar/Scale for boss state 5, rotating
 Milestones: AddLocatorInstList's kind-5 locators (FloorPos drop + 0.5),
 update_player_milestone's +0x950 history. Floor parents with rotation use
 MulMat4 with InvertMat4's rigid inverse.
+
+## Power melee and magic modes (2026-10-21)
+
+- PlayerMotion's melee consumption: event bits 0xf0 (the turbo melee)
+  triple the damage, add flag 0x20 and take the turbo cost +0x8e8 from
+  +0x800 (then clear it) before the usual reach test.
+- start_magic 0x134408 modes: 0 the potion blast (StartMagicFX: ScaleFX
+  min(power/32, 1), SfxSetLight 1.5 power, light_color[mclr_idx[c]]); 1
+  turbo defence (StartShieldFX 0x17eec8: StartFXMissile(3,
+  ShieldEffects[c], 0x13a), physics radius and blast = power/4, damage 25
+  k, ScaleFX(f, 1, f) with f = power/12 in [0.33, 1], parented to the
+  player); 2/3 attack + magic (StartThrowMagicFX 0x17ec80: StartFXSub(0.667,
+  ThrowMagicEffects[c], 2 × forward + 4 up, 0x20010e), gravity 100, radius
+  0.5, velocity ((short)+0x930 × 1.5 + 5) × (fwd.x·0.707, 0.707,
+  fwd.z·0.707), spin (10π, 0, 0) (0x240830), SfxSetHit(MagicEffects[c],
+  sound colour + 7), damage 40 k, blast 0.75 power, +0xb0 min(0.75
+  power/32, 1)). Players past level 0x4a also get StartMagicHealFX
+  (header 0x33, parented) except in mode 1. Checked headlessly (G1 game
+  runs with --potions: turbo + magic reaches mode 1, attack + magic modes
+  2 and 3; no unsupported path); not yet compared with a capture.

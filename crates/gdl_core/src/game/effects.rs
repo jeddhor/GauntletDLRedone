@@ -87,6 +87,8 @@ pub struct EffectNode {
     pub matrix: [V3; 3],
     pub position: V3,
     pub scale: f32,
+    /// ScaleFX's per-axis factors beyond `scale` (StartShieldFX: x/z only).
+    pub stretch: V3,
     pub visual: Visual,
     /// ATime when the current tree started (presentation clock).
     pub start: f32,
@@ -133,6 +135,13 @@ pub struct EffectTables {
     pub headers: Vec<Option<EffectHeader>>,
     /// MagicEffects 0x2407a0: EffectHeaders index by potion colour (0..4).
     pub magic_effects: [i32; 5],
+    /// ShieldEffects 0x2407d0 and ThrowMagicEffects 0x2407b8 by colour.
+    pub shield_effects: [i32; 5],
+    pub throw_magic_effects: [i32; 5],
+    /// mclr_idx 0x23fa60 (colour → light_color row) and light_color
+    /// 0x23f9f8 (7 rgb rows).
+    pub mclr_idx: [usize; 5],
+    pub light_color: [V3; 7],
     /// EnemyMissileInfo 0x24de80: 28 types × 3 kinds × 12 words.
     pub enemy_missile_info: Vec<[u32; 12]>,
     /// EnemyMissileDesc 0x24de68: "ARROW", "BOMB", "FBALL".
@@ -184,6 +193,15 @@ impl EffectTables {
         }
         let m = words(elf.object("MagicEffects")?);
         let magic_effects: [i32; 5] = std::array::from_fn(|k| m.get(k).copied().unwrap_or(0) as i32);
+        let five = |n: &str| -> Result<[i32; 5], Box<dyn std::error::Error>> {
+            let w = words(elf.object(n)?);
+            Ok(std::array::from_fn(|k| w.get(k).copied().unwrap_or(0) as i32))
+        };
+        let shield_effects = five("ShieldEffects")?;
+        let throw_magic_effects = five("ThrowMagicEffects")?;
+        let mclr_idx = five("mclr_idx")?.map(|v| v.clamp(0, 6) as usize);
+        let lc = words(elf.object("light_color")?);
+        let light_color: [V3; 7] = std::array::from_fn(|k| std::array::from_fn(|c| f32::from_bits(lc.get(3 * k + c).copied().unwrap_or(0))));
         let em = words(elf.object("EnemyMissileInfo")?);
         let enemy_missile_info = em.chunks_exact(12).map(|c| c.try_into().unwrap()).collect();
         let d = elf.object("EnemyMissileDesc")?;
@@ -201,7 +219,7 @@ impl EffectTables {
                 });
             }
         }
-        Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects, enemy_missile_info, enemy_missile_desc, shared })
+        Ok(Self { missile_info, wall_hit, spread, exp, headers, magic_effects, shield_effects, throw_magic_effects, mclr_idx, light_color, enemy_missile_info, enemy_missile_desc, shared })
     }
 
     /// The level's item packages (item_anim, item_anim2), searched after
@@ -452,6 +470,7 @@ impl Game {
             matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             position: position.unwrap_or([0.0; 3]),
             scale: 1.0,
+            stretch: [1.0; 3],
             visual,
             start: atime,
             radius: 0.0,
@@ -1373,29 +1392,31 @@ impl Game {
         Ok(result as f32)
     }
 
-    /// start_magic 0x134408(power, player, position, potion flags, mode);
-    /// mode 0 is the ordinary potion blast (StartMagicFX 0x17eb50). Player
-    /// -1 (a destroyed potion item): power × 20, size factor 0.8, mode 0, no
-    /// potion audio.
+    /// start_magic 0x134408(power, player, position, potion flags, mode).
+    /// Player -1 (a destroyed potion item): power × 20, size factor 0.8,
+    /// mode 0, no potion audio. Mode 0: StartMagicFX 0x17eb50 (the potion
+    /// blast); 1: StartShieldFX 0x17eec8 (turbo defence, parented to the
+    /// player); 2+: StartThrowMagicFX 0x17ec80 (a thrown flask). Players
+    /// past level 0x4a also get StartMagicHealFX 0x17ee48 (not for mode 1).
     pub fn start_magic(&mut self, power: f32, player: i32, position: V3, flags: u32, mode: i32) -> R<()> {
         let mut flags = flags;
         let mut mode = mode;
-        let (k, power) = match usize::try_from(player) {
+        let (kf, power) = match usize::try_from(player) {
             Err(_) => {
                 mode = 0;
                 (f32::from_bits(0x3f4c_cccd), mul(power, 20.0)?)
             }
             Ok(p) => {
-                let mut k = 1.0;
+                let mut kf = 1.0;
                 let mut power = mul(power, self.players[p].f32_(0x120))?;
                 if damage_color(flags) == player {
-                    k = f32::from_bits(0x3f8c_cccd);
+                    kf = f32::from_bits(0x3f8c_cccd);
                     power = mul(power, f32::from_bits(0x3f8c_cccd))?;
                 }
                 if 0x18 < self.players[p].i32_(0x2ac0) {
                     flags |= 0x80_0000;
                 }
-                (k, power)
+                (kf, power)
             }
         };
         let mut colour = flags & 0xf;
@@ -1406,32 +1427,108 @@ impl Game {
             self.randpottype += 1;
         }
         flags |= 0x200;
-        if mode != 0 {
-            return unsupported("start_magic shield/thrown modes");
+        let c = colour as usize % 5;
+        let light = self.effects.tables.light_color[self.effects.tables.mclr_idx[c]];
+        let size = |v: f32| -> R<f32> {
+            let f = mul(v, 0.03125)?;
+            Ok(if 1.0 < f { 1.0 } else { f })
+        };
+        let owner = player as i16 + 1;
+        if mode == 1 {
+            // StartShieldFX(25 kf, power / 4, no position, flags, player):
+            // StartFXMissile(3, ShieldEffects[c], …, 0x13a), physics radius
+            // = the power, ScaleFX(f, 1, f) with f = power / 12 in
+            // [0.33, 1]; MBNodeSetParent to the player's node (+0x80).
+            let p = player as usize;
+            let power = mul(power, 0.25)?;
+            let header = self.effects.tables.shield_effects[c] as usize;
+            let at = self.players[p].v3(0x50);
+            if let Some(k) = self.start_fx_missile(3.0, header, at, [0.0; 3], 0x13a, 0, 0, 0)? {
+                self.sfx_set_physics_pub(k, 0.0, power, None, None);
+                self.sfx_set_damage(k, mul(kf, 25.0)?, power, 0.0, flags, owner);
+                let f4 = mul(power, f32::from_bits(0x3daa_aaab))?;
+                let f3 = if f4 < 0.33 {
+                    0.33
+                } else if 1.0 < f4 {
+                    1.0
+                } else {
+                    f4
+                };
+                if let Some(n) = self.effects.nodes[k].as_mut() {
+                    n.stretch = [f3, 1.0, f3];
+                }
+                self.sfx_set_light(k, mul(power, 1.5)?, light);
+                self.parent_fx_to_player(k, p, [0.0; 3]);
+            }
+            self.audio_potion(c, position, 1);
+            return Ok(());
         }
-        // StartMagicFX(40 k, power, position, flags, player).
-        let idx = *self.effects.tables.magic_effects.get(colour as usize).ok_or_else(|| Unsupported("MagicEffects index".into()))?;
-        let h = self.effects.tables.headers.get(idx as usize).copied().flatten().ok_or_else(|| Unsupported(format!("magic effect header {idx}")))?;
-        let i = self.start_fx_tree(0.0, Visual::Header(idx as usize), h.frames, h.timing, Some(position), 0x12a)?;
-        let r = self.fx_mut(i);
-        r.set_u32(fx::KIND, idx as u32);
-        r.set_f32(fx::GRAVITY, 0.0);
-        r.set_f32(fx::RADIUS, 0.0);
-        r.set_i16(fx::HIT_FX, 0);
-        r.set_u32(fx::HIT_SOUND, 0);
-        r.set_u32(fx::WALL_SOUND, 0);
-        r.set_f32(fx::DAMAGE, mul(k, 40.0)?);
-        let mut df = flags;
-        if 4 < (df & 0xf) {
-            df &= 0xffff_fff3;
+        if 2 <= mode {
+            // StartThrowMagicFX(100, 40 kf, power × 0.75, start, velocity,
+            // flags, player, colour + 7): from 2 × forward (+4 up) at speed
+            // (short)+0x930 × 1.5 + 5 along (forward·0.707, 0.707);
+            // StartFXSub(0.667, ThrowMagicEffects[c], start, 0x20010e),
+            // SfxSetPhysics(100, 0.5, velocity, spin (10π, 0, 0) at
+            // 0x240830), SfxSetHit(MagicEffects[c], colour + 7), +0xb0 the
+            // hit scale min(power / 32, 1).
+            let p = player as usize;
+            let r = &self.players[p];
+            let fwd = r.v3(0x40);
+            let speed = add(mul(f32::from(r.i16_(0x930)), 1.5)?, 5.0)?;
+            let start = [add(add(fwd[0], fwd[0])?, position[0])?, add(add(add(fwd[1], fwd[1])?, position[1])?, 4.0)?, add(add(fwd[2], fwd[2])?, position[2])?];
+            let vel = [mul(mul(speed, fwd[0])?, 0.707)?, mul(speed, 0.707)?, mul(mul(speed, fwd[2])?, 0.707)?];
+            let thrown = mul(power, 0.75)?;
+            let header = self.effects.tables.throw_magic_effects[c] as usize;
+            let k = self.start_fx_sub(f32::from_bits(0x3f2a_c083), header, Some(start), 0x20_010e)?;
+            if 0 <= k {
+                let k = k as usize;
+                let spin = [f32::from_le_bytes(0x41fb_53d1u32.to_le_bytes()), 0.0, 0.0];
+                self.sfx_set_physics_pub(k, 100.0, 0.5, Some(vel), Some(spin));
+                let hit = self.effects.tables.magic_effects[c] as i16;
+                self.sfx_set_hit(k, hit, colour + 7, colour + 7);
+                self.sfx_set_damage(k, mul(kf, 40.0)?, thrown, 0.0, flags, owner);
+                let f = size(thrown)?;
+                self.fx_mut(k).set_f32(fx::HIT_SCALE, f);
+                self.sfx_set_light(k, mul(thrown, 1.5)?, light);
+            }
+        } else {
+            // StartMagicFX(40 kf, power, position, flags, player).
+            let idx = *self.effects.tables.magic_effects.get(c).ok_or_else(|| Unsupported("MagicEffects index".into()))?;
+            let h = self.effects.tables.headers.get(idx as usize).copied().flatten().ok_or_else(|| Unsupported(format!("magic effect header {idx}")))?;
+            let i = self.start_fx_tree(0.0, Visual::Header(idx as usize), h.frames, h.timing, Some(position), 0x12a)?;
+            let r = self.fx_mut(i);
+            r.set_u32(fx::KIND, idx as u32);
+            r.set_f32(fx::GRAVITY, 0.0);
+            r.set_f32(fx::RADIUS, 0.0);
+            r.set_i16(fx::HIT_FX, 0);
+            r.set_u32(fx::HIT_SOUND, 0);
+            r.set_u32(fx::WALL_SOUND, 0);
+            self.sfx_set_damage(i, mul(kf, 40.0)?, power, 0.0, flags, owner);
+            // ScaleFX(min(power / 32, 1)), SfxSetLight(1.5 power); the floor
+            // placement (y only) is presentation.
+            let f = size(power)?;
+            if let Some(n) = self.effects.nodes[i].as_mut() {
+                n.scale = f;
+            }
+            self.sfx_set_light(i, mul(power, 1.5)?, light);
+            if 0 <= player {
+                self.audio_potion(c, position, 0);
+            }
         }
-        r.set_u32(fx::DAMAGE_FLAGS, df);
-        r.set_f32(fx::BLAST, power);
-        r.set_f32(fx::FADE, 0.0);
-        r.set_i16(fx::OWNER, player as i16 + 1);
-        // PlaceEffectOnFloor (y only; the blast tests x/z) and lights: presentation.
-        if 0 <= player {
-            self.audio_potion(colour as usize, position, 0);
+        // StartMagicHealFX(power, 0): StartFXSub(0, 0x33, …) scaled by
+        // min(power / 32, 1), SfxSetParent to the player's node.
+        if let Ok(p) = usize::try_from(player)
+            && 0x4a < self.players[p].i32_(0x2ac0)
+        {
+            let at = self.players[p].v3(0x50);
+            let k = self.start_fx_sub(0.0, 0x33, Some(at), 0)?;
+            if 0 <= k {
+                let f = size(power)?;
+                if let Some(n) = self.effects.nodes[k as usize].as_mut() {
+                    n.scale = f;
+                }
+                self.parent_fx_to_player(k as usize, p, [0.0; 3]);
+            }
         }
         Ok(())
     }

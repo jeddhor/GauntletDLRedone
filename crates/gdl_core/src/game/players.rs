@@ -336,9 +336,15 @@ impl Game {
         let d = self.player_get_target(p, origin, facing, &mut dir, &mut target, &mut item)?;
         let enemy = usize::try_from(target).ok().filter(|&t| t < 0x10000);
         if bits & 0xf0 != 0 {
-            return super::unsupported("power melee (event bits 0xf0)");
-        }
-        if bits & 4 != 0 {
+            // The turbo (power) melee: triple damage, flag 0x20, the turbo
+            // cost +0x8e8 taken from +0x800 and cleared.
+            damage = mul(damage, 3.0)?;
+            flags |= 0x20;
+            let r = &mut self.players[p];
+            let t = crate::numeric::sub_guarded_rz(r.f32_(0x800), r.f32_(0x8e8))?;
+            r.set_f32(0x800, t);
+            r.set_u32(0x8e8, 0);
+        } else if bits & 4 != 0 {
             damage = add(damage, damage)?;
             flags |= 0x10;
         } else if bits & 8 != 0 && enemy.is_some_and(|e| self.enemies[e].f32_(super::enemies::e::HALF_HEIGHT) <= 2.0) {
