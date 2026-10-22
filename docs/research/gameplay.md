@@ -726,3 +726,19 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
     reads +0x2d0, which its lazy refresh leaves; camera.md) and seeds enemy
     clocks for the lettered trees (EnemyDesc levels 4..7: A1's placed
     logic-23 grunt).
+  Golem statue (w1l1-golem-v2.p2s, player 0 written to (121.29, 25.86,
+  98.69) beside item 71; trace-A1-golem-v2, a four-direction walk): contact
+  at step 53, the golem (CritterNewInst(3), GOL_STATUE from the golem
+  critter's model — MONSTERS/GOLEM is absent) at step 117, CritterGolemAI
+  after: 240/240 in every part with no further change. Statue items carry a
+  player count (+0xe0; +0xe1 1 hidden): A1's golem 67 and the General 103 by
+  the start need 2 and 4 players, so single-player traces never see them.
+  Death statue 50 (A1): fenced off from both sides tried (w1l1-death-v1/v2,
+  trace-A1-death-v1/v2, 260/260 each without activating it).
+  - PlayerGetTarget's gate test (the +0x880 item of kind 7) after a target
+    found by the search reads fStack_f0, which only a given target writes:
+    stack residue left at PlayerMotion's sp − 0xf0, usually by
+    PlayerCollideFloor's FloorCollide (its saved ra, a denormal, and the
+    zero upper half). HYPOTHESIS: the world origin as the target position
+    (trace-A1-death-v1 steps 105..113 match; the port had stopped with
+    Unsupported, cutting player 0's update short near gates).

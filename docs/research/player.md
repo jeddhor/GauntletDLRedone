@@ -150,7 +150,9 @@ states the disc does not reach or that would read garbage in the original
 team-move wall bounce without a normal, DAMG/SFXX chain cycles, effects
 parented to effects, get_player_pos beside a player without a floor
 record, the debug menu's Next/PrevWorldLevel). Floor parents with rotation
-use MulMat4 with InvertMat4's rigid inverse.
+use MulMat4 with InvertMat4's rigid inverse. PlayerGetTarget's gate test
+after a searched target, which reads stack residue, is no longer Unsupported:
+it takes the world origin (HYPOTHESIS, gameplay.md "Statues").
 
 ## Power melee and magic modes (2026-10-21)
 

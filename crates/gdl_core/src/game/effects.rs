@@ -1138,7 +1138,8 @@ impl Game {
         let range = if self.boss_crit_inst != 0 { 200.0 } else { 30.0 };
         let mut d = range;
         let pl = self.players[p].clone();
-        // fStack_f0: the given target's position (stack garbage otherwise).
+        // fStack_f0: the given target's position (stack residue otherwise;
+        // see the kind-7 check below).
         let mut target_pos: Option<V3> = None;
         if (0..0x10000).contains(target) {
             let en = &self.enemies[*target as usize];
@@ -1231,9 +1232,13 @@ impl Game {
             && let Some(it) = pl.u32_(0x880).checked_sub(1).map(|v| v as usize)
             && self.items.definitions[self.items.records[it].definition()].kind() == 7
         {
-            let Some(tp) = target_pos else {
-                return unsupported("PlayerGetTarget kind-7 check without a given target (fStack_f0 uninitialised)");
-            };
+            // Without a given target fStack_f0 (sp+0x20, PlayerMotion's
+            // sp − 0xf0) holds stack residue. PlayerMotion's last callee to
+            // reach it is usually PlayerCollideFloor's FloorCollide, whose
+            // saved ra (a code address: a denormal, 0 on the EE FPU) and its
+            // zero upper half give x and y; z is older residue. HYPOTHESIS:
+            // the world origin (trace-A1-death-v1 steps 105..113 match).
+            let tp = target_pos.unwrap_or([0.0; 3]);
             let mut v = v_sub(tp, origin)?;
             normal_vector(&mut v)?;
             let r = pl.f32_(0x828);

@@ -88,6 +88,8 @@ warp-*.json and screenshots in private/reports):
 | 9 (staging) | w7l5-boss-v1.p2s | from slot 6: player 0 onto G1's exit (118.28, 86.8, −472.5), skip_wave 0x10704, 1000 vblanks | G5, the lich's crypt, in play |
 | 9 (staging) | w<world>l<level>-boss-v1.p2s (C5 w3l5, D5 w4l5, E2 w5l2, F2 w6l2, H4 w8l4, I5 w9l5, J5 w10l5, K5 w11l5, A5 w1l5) | from slot 3: player 0 onto B1's exit, skip_wave 0x10000 + the boss wave, `--until-wave` (1000..1400 vblanks) | the boss level in play, boss not yet active (reports warp-<level>-boss-v1.json) |
 | 9 (staging) | w1l1-statue-v1.p2s (sha256 ed7945c0…) | slot 4 with player 0 written to (−75, 0, 42.7), beside A1's gargoyle statue, 250 vblanks | A1, WARPED position (guest write); for the statue's activation |
+| 9 (staging) | w1l1-golem-v1.p2s / w1l1-golem-v2.p2s | slot 4 with player 0 written beside golem statues 67 (multiplayer-only) and 71 (−106.8, 26.09, −17.2 / 121.29, 25.86, 98.69), 250 vblanks | A1, WARPED |
+| 9 (staging) | w1l1-death-v1.p2s / w1l1-death-v2.p2s | slot 4 with player 0 written near Death statue 50 (−77, 0, 84.1 / −70.6, 0.04, 71.7), 250 vblanks | A1, WARPED (the statue is fenced off) |
 | 9 (staging) | w9l5-boss-v2.p2s (sha256 793dedef…) | from w9l5-boss-v1: player 0 written to (9.6, −4.047, −5.2), 62 units from the yeti (a floor point by collision-query), 4 vblanks | I5, WARPED position (guest write); for the yeti's activation |
 
 Slot 9 is a staging slot (tools/python/reference_slots.py): `--stage NAME`

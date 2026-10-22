@@ -7,7 +7,8 @@ paused virtual reference, optionally writes player 0's position
 (the record's matrix translation +0x50 and its node's local translation
 +0x30 — a guest write, so the resulting state is labelled as warped),
 optionally writes skip_wave (0x10000 + wave: do_exit's own wave skip, the next
-exit goes to that wave; also a labelled guest write), steps a
+exit goes to that wave; also a labelled guest write) or a critter's health
+(CritterInsts[k] +0x4f4; labelled guest write), steps a
 bounded key schedule one verified vblank at a time (F10), reports CurWorld,
 game_mode and player 0's position after every segment, and can save the state
 to a new PCSX2 slot (PINE MsgSaveState) copied to a new private capture. The
@@ -37,6 +38,8 @@ def main():
     parser.add_argument('--stage', help='a preserved capture name to start from through the staging slot 9')
     parser.add_argument('--pos', type=float, nargs=3, help='player 0 position written after the reload (guest write)')
     parser.add_argument('--skip-wave', type=lambda v: int(v, 0), help="skip_wave written after the reload: 0x10000 + world << 8 | record (do_exit's wave skip; guest write)")
+    parser.add_argument('--critter-health', nargs=2, metavar=('INDEX', 'VALUE'),
+                        help='CritterInsts[INDEX] +0x4f4 health written after the reload (a live instance; guest write)')
     parser.add_argument('--until-wave', type=lambda v: int(v, 0),
                         help='stop after the first segment that ends with this wave (world << 8 | record) in play '
                              '(game_mode 0x4010, player 0 state 1)')
@@ -78,7 +81,7 @@ def main():
     args.slot, frozen = resolve(args.slot, args.stage)
     profile = json.loads(pathlib.Path('profiles/ps2/slus-20047-reference.json').read_text())
     vb_counter = profile['symbols']['vb_counter']['guest_address']
-    sym = elf_symbols({'players', 'CurWorld', 'CurLevel', 'game_mode', 'skip_wave'})
+    sym = elf_symbols({'players', 'CurWorld', 'CurLevel', 'game_mode', 'skip_wave', 'CritterInsts', 'NumCritterInsts'})
 
     def xdo(*a):
         return subprocess.run(['xdotool', *a], env=env, check=True, capture_output=True, text=True, timeout=5).stdout
@@ -130,6 +133,13 @@ def main():
         if args.skip_wave is not None:
             write32(sym['skip_wave'], args.skip_wave)
             log.append(dict(write=dict(skip_wave=f'{args.skip_wave:#x}')))
+        if args.critter_health:
+            k, v = int(args.critter_health[0]), float(args.critter_health[1])
+            inst = sym['CritterInsts'] + 0xb70 * k
+            if not 0 <= k < min(16, word(sym['NumCritterInsts'])) or word(inst + 4) == 0 or not 0.0 < v:
+                raise ValueError('critter-health needs a live instance and a positive value')
+            write32(inst + 0x4f4, struct.unpack('<I', struct.pack('<f', v))[0])
+            log.append(dict(write=dict(critter_health=[k, v])))
         step = 0
         try:
             for seg in segments:
