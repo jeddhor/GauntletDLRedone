@@ -307,7 +307,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let cam = w.cameras.get(l.camera_index.max(0) as usize).map(|c| {
                 (i16::from_le_bytes([c.raw[0x26], c.raw[0x27]]), f32::from_le_bytes(c.raw[0x28..0x2c].try_into().unwrap_or([0; 4])))
             });
-            println!("{k} {} movie {:?} flags04 {:#x} cams {} attract_cam {:?}", l.code, m, l.word_04, l.camera_index, cam);
+            println!("{k} {} movie {:?} flags04 {:#x} cams {} attract_cam {:?} boss {:#x}", l.code, m, l.word_04, l.camera_index, cam, l.boss_type);
         }
         return Ok(());
     }
