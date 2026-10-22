@@ -93,6 +93,18 @@ original (PCSX2 reference on Xvfb :191, private captures):
    CreateDynobjGrid's cached poses, GetWorldMat/UnparentMatrix as node
    chains, sound items' world-animation nodes and SetItemGeo's clock start;
    world_update's order and paused gate (gameplay.md, items.md).
+   Other realms (reference_warp.py captures, slots 3–7; gameplay.md):
+   A1 270/270 and B1 250/250 in every part; K2, the ship, 210/210 for
+   enemies, player, effects, world animation and its General critter
+   (items 206: audio driver handles). Critters are now probed, seeded and
+   compared (critters.md "Reference comparison"): they ride moving floors
+   through their +0x70 node, turn their heads (NodeLookAtPos), and the
+   replay maps their node pointers by CritterGetNode's table. B1 fixes:
+   EnemyCollideFloor's second-query object, SfxSkipItem's indestructible
+   tail, PlayerMotion's carried PlayerGetTarget target, the state-8 action
+   guard and +0x3a4; the replay restores item side state per attempt.
+   Next: traces of a boss, statue activations (golem/gargoyle), a critter
+   with children, and more realm levels (G1 from slot 6).
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

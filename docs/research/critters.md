@@ -3,8 +3,10 @@
 Bosses and statue enemies (golems, gargoyles, generals) are "critters": a
 data-driven engine separate from the ordinary enemy AI. Sources: SLUS_200.47
 critter/boss family 0x191850–0x1a1fa8 (exports in private/reports/ghidra-critter,
--atree, -lgws). Status: transcription in progress; nothing here has been
-compared with the reference yet. Native port: gdl_core game/critters.rs (types,
+-atree, -lgws, -lookat1). Status: transcription in progress; one critter (K2's
+General, a golem-type kind 8) is compared with the reference over 210 updates
+("Reference comparison" below); bosses, golems, gargoyles and children are not
+compared yet. Native port: gdl_core game/critters.rs (types,
 loading, instances, pose), critter_ai.rs (per-frame AI), critter_hits.rs
 (attacks, damage, hit tests); tree_pose.rs evaluates the skeleton.
 
@@ -84,12 +86,75 @@ critical/block/attack/translate/ready move search, CritterAnimate, death
 timing (move 0x11 → BossIsDead, fade, CritterDelInst), then
 CritterDoTransition/DoActions/Translate/Rotate/LookAtPlayer and floor snap.
 
+## Reference comparison (2026-10-22, actual disc)
+
+trace-k2-newgame-v5 (slot 7, the ship K2) records CritterInsts (16 × 0xb70,
+delta-coded), NumCritterInsts, BossCritInst, CritterETypes, CritterNewID,
+CritterCounter, CritterNActivePlayers, CritterPlayerNTargets, BossStartPos,
+BossActivateTime, BossCamMode, EnemyRootNode and, per live instance, the +0x70
+MB node (local matrix, +0x74 parent) and CritterGetNode's table (+0xc0, +0xbc
+entries of 0x28 bytes, the MB node pointer first). The frame replay seeds each
+root instance from its record: TYPE by CritterETypes, the native tree state as
+CritterInitInst/InitGeo/InitColnodes derive it, the clock from the +0x84
+AnimInfo, the pose evaluated at it with the previous update's look-at rebuilt
+from +0x10c..+0x118, +0xdc and the collision/look-at nodes by the node table,
+the node's parent as a WORLDS object by its +0x28 node pointer. Result
+(replay-frame-k2-v10.json): critters 210/210, and every collision and look-at
+node pointer agrees with the native node indices.
+
+Instance words that are guest pointers (not compared): +0x04 TYPE, +0x70 the
+critter's MB node (MBNewNode(EnemyRootNode)), +0x80/+0xc0 the atree and its
+node table, +0x84..+0x8c and +0xc4 AnimInfo links, +0xcc the tree root
+(AtreeInit's first node, parented to +0x70), +0xd0 the shadow tree, +0xd4/+0xd8
+/+0xdc/+0xe8 nodes, +0xe0 a move effect node (MBRemoveNode at a done
+transition), +0xb60/+0xb64 the child chain, and each collision node's +0 NODE
+record, +4 node and +8 reference node. +0xb54 is an Items pointer
+(ProcessItems 0x155fe8; native slot + 1), +0xb5c a waypoint record
+(FindClosestWaypoint's 0x23bd20 array, stride 0x80; native index + 1). The MB
+nodes are not allocated in tree order (the stride-0x80 guess from one record
+was wrong; the table is authoritative).
+
+Stack residue: CritterGetSingleTargetPlayer copies its 0x30-byte target struct
+into +0x140, and CritterCalcTarget never writes the struct's +0x14/+0x18/+0x1c/
++0x2c, so +0x154/+0x158/+0x15c/+0x16c hold whatever the stack had (0, 0,
+0x80808080, 1.0 in the trace). No critter code reads them back (the 0x15c loads
+in CritterDamage, CritterDamagePlayer and CritterGolemAI are the global
+0x22015c, EnemyShrink); the replay skips them.
+
+Found by the comparison:
+- ProcessCritter starts with GetWorldMat(+0x70 node → +0x10) and ends (every
+  surviving path, LAB_00198ef0) with CopyMat4(+0x10 → node) and
+  UnparentMatrix(node, node +0x74); CritterInitGeo ends the same way under
+  EnemyRootNode. CritterCollideWorld's last FloorCollide hit re-parents the
+  node: MBNodeSetParent(node, the object's node) when its +0x28 node exists and
+  flag 0x1000 is set, else EnemyRootNode. A critter therefore rides a moving
+  floor; K2's General stands on K2FLOOR_NODEA1 (object 1226) like the player.
+  Native: Critter::node (the stored local) and Critter::floor; tree nodes
+  compose through that local, the floor chain, the identity root and the
+  translation-only root (tree_pose::node_world_chain), so mid-update node
+  matrices use the node as the last UnparentMatrix stored it.
+- CritterLookAtPlayer 0x19c600 (move types 0x10/0 return; death, MOVE +4 bit
+  1, +0xb4c > 0 or +0xb4e > 0 relax towards zero; the target is
+  players[+0x130] +0x60) and NodeLookAtPos 0x19c240(TYPE +0x60/+0x64 yaw
+  limit, 0, TYPE +0x68/+0x6c pitch limit, TYPE +0x70/+0x74 pitch offset):
+  GetYawPitch of the node's world row 2 and of the target from its world
+  position, the accumulated yaw/pitch (+0x10c/+0x114 for +0xd4, +0x110/+0x118
+  for +0xd8) approach by at most SPF·π/2 with one-step wraps, then ExtractPYR
+  0x1d6790 of the node's local, each angle moved within its limit and
+  CreatePYRMatrix 0x1d63f8 (3 × 3 rows, w zeros, +0x3c = 1, translation
+  kept). The rebuilt head is what the next update's colnode pass reads.
+- DoAnimation's reset handshake (a nonzero AnimInfo reset byte becomes 2) on
+  critter clocks (step 42, a new WALK move).
+- CritterNodePlayerCollide 0x19bcf4..0x19bd28: the knockback direction is
+  t = a + b, then t + t (the decompiler prints a + b + a + b; one ulp in all
+  three components at every hit).
+
 ## Native implementation notes (2026-10-17)
 
 - Skeleton: crate::tree_pose evaluates DoAnimation locals at the clock's
   sequence/frame and composes them with GetWorldMat's parent order onto the
-  instance matrix. Node scale, NodeLookAtPos head turns and ADDA
-  attachments (presentation) are not applied; sequence blending does not
+  instance matrix. Node scale and ADDA attachments (presentation) are not
+  applied; NodeLookAtPos head turns are (2026-10-22); sequence blending does not
   occur (CritterAnimate's AnimateATree clears f12, the blend duration, at
   0x112a30 — 2026-10-22). Key gaps of 256+
   frames use a direct float reciprocal (sample_channels_long_gaps,

@@ -83,7 +83,7 @@ warp-*.json and screenshots in private/reports):
 | 4 | w1l1-newgame-v1.p2s | (117.93, 0.59, −88.83), world 1 | A1 "Courtyard" during the stage-start title and zoom |
 | 5 | w11l1-newgame-v1.p2s | (163.11, 5.91, 42.41), world 11 | still loading (mode 0x400e) — not for traces |
 | 6 | w7l1-newgame-v1.p2s | (45.07, −6.43, −112.70), world 7 | G1 new game after its start |
-| 7 | w11l1-newgame-v2.p2s | world 11, 1800 vblanks | K1, the moving ship, after its start |
+| 7 | w11l1-newgame-v2.p2s | world 11, 1800 vblanks | K2, the moving ship (SKY's LEVL record 0), after its start |
 
 reference_trace.py and reference_screenshot.py accept these slots; each run
 first checks the PCSX2 slot file against its preserved capture.

@@ -549,3 +549,45 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   own generator, shifting every later draw) and a base of (frames × period
   scale + 0.5) << 1 (the port multiplied by 1.0) — the A1 traps (SPIKES,
   TENTACLE) and the LOW food item.
+- B1 (the Mountain's first level; slot 3, trace-b1-newgame-v2: Up,
+  Up+Right, two throws, Left; 500 vblanks, critters probed — B1 has none):
+  whole-update replay (replay-frame-b1-v9.json) 250/250 in every part. The
+  first divergences and their causes, in order:
+  - step 276, enemy 4's floor link: EnemyCollideFloor's second FloorCollide
+    (at position + move, when the step exceeds speed × 0.1) reassigns the
+    object the rest of the function reads and returns (0x143120: iVar2);
+    the port returned the first query's B1RAMP#6 at the seam with
+    B1FLOOR00#04.
+  - step 278, the poison barrel's blast and the KEY: SfxSkipItem's kinds 1
+    and 2 (and 2/0x2b) end in the shared tail 0x17b1dc, which skips an
+    indestructible item (+0xe3 = −1) unless the damage flags have 0x600.
+  - step 366, the barrel's end (+0xdc 1 → 2, deleted, help 0x2d): a replay
+    artifact — the first solve attempt deleted the barrel and the retry
+    lost its clock. The replay now restores the native item side state
+    (floor parent, sound node/anchor, tree, clock, geometry flag, first empty
+    slot) per attempt; DeleteItem keeps the record's +0x84 AnimInfo as the
+    clock left it.
+  - step 402, the melee kill of enemy 1 (+4 experience): PlayerMotion
+    passes uStack_118 (sp+0x128: PlayerCollideEnemies' contact, then the
+    targeting stage's result) and piStack_114 into both PlayerGetTarget
+    calls (0x14988c, 0x14bb1c); the port passed −1, so the targeting
+    stage's generator item won the melee query.
+  - step 404, +0x3a4 of the dying enemy: do_enemies' state 8 runs
+    DoEnemyAction only with a tree (+0x80) and not for BossType, then sets
+    +0x3a4 = 0 when +0xe0 ≠ +0xe4, else −1 (0x13bad4..0x13bb10).
+- K2 (the ship — SKY's LEVL record 0 —; slot 7, trace-k2-newgame-v5: the
+  stage start, Down, two throws, Up; 420 vblanks with CritterInsts, the
+  critter globals and each live critter's node, parent and node table):
+  whole-update replay (replay-frame-k2-v10.json) enemies, player 0,
+  effects, world animation and critters 210/210; items 206/210, the four
+  S_BARROLL loop sounds' +0xfe (the audio driver's first AudioLOOP return
+  is negative, 0xffdc, then a handle; native stores 1). The General
+  (CritterETypes[8][0]) stands on the deck; the player's PlayerGetTarget
+  found it (+0x8e4 bit 0x10), which the replay could not show before
+  critters were seeded. Fixed (research/critters.md): ProcessCritter's
+  GetWorldMat of the +0x70 node and its closing CopyMat4 + UnparentMatrix,
+  CritterCollideWorld's floor re-parenting, tree nodes composed through the
+  node and the floor chain, CritterLookAtPlayer/NodeLookAtPos, the reset
+  handshake on critter clocks, and CritterNodePlayerCollide's knockback
+  direction (t = a + b, then t + t at 0x19bd14 — the decompiler shows
+  a + b + a + b).
