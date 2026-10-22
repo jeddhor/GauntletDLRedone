@@ -173,6 +173,8 @@ pub struct EnemyAnimData {
     /// (type, tree label) of other trees in the type's package, e.g.
     /// "ZOM_ARROW" (InitEnemyMissiles matches "<PREFIX>_<desc>").
     pub other_trees: std::collections::HashMap<(i32, String), (i16, i16)>,
+    /// (type, tree label) → the tree's index in the type's package.
+    pub tree_index: std::collections::HashMap<(i32, String), usize>,
 }
 
 /// InitActions: action names (EE 0x23f8c8 list) → sequence index and +0x20 word.

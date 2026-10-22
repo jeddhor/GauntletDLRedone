@@ -93,9 +93,10 @@ pub fn enemy_desc(prefix: &str, level: i32) -> String {
 
 /// Enemy trees EnemyDesc(type, level) from a MONSTERS/<NAME>/ANIM.PS2 package.
 pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animations) {
-    for tree in &anim.trees {
+    for (k, tree) in anim.trees.iter().enumerate() {
         let s = tree.sequences.first();
         data.other_trees.insert((t, tree.label.clone()), (s.map_or(0, |s| s.frames), s.map_or(0, |s| s.timing_factor)));
+        data.tree_index.insert((t, tree.label.clone()), k);
     }
     for (k, tree) in anim.trees.iter().enumerate() {
         let Some(level) = (1..=7).find(|&l| enemy_desc(prefix, l) == tree.label) else { continue };
@@ -288,7 +289,43 @@ impl Game {
             },
         };
         let mut collision = CollisionWorld::from_world(inp.world)?;
-        let loaded = load_items(inp.world, &mut collision, ItemTables::from_elf(inp.elf)?, session, s.extra.vb_counter)?;
+        let mut world_anims = match &inp.world.anims {
+            Some(a) => super::world_anim::WorldAnimSet::new(inp.world.bytes.clone(), a),
+            None => Default::default(),
+        };
+        // GauntWorldInit 0x163338: world_update before AddItemInstList. Its
+        // DoWorldAnimation poses the moving floors the items are placed and
+        // parented on (fixture: item 307's node local relative to object 821
+        // holds the posed parent; 23 live items parented). InitWorldInfo's
+        // 0x2000000 comes first (NewWorld). The rest of that world_update
+        // (fog, start_of_stage, SetupDynGrid on no items) is not modelled
+        // (HYPOTHESIS: nothing it changes reaches the simulation).
+        let g0 = &s.globals;
+        let animate = (0 < g0.num_in_game_players || g0.game_mode & 0x8000 != 0)
+            && 0x18694 < (g0.trig_cam_delay.wrapping_sub(0xb) as u32)
+            && g0.paused == 0
+            && g0.help == 0;
+        let spf = g0.spf;
+        let loaded = load_items(inp.world, &mut collision, ItemTables::from_elf(inp.elf)?, session, s.extra.vb_counter, &mut |w, col| {
+            for e in world_anims.entries.iter().filter(|e| e.active) {
+                if let Some(o) = w.objects.get_mut(e.object) {
+                    o.flags_10 |= 0x200_0000;
+                }
+            }
+            if animate {
+                for k in 0..world_anims.entries.len() {
+                    if world_anims.entries[k].active {
+                        let mut explode = None;
+                        super::world_anim::world_anim_sub(&mut world_anims, k, &mut w.objects, col, spf, false, &mut explode)
+                            .map_err(|e| crate::items::UnsupportedItem(format!("load-time DoWorldAnimation: {}", e.0)))?;
+                        if explode.is_some() {
+                            return Err(crate::items::UnsupportedItem("load-time WorldObjectExplode".into()));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?;
         let mut players: [Record; 4] = std::array::from_fn(|_| Record::zeroed(PLAYER));
         for (k, h) in s.players.iter().enumerate() {
             let b = hex(h)?;
@@ -343,10 +380,7 @@ impl Game {
                 .into_iter()
                 .map(|n| (n, inp.elf.object(n).map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default()))
                 .collect(),
-            world_anims: match &inp.world.anims {
-                Some(a) => super::world_anim::WorldAnimSet::new(inp.world.bytes.clone(), a),
-                None => Default::default(),
-            },
+            world_anims,
             world_order: inp.elf.object("WorldOrder").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
             thermometer: Default::default(),
             world_crystal: inp.elf.object("WorldCrystal").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
@@ -436,6 +470,8 @@ impl Game {
             skin_views: Default::default(),
             health_meters: Default::default(),
             sfx_ene_bloodidx: 0,
+            gen_hit_effects: [-1; 45],
+            gen_die_effects: [-1; 45],
             lock_cam_req: 0,
             critters: Vec::new(),
             critter_data: super::critters::CritterData {
@@ -563,6 +599,9 @@ impl Game {
         game.set_player_vars();
         // CritterLoadAllTypes / CritterInitAllMoves, then AddLocatorInstList's
         // boss locators (kind 6, skipped in game_mode 0x400b).
+        // GauntWorldInit: InitEffects (the generator effects are the first
+        // custom effects, 0x61..) before CritterInitAllMoves.
+        game.init_gen_effects();
         game.critter_load_types().map_err(|e| format!("critter types: {}", e.0))?;
         if game.globals.game_mode != 0x400b {
             for loc in inp.world.locators.iter().filter(|l| l.kind == 6) {

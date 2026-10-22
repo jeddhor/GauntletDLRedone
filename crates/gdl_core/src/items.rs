@@ -1068,10 +1068,14 @@ pub fn load_items(
     tables: ItemTables,
     session: ItemSession,
     seed: u32,
+    before_instances: &mut dyn FnMut(&mut ItemWorld, &mut CollisionWorld) -> R<()>,
 ) -> R<LoadedItems> {
     let start = session.random_item_num;
     let mut w = ItemWorld::new(world, collision, tables, session)?;
     w.rng = Rand::new(seed);
+    // GauntWorldInit's world_update runs between the world's creation and
+    // AddItemInstList (the caller's step).
+    before_instances(&mut w, collision)?;
     let max_items = world.items.len() + 500;
     let mut outcome = Vec::new();
     let mut coins = 0;

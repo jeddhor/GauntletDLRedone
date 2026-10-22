@@ -1,7 +1,8 @@
 //! Skin effects: SetSkinFX 0x1800c8, ProcessSkinFX 0x180010, DoProcessSkinFX
-//! 0x17ff18 and PlayerProcessSkinFX 0x132fd0. A skin is six floats in the
-//! owner's record (enemy +0x1f8, player +0x7b4): end, current, rate,
-//! texture, repeats, ambient add. While end > 0 the tree draws its
+//! 0x17ff18 and PlayerProcessSkinFX 0x132fd0. A skin is six words in the
+//! owner's record (enemy +0x1f8, player +0x7b4): end, current, rate (floats),
+//! texture and repeats (integer words: SetSkinFX stores them with sw and
+//! ProcessSkinFX decrements the repeats with addiu), ambient add (float). While end > 0 the tree draws its
 //! alternate texture (MBTreeSetAltTex −4 replace, −3 for the chrome
 //! textures) at frame (int)current and ambient add (int)ambient
 //! (MBTreeSetAmbientAdd). The texture word holds a [`SkinTex`] code instead
@@ -89,8 +90,8 @@ pub fn set_skin_fx(r: &mut Record, o: usize, rate: f32, tex: SkinTex, end: i32, 
     r.set_f32(o, end as f32);
     r.set_f32(o + 4, -rate);
     r.set_f32(o + 8, rate);
-    r.set_f32(o + 12, tex as i32 as f32);
-    r.set_f32(o + 16, repeats);
+    r.set_i32(o + 12, tex as i32);
+    r.set_i32(o + 16, repeats as i32);
     r.set_f32(o + 20, 999.0);
 }
 
@@ -102,15 +103,15 @@ pub fn process_skin_fx(r: &mut Record, o: usize, vb: i32, view: &mut SkinView) -
     let cur = add(mul((vb >> 1) as f32, r.f32_(o + 8))?, r.f32_(o + 4))?;
     r.set_f32(o + 4, cur);
     if r.f32_(o) <= cur {
-        if r.f32_(o + 16) == 0.0 {
+        if r.i32_(o + 16) == 0 {
             r.set_f32(o, 0.0);
         } else {
             r.set_f32(o + 4, 0.0);
-            r.set_f32(o + 16, (r.f32_(o + 16) as i32 - 1) as f32);
+            r.set_i32(o + 16, r.i32_(o + 16) - 1);
         }
     }
     if 0.0 < r.f32_(o) {
-        let tex = r.f32_(o + 12) as i32;
+        let tex = r.i32_(o + 12);
         let chrome = tex == SkinTex::Silver as i32 || tex == SkinTex::Gold as i32;
         *view = SkinView { mode: if chrome { -3 } else { -4 }, tex, frame: r.f32_(o + 4) as i32, ambient: r.f32_(o + 20) as i32 };
     } else {

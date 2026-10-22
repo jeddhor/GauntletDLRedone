@@ -74,7 +74,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    are ported). Items ride moving floors (PlaceItem parent). Enemy node
    round trip (GetObjWorldMat/UpdateObjWorldMat), spawn AnimInfo/matrix and
    check_enemy_pos probe fixes: enemies 270/270 (combat) and 267/270
-   (fight) with ProcessItems in the replay.
+   (fight) with ProcessItems in the replay. Whole-update replay with the
+   effects array (gameplay.md): enemies and effects 270/270 on both traces;
+   fixed effect spin/CreateDirMatrix, missile streak words, SetSkinFX
+   integer words, generator hit/death effects, load-time world_update.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

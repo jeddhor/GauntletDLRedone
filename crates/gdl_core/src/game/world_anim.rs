@@ -124,6 +124,140 @@ pub fn eval_local(set: &WorldAnimSet, e: &WorldAnimState, frame: f32, position: 
     Ok(m)
 }
 
+/// DoWorldAnimSub 0x11ce80 for entry `k` on the animation set, the object
+/// words and the collision world's node matrices (shared by world_update and
+/// GauntWorldInit's world_update before AddItemInstList). A looping object
+/// with flags & 0x100f0000 == 0x50000 that wraps is returned in `explode`.
+pub fn world_anim_sub(
+    anims: &mut WorldAnimSet,
+    k: usize,
+    objects: &mut [crate::items::ObjectWords],
+    collision: &mut crate::collision::CollisionWorld,
+    spf: f32,
+    stop_time: bool,
+    explode: &mut Option<usize>,
+) -> R<()> {
+    let e = anims.entries[k].clone();
+    let o = e.object;
+    if objects.len() <= o {
+        return Ok(());
+    }
+    let oflags = objects[o].flags_10;
+    let mut flags = if oflags & 0x30_0000 == 0x30_0000 {
+        e.flags & 0xfffe
+    } else if oflags & 0x10_0000 == 0 {
+        if oflags & 0x20_0000 == 0 {
+            (e.flags & 0xfffd) | 0x101
+        } else {
+            (e.flags & 0xfcfd) | 1
+        }
+    } else {
+        (e.flags & 0xfcff) | 3
+    };
+    anims.entries[k].flags = flags;
+    if flags & 1 == 0 {
+        objects[o].flags_10 &= 0xf7ff_ffff;
+        return Ok(());
+    }
+    let tf = e.transform_flags;
+    let local: Option<M4>;
+    if tf & 0xfff == 0 {
+        // CopyMat4(identity): the node matrix loses its translation too.
+        local = Some([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]);
+    } else {
+        let bytes = anims.bytes.clone();
+        let track = KeyTrack::from_parts(&bytes, e.key_start, tf, e.channels, e.frames.max(0) as u16, anims.tables)
+            .map_err(|err| Unsupported(format!("world animation keys: {err}")))?;
+        let ch = crate::animation::sample_channels_long_gaps(&track, e.frame.max(0.0)).map_err(|err| Unsupported(format!("world animation sample: {err:?}")))?;
+        let p0 = collision.objects[o].position;
+        let mut m = collision.node_local[o].unwrap_or([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [p0[0], p0[1], p0[2], 1.0]]);
+        if tf & 7 != 0 {
+            let rows = if tf & 0x8000 == 0 { create_ryp_matrix([ch[0], ch[1], ch[2]])? } else { create_pyr_matrix([ch[0], ch[1], ch[2]])? };
+            for r in 0..3 {
+                m[r] = [rows[r][0], rows[r][1], rows[r][2], 0.0];
+            }
+        }
+        if tf & 0x70 != 0 {
+            let base = collision.objects[o].position;
+            m[3] = [add(base[0], ch[3])?, add(base[1], ch[4])?, add(base[2], ch[5])?, 1.0];
+        }
+        if tf & 0x700 != 0 {
+            collision.node_scale[o] = Some([ch[6], ch[7], ch[8]]);
+        }
+        local = Some(m);
+    }
+    if let Some(m) = local {
+        collision.node_local[o] = Some(m);
+    }
+    if stop_time && flags & 0x100 != 0 {
+        return Ok(());
+    }
+    if spf <= 0.0 {
+        return Ok(());
+    }
+    let ob = &mut objects[o];
+    ob.flags_10 = (ob.flags_10 & 0xff3f_ffff) | 0x800_0000;
+    let step = mul(spf, 30.0)?;
+    let last = i32::from(e.frames) - 1;
+    let mut frame = e.frame;
+    let mark;
+    if flags & 2 == 0 {
+        frame = add(step, frame)?;
+        if (frame as i32 as i16 as i32) < last {
+            if (frame as i32 as i16) <= 1 && objects[o].flags_10 & 0x1000_0000 != 0 {
+                objects[o].flags_10 &= 0xefff_ffff;
+            }
+            anims.entries[k].frame = frame;
+            return Ok(());
+        }
+        if flags & 0x200 == 0 {
+            if flags & 0x100 == 0 {
+                frame = last as f32;
+                objects[o].flags_10 &= 0xf7ff_ffff;
+            } else {
+                frame = 0.0;
+                if objects[o].flags_10 & 0x100f_0000 == 0x5_0000 {
+                    *explode = Some(o);
+                }
+            }
+        } else {
+            frame = last as f32;
+            flags ^= 2;
+        }
+        mark = 0x80_0000;
+    } else {
+        frame = sub(frame, step)?;
+        if 0.0 <= frame {
+            if last - 1 <= (frame as i32 as i16 as i32) && objects[o].flags_10 & 0x1000_0000 != 0 {
+                objects[o].flags_10 &= 0xefff_ffff;
+            }
+            anims.entries[k].frame = frame;
+            return Ok(());
+        }
+        if flags & 0x200 == 0 {
+            if flags & 0x100 == 0 {
+                frame = 0.0;
+                objects[o].flags_10 &= 0xf7ff_ffff;
+            } else {
+                frame = last as f32;
+                if objects[o].flags_10 & 0x100f_0000 == 0x5_0000 {
+                    *explode = Some(o);
+                }
+            }
+        } else {
+            frame = 0.0;
+            flags ^= 2;
+        }
+        mark = 0x40_0000;
+    }
+    objects[o].flags_10 |= mark;
+    let st = &mut anims.entries[k];
+    st.frame = frame;
+    st.flags = flags;
+    Ok(())
+}
+
+
 impl Game {
     /// DoWorldAnimation (world_update's first step): every active entry
     /// when players are in game and no trigger camera holds the world.
@@ -146,128 +280,13 @@ impl Game {
     }
 
     fn do_world_anim_sub(&mut self, k: usize) -> R<()> {
-        let e = self.world_anims.entries[k].clone();
-        let o = e.object;
-        if self.items.objects.len() <= o {
-            return Ok(());
+        let mut explode = None;
+        world_anim_sub(&mut self.world_anims, k, &mut self.items.objects, &mut self.collision, self.globals.spf, self.stop_time != 0, &mut explode)?;
+        if let Some(o) = explode {
+            // GetWorldMat(node) → WorldObjectExplode at its translation.
+            let at = self.collision.object_matrix(o).map_err(|e| Unsupported(format!("{e:?}")))?[3];
+            self.world_object_explode(o, [at[0], at[1], at[2]])?;
         }
-        let oflags = self.items.objects[o].flags_10;
-        let mut flags = if oflags & 0x30_0000 == 0x30_0000 {
-            e.flags & 0xfffe
-        } else if oflags & 0x10_0000 == 0 {
-            if oflags & 0x20_0000 == 0 {
-                (e.flags & 0xfffd) | 0x101
-            } else {
-                (e.flags & 0xfcfd) | 1
-            }
-        } else {
-            (e.flags & 0xfcff) | 3
-        };
-        self.world_anims.entries[k].flags = flags;
-        if flags & 1 == 0 {
-            self.items.objects[o].flags_10 &= 0xf7ff_ffff;
-            return Ok(());
-        }
-        let tf = e.transform_flags;
-        let local: Option<M4>;
-        if tf & 0xfff == 0 {
-            // CopyMat4(identity): the node matrix loses its translation too.
-            local = Some([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]);
-        } else {
-            let bytes = self.world_anims.bytes.clone();
-            let track = KeyTrack::from_parts(&bytes, e.key_start, tf, e.channels, e.frames.max(0) as u16, self.world_anims.tables)
-                .map_err(|err| Unsupported(format!("world animation keys: {err}")))?;
-            let ch = crate::animation::sample_channels_long_gaps(&track, e.frame.max(0.0)).map_err(|err| Unsupported(format!("world animation sample: {err:?}")))?;
-            let p0 = self.collision.objects[o].position;
-            let mut m = self.collision.node_local[o].unwrap_or([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [p0[0], p0[1], p0[2], 1.0]]);
-            if tf & 7 != 0 {
-                let rows = if tf & 0x8000 == 0 { create_ryp_matrix([ch[0], ch[1], ch[2]])? } else { create_pyr_matrix([ch[0], ch[1], ch[2]])? };
-                for r in 0..3 {
-                    m[r] = [rows[r][0], rows[r][1], rows[r][2], 0.0];
-                }
-            }
-            if tf & 0x70 != 0 {
-                let base = self.collision.objects[o].position;
-                m[3] = [add(base[0], ch[3])?, add(base[1], ch[4])?, add(base[2], ch[5])?, 1.0];
-            }
-            if tf & 0x700 != 0 {
-                self.collision.node_scale[o] = Some([ch[6], ch[7], ch[8]]);
-            }
-            local = Some(m);
-        }
-        if let Some(m) = local {
-            self.collision.node_local[o] = Some(m);
-        }
-        if self.stop_time != 0 && flags & 0x100 != 0 {
-            return Ok(());
-        }
-        let spf = self.globals.spf;
-        if spf <= 0.0 {
-            return Ok(());
-        }
-        let ob = &mut self.items.objects[o];
-        ob.flags_10 = (ob.flags_10 & 0xff3f_ffff) | 0x800_0000;
-        let step = mul(spf, 30.0)?;
-        let last = i32::from(e.frames) - 1;
-        let mut frame = e.frame;
-        let mark;
-        if flags & 2 == 0 {
-            frame = add(step, frame)?;
-            if (frame as i32 as i16 as i32) < last {
-                if (frame as i32 as i16) <= 1 && self.items.objects[o].flags_10 & 0x1000_0000 != 0 {
-                    self.items.objects[o].flags_10 &= 0xefff_ffff;
-                }
-                self.world_anims.entries[k].frame = frame;
-                return Ok(());
-            }
-            if flags & 0x200 == 0 {
-                if flags & 0x100 == 0 {
-                    frame = last as f32;
-                    self.items.objects[o].flags_10 &= 0xf7ff_ffff;
-                } else {
-                    frame = 0.0;
-                    if self.items.objects[o].flags_10 & 0x100f_0000 == 0x5_0000 {
-                        // GetWorldMat(node) → WorldObjectExplode at its translation.
-                        let at = self.collision.object_matrix(o).map_err(|e| Unsupported(format!("{e:?}")))?[3];
-                        self.world_object_explode(o, [at[0], at[1], at[2]])?;
-                    }
-                }
-            } else {
-                frame = last as f32;
-                flags ^= 2;
-            }
-            mark = 0x80_0000;
-        } else {
-            frame = sub(frame, step)?;
-            if 0.0 <= frame {
-                if last - 1 <= (frame as i32 as i16 as i32) && self.items.objects[o].flags_10 & 0x1000_0000 != 0 {
-                    self.items.objects[o].flags_10 &= 0xefff_ffff;
-                }
-                self.world_anims.entries[k].frame = frame;
-                return Ok(());
-            }
-            if flags & 0x200 == 0 {
-                if flags & 0x100 == 0 {
-                    frame = 0.0;
-                    self.items.objects[o].flags_10 &= 0xf7ff_ffff;
-                } else {
-                    frame = last as f32;
-                    if self.items.objects[o].flags_10 & 0x100f_0000 == 0x5_0000 {
-                        // GetWorldMat(node) → WorldObjectExplode at its translation.
-                        let at = self.collision.object_matrix(o).map_err(|e| Unsupported(format!("{e:?}")))?[3];
-                        self.world_object_explode(o, [at[0], at[1], at[2]])?;
-                    }
-                }
-            } else {
-                frame = 0.0;
-                flags ^= 2;
-            }
-            mark = 0x40_0000;
-        }
-        self.items.objects[o].flags_10 |= mark;
-        let st = &mut self.world_anims.entries[k];
-        st.frame = frame;
-        st.flags = flags;
         Ok(())
     }
 

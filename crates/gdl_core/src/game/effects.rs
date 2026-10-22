@@ -74,7 +74,8 @@ pub struct EffectHeader {
     /// 0 = WEAPONS/ANIM.PS2 (weapon_anim), 1 = POWERUPS/ANIM.PS2 (powerup_anim),
     /// 2 + n = the model of critter file n (InitCustomEffect), 0x40 + p =
     /// player p's SFX package (PlayerModelData +0x48), 0x80 + n = the
-    /// level's n-th item package (item_anim, item_anim2).
+    /// level's n-th item package (item_anim, item_anim2), 0xc0 + t = enemy
+    /// type t's package (enemy_anim[t]).
     pub source: u8,
     pub tree: usize,
     pub frames: i16,
@@ -384,20 +385,29 @@ pub fn calc_target_dir(speed: f32, inv: f32, gravity: f32, lift: f32, d: &mut V3
     Ok(())
 }
 
-/// Native matrix helpers for the node orientation (presentation only; the
-/// original YawMat3/CreateDirMatrix arithmetic is not reproduced bit for bit).
-fn dir_matrix(v: V3) -> [V3; 3] {
-    let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if n * n < 0.001 {
-        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+/// CreateDirMatrix 0x1d60a0(m, v, up): |v|² < 0.001 → identity rows;
+/// without `up` CreateYPRMatrix(atan2f(vy, fqdist(vx, vz)) × 0.5,
+/// atan2f(vx, vz), 0); otherwise row 2 = SlowNormalVector(v), row 1 =
+/// SlowNormalVector(row 2 × up), row 0 = row 1 × row 2. ProcessEffects
+/// passes Cam[0]'s row 2 (0x23e520: the camera's view direction, equal to the
+/// window camera rows in the fixture), which rolls a missile's rows toward
+/// the camera (trace-fight-g1-v4).
+fn create_dir_matrix(v: V3, up: Option<V3>) -> R<[V3; 3]> {
+    if add(add(mul(v[0], v[0])?, mul(v[1], v[1])?)?, mul(v[2], v[2])?)? < 0.001 {
+        return Ok([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
     }
-    let f = [v[0] / n, v[1] / n, v[2] / n];
-    let up = [0.0, 1.0, 0.0];
-    let mut r = [up[1] * f[2] - up[2] * f[1], up[2] * f[0] - up[0] * f[2], up[0] * f[1] - up[1] * f[0]];
-    let rl = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt().max(1e-6);
-    r = [r[0] / rl, r[1] / rl, r[2] / rl];
-    let u = [f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]];
-    [r, u, f]
+    let Some(u) = up else {
+        let h = fqdist(v[0], v[2])?.0;
+        let pitch = mul(atan2f(v[1], h)?, 0.5)?;
+        let m = super::enemy_ai::create_ypr_matrix([pitch, atan2f(v[0], v[2])?, 0.0])?;
+        return Ok([[m[0][0], m[0][1], m[0][2]], [m[1][0], m[1][1], m[1][2]], [m[2][0], m[2][1], m[2][2]]]);
+    };
+    let mut f = v;
+    super::critter_ai::slow_normal_vector(&mut f)?;
+    let mut r1 = [sub(mul(f[1], u[2])?, mul(f[2], u[1])?)?, sub(mul(f[2], u[0])?, mul(f[0], u[2])?)?, sub(mul(f[0], u[1])?, mul(f[1], u[0])?)?];
+    super::critter_ai::slow_normal_vector(&mut r1)?;
+    let r0 = [sub(mul(r1[1], f[2])?, mul(r1[2], f[1])?)?, sub(mul(r1[2], f[0])?, mul(r1[0], f[2])?)?, sub(mul(r1[0], f[1])?, mul(r1[1], f[0])?)?];
+    Ok([r0, r1, f])
 }
 
 impl Game {
@@ -656,13 +666,26 @@ impl Game {
             r.set_i16(fx::OWNER, owner as i16);
         }
         if let Some(n) = self.effects.nodes[i].as_mut() {
-            let (s, c) = (yaw.sin(), yaw.cos());
-            n.matrix = [[c, 0.0, -s], [0.0, 1.0, 0.0], [s, 0.0, c]];
+            // SfxSetPhysics: YawMat3(atan2f(vx, vz)) on StartFXTree's identity.
+            let mut m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+            crate::collision::yaw_mat3(&mut m, yaw).map_err(|e| Unsupported(format!("YawMat3: {e:?}")))?;
+            n.matrix = m;
             if flags & 0x200_0000 != 0 {
                 n.scale = f32::from_bits(0x3fe6_6666);
             }
         }
-        // SfxSetStreak (owner > 0): streak colour/alpha are presentation.
+        // SfxSetStreak 0x17e0f0 (owner > 0): flag 0x40000, +0xd8 the class
+        // record's +0x17c, +0xdc the radius (its time argument is 0); the
+        // poly (+0xd4), colour and alpha are presentation.
+        if 0 < owner {
+            let raw = &self.classes[(owner - 1) as usize].raw;
+            let width = raw.get(0x17c..0x180).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+            let r = self.fx_mut(i);
+            r.or_u32(fx::FLAGS, 0x4_0000);
+            r.set_f32(0xd8, width);
+            let rad = r.f32_(fx::RADIUS);
+            r.set_f32(0xdc, rad);
+        }
         Ok(i)
     }
 
@@ -1515,6 +1538,8 @@ impl Game {
                             self.items.records[slot].and_u16(0xd8, 0xfffe);
                             self.items.records[slot].set_i8(0xe3, -1);
                         }
+                        let ty = i32::from(self.items.records[slot].i16_(0xf0));
+                        self.start_gen_hit_fx(slot, ty, level == 0)?;
                         self.events.push(Event::GeneratorHit { slot, destroyed: level == 0 });
                     }
                     if level == 0 {
@@ -2027,6 +2052,60 @@ impl Game {
         Ok(i)
     }
 
+    /// InitEffects 0x179e20's generator part: for every enemy type whose
+    /// package is loaded (types 0..0x2c in order) GenHitEffects[t] =
+    /// InitCustomEffectSub(enemy_anim[t], "GENHIT") and GenDieEffects[t] =
+    /// "GENDIE" (the package's tree first, then the shared ones); CurWorld
+    /// 5/6 then re-registers index 0 from item_anim (NATIVE: the realm
+    /// package's tree is not distinguished from the shared search).
+    pub(crate) fn init_gen_effects(&mut self) {
+        for t in 0..45usize {
+            let ti = t as i32;
+            let loaded = self.enemy_anim_data.trees.keys().any(|(tt, _)| *tt == ti);
+            if !loaded {
+                self.gen_hit_effects[t] = -1;
+                self.gen_die_effects[t] = -1;
+                continue;
+            }
+            for (name, die) in [("GENHIT", false), ("GENDIE", true)] {
+                let own = self.enemy_anim_data.tree_index.get(&(ti, name.to_string())).map(|&k| {
+                    let (frames, timing) = self.enemy_anim_data.other_trees[&(ti, name.to_string())];
+                    EffectHeader { source: 0xc0 + t as u8, tree: k, frames, timing }
+                });
+                let h = self.register_custom_effect(own, name);
+                if die {
+                    self.gen_die_effects[t] = h;
+                } else {
+                    self.gen_hit_effects[t] = h;
+                }
+            }
+        }
+        if (self.globals.cur_world as u32).wrapping_sub(5) < 2 {
+            self.gen_hit_effects[0] = self.register_custom_effect(None, "GENHIT");
+            self.gen_die_effects[0] = self.register_custom_effect(None, "GENDIE");
+        }
+    }
+
+    /// StartGenHitFx 0x17f720(item matrix, type, destroyed): GenDieEffects
+    /// (types 1/4 fall back to effect 0x1e) or GenHitEffects of the type,
+    /// StartFXNoLoop at the item's translation and SfxSetMat with its rows.
+    pub(crate) fn start_gen_hit_fx(&mut self, slot: usize, ty: i32, destroyed: bool) -> R<()> {
+        let t = ty.max(0) as usize;
+        let mut h = if destroyed { self.gen_die_effects.get(t).copied().unwrap_or(-1) } else { self.gen_hit_effects.get(t).copied().unwrap_or(-1) };
+        if destroyed && h < 0 && (t == 1 || t == 4) {
+            h = 0x1e;
+        }
+        let Ok(h) = usize::try_from(h) else { return Ok(()) };
+        let Some(head) = self.effects.tables.headers.get(h).copied().flatten() else { return Ok(()) };
+        let r = self.items.records[slot].clone();
+        let i = self.start_fx_tree(0.0, Visual::Header(h), head.frames, head.timing, Some(r.v3(0x40)), 0)?;
+        self.fx_mut(i).set_u32(fx::KIND, h as u32);
+        if let Some(n) = self.effects.nodes[i].as_mut() {
+            n.matrix = [r.v3(0x10), r.v3(0x20), r.v3(0x30)];
+        }
+        Ok(())
+    }
+
     /// AddPlayerHitCol 0x17dd70(position, flags, killed): DamageBlood /
     /// KillBloodEffects (gore_level 0).
     pub(crate) fn add_player_hit_col(&mut self, at: V3, flags: u32, killed: bool) -> R<i32> {
@@ -2384,13 +2463,27 @@ impl Game {
             }
         }
         if flags & 0x2_0000 == 0 {
+            // The spin (+0x8c..+0x94, radians per second): PitchMat3(−x ·
+            // SPF), YawMat3(y · SPF), RollMat3(z · SPF) for each nonzero
+            // component (trace-fight-g1-v4: the missile's rows roll ~36° an
+            // update about its forward row).
             let s = self.fx(i).v3(fx::SPIN);
-            if s != [0.0; 3] {
-                // Pitch/Yaw/RollMat3: orientation only (presentation).
+            let rot = |e: crate::collision::UnsupportedCollision| Unsupported(format!("spin: {e:?}"));
+            if s[0] != 0.0 {
+                crate::collision::pitch_mat3(&mut m, mul(-s[0], spf)?).map_err(rot)?;
+                moved = true;
+            }
+            if s[1] != 0.0 {
+                crate::collision::yaw_mat3(&mut m, mul(s[1], spf)?).map_err(rot)?;
+                moved = true;
+            }
+            if s[2] != 0.0 {
+                crate::collision::roll_mat3(&mut m, mul(s[2], spf)?).map_err(rot)?;
                 moved = true;
             }
         } else {
-            m = dir_matrix(self.fx(i).v3(fx::VELOCITY));
+            let up = self.std_camera.as_ref().map(|c| c.pb.cam_rows[2]);
+            m = create_dir_matrix(self.fx(i).v3(fx::VELOCITY), up)?;
             moved = true;
         }
         let age = sub(self.fx(i).f32_(fx::END), atime)?;

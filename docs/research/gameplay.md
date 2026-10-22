@@ -401,3 +401,47 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   destruction's +0x2a4 link clearing at 474). Without ProcessItems the
   fight trace replays 253/270 (replay-enemies-fight-g1-v6.json),
   trace-enemies-g1-v4 179/180.
+
+## Whole-update replay (2026-10-22, actual disc)
+
+- Probe additions (reference_enemies.py): the Effects array (64 × 0xf0,
+  delta-coded) with NumEffects, SfxId and each live slot's MB node (local
+  matrix at node +0x00, scale vector +0x40), sfx_ene_bloodidx, the WORLDS
+  world-animation entries (file base found below WorldBase; +0x6c, 16 bytes
+  each) and the WORLDS object records (60 bytes, delta-coded). Traces
+  trace-fight-g1-v4..v6 and trace-combat-g1-v3 re-recorded from the same
+  fixture and schedules are byte-identical in their enemy samples.
+- game_run.py --enemy-replay TRACE --frame-replay: each update starts from
+  the before state — items, enemies, player 0 (as the player replay seeds
+  it), the StdCam view, effects (records in the native convention, nodes
+  as EffectNode: rows, translation, scale y with x/z as stretch), world
+  animation entries and object words — and runs world_update's
+  DoWorldAnimation, SetupDynGrid, ProcessItems, do_enemies, do_players and
+  ProcessEffects with the rand seed solved over the chain; enemies, items,
+  player 0, effects and the animation entries are compared afterwards.
+  Effect words skipped: the node/tree/AnimInfo links, the tree's AnimInfo
+  clock (+0x28..+0x57 except the loop word +0x50), +0xd4 streak and +0xe4
+  hit-target node; the skin texture word (enemy +0x204, player +0x7c0) is
+  a texture handle in the original.
+- Results: trace-fight-g1-v6 (replay-frame-fight-g1-v7.json) enemies
+  270/270, effects 270/270, world animation 270/270, player 0 269/270
+  (+0x894 at step 194, open); trace-combat-g1-v3
+  (replay-frame-combat-g1-v2.json) enemies 270/270, effects 270/270,
+  player 0 268/270 (+0x894 at 194, +0x197c at 496). Throws, the missiles'
+  flight, the two kills (state 8, death skin), kill credit and experience,
+  and the generator's destruction all match.
+- Fixed by these traces: SetSkinFX stores the texture and repeat words as
+  integers (sw; ProcessSkinFX decrements with addiu); ProcessEffects'
+  spin (PitchMat3(−x · SPF), YawMat3(y · SPF), RollMat3(z · SPF); the port
+  had treated it as presentation) and CreateDirMatrix for spinless effects,
+  whose "up" is Cam[0]'s row 2 (0x23e520, the camera's view direction) —
+  the missile rows roll toward the camera; StartMissile's SfxSetPhysics
+  YawMat3(atan2f) through libm and SfxSetStreak's record words (flag
+  0x40000, +0xd8 the class record's +0x17c, +0xdc the radius);
+  StartGenHitFx on a generator's level change (GenHitEffects /
+  GenDieEffects: InitEffects registers each loaded enemy type's GENHIT /
+  GENDIE trees first among the custom effects, 0x61.., so the client now
+  shows the generator hit and death effects); AddEnemyHitCol's blood
+  alternation needs sfx_ene_bloodidx as an input; and GauntWorldInit's
+  world_update before AddItemInstList, whose DoWorldAnimation poses the
+  moving floors that PlaceItem parents items on (items.md).

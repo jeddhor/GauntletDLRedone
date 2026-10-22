@@ -489,6 +489,11 @@ pub struct Game {
     pub enemy_alpha: Vec<i32>,
     /// sfx_ene_bloodidx 0x2407.. (AddEnemyHitCol's alternating blood).
     pub sfx_ene_bloodidx: u32,
+    /// GenHitEffects 0x244ec0 / GenDieEffects 0x244f78 (InitEffects: the
+    /// custom effects GENHIT / GENDIE of each loaded enemy type's package; −1
+    /// otherwise), 45 types.
+    pub gen_hit_effects: [i32; 45],
+    pub gen_die_effects: [i32; 45],
     /// Boss health meters (HealthMeterStart; HealthMeterInit per level).
     pub health_meters: healthmeter::HealthMeters,
     /// Enemy and player trees' skin state (MBTreeSetAltTex / AmbientAdd).

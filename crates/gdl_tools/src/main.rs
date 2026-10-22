@@ -249,6 +249,171 @@ impl ReferenceItems {
     }
 }
 
+/// The reference WORLDS object records (60 bytes) accumulated from
+/// reference_enemies.py's `objects_delta`.
+#[derive(Default, Clone)]
+struct ReferenceObjects(Vec<Vec<u8>>);
+
+impl ReferenceObjects {
+    fn apply(&mut self, sample: &serde_json::Value) -> Result<bool, Box<dyn Error>> {
+        let Some(delta) = sample["enemies"]["objects_delta"].as_object() else { return Ok(false) };
+        for (k, hex) in delta {
+            let k: usize = k.parse()?;
+            let s = hex.as_str().ok_or("object hex")?;
+            let raw = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<Vec<u8>, _>>()?;
+            if self.0.len() <= k {
+                self.0.resize(k + 1, vec![0; 60]);
+            }
+            self.0[k] = raw;
+        }
+        Ok(true)
+    }
+
+    /// The runtime words (+0x10 flags, +0x14, +0x16, +0x17, +0x35 exclusion).
+    fn seed(&self, game: &mut gdl_core::game::Game) {
+        for (k, r) in self.0.iter().enumerate() {
+            let Some(o) = game.items.objects.get_mut(k) else { break };
+            o.flags_10 = u32::from_le_bytes(r[0x10..0x14].try_into().unwrap());
+            o.word_14 = u16::from_le_bytes([r[0x14], r[0x15]]);
+            o.byte_16 = r[0x16];
+            o.byte_17 = r[0x17];
+            if let Some(x) = game.items.object_exclusion.get_mut(k) {
+                *x = r[0x35] as i8;
+            }
+        }
+    }
+}
+
+/// The reference Effects array (64 × 0xf0) accumulated from
+/// reference_enemies.py's `effects_delta`, with the live slots' render nodes.
+#[derive(Default, Clone)]
+struct ReferenceEffects {
+    slots: Vec<Vec<u8>>,
+    nodes: std::collections::BTreeMap<usize, Vec<u8>>,
+    num: usize,
+    sfx_id: i32,
+}
+
+impl ReferenceEffects {
+    /// Effect words that are guest pointers or presentation: +0x14 node
+    /// (native: 1 while a node exists), +0x18..+0x27 tree and AnimInfo links,
+    /// +0x58/+0x5c, +0xd4 streak, +0xe4 hit-target node, +0xec carried item
+    /// (native: slot + 1).
+    const POINTERS: [usize; 9] = [0x14, 0x18, 0x1c, 0x20, 0x24, 0x58, 0x5c, 0xd4, 0xe4];
+
+    fn apply(&mut self, sample: &serde_json::Value) -> Result<bool, Box<dyn Error>> {
+        let e = &sample["enemies"];
+        let Some(delta) = e["effects_delta"].as_object() else { return Ok(false) };
+        let hexv = |v: &serde_json::Value| -> Result<Vec<u8>, Box<dyn Error>> {
+            let s = v.as_str().ok_or("effect hex")?;
+            Ok((0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<Vec<u8>, _>>()?)
+        };
+        self.slots.resize(64, vec![0; 0xf0]);
+        for (slot, hex) in delta {
+            let k: usize = slot.parse()?;
+            *self.slots.get_mut(k).ok_or("effect slot")? = hexv(hex)?;
+        }
+        self.nodes.clear();
+        if let Some(nodes) = e["effect_nodes"].as_object() {
+            for (slot, n) in nodes {
+                self.nodes.insert(slot.parse()?, hexv(&n["node"])?);
+            }
+        }
+        self.num = e["NumEffects"].as_u64().ok_or("NumEffects")? as usize;
+        self.sfx_id = e["SfxId"].as_i64().ok_or("SfxId")? as i32;
+        Ok(true)
+    }
+
+    fn native(raw: &[u8], items_base: u32) -> Vec<u8> {
+        let word = |o: usize| u32::from_le_bytes(raw[o..o + 4].try_into().unwrap());
+        let mut r = raw[..0xf0].to_vec();
+        let node = u32::from(word(0x14) != 0);
+        for o in Self::POINTERS {
+            r[o..o + 4].fill(0);
+        }
+        r[0x14..0x18].copy_from_slice(&node.to_le_bytes());
+        let it = word(0xec);
+        let slot = if it == 0 || it < items_base { 0 } else { (it - items_base) / 0x110 + 1 };
+        r[0xec..0xf0].copy_from_slice(&slot.to_le_bytes());
+        r
+    }
+
+    /// EffectNode from the MB node: rows +0x00/+0x10/+0x20, translation
+    /// +0x30, scale vector +0x40 (uniform = y, the rest as stretch).
+    /// Presentation-only fields take neutral values (HYPOTHESIS: the parent
+    /// is the effect root; homing targets are not mapped).
+    fn node(n: &[u8], atime: f32) -> gdl_core::game::effects::EffectNode {
+        let f = |o: usize| f32::from_le_bytes(n[o..o + 4].try_into().unwrap());
+        let v = |o: usize| [f(o), f(o + 4), f(o + 8)];
+        let s = f(0x44);
+        let stretch = if s != 0.0 { [f(0x40) / s, 1.0, f(0x48) / s] } else { [1.0; 3] };
+        gdl_core::game::effects::EffectNode {
+            matrix: [v(0), v(0x10), v(0x20)],
+            position: v(0x30),
+            scale: s,
+            stretch,
+            visual: gdl_core::game::effects::Visual::Header(0),
+            start: atime,
+            radius: 0.0,
+            parent: None,
+            target: None,
+            tint: None,
+            alpha: None,
+            ambient: None,
+            follow: None,
+        }
+    }
+
+    fn seed(&self, game: &mut gdl_core::game::Game, items_base: u32, atime: f32) {
+        for (k, raw) in self.slots.iter().enumerate().take(game.effects.slots.len()) {
+            game.effects.slots[k] = gdl_core::game::record::Record(Self::native(raw, items_base));
+            game.effects.nodes[k] = self.nodes.get(&k).map(|n| Self::node(n, atime));
+        }
+        game.effects.num = self.num;
+        game.effects.sfx_id = self.sfx_id;
+    }
+
+    /// Differing words of the native effects against these: records (the
+    /// AnimInfo clock +0x28..+0x4f is the tree's presentation clock and is
+    /// skipped) and the nodes' rows and translation.
+    fn compare(&self, game: &gdl_core::game::Game, items_base: u32) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        if game.effects.num != self.num {
+            out.push(serde_json::json!({"field":"NumEffects","native":game.effects.num,"reference":self.num}));
+        }
+        for (k, raw) in self.slots.iter().enumerate().take(game.effects.slots.len()) {
+            let r = Self::native(raw, items_base);
+            let n = &game.effects.slots[k].0;
+            for o in (0..0xf0).step_by(4) {
+                // The tree's AnimInfo clock (+0x1c..+0x57) is presentation
+                // except the loop word +0x50 (native: looping).
+                if (0x28..0x50).contains(&o) || o == 0x54 {
+                    continue;
+                }
+                let mask = if o == 0x50 { 0xffff } else { u32::MAX };
+                let w = |b: &[u8]| u32::from_le_bytes(b[o..o + 4].try_into().unwrap()) & mask;
+                if w(n) != w(&r) {
+                    out.push(serde_json::json!({"effect":k,"offset":format!("{o:#x}"),"native":format!("{:08x}", w(n)),"reference":format!("{:08x}", w(&r))}));
+                }
+            }
+            match (game.effects.nodes[k].as_ref(), self.nodes.get(&k)) {
+                (Some(nn), Some(rn)) => {
+                    let rn = Self::node(rn, 0.0);
+                    let pairs = [("position", nn.position, rn.position), ("row0", nn.matrix[0], rn.matrix[0]), ("row1", nn.matrix[1], rn.matrix[1]), ("row2", nn.matrix[2], rn.matrix[2])];
+                    for (name, a, b) in pairs {
+                        if a.map(f32::to_bits) != b.map(f32::to_bits) {
+                            out.push(serde_json::json!({"effect":k,"node":name,"native":a,"reference":b}));
+                        }
+                    }
+                }
+                (None, None) => {}
+                (a, b) => out.push(serde_json::json!({"effect":k,"node":"presence","native":a.is_some(),"reference":b.is_some()})),
+            }
+        }
+        out
+    }
+}
+
 fn texdef_export(
     source: &Path,
     textures: Option<&Path>,
@@ -946,7 +1111,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         let tables = gdl_core::items::ItemTables::from_elf(&elf)?;
         let mut collision = gdl_core::collision::CollisionWorld::from_world(&world)?;
         let seed = int("rng_seed")? as u32;
-        let loaded = gdl_core::items::load_items(&world, &mut collision, tables, session, seed)?;
+        // NATIVE: without the load-time world_update (no world animation state
+        // here); items on moving floors are placed on the rest pose.
+        let loaded = gdl_core::items::load_items(&world, &mut collision, tables, session, seed, &mut |_, _| Ok(()))?;
         let w = &loaded.world;
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
         let report = serde_json::json!({
@@ -1308,7 +1475,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             // (+0x2a4) and blocking-item (+0x2a0) links (Items records) and the
             // floor link (+0x2ac, a WorldBase object of 0x3c bytes) become the
             // native slot/object + 1.
-            let pointer_words: std::collections::HashSet<usize> = [0x70, 0x80, 0x84, 0x88, 0x8c, 0xc0, 0xc4, 0x1f0].into_iter().collect();
+            // +0x204: the skin texture word (a texture handle in the
+            // original, a SkinTex code natively).
+            let pointer_words: std::collections::HashSet<usize> = [0x70, 0x80, 0x84, 0x88, 0x8c, 0xc0, 0xc4, 0x1f0, 0x204].into_iter().collect();
             let s0 = samples.first().ok_or("empty trace")?;
             let items_base = word(&hexb(&s0["enemies"]["Items"])?);
             let world_base = word(&hexb(&s0["enemies"]["WorldBase"])?);
@@ -1338,10 +1507,27 @@ fn run() -> Result<(), Box<dyn Error>> {
             let mut have_items = ref_before.apply(s0)?;
             // items_replay: ProcessItems runs first (native visibility from
             // the seeded StdCam view) and the Items array is compared too.
-            let items_mode = opts.contains_key("items_replay");
+            let items_mode = opts.contains_key("items_replay") || opts.contains_key("frame_replay");
             if items_mode && !have_items {
                 return Err("items_replay needs a trace with items_delta".into());
             }
+            // frame_replay: the whole game_main update — ProcessItems,
+            // do_enemies, do_players, ProcessEffects — from the before state
+            // (effects from the trace's effects_delta), compared after.
+            let frame_mode = opts.contains_key("frame_replay");
+            let mut fx_before = ReferenceEffects::default();
+            let have_fx = fx_before.apply(s0)?;
+            if frame_mode && !have_fx {
+                return Err("frame_replay needs a trace with effects_delta".into());
+            }
+            let player_pointer_words: std::collections::HashSet<usize> = [0x80, 0x90, 0x94, 0x98, 0x9c, 0x6a0, 0x6a4, 0x6a8, 0x6ac, 0x6b0, 0x6b4, 0x6b8, 0x6bc, 0x704, 0x708, 0x7c0, 0x880, 0x884, 0x888, 0x89c, 0x8a0, 0x690, 0x694]
+                .into_iter().collect();
+            let player_hud_words: std::collections::HashSet<usize> = [0x878, 0x87c, 0x2ae0].into_iter().collect();
+            let mut obj_before = ReferenceObjects::default();
+            obj_before.apply(s0)?;
+            let mut world_anim_updates_equal = 0;
+            let mut player_updates_equal = 0;
+            let mut effect_updates_equal = 0;
             let mut item_updates_equal = 0;
             let mut by_item_offset: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
             for w in samples.windows(2) {
@@ -1349,6 +1535,14 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let mut ref_after = ReferenceItems(ref_before.0.clone());
                 have_items &= ref_after.apply(a)?;
                 let ref_b = std::mem::replace(&mut ref_before, ref_after);
+                let mut fx_after = fx_before.clone();
+                if !fx_after.apply(a)? && frame_mode {
+                    return Err("frame_replay: a sample without effects_delta".into());
+                }
+                let fx_b = std::mem::replace(&mut fx_before, fx_after);
+                let mut obj_after = obj_before.clone();
+                obj_after.apply(a)?;
+                let obj_b = std::mem::replace(&mut obj_before, obj_after);
                 if b["observation"]["scalars"]["AFrame"]["raw_u32"] == a["observation"]["scalars"]["AFrame"]["raw_u32"] {
                     continue;
                 }
@@ -1458,6 +1652,72 @@ fn run() -> Result<(), Box<dyn Error>> {
                         }
                         game.replay_sync_view();
                     }
+                    if frame_mode {
+                        // Player 0 as the player replay seeds it: the floor link
+                        // by PlayerCheckFloor's query, the item link as a slot +
+                        // 1, other links cleared; SetPlayerVars' +0x93e clear;
+                        // the node matrix from the trace.
+                        {
+                            let r = &game.players[0];
+                            let (rad, h, pos) = (r.f32_(0x828), r.f32_(0x82c), r.v3(0x50));
+                            let floor = if r.u32_(0x89c) != 0 {
+                                game.collision.floor_collide(rad, 0.0, -(h + 3.0), pos, false, 1).map_err(|e| e.0)?.0.solid.map_or(0, |hit| hit.object as u32 + 1)
+                            } else {
+                                0
+                            };
+                            let r = &mut game.players[0];
+                            let item = r.u32_(0x880);
+                            r.set_u32(0x89c, floor);
+                            for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
+                                r.set_u32(o, 0);
+                            }
+                            if item >= items_base && (item - items_base).is_multiple_of(0x110) {
+                                r.set_u32(0x880, (item - items_base) / 0x110 + 1);
+                            }
+                            r.set_u16(0x93e, 0);
+                        }
+                        game.player_floor_parent[0] = None;
+                        game.player_node[0] = match bp.get("node") {
+                            Some(v) => {
+                                let n = hexb(v)?;
+                                Some(std::array::from_fn(|i| std::array::from_fn(|j| fl(&n[0x10 * i + 4 * j..]))))
+                            }
+                            None => None,
+                        };
+                        let gl = &mut game.globals;
+                        gl.aux_levels = word(&g("AuxLevels")?);
+                        gl.skip_wave = word(&g("skip_wave")?) as i32;
+                        gl.quit_level = word(&g("quit_level")?) as i32;
+                        gl.auto_exit_flag = word(&g("auto_exit_flag")?) as i32;
+                        let opt = g("options")?;
+                        gl.options = word(&opt[0..]) as i32;
+                        gl.options_4 = word(&opt[4..]);
+                        gl.options_18 = word(&opt[0x18..]);
+                        let win = hexb(&bp["win"])?;
+                        gl.camera_90 = fl(&win[0x90..]);
+                        gl.camera_98 = fl(&win[0x98..]);
+                        let atime = gl.atime;
+                        fx_b.seed(game, items_base, atime);
+                        // AddEnemyHitCol's alternating blood (traces from
+                        // trace-fight-g1-v5).
+                        if let Some(v) = b["enemies"].get("sfx_ene_bloodidx") {
+                            game.sfx_ene_bloodidx = word(&hexb(v)?);
+                        }
+                        // world_update's DoWorldAnimation from the traced
+                        // entries (+6 flags, +8 frame) and object words (traces
+                        // from trace-fight-g1-v6): the moving floors' matrices.
+                        if let Some(wa) = b["enemies"].get("world_anims") {
+                            let raw = hexb(wa)?;
+                            obj_b.seed(game);
+                            for (k, e) in game.world_anims.entries.iter_mut().enumerate().take(raw.len() / 16) {
+                                e.flags = u16::from_le_bytes([raw[16 * k + 6], raw[16 * k + 7]]);
+                                e.frame = fl(&raw[16 * k + 8..]);
+                            }
+                            game.sync_collision();
+                            game.do_world_animation().map_err(|e| e.0)?;
+                            game.sync_collision();
+                        }
+                    }
                     game.setup_dyn_grid().map_err(|e| e.0)?;
                     Ok(())
                 };
@@ -1478,6 +1738,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                     res = if items_mode { game.process_items() } else { Ok(()) };
                     if res.is_ok() {
                         res = game.do_enemies(&visible);
+                    }
+                    if frame_mode && res.is_ok() {
+                        res = game.do_players().map(|_| ());
+                        if res.is_ok() {
+                            res = game.process_effects();
+                        }
                     }
                     if game.rng.state == rand_after {
                         solved = true;
@@ -1525,6 +1791,34 @@ fn run() -> Result<(), Box<dyn Error>> {
                     equal_updates += 1;
                 }
                 let item_diffs = if items_mode { ref_before.compare(&game, &hexb(&a["enemies"]["WorldInfo"])?, items_base) } else { Vec::new() };
+                let (mut player_diffs, effect_diffs) = (Vec::new(), if frame_mode { fx_before.compare(&game, items_base) } else { Vec::new() });
+                if frame_mode {
+                    let after = hexb(&a["player"]["player0"])?;
+                    for o in (0..0x2b00).step_by(4) {
+                        if player_pointer_words.contains(&o) || player_hud_words.contains(&o) {
+                            continue;
+                        }
+                        let (n, r) = (game.players[0].u32_(o), word(&after[o..]));
+                        if n != r {
+                            player_diffs.push(serde_json::json!({"offset":format!("{o:#x}"),"native":format!("{n:08x}"),"reference":format!("{r:08x}")}));
+                        }
+                    }
+                    if player_diffs.is_empty() && res.is_ok() {
+                        player_updates_equal += 1;
+                    }
+                    if effect_diffs.is_empty() && res.is_ok() {
+                        effect_updates_equal += 1;
+                    }
+                    if let Some(wa) = a["enemies"].get("world_anims") {
+                        let raw = hexb(wa)?;
+                        let same = game.world_anims.entries.iter().enumerate().take(raw.len() / 16).all(|(k, e)| {
+                            e.flags == u16::from_le_bytes([raw[16 * k + 6], raw[16 * k + 7]]) && e.frame.to_bits() == word(&raw[16 * k + 8..])
+                        });
+                        if same {
+                            world_anim_updates_equal += 1;
+                        }
+                    }
+                }
                 if items_mode && item_diffs.is_empty() && res.is_ok() {
                     item_updates_equal += 1;
                 }
@@ -1533,11 +1827,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 updates.push(serde_json::json!({"step":a["step"],"seed_solved":solved,"error":res.err().map(|e| e.0),
                     "words_differing":diffs.len(),"diffs":diffs.iter().take(60).collect::<Vec<_>>(),
-                    "item_words_differing":item_diffs.len(),"item_diffs":item_diffs.iter().take(60).collect::<Vec<_>>()}));
+                    "item_words_differing":item_diffs.len(),"item_diffs":item_diffs.iter().take(60).collect::<Vec<_>>(),
+                    "player_words_differing":player_diffs.len(),"player_diffs":player_diffs.iter().take(40).collect::<Vec<_>>(),
+                    "effect_words_differing":effect_diffs.len(),"effect_diffs":effect_diffs.iter().take(40).collect::<Vec<_>>()}));
             }
             let report = serde_json::json!({"scope":"per-update replay of a reference enemies trace through the native do_enemies (all 25 records, every u32 except presentation pointers 0x70 0x80 0x84 0x88 0x8c 0xc0 0xc4 0x1f0; generator/floor links mapped)",
                 "items_mode":items_mode,"item_scope":"items_replay: ProcessItems then do_enemies; Items array words except +0x70..+0xc7 and the +0xe6 link, export_live_items convention",
                 "item_updates_equal":item_updates_equal,"differing_item_offsets":by_item_offset,
+                "frame_mode":frame_mode,"player_updates_equal":player_updates_equal,"effect_updates_equal":effect_updates_equal,
+                "world_anim_updates_equal":world_anim_updates_equal,
+                "item_floor_parents":game.items.floor_parent.iter().enumerate().filter_map(|(k, p)| p.map(|(o, l)| serde_json::json!({"item":k,"object":o,"local":l}))).collect::<Vec<_>>(),
                 "items_without_native_clock":(0..game.items.records.len()).filter(|&k| game.items.records[k].active() && game.item_anims.get(k).is_none_or(|a| a.is_none()))
                     .map(|k| String::from_utf8_lossy(game.items.definitions[game.items.records[k].definition()].name()).into_owned())
                     .fold(std::collections::BTreeMap::<String, usize>::new(), |mut m, n| { *m.entry(n).or_default() += 1; m }),
@@ -1566,7 +1865,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let word = |b: &[u8]| u32::from_le_bytes(b[..4].try_into().unwrap());
             let fl = |b: &[u8]| f32::from_le_bytes(b[..4].try_into().unwrap());
             // Guest pointers (trees, nodes, item/object/player links) differ by design.
-            let pointer_words: std::collections::HashSet<usize> = [0x80, 0x90, 0x94, 0x98, 0x9c, 0x6a0, 0x6a4, 0x6a8, 0x6ac, 0x6b0, 0x6b4, 0x6b8, 0x6bc, 0x704, 0x708, 0x880, 0x884, 0x888, 0x89c, 0x8a0, 0x690, 0x694]
+            let pointer_words: std::collections::HashSet<usize> = [0x80, 0x90, 0x94, 0x98, 0x9c, 0x6a0, 0x6a4, 0x6a8, 0x6ac, 0x6b0, 0x6b4, 0x6b8, 0x6bc, 0x704, 0x708, 0x7c0, 0x880, 0x884, 0x888, 0x89c, 0x8a0, 0x690, 0x694]
                 .into_iter().collect();
             // HUD words written by presentation code: get_screen_pos (+0x878,
             // +0x87c) and draw_power_meter (+0x2ae0); compared separately.

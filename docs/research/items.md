@@ -77,7 +77,12 @@ relative to it (doplayers::unparent_matrix, shared with UpdatePlayerWorldMat),
 ProcessItems' second loop rebuilds the record matrix from the parent's
 current matrix (parented_matrix) before the offsets; the +0xf8
 world-animation node of kind 13 is not modelled (unknowns.md "Item world
-matrices"). The same +0x28 reading corrected PlayerCheckMovingFloor and
+matrices"). GauntWorldInit calls world_update (0x163338) right before
+AddItemInstList, so the items are placed on the posed floors: native runs
+that DoWorldAnimation in load_items' before-instances step (item 307's
+local relative to object 821 then matches the fixture node's to 2e-5; 21
+items parented natively, 23 in the fixture — item 308 is parented to
+object 227 natively but not in the fixture, open). The same +0x28 reading corrected PlayerCheckMovingFloor and
 OtherPlayerOnOtherMovingObject, which had required a +0x18 parent.
 
 World numbers come from worlddatas (EE 0x23deb0; 14 × 44 B, number +0, letter

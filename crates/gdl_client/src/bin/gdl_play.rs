@@ -3728,6 +3728,7 @@ fn present_world(
                         let pkg = match head.source {
                             0 => Some("WEAPONS".to_string()),
                             1 => Some("POWERUPS".to_string()),
+                            n if 0xc0 <= n => sources.monsters.get(&i32::from(n - 0xc0)).cloned(),
                             n if 0x80 <= n => items.get(usize::from(n - 0x80)).cloned(),
                             n if 0x40 <= n => sources.players.get(usize::from(n - 0x40)).and_then(|p| p.as_ref()).map(|p| p.sfx_name.clone()),
                             n => session.levels[session.current].critters.get(n as usize - 2).and_then(|c| c.2.clone()),

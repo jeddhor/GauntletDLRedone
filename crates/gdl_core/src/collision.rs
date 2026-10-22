@@ -1233,6 +1233,33 @@ pub fn yaw_mat3(m: &mut [V3; 3], a: f32) -> R<()> {
     Ok(())
 }
 
+/// The shared PitchMat3 0x1d5440 / RollMat3 0x1d54f0 form: no-op below
+/// |a| < 0.0001; per column a' = cos·a − sin·b, b' = cos·b + sin·a over rows
+/// (`ra`, `rb`) — (1, 2) for pitch, (0, 1) for roll.
+fn rot_rows(m: &mut [V3; 3], a: f32, ra: usize, rb: usize) -> R<()> {
+    if a.abs() < f32::from_bits(0x38d1_b717) {
+        return Ok(());
+    }
+    let s = crate::libm::sinf(a).map_err(|_| UnsupportedCollision("sinf domain"))?;
+    let c = crate::libm::cosf(a).map_err(|_| UnsupportedCollision("cosf domain"))?;
+    let (a_row, b_row) = (m[ra], m[rb]);
+    for (j, (x, y)) in a_row.into_iter().zip(b_row).enumerate() {
+        m[ra][j] = sub(mul(c, x)?, mul(s, y)?)?;
+        m[rb][j] = add(mul(c, y)?, mul(s, x)?)?;
+    }
+    Ok(())
+}
+
+/// PitchMat3 0x1d5440: rows 1 and 2.
+pub fn pitch_mat3(m: &mut [V3; 3], a: f32) -> R<()> {
+    rot_rows(m, a, 1, 2)
+}
+
+/// RollMat3 0x1d54f0: rows 0 and 1.
+pub fn roll_mat3(m: &mut [V3; 3], a: f32) -> R<()> {
+    rot_rows(m, a, 0, 1)
+}
+
 #[cfg(test)]
 mod tests {
 
