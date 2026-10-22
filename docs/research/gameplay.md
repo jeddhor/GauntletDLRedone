@@ -512,3 +512,15 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   CreateDynobjGrid first, then the boss, quest, stage-start, lightning and
   end-of-stage parts), sets start_enemyinfo every update (start_of_stage == 0
   or LEVL +0x48), and do_auto_exit runs before it (game_main).
+- Tower crystal pickup (trace-tower-crystals-v1: slot 2, idle 30, Up 70,
+  Left 130 — blocked near x 6.6 —, Up 100, Cross 10; 400 vblanks): the
+  reference grabs crystal 63 (GEMORANGE) at step 64 (+0xd8 |= 0x100) and
+  deletes it at 72. Native whole-update replay
+  (replay-frame-tower-crystals-v1.json, --load-players 0): enemies, player
+  0, effects and world animation 192/192; items 126/192, the rest the sound
+  items 160/161's +0xfe audio handles. Reference screenshots of the pickup
+  (private/reports/ref-tower-crystal-up40/60/120.png: Up held from the
+  savestate): the 1/15 counter at once, the "Crystal" got-it panel over
+  player 1's box by 120 vblanks, Sumner on his pedestal. Native's client
+  showed the label twice after three quick pickups (two do_got_it panels;
+  not compared with a reference of several pickups).
