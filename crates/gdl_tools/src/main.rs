@@ -105,6 +105,67 @@ fn bounded_read(path: &Path, limit: u64) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(data)
 }
 
+/// The reference Items array accumulated from reference_enemies.py's
+/// delta-coded `items_delta` (the first capture holds every record).
+#[derive(Default)]
+struct ReferenceItems(Vec<Vec<u8>>);
+
+impl ReferenceItems {
+    fn apply(&mut self, sample: &serde_json::Value) -> Result<bool, Box<dyn Error>> {
+        let Some(delta) = sample["enemies"]["items_delta"].as_object() else { return Ok(false) };
+        let count = sample["enemies"]["NumItems"].as_u64().ok_or("NumItems")? as usize;
+        self.0.resize(count, vec![0; 0x110]);
+        for (slot, hex) in delta {
+            let slot: usize = slot.parse()?;
+            let s = hex.as_str().ok_or("item hex")?;
+            let raw = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<Vec<u8>, _>>()?;
+            *self.0.get_mut(slot).ok_or("item slot beyond NumItems")? = raw;
+        }
+        Ok(true)
+    }
+
+    /// Seed the native items in the export_live_items.py convention: +0x00
+    /// definition pointer → index (WorldInfo +0x68, 0x50 bytes), kinds 5/12
+    /// +0xf0 → WORLDS object index + 1 (WorldInfo +0x04, 0x3c bytes), kinds
+    /// 5/11 +0xf8 → item slot + 1, kinds 2/13 +0xf8 cleared; presentation
+    /// words (+0x70..+0xc7, +0xe6 dyngrid link) kept native. `visible`
+    /// supplies the +0xd8 0x4000 bit do_items writes before do_enemies.
+    fn seed(&self, game: &mut gdl_core::game::Game, worldinfo: &[u8], items_base: u32, visible: Option<&ReferenceItems>) -> Result<(), Box<dyn Error>> {
+        let word = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        let (objects, defs) = (word(worldinfo, 4), word(worldinfo, 0x68));
+        if self.0.len() != game.items.records.len() {
+            return Err(format!("reference NumItems {} differs from native {}", self.0.len(), game.items.records.len()).into());
+        }
+        for (slot, raw) in self.0.iter().enumerate() {
+            let mut new = [0u8; 0x110];
+            new.copy_from_slice(&raw[..0x110]);
+            let ptr = word(raw, 0);
+            let def = if ptr == 0 { 0 } else { ptr.wrapping_sub(defs) / 0x50 };
+            new[0..4].copy_from_slice(&def.to_le_bytes());
+            let kind = game.items.definitions.get(def as usize).map_or(-1, |d| d.kind());
+            let index = |v: u32, base: u32, size: u32| if v == 0 { 0 } else { v.wrapping_sub(base) / size + 1 };
+            if matches!(kind, 5 | 12) {
+                new[0xf0..0xf4].copy_from_slice(&index(word(raw, 0xf0), objects, 0x3c).to_le_bytes());
+            }
+            if matches!(kind, 5 | 11) {
+                new[0xf8..0xfc].copy_from_slice(&index(word(raw, 0xf8), items_base, 0x110).to_le_bytes());
+            }
+            if matches!(kind, 2 | 13) {
+                new[0xf8..0xfc].fill(0);
+            }
+            if let Some(v) = visible.and_then(|v| v.0.get(slot)) {
+                let d8 = (u16::from_le_bytes([new[0xd8], new[0xd9]]) & !0x4000) | (u16::from_le_bytes([v[0xd8], v[0xd9]]) & 0x4000);
+                new[0xd8..0xda].copy_from_slice(&d8.to_le_bytes());
+            }
+            let rec = &mut game.items.records[slot];
+            new[0x70..0xc8].copy_from_slice(&rec.0[0x70..0xc8]);
+            new[0xe6..0xe8].copy_from_slice(&rec.0[0xe6..0xe8]);
+            rec.0 = new;
+        }
+        Ok(())
+    }
+}
+
 fn texdef_export(
     source: &Path,
     textures: Option<&Path>,
@@ -1179,8 +1240,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             let mut updates = Vec::new();
             let mut equal_updates = 0;
             let mut by_offset: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+            // Traces with items_delta seed every item from the before state
+            // (the +0xd8 0x4000 visible bit from the after state).
+            let mut ref_before = ReferenceItems::default();
+            let mut have_items = ref_before.apply(s0)?;
             for w in samples.windows(2) {
                 let (b, a) = (&w[0], &w[1]);
+                let mut ref_after = ReferenceItems(ref_before.0.clone());
+                have_items &= ref_after.apply(a)?;
+                let ref_b = std::mem::replace(&mut ref_before, ref_after);
                 if b["observation"]["scalars"]["AFrame"]["raw_u32"] == a["observation"]["scalars"]["AFrame"]["raw_u32"] {
                     continue;
                 }
@@ -1260,7 +1328,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // from trace-enemies-g1-v4): +0x00 definition pointer →
                     // index (WorldInfo +0x68, 0x50 bytes), presentation words
                     // (+0x70..+0xc7, +0xe6 dyngrid link) left native.
-                    if let (Some(gens), Some(wi)) = (b["enemies"]["generator_items"].as_object(), b["enemies"].get("WorldInfo")) {
+                    if have_items {
+                        ref_b.seed(game, &hexb(&b["enemies"]["WorldInfo"])?, items_base, Some(&ref_before))?;
+                    } else if let (Some(gens), Some(wi)) = (b["enemies"]["generator_items"].as_object(), b["enemies"].get("WorldInfo")) {
                         let wi = hexb(wi)?;
                         let defs = word(&wi[0x68..]);
                         for (slot, hex) in gens {
@@ -1377,8 +1447,18 @@ fn run() -> Result<(), Box<dyn Error>> {
             let hud_words: std::collections::HashSet<usize> = [0x878, 0x87c, 0x2ae0].into_iter().collect();
             let mut updates = Vec::new();
             let mut equal_updates = 0;
+            // Traces with items_delta: every item from the before state with
+            // the after state's +0xd8 0x4000 visible bit (do_items runs first).
+            let mut ref_before = ReferenceItems::default();
+            let mut have_items = match samples.first() {
+                Some(s0) => ref_before.apply(s0)?,
+                None => false,
+            };
             for w in samples.windows(2) {
                 let (b, a) = (&w[0], &w[1]);
+                let mut ref_after = ReferenceItems(ref_before.0.clone());
+                have_items &= ref_after.apply(a)?;
+                let ref_b = std::mem::replace(&mut ref_before, ref_after);
                 if b["observation"]["scalars"]["AFrame"]["raw_u32"] == a["observation"]["scalars"]["AFrame"]["raw_u32"] {
                     continue;
                 }
@@ -1459,10 +1539,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                 // crowd) come from the reference; the grid is rebuilt.
                 if let (Some(eb), Some(e0)) = (a["enemies"].get("enemies"), samples.first().and_then(|s| s["enemies"].as_object())) {
                     let eb = hexb(eb)?;
+                    let before_enemies = hexb(&b["enemies"]["enemies"])?;
                     let base_of = |n: &str| -> Result<u32, Box<dyn Error>> { Ok(word(&hexb(e0.get(n).ok_or("trace base")?)?)) };
                     let (items_base, world_base) = (base_of("Items")?, base_of("WorldBase")?);
                     for k in 0..game.enemies.len().min(eb.len() / 0x3b0) {
-                        let mut rec = gdl_core::game::record::Record(eb[k * 0x3b0..(k + 1) * 0x3b0].to_vec());
+                        // An enemy killed this update (state 1 → 8) died in
+                        // ProcessEffects after do_players: the before record.
+                        let state = |m: &[u8]| word(&m[k * 0x3b0 + 0xc8..]);
+                        let src = if state(&eb) == 8 && state(&before_enemies) == 1 { &before_enemies } else { &eb };
+                        let mut rec = gdl_core::game::record::Record(src[k * 0x3b0..(k + 1) * 0x3b0].to_vec());
                         for (o, base, size) in [(0x2a4, items_base, 0x110u32), (0x2a0, items_base, 0x110), (0x2ac, world_base, 0x3c)] {
                             let v = rec.u32_(o);
                             let n = if v == 0 || v < base || !(v - base).is_multiple_of(size) { if v == 0 { 0 } else { u32::MAX } } else { (v - base) / size + 1 };
@@ -1470,9 +1555,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                         }
                         game.enemies[k] = rec;
                     }
-                    // The generator items as do_items left them (WorldInfo +0x68
-                    // maps the definition pointer; presentation words kept).
-                    if let (Some(gens), Some(wi)) = (a["enemies"]["generator_items"].as_object(), a["enemies"].get("WorldInfo")) {
+                    if have_items {
+                        let items_base = word(&hexb(&e0["Items"])?);
+                        ref_b.seed(&mut game, &hexb(&b["enemies"]["WorldInfo"])?, items_base, Some(&ref_before))?;
+                    }
+                    // Otherwise the generator items as do_items left them
+                    // (WorldInfo +0x68 maps the definition pointer;
+                    // presentation words kept). The after state also holds
+                    // ProcessEffects' damage, so full traces use the before.
+                    if have_items {
+                    } else if let (Some(gens), Some(wi)) = (a["enemies"]["generator_items"].as_object(), a["enemies"].get("WorldInfo")) {
                         let defs = word(&hexb(wi)?[0x68..]);
                         for (slot, hex) in gens {
                             let slot: usize = slot.parse()?;

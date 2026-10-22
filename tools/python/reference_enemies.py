@@ -7,7 +7,11 @@ reseeds it with srand(pbGetCPUTime() >> 3) every loop) and the globals the
 native do_enemies reads beyond reference_player.py's (with the Items and
 WorldBase pointers that map the generator +0x2a4 and floor +0x2ac links, the
 WorldInfo block and the generator item records themselves), as raw bytes.
-Addresses come from the executable's own symbol table. Research only.
+Also the whole Items array (NumItems records of 0x110 bytes), delta-coded:
+the first capture holds every record, later ones only the slots whose bytes
+changed since the previous capture (do_items flags such as +0xd8 0x4000
+"visible" change per frame). Addresses come from the executable's own
+symbol table. Research only.
 """
 import struct
 
@@ -19,7 +23,7 @@ ENEMY_COUNT = 25
 
 
 def enemy_probe(memory):
-    sym = elf_symbols({'enemies', '_impure_ptr', 'WorldInfo'} | set(ENEMY_GLOBALS))
+    sym = elf_symbols({'enemies', '_impure_ptr', 'WorldInfo', 'NumItems'} | set(ENEMY_GLOBALS))
     base, impure = sym['enemies'], sym['_impure_ptr']
     reent, = struct.unpack_from('<I', memory, impure)
     if not 0x100000 <= reent < 0x2000000 or reent % 4:
@@ -28,6 +32,9 @@ def enemy_probe(memory):
 
     def chunks(read, address, n):
         return b''.join(read(address + o, min(2048, n - o)) for o in range(0, n, 2048))
+
+    seen = set()
+    previous = {}
 
     def capture(read):
         pointer, = struct.unpack('<I', read(impure, 4))
@@ -40,12 +47,27 @@ def enemy_probe(memory):
         # record an enemy's generator link (+0x2a4) points to, by slot.
         out['WorldInfo'] = read(sym['WorldInfo'], 0xa4).hex()
         items, = struct.unpack('<I', read(sym['Items'], 4))
-        gens = {}
+        # Slots an enemy links to (+0x2a4 generator, +0x2a0 blocking item),
+        # kept for the rest of the trace once seen (a destroyed generator is
+        # no longer linked but its record still changes).
         for k in range(ENEMY_COUNT):
-            g, = struct.unpack_from('<I', raw, k * ENEMY_SIZE + 0x2a4)
-            if g and items <= g < items + 0x110 * 4096 and (g - items) % 0x110 == 0:
-                gens[str((g - items) // 0x110)] = read(g, 0x110).hex()
-        out['generator_items'] = gens
+            for o in (0x2a4, 0x2a0):
+                g, = struct.unpack_from('<I', raw, k * ENEMY_SIZE + o)
+                if g and items <= g < items + 0x110 * 4096 and (g - items) % 0x110 == 0:
+                    seen.add((g - items) // 0x110)
+        out['generator_items'] = {str(slot): read(items + 0x110 * slot, 0x110).hex() for slot in sorted(seen)}
+        count, = struct.unpack('<i', read(sym['NumItems'], 4))
+        if not 0 <= count <= 4096:
+            raise ValueError('NumItems out of range')
+        array = chunks(read, items, 0x110 * count)
+        delta = {}
+        for slot in range(count):
+            r = array[0x110 * slot:0x110 * (slot + 1)]
+            if previous.get(slot) != r:
+                delta[str(slot)] = r.hex()
+                previous[slot] = r
+        out['NumItems'] = count
+        out['items_delta'] = delta
         return out
 
     regions = [(base + o, memory[base + o:base + min(size, o + 2048)]) for o in range(0, size, 2048)]

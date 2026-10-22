@@ -324,10 +324,42 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   trace still replays 150/150.
 - Enemy replay on the combat-approach trace with the +0x2a0 item link
   mapped: 225/270 updates equal (replay-enemies-combat-g1-v2.json); most of
-  the rest are generator spawns (do_items). Open, minimized: step 352,
-  enemy 6 (type 12, logic 07) — native check_vacancy's ItemCollide returns
-  generator 127 (GRU, +0xd8 0x4005 in both; ItemCollSub, StartItemGrid
-  with MaxItemRad 15, EnemyItemCollision and the approach test read the
-  same as the port), so native counts the heading stuck (+0x37a) where the
-  reference walks on. Also open: ±0.0 signs in the yaw matrices of a few
-  enemies and the AnimInfo +0x94 mirror after a sequence change.
+  the rest are generator spawns (do_items). The step-352 enemy-6 case
+  (native check_vacancy blocked on generator 127 where the reference walks
+  on) was a replay input, not a port difference: see the next item.
+- Whole Items array in the probe (2026-10-22): reference_enemies.py now
+  also keeps NumItems and every item record, delta-coded (first capture
+  complete, later only changed slots). The trace re-recorded from the same
+  fixture and schedule is byte-identical in all 541 enemy samples
+  (trace-fight-g1-v3 vs v2, trace-combat-g1-v2 vs v1), so the reference run
+  is deterministic. The replays seed every item from the before state with
+  the after state's +0xd8 0x4000 bit — do_items' per-frame visible flag
+  (item_visible), written before do_enemies and do_players. Root cause of
+  the vacancy case: ItemCollide returns the *first* hit in grid order
+  (nearest = 0), and slot 426 (kind 5, subtype 0x18, +0xfc reach 5) is
+  ahead of generator 127 in that cell's chain; in the reference it was
+  visible (+0xd8 0x4010; the fixture seed had 0x0010, which ItemCollSub's
+  0x4040 test skips), so ItemCollide returned it and EnemyItemCollision
+  (kind 5: no block) left the step vacant. Same for trace-fight-g1-v2
+  step 532, enemy 13.
+- Fixed by the traces: InitAnim's AnimInfo +0x10 (enemy +0x94) is the new
+  sequence's frame count; animate_enemy did not write it on a switch
+  (0xc → 0xf on seq 6 → 1 at fight-v3 steps 250/264; do_enemy_anim's
+  0x18..0x1a timing reads it).
+- Results with full items: enemy replay 250/270 (combat,
+  replay-enemies-combat-g1-v3.json) and 247/270 (fight,
+  replay-enemies-fight-g1-v4.json); player replay 268/270 (combat,
+  replay-player-combat-g1-v10.json) and 266/270 (fight,
+  replay-player-fight-g1-v5.json). The player replay seeds an enemy killed
+  in the update (state 1 → 8) from its before record and, with full items,
+  drops the after-state generator overlay: both kills and the generator's
+  destruction come from ProcessEffects after do_players (with them the
+  auto-aim words +0x8dc/+0x8e4 at fight steps 430/474/512 match). Every
+  remaining enemy difference is a do_items spawn, a hit applied outside
+  do_enemies, a link those write (+0x29c, +0x2a4) or a ±0.0 sign in the
+  yaw matrix (+0x14/+0x28: the reference gets +0.0 in updates where
+  +0x2f0 goes 1 → 0; CreateYPRMatrix gives −0.0 there unless the roll it
+  reads is −0.0 — open, no gameplay effect). The remaining player words
+  are ProcessEffects' kill credit (+0x8f0 combo, +0xbd4/+0xbe4 kill
+  counts, +0x1a1c experience), +0x894 at step 194 and +0x197c at step
+  496.

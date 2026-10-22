@@ -60,7 +60,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    2026-10-22: enemy replay against the reference (gameplay.md "Enemy
    replay"): reference_enemies.py probe, game-run enemy_replay with the
    rand seed solved per update; 179/180 updates equal for all 25 G1
-   enemies; fixed DoEnemyItemCollide's delay distance.
+   enemies; fixed DoEnemyItemCollide's delay distance. Two 270-update
+   combat traces (now with the whole Items array, delta-coded): enemies
+   250/270 and 247/270, players 268/270 and 266/270; the rest is do_items
+   spawns, ProcessEffects hits/kill credit and ±0.0 matrix signs. Fixed:
+   unsigned auto-aim test, show_crystals timer rounding, state 6/8
+   offsets, the clock loop word, InitAnim's enemy +0x94 frame count.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

@@ -325,6 +325,8 @@ impl Game {
         if 0 <= self.enemy_collide_enemy(r, h, i, from, p, false)? {
             return Ok(0);
         }
+        // ItemCollide returns the first hit in grid order, so a non-blocking
+        // item ahead of a blocking one leaves the step vacant.
         let item = self.item_collide(r, from, p, None, false)?;
         let blocks = match item {
             Some(item) => self.enemy_item_collision(None, item)?,
@@ -2662,7 +2664,13 @@ impl Game {
                 flag = 1;
             }
         }
+        // AnimInfo +0x34 (sh t0 at 0x179888) before AnimateATree: the loop
+        // word of the native clock too (InitAnim replaces it with the clip's
+        // repeat flag when the sequence changes).
         self.enemies[i].set_i16(0xb8, flag);
+        if let Some(Some(a)) = self.enemy_anims.get_mut(i) {
+            a.clock.loop_word = flag as u16;
+        }
         let switched = self.animate_enemy(i, clip as u16, mode)?;
         if !switched {
             return Ok(cur_out);
@@ -2726,6 +2734,9 @@ impl Game {
         a.clock = out.state;
         if switched {
             a.current = clip;
+            // InitAnim: AnimInfo +0x10 (+0x94) = the sequence's frame count
+            // (trace-fight-g1-v3 steps 250/264: 0xc → 0xf on seq 6 → 1).
+            self.enemies[i].set_i16(0x94, requested.frames);
         }
         Ok(out.return_flags != 0)
     }
@@ -2834,8 +2845,11 @@ impl Game {
                         self.enemy_process_skin_fx(k)?;
                     }
                 }
-                6 => {}
+                // GetObjWorldMat (the attention/collision points) for states
+                // 6 and 8 too, before the type checks (0x13b8c0, 0x13b8f0).
+                6 => self.enemy_update_offsets(k)?,
                 8 => {
+                    self.enemy_update_offsets(k)?;
                     if self.enemies[k].i32_(e::TYPE) == self.globals.boss_type {
                         // boss shadow follows; presentation only
                     } else if self.enemies[k].i32_(e::TYPE) == 0x1e {
