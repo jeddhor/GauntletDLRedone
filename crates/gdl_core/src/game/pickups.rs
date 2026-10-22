@@ -427,6 +427,8 @@ impl Game {
             }
             None => self.items.set_item(slot, None, def, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3])?,
         }
+        // SetItemGeo: the new item's tree and clock (spawned items had none).
+        self.attach_item_anim(slot);
         Ok(slot)
     }
 

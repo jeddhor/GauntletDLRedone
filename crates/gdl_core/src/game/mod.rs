@@ -371,6 +371,9 @@ pub struct Game {
     /// ComboEffects 0x2407f8 (EffectHeaders indices, ELF data).
     pub combo_effects: Vec<i32>,
     pub item_anims: Vec<Option<item_runtime::ItemAnim>>,
+    /// The item trees' clip timings by label in AtreeMatchAnyHeader order
+    /// (SetItemGeo attaches one to every item created later as well).
+    pub item_anim_lib: std::collections::HashMap<String, Vec<crate::animation_clock::ClipTiming>>,
     /// Culling view (MBWorldSphereClip inputs) derived from the StdCam.
     pub camera: Option<item_runtime::Camera>,
     /// The start camera parameters (the culling planes come from here).

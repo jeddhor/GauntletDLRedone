@@ -926,6 +926,17 @@ pub fn create_mat3_norm(k: f32, n: V3) -> R<[[f32; 4]; 3]> {
     ])
 }
 
+/// Row 1 of create_mat3_norm (the normal, or ±y past the 0x3f7fbe77 limits).
+pub fn create_mat3_norm_row1(n: V3) -> V3 {
+    if w(0x3f7fbe77) < n[1] {
+        [0.0, 1.0, 0.0]
+    } else if n[1] < w(0xbf7fbe77) {
+        [0.0, -1.0, 0.0]
+    } else {
+        n
+    }
+}
+
 /// PointLineDist 0x11a458: squared distance from `x` to segment a + d*[0, len].
 fn point_line_dist(x: V3, a: V3, d: V3, len: f32) -> R<(f32, V3)> {
     let t = vdot(vsub(x, a)?, d)?;

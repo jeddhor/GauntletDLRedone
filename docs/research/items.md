@@ -57,6 +57,13 @@ package fallback for generators (no G1 generator needs it) and the placed
 DEATH (kind 4) atree that SetItem's statue path takes from the enemy package.
 No label occurs in both POWERUPS and an ITEMS package; realm I and level I5
 share BRIDGEPAD (I5 is a boss level, so only item_anim2 is loaded there).
+SetItem calls SetItemGeo only for kinds other than 4 and 13, kind 12 only
+for subtype 2, and never for an instance whose flag byte +3 has bit 2;
+items created later (AddItemSub: drops, spawned pickups) get their tree and
+clock the same way. Tower trace check (trace-tower-v1, step 0): the items
+without an AnimInfo (+0x80 = 0) are 95 BRIDGEPAD, 41 EXIT_PORTAL (8 more
+have one) and 53 S_CARPETFLY in the reference, the same records native
+leaves without a clock.
 
 ## Per-update matrices (ProcessItems loop 2, PlaceItem)
 

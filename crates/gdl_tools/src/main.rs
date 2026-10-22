@@ -205,11 +205,23 @@ impl ReferenceItems {
                 new[0xd8..0xda].copy_from_slice(&d8.to_le_bytes());
             }
             let rec = &mut game.items.records[slot];
+            let reused = rec.definition() != u32::from_le_bytes(new[0..4].try_into().unwrap()) as usize;
             for o in Self::POINTERS {
                 new[o..o + 4].copy_from_slice(&rec.0[o..o + 4]);
             }
             new[0xe6..0xe8].copy_from_slice(&rec.0[0xe6..0xe8]);
             rec.0 = new;
+            // SetItemGeo ran when the traced atree (+0x80) is set; a slot
+            // holding another definition natively, or with another geometry
+            // decision, takes its tree's clock.
+            let geo = u32::from_le_bytes(raw[0x80..0x84].try_into().unwrap()) != 0;
+            if game.items.geo.len() <= slot {
+                game.items.geo.resize(slot + 1, false);
+            }
+            if reused || game.items.geo[slot] != geo {
+                game.items.geo[slot] = geo;
+                game.attach_item_anim(slot);
+            }
             if let Some(Some(an)) = game.item_anims.get_mut(slot) {
                 an.clock = Self::clock_of(&new);
                 an.current = an.clock.sequence;
@@ -1686,14 +1698,14 @@ fn run() -> Result<(), Box<dyn Error>> {
                         // by PlayerCheckFloor's query, the item link as a slot +
                         // 1, other links cleared; SetPlayerVars' +0x93e clear;
                         // the node matrix from the trace.
+                        // The floor link: the traced WORLDS object (0x3c bytes
+                        // from WorldBase) as index + 1.
+                        let floor_obj = {
+                            let v = game.players[0].u32_(0x89c);
+                            (v != 0 && world_base <= v && (v - world_base).is_multiple_of(0x3c)).then(|| ((v - world_base) / 0x3c) as usize)
+                        };
                         {
-                            let r = &game.players[0];
-                            let (rad, h, pos) = (r.f32_(0x828), r.f32_(0x82c), r.v3(0x50));
-                            let floor = if r.u32_(0x89c) != 0 {
-                                game.collision.floor_collide(rad, 0.0, -(h + 3.0), pos, false, 1).map_err(|e| e.0)?.0.solid.map_or(0, |hit| hit.object as u32 + 1)
-                            } else {
-                                0
-                            };
+                            let floor = floor_obj.map_or(0, |o| o as u32 + 1);
                             let r = &mut game.players[0];
                             let item = r.u32_(0x880);
                             r.set_u32(0x89c, floor);
@@ -1705,7 +1717,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                             }
                             r.set_u16(0x93e, 0);
                         }
-                        game.player_floor_parent[0] = None;
+                        // PlayerCheckMovingFloor parented the node to a flag-
+                        // 0x1000 floor last update: the traced node is local
+                        // to it.
+                        game.player_floor_parent[0] = floor_obj.filter(|&o| game.collision.runtime_flags.get(o).is_some_and(|f| f & 0x1000 != 0));
                         game.player_node[0] = match bp.get("node") {
                             Some(v) => {
                                 let n = hexb(v)?;

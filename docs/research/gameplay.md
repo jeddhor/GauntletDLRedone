@@ -462,3 +462,41 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   TEXT/ENGLISH.ROM so NewHelp's logic (seen marks, help pause) runs, and
   the replays seed the help globals; player-parented effect nodes are
   compared by their local matrix.
+- Tower trace (trace-tower-v1: savestate slot 2, the new game in the
+  Tower, recorded with reference_trace.py --slot 2; world L level 1, no
+  items seed): enemies, player 0, effects and world animation 170/170
+  (replay-frame-tower-v11.json). The first divergence (v4: player 0 at
+  step 250, +0x54/+0x898) came from three faults, all fixed:
+  ProcessItemWobjs' fade branch sets "moving" (s3) while the transparency
+  changes (0x154af0 fading out below 0xf8, 0x154b30 fading in while
+  non-zero), so a fading object gets +0x35 = 1, +0x10 |= 0x20000000 and
+  +0x16 |= 0x10 — the port had moving = false, and the player stood on
+  L1 object 2903 (child of fade object 2902) during the 16 updates the
+  original excludes it (exclusion 1 & FloorCollide's mask 1). Collision
+  reads the object words live, but native copied them into the collision
+  world only after DoWorldAnimation; ProcessItemWobjs (at its end), the
+  rotator and the Tower trigger chain now sync the objects they write.
+  PlayerCollideFloor's two re-queries pass player_floor_col (0x2341a0)
+  and WorldCollide fills the struct only on a hit, so PlayerNewFloor
+  sees the re-query's object and normal; the port kept the first query's.
+  At step 252 that first query ties: static L1FLOOR2#1 (3260, grid pass
+  first) and the dynamic 2903 above it both give the edge metric
+  1.4521765 (10000 × the squared edge distance; WorldObjCollide's
+  compare is strict, c.lt.s at 0x11dd84/0x11ddc0), and the re-query by
+  distance picks 2903. The node matrices of 2902/2903 read from the
+  savestate are the native ones bit for bit. With the same change,
+  WorldObjGetAllFlags and the wall/floor flag tests read the run-time
+  +0x10 words (the moving-floor gate, 0x0c000000 with 0x20000000, can
+  now fire) and the floor normal of a matrix object is turned by its world
+  matrix (WorldVector, as WorldCollide's tail does). G1 effects of the
+  same fixes: trace-fight-g1-v6 player 0 270/270 (the step-194 +0x894
+  diff is gone; replay-frame-fight-g1-v10.json), trace-combat-g1-v3
+  269/270 (+0x197c at 496 open; replay-frame-combat-g1-v4.json), player
+  replays combat 270/270 (replay-player-combat-g1-v16.json) and fight
+  267/270 (kill credit from enemy deaths, which the player replay does not
+  run; replay-player-fight-g1-v11.json).
+- Tower items still differing (open): the AnimInfo reset byte +0x96
+  (native 1, reference 2) of two groups (items 0..40 from step 2, 49..63
+  from step 16); the matrices of items parented to moving floors (67, 210,
+  211 on object 1851: x/z; 141, 147 on 2874: y −13.17 against −32.17; 203
+  +0x50/+0x60; 166 all rows); item 160 +0xfc from step 50.

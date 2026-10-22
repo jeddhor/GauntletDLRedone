@@ -167,7 +167,10 @@ structure and a PSMCT16S render target (FRAME PSM 0x0a, two buffers).
   falls back to 0. Transparency goes through MBTreeSetAlpha(tree, a, 1)
   (+0x53 = ~a, flag 0x200 for a ≥ 1). The earlier port had the visibility
   inverted: the Tower's lit podium (with the green beams over Sumner) was
-  drawn from a new game's start while the reference hides it.
+  drawn from a new game's start while the reference hides it. While the
+  transparency changes (0x154af0, 0x154b30) the object also counts as
+  moving: +0x35 = 1 (excluded from FloorCollide's mask 1), +0x10 |=
+  0x20000000 and +0x16 |= 0x10 (gameplay.md, Tower trace).
 - MBSetupObject distance alpha for MB flags 0x100400 (alpha 255/100 or
   255/200 × view depth) on per-entity materials.
 - Package tree nodes (items, missiles, enemy missiles) carry their MB flags

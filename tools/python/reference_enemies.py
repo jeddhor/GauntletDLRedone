@@ -100,7 +100,7 @@ def enemy_probe(memory):
                 raise ValueError('WORLDS base not found below WorldBase')
             if not (0 <= world['count'] <= 1024 and 0 < world['objects'] <= 8192):
                 raise ValueError('WORLDS header out of range')
-        out['world_anims'] = read(world['base'] + world['entries'], 16 * world['count']).hex() if world['count'] else ''
+        out['world_anims'] = chunks(read, world['base'] + world['entries'], 16 * world['count']).hex() if world['count'] else ''
         raw_obj = chunks(read, objects, 60 * world['objects'])
         obj_delta = {}
         for k in range(world['objects']):

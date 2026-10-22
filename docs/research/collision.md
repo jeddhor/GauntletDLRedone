@@ -75,10 +75,33 @@ definition's +0xa bit 0). The other 23 items ride dynamic objects (ELEV1/2/3/5/
 those objects' current motion, which needs WorldDynCollide and world animation.
 Report: private/reports/place-items-g1-v1.json.
 
+## Dynamic objects and run-time words (2026-10-22)
+
+WorldCollide runs the static grid pass first and WorldDynCollide 0x11fbe8 after
+it; both reach WorldObjCollide 0x11da08, whose compares are strict (c.lt.s at
+0x11dd84 water, 0x11ddc0 solid), so on an equal metric the static object keeps
+the hit. Native dyn_collide tests every dynamic object instead of the dyngrid
+cells (WorldObjCollide's segment-sphere rejection applies as in the original);
+the Tower's static grid lists none of its dynamic objects (checked for 2902,
+2903). The exclusion test ORs the parent's +0x35, as the original does.
+
+The original reads the object words (+0x10 flags, +0x35 exclusion, the node y)
+live. Native keeps copies in the collision world: sync_collision after
+DoWorldAnimation, and sync_collision_object after each later writer
+(ProcessItemWobjs, the rotator, the Tower trigger chain), so queries later in
+the same update see the new words (Tower trace, gameplay.md). WorldObjGetAllFlags
+and PlayerCollideFloor/Walls' flag tests read those run-time words.
+
+WorldCollide's tail writes the output struct only when the caller passes one and
+something was hit (+0x44 object, +0x40 metric, +0x30 position, rows from
+CreateMat3Norm of the triangle normal — turned by the object's world matrix
+through WorldVector 0x1d5948 for matrix objects; 0x1000 objects with +0x10 bit 0
+keep the file normal). PlayerCollideFloor's two re-queries pass player_floor_col
+(0x2341a0); its forward probe passes none.
+
 ## Not yet native
 
-WorldDynCollide (41 dynamic objects in a runtime-built grid; none within 30 units
-of the fixture start), matrix/offset objects, TriLineCol (CheckFlags 0x20), wall
-queries, slopes, water hits, PlayerCollideFloor/Walls/Items/Players, SlideAlongWall,
-PlayerNewFloor and CameraLimitPlayerDpos. The CheckNum wrap after 255 queries
-is reproduced per native world, but its original value depends on every caller.
+The dyngrid itself (SetupDynGrid's cells and NextDynGrid order: a dynamic object
+reached through two cells is tested once per query via +0x42, so only the
+candidate order could differ). The CheckNum wrap after 255 queries is reproduced
+per native world, but its original value depends on every caller.

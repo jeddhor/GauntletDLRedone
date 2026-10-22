@@ -261,6 +261,11 @@ pub struct ItemWorld {
     /// (UpdateObjWorldMat); ProcessItems' GetObjWorldMat rebuilds the record
     /// matrix from them every update.
     pub floor_parent: Vec<Option<(usize, [[f32; 4]; 4])>>,
+    /// SetItem's SetItemGeo decision per slot (the item gets its definition's
+    /// tree, +0x4c): not for kind 4 (placed enemies; statues take enemy or
+    /// critter trees), 13, 12 other than subtype 2, nor an instance with flag
+    /// byte +3 bit 2 (fixture: the Tower's BRIDGEPAD triggers have no atree).
+    pub geo: Vec<bool>,
 }
 
 /// WPitchMat3/WYawMat3/WRollMat3 0x1d5228/0x1d5178/0x1d52d8 on rows 0..2.
@@ -340,6 +345,7 @@ impl ItemWorld {
             quest_item: None,
             rng: Rand::new(0),
             floor_parent: Vec::new(),
+            geo: Vec::new(),
         })
     }
 
@@ -545,6 +551,10 @@ impl ItemWorld {
         let mut r = self.records[slot].clone();
         r.set_u32(0, def as u32);
         let d = self.definitions[def].clone();
+        if self.geo.len() <= slot {
+            self.geo.resize(slot + 1, false);
+        }
+        self.geo[slot] = !(matches!(kind, 4 | 13) || kind == 12 && subtype != 2) && iu8(3) & 2 == 0;
         r.set_f32(0xc8, d.f32_(0x1c));
         r.set_f32(0xcc, add(d.f32_(0x20), 1.0)?);
         r.set_f32(0xd0, d.f32_(0x24));

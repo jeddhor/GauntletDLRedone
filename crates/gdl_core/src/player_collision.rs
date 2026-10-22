@@ -8,7 +8,7 @@
 //! moving-floor handling and slope factor, transporters/exits, damage callbacks,
 //! dynamic objects. The comparison against reference traces measures where this
 //! composition is sufficient.
-use crate::collision::{create_mat3_norm, normal_vector, CollisionWorld, Hit, UnsupportedCollision};
+use crate::collision::{create_mat3_norm_row1, normal_vector, CollisionWorld, Hit, UnsupportedCollision};
 use crate::numeric::{add_guarded_rz as add, div_rn, mul_rz as mul, sub_guarded_rz as sub};
 use crate::vu0::fqdist;
 
@@ -75,17 +75,29 @@ pub struct WallContact {
     pub normal: V3,
 }
 
-/// Collision output-struct row 1 (CreateMat3Norm normal row) for a static hit.
+/// Collision output-struct row 1 (CreateMat3Norm normal row). WorldCollide
+/// (0x11e160 tail) first turns a matrix object's triangle normal by its
+/// world matrix (WorldVector; 0x1000 offset-only objects, +0x10 bit 0, keep
+/// the file normal); NormalVector on rows 0 and 2 leaves row 1. Row 1 does
+/// not use the triangle's scale (+inf for the flat triangles a turned
+/// object can tilt, where only rows 0 and 2 overflow).
 pub(crate) fn hit_normal(world: &CollisionWorld, hit: &Hit) -> R<V3> {
     let t = world.triangles[hit.triangle];
-    let m = create_mat3_norm(t.scale, t.normal)?;
-    Ok([m[1][0], m[1][1], m[1][2]])
+    let flags = world.runtime_flags[hit.object];
+    let n = match hit.matrix {
+        Some(m) if flags & 0x100_0000 != 0 || flags & 1 == 0 => {
+            world_vector(t.normal, &[[m[0][0], m[0][1], m[0][2]], [m[1][0], m[1][1], m[1][2]], [m[2][0], m[2][1], m[2][2]]])?
+        }
+        _ => t.normal,
+    };
+    Ok(create_mat3_norm_row1(n))
 }
 
+/// WorldObjGetAllFlags: the run-time +0x10 words of the object and its parents.
 fn object_flags_with_parents(world: &CollisionWorld, mut object: Option<usize>) -> u32 {
     let mut flags = 0;
     while let Some(o) = object {
-        flags |= world.objects[o].flags;
+        flags |= world.runtime_flags[o];
         object = world.objects[o].parent;
     }
     flags
@@ -159,7 +171,7 @@ pub fn collide_walls(
     let Some(first) = wall_collide(world, r, pos, target)? else {
         return Ok((0, None));
     };
-    let flags = world.objects[first.object].flags;
+    let flags = world.runtime_flags[first.object];
     if flags & 0x38 != 0 {
         return Ok((if action == 0x8f { 1 } else { 2 }, Some(first)));
     }
@@ -244,7 +256,7 @@ pub fn collide_floor(
         s.flags_8ac &= 0xffff_7fff;
     }
     if speed < w(0x3a83126f) && s.word_100 == 1 {
-        if 3.0 < change || world.objects[contact.object].flags & 0x1000 != 0 {
+        if 3.0 < change || world.runtime_flags[contact.object] & 0x1000 != 0 {
             s.floor_y_88c = contact_y;
         }
         return Ok(if w(0x3a83126f) < change { 1 } else { 0 });
@@ -256,8 +268,13 @@ pub fn collide_floor(
         d[2] = 0.0;
         return Ok(0);
     }
+    // The requeries write player_floor_col too (WorldCollide fills the
+    // struct only on a hit), so PlayerNewFloor sees their object.
     let requery = |world: &mut CollisionWorld, d: &mut V3, s: &mut PlayerFloorState| -> R<i32> {
         let found = floor(world, target(d)?, false)?;
+        if let Some(h) = found {
+            s.floor_hit = Some((h, hit_normal(world, &h)?));
+        }
         if gate && s.floor_object_89c != found.map(|h| h.object) {
             *d = [0.0; 3];
             return Ok(-1);
@@ -296,7 +313,7 @@ pub fn collide_floor(
         }
         match c.solid {
             Some(ahead) => {
-                let flat = world.objects[ahead.object].flags & 8 != 0
+                let flat = world.runtime_flags[ahead.object] & 8 != 0
                     && sub(ahead.position[1], contact_y)?.abs() < 4.0;
                 if flat {
                     off = 0.0;
@@ -367,7 +384,7 @@ pub fn player_displacement(
     } else if floor_result == 0 {
         match state.floor_object_89c {
             None => true,
-            Some(o) => world.objects[o].flags & 0x1000 == 0,
+            Some(o) => world.runtime_flags[o] & 0x1000 == 0,
         }
     } else if floor_result == -2 {
         state.floor_object_89c.is_none() || state.flags_8ac & 0x8000 != 0

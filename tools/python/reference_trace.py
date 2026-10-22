@@ -58,6 +58,8 @@ def main():
                         help='diagnostic: keep final keys held after the last step for a following debugger stop. '
                              'Release them with keyup while the render window has focus; releases delivered to '
                              'the debugger window leave PCSX2 input stale (observed 2026-10-15)')
+    parser.add_argument('--slot', type=int, choices=(1, 2), default=1,
+                        help='savestate slot: 1 the Poison Fields fixture, 2 the Tower new game')
     parser.add_argument('--out', type=pathlib.Path, required=True)
     args = parser.parse_args()
     # StdCam traces need longer walks to cross transmitter zones (600 bound).
@@ -71,11 +73,11 @@ def main():
     env = environment()
     if launch.get('display') != env['DISPLAY'] or not launch.get('diagnostic_hotkeys'):
         raise ValueError('reference was not launched with virtual-display stepping bindings')
-    fixture = pathlib.Path('private/reference/config/PCSX2/sstates/SLUS-20047 (15030637).01.p2s')
-    frozen = pathlib.Path('private/reference/captures/poison-fields-original.p2s')
+    fixture = pathlib.Path(f'private/reference/config/PCSX2/sstates/SLUS-20047 (15030637).0{args.slot}.p2s')
+    frozen = pathlib.Path('private/reference/captures/' + ('poison-fields-original.p2s' if args.slot == 1 else 'tower-newgame-v1.p2s'))
     fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
     if fixture_hash != hashlib.sha256(frozen.read_bytes()).hexdigest():
-        raise ValueError('private slot 1 differs from preserved fixture')
+        raise ValueError(f'private slot {args.slot} differs from preserved fixture')
     profile = json.loads(pathlib.Path('profiles/ps2/slus-20047-reference.json').read_text())
     source = json.loads(pathlib.Path('profiles/ps2/slus-20047.json').read_text())
     elf = pathlib.Path('private/disc/SLUS_200.47').read_bytes()
@@ -140,7 +142,7 @@ def main():
                 capture_movement, movement_regions = movement_probe(memory, profile)
                 regions.extend(movement_regions)
             # PINE queues the load asynchronously; wait for all fixture fields.
-            pine.request(b'\x0a\x01')
+            pine.request(b'\x0a' + bytes([args.slot]))
             deadline = time.monotonic()+5
             while True:
                 observation = describe(read, profile)
@@ -172,10 +174,17 @@ def main():
                 before = observation['scalars']['vb_counter']['raw_u32']
                 xdo('key', '--delay', '20', 'F10')
                 deadline = time.monotonic()+5
+                resend = time.monotonic()+1.5
                 while True:
                     after, = pine.read_ee32([profile['symbols']['vb_counter']['guest_address']])
                     if pine.status() == 1 and after != before:
                         break
+                    if step == 1 and time.monotonic() >= resend:
+                        # As reference_screenshot.py: the first step after a
+                        # state load can be dropped (seen with slot 2); a
+                        # double step is still refused below.
+                        xdo('key', '--delay', '20', 'F10')
+                        resend = deadline
                     if time.monotonic() >= deadline:
                         raise ValueError(f'frame step {step} did not settle')
                     time.sleep(0.01)

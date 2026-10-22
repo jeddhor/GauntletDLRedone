@@ -81,6 +81,14 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Varied trace 175/175 everywhere after porting ResolvePlyrData (class
    specials had no effects or sounds), VU0 MulVecMat3/4 in the class SFX
    code, the opened-chest enemy loop, and NewHelp in headless runs.
+   Tower new-game trace (reference_trace.py --slot 2, trace-tower-v1):
+   enemies, player 0, effects and world animation 170/170 after fixing
+   ProcessItemWobjs' fading-object "moving" words, the collision copies of
+   the object words (now synced by each writer), PlayerCollideFloor's
+   re-queries writing player_floor_col, run-time flags in the floor/wall
+   tests and matrix-object floor normals; the same fixes bring G1 fight
+   player 0 to 270/270. Open: Tower item matrices on moving floors and the
+   +0x96 AnimInfo reset byte (gameplay.md).
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

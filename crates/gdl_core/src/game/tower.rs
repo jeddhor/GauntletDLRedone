@@ -248,6 +248,7 @@ impl Game {
                         self.items.objects[o].byte_17 = 0x2f;
                         self.items.objects[o].flags_10 = if instant { old | 0xa0_0000 } else { old | 0x20_0000 };
                     }
+                    self.sync_collision_object(o);
                 }
                 k = self.items.records[i].u32_(0xf8).checked_sub(1).map(|v| v as usize);
                 guard += 1;

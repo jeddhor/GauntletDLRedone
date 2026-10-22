@@ -8,7 +8,6 @@
 //! PlayerSim until the full PlayerMotion port lands; its pickups use the
 //! ported PlayerCollideItems/PlayerItemCollision/GrabPowerup chain.
 use super::enemy_ai::{init_actions, EnemyAnim, EnemyAnimData};
-use super::item_runtime::ItemAnim;
 use super::pickups::ClassData;
 use super::record::{Record, PLAYER};
 use super::{enemies, Game, Globals, R};
@@ -414,6 +413,7 @@ impl Game {
             quest_item_timer: 0.0,
             combo_effects: inp.elf.object("ComboEffects").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
             item_anims: vec![None; item_count],
+            item_anim_lib: inp.item_anims.clone(),
             camera: None,
             camera_rest: None,
             std_camera: {
@@ -616,10 +616,7 @@ impl Game {
             }
         }
         for slot in 0..item_count {
-            let name = String::from_utf8_lossy(game.items.definitions[game.items.records[slot].definition()].name()).into_owned();
-            if let Some(clips) = inp.item_anims.get(&name) {
-                game.item_anims[slot] = Some(ItemAnim { clock: fresh_clock(), clips: clips.clone(), current: 0 });
-            }
+            game.attach_item_anim(slot);
         }
         if let Some(n) = load_note {
             game.log.unsupported.insert(n, 0);
@@ -824,6 +821,9 @@ impl Game {
     }
 
     /// Copy the item system's runtime object state into the collision world.
+    /// The original's collision reads the object words (+0x10 flags, +0x35
+    /// exclusion, the node y) live, so every writer syncs before the next
+    /// query in the same update.
     pub fn sync_collision(&mut self) {
         for o in 0..self.collision.objects.len() {
             self.collision.runtime_flags[o] = self.items.objects[o].flags_10;
@@ -831,6 +831,15 @@ impl Game {
         }
         for w in &self.items.wobjs {
             self.collision.node_y[w.object] = Some(self.items.object_node_y[w.object]);
+        }
+    }
+
+    /// sync_collision for one object.
+    pub(crate) fn sync_collision_object(&mut self, o: usize) {
+        self.collision.runtime_flags[o] = self.items.objects[o].flags_10;
+        self.collision.runtime_exclusion[o] = self.items.object_exclusion[o];
+        if self.items.wobjs.iter().any(|w| w.object == o) {
+            self.collision.node_y[o] = Some(self.items.object_node_y[o]);
         }
     }
 

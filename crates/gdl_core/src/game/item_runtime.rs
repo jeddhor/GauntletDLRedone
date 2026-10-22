@@ -148,6 +148,21 @@ impl Game {
         Ok(out.return_flags)
     }
 
+    /// SetItemGeo 0x151688's AtreeInit: the slot's clock for its
+    /// definition's tree (+0x4c, matched by name), none for a static model.
+    pub fn attach_item_anim(&mut self, slot: usize) {
+        if self.item_anims.len() <= slot {
+            self.item_anims.resize(slot + 1, None);
+        }
+        let Some(r) = self.items.records.get(slot) else { return };
+        if !self.items.geo.get(slot).copied().unwrap_or(false) {
+            self.item_anims[slot] = None;
+            return;
+        }
+        let name = String::from_utf8_lossy(self.items.definitions[r.definition()].name()).into_owned();
+        self.item_anims[slot] = self.item_anim_lib.get(&name).map(|clips| ItemAnim { clock: super::setup::fresh_clock(), clips: clips.clone(), current: 0 });
+    }
+
     fn has_item_anim(&self, slot: usize) -> bool {
         self.item_anims.get(slot).is_some_and(|a| a.is_some())
     }
@@ -274,6 +289,7 @@ impl Game {
         };
         self.items.records[slot].set_u8(0xde, 2);
         self.items.objects[o].flags_10 &= 0xffff_fffe;
+        self.sync_collision_object(o);
         self.collision.yaw_object(o, angle).map_err(|e| super::Unsupported(format!("rotator: {e:?}")))?;
         Ok(())
     }
@@ -1384,12 +1400,15 @@ impl Game {
                 // transparency passes 0xf7; otherwise MBTreeClearFlags(2)
                 // and the transparency falls back to 0. Transparency
                 // = 0xff − node +0x53 (MBTreeSetAlpha(tree, a, 1)); 8 per
-                // vblank, immediate during start_of_stage.
+                // vblank, immediate during start_of_stage. While the alpha
+                // changes (0x154af0, 0x154b30) the object counts as moving:
+                // +0x35 = 1 and flag 0x20000000 below.
                 let out = if tf & 0x20 == 0 { b16 & 0xf == 0 } else { b16 & 0x2f != 0 };
                 self.items.object_exclusion[o] = if out { -1 } else { 0 };
                 let mut a = self.node_alpha.get(o).copied().flatten().map_or(0, i32::from);
                 let start = self.globals.start_of_stage != 0;
                 let step = self.globals.vb_elapsed * 8;
+                let mut m = false;
                 if out {
                     if a < 0xff {
                         a = if start { 0xff } else { a + step };
@@ -1398,6 +1417,7 @@ impl Game {
                             a = 0xff;
                         } else {
                             self.node_clear_flags_at(o, 2);
+                            m = true;
                         }
                         self.world_node_set_alpha(Some(o), a);
                     }
@@ -1405,10 +1425,11 @@ impl Game {
                     self.node_clear_flags_at(o, 2);
                     if a != 0 {
                         a = if start { 0 } else { (a - step).max(0) };
+                        m = true;
                         self.world_node_set_alpha(Some(o), a);
                     }
                 }
-                moving = false;
+                moving = m;
             } else if flags & 0x200_0000 == 0 {
                 if tf & 8 != 0 || on < 2 {
                     let w = &self.items.wobjs[k];
@@ -1487,9 +1508,12 @@ impl Game {
             }
             f.byte_16 = b16;
         }
+        // The rest of the update's collision sees the new words.
+        for k in 0..self.items.wobjs.len() {
+            self.sync_collision_object(self.items.wobjs[k].object);
+        }
         Ok(())
     }
-
 }
 
 /// ExtractYPR 0x1d6950: (pitch, yaw, roll) from matrix rows (12 floats).
