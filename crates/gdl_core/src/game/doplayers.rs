@@ -68,20 +68,6 @@ pub(crate) fn unparent_matrix(mut m: [[f32; 4]; 4], parent: Option<&[[f32; 4]; 4
     Ok(m)
 }
 
-/// GetWorldMat of a node under a parent world matrix: a translation-only
-/// parent adds its offset (add.s), otherwise MulMat4(parent, node).
-pub(crate) fn parented_matrix(local: &[[f32; 4]; 4], pm: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
-    if translation_only(pm) {
-        let mut world = *local;
-        for j in 0..3 {
-            world[3][j] = add(pm[3][j], local[3][j])?;
-        }
-        Ok(world)
-    } else {
-        mat_mul(pm, local)
-    }
-}
-
 /// A player record's matrix +0x20..+0x5c (4 × 4).
 pub(crate) fn record_matrix_of(r: &super::record::Record) -> [[f32; 4]; 4] {
     std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x20 + 0x10 * i + 4 * j)))
@@ -150,11 +136,6 @@ impl Game {
         Ok(())
     }
 
-    /// The parent object's world matrix (rows).
-    pub(crate) fn parent_world(&self, o: usize) -> R<[[f32; 4]; 4]> {
-        self.collision.object_matrix(o).map_err(|e| Unsupported(e.0.to_string()))
-    }
-
     /// The record matrix +0x20..+0x5c (4 × 4).
     fn record_matrix(&self, p: usize) -> [[f32; 4]; 4] {
         record_matrix_of(&self.players[p])
@@ -163,8 +144,8 @@ impl Game {
     /// GetObjWorldMat(+0x20, +0x81c, +0x810): the record matrix becomes the
     /// node's world matrix (GetWorldMat), then the collision (+0x70) and
     /// attention (+0x60) points. Under PlayerRootNode the world matrix is the
-    /// node's local matrix; under a moving floor object its translation is
-    /// added (translation-only parents).
+    /// node's local matrix; under a floor object, the MulMat4 chain of its
+    /// ancestors (collision::chain_world).
     pub(crate) fn get_obj_world_mat(&mut self, p: usize) -> R<()> {
         let local = match self.player_node[p] {
             Some(m) => m,
@@ -180,7 +161,9 @@ impl Game {
             // +0x6b4 node world, node) (game/teammove.rs).
             world = mat_mul(&self.team_parent_world(k)?, &local)?;
         } else if let Some(o) = self.player_floor_parent[p] {
-            world = parented_matrix(&local, &self.parent_world(o)?)?;
+            // GetWorldMat under the floor object's node: the MulMat4 chain
+            // (collision::chain_world).
+            world = self.collision.chain_world(local, Some(o)).map_err(|e| Unsupported(e.0.to_string()))?;
         }
         let r = &mut self.players[p];
         for (i, row) in world.iter().enumerate() {
@@ -210,11 +193,12 @@ impl Game {
         if self.players[p].u16_(0x93c) & 0x20 != 0 {
             return Ok(());
         }
-        let parent = match self.player_floor_parent[p] {
-            Some(o) => Some(self.parent_world(o)?),
-            None => None,
+        // UnparentMatrix: under a floor object recursive per level
+        // (collision::unparent_chain); under PlayerRootNode the root form.
+        let m = match self.player_floor_parent[p] {
+            Some(o) => self.collision.unparent_chain(self.record_matrix(p), Some(o)).map_err(|e| Unsupported(e.0.to_string()))?,
+            None => unparent_matrix(self.record_matrix(p), None)?,
         };
-        let m = unparent_matrix(self.record_matrix(p), parent.as_ref())?;
         self.player_node[p] = Some(m);
         if offsets {
             self.update_obj_offsets(p)?;

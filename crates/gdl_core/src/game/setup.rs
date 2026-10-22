@@ -120,6 +120,9 @@ pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animat
             .collect();
         data.trees.insert((t, level), (clips_of(anim, k), init_actions(&labels)));
         data.tree_nodes.insert((t, level), tree.nodes.len() as i32);
+        if tree.nodes.iter().any(|n| n.node_type == 1) {
+            data.tree_animated.insert((t, level));
+        }
     }
 }
 

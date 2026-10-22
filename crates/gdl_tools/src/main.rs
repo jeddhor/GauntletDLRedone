@@ -245,7 +245,16 @@ impl ReferenceItems {
             if let Some(Some(an)) = game.item_anims.get(slot) {
                 Self::write_clock(&mut n, &an.clock);
             }
-            let r = Self::native(raw, worldinfo, items_base, &|d| defs.get(d).map_or(-1, |d| d.kind()));
+            let mut r = Self::native(raw, worldinfo, items_base, &|d| defs.get(d).map_or(-1, |d| d.kind()));
+            // Kind 13's +0xfe is the audio driver's (AudioLOOP queue id,
+            // negated while pending, or AudioFindTID's track mask; native 1
+            // while playing): compared by sign.
+            if defs.get(u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize).is_some_and(|d| d.kind() == 13) {
+                for b in [&mut n, &mut r] {
+                    let v = i16::from_le_bytes([b[0xfe], b[0xff]]).signum();
+                    b[0xfe..0x100].copy_from_slice(&v.to_le_bytes());
+                }
+            }
             for o in (0..0x110).step_by(4) {
                 if Self::POINTERS.contains(&o) {
                     continue;

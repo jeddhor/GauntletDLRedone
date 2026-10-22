@@ -178,6 +178,9 @@ pub struct EnemyAnimData {
     /// (type, level) → the tree's node count (AtreeInitSub: atree +0x3c,
     /// the record's +0xbc).
     pub tree_nodes: std::collections::HashMap<(i32, i32), i32>,
+    /// (type, level) trees with a type-1 node: AnimateATree's DoAnimation
+    /// turns a nonzero reset byte into 2 (OANIM-only trees never do).
+    pub tree_animated: std::collections::HashSet<(i32, i32)>,
 }
 
 /// InitActions: action names (EE 0x23f8c8 list) → sequence index and +0x20 word.
@@ -2735,8 +2738,14 @@ impl Game {
             },
         )?;
         let switched = out.return_flags & 1 != 0;
+        let animated = self.enemy_anim_data.tree_animated.contains(&anim.tree);
         let a = self.enemy_anims[i].as_mut().unwrap();
         a.clock = out.state;
+        // DoAnimation 0x10fd10: a nonzero reset byte becomes 2 for trees with
+        // a type-1 node (trace-k1-newgame-v1's ACI/PLA; G1's OANIM trees not).
+        if animated && a.clock.reset_byte != 0 {
+            a.clock.reset_byte = 2;
+        }
         if switched {
             a.current = clip;
             // InitAnim: AnimInfo +0x10 (+0x94) = the sequence's frame count

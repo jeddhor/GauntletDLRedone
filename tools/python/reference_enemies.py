@@ -25,7 +25,8 @@ ENEMY_COUNT = 25
 
 
 def enemy_probe(memory):
-    sym = elf_symbols({'enemies', '_impure_ptr', 'WorldInfo', 'NumItems', 'Effects', 'NumEffects', 'SfxId'} | set(ENEMY_GLOBALS))
+    sym = elf_symbols({'enemies', '_impure_ptr', 'WorldInfo', 'NumItems', 'Effects', 'NumEffects', 'SfxId', 'CritterInsts',
+                       'NumCritterInsts', 'BossCritInst'} | set(ENEMY_GLOBALS))
     base, impure = sym['enemies'], sym['_impure_ptr']
     reent, = struct.unpack_from('<I', memory, impure)
     if not 0x100000 <= reent < 0x2000000 or reent % 4:
@@ -39,6 +40,7 @@ def enemy_probe(memory):
     previous = {}
     previous_fx = {}
     previous_obj = {}
+    previous_crit = {}
     world = {}
 
     def capture(read):
@@ -109,6 +111,18 @@ def enemy_probe(memory):
                 obj_delta[str(k)] = r.hex()
                 previous_obj[k] = r
         out['objects_delta'] = obj_delta
+        # CritterInsts (16 × 0xb70, delta-coded) with NumCritterInsts and
+        # BossCritInst.
+        crit = chunks(read, sym['CritterInsts'], 16 * 0xb70)
+        crit_delta = {}
+        for k in range(16):
+            r = crit[0xb70 * k:0xb70 * (k + 1)]
+            if previous_crit.get(k) != r:
+                crit_delta[str(k)] = r.hex()
+                previous_crit[k] = r
+        out['critters_delta'] = crit_delta
+        out['NumCritterInsts'] = struct.unpack('<i', read(sym['NumCritterInsts'], 4))[0]
+        out['BossCritInst'] = read(sym['BossCritInst'], 4).hex()
         return out
 
     regions = [(base + o, memory[base + o:base + min(size, o + 2048)]) for o in range(0, size, 2048)]
