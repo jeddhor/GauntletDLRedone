@@ -71,9 +71,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    2026-10-21: the player-select screen (pselect.rs: every column state,
    name entry, Hidden codes, card states on the native store), its entry
    points (after the shop, Manage Character, joining in the Tower) and
-   per-player characters in the client. Remaining: the title's select
-   (still the native pages), the SELECT scene behind the columns,
-   credits, attract mode, movies. 2026-10-21: Control Style, Screen Adjust. 2026-10-21: the ICON_ARROW selector.
+   per-player characters in the client. The title's Start opens the select
+   screen over the Tower (init_player_select(0); the native save list stays
+   behind GDL_DEBUG_NATIVE_SELECT for the capture import). Remaining: the
+   SELECT scene behind the columns, credits, attract mode, movies. 2026-10-21: Control Style, Screen Adjust. 2026-10-21: the ICON_ARROW selector.
 6. Audio completeness; secret characters; Sumner as a character;
    multiplayer join/camera rules; remaining unported paths from sweeps.
    2026-10-21: the Audio* cue placeholders, background music (areas,

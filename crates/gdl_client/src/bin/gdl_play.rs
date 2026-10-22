@@ -1659,7 +1659,7 @@ fn present_special_texmods(sim: Res<Sim>, libs: Res<Libraries>, q: Query<(Entity
     let aframe = sim.updates;
     for (e, t) in &q {
         if step.0 != aframe {
-            *step = (aframe, if aframe % u64::from(t.rate.max(1)) == 0 { (step.1 + 1) % t.frames.max(1) } else { step.1 });
+            *step = (aframe, if aframe.is_multiple_of(u64::from(t.rate.max(1))) { (step.1 + 1) % t.frames.max(1) } else { step.1 });
         }
         let Some(lib) = libs.0.get(&t.package) else { continue };
         let Some(&base) = lib.label_index.get(&t.base.to_uppercase()) else { continue };
@@ -4190,12 +4190,34 @@ fn refresh_saves(front: &mut Front) {
 
 /// Load save `slot` and enter the Tower with that character.
 fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
+    start_session(world, Some(slot))
+}
+
+/// The title's Start (do_titlescreen → init_player_select(0)): the Tower
+/// loads behind the select screen with player 1 (port 0) in, choosing.
+fn start_select(world: &mut EcsWorld) -> Result<(), Box<dyn Error>> {
+    start_session(world, None)
+}
+
+/// Build the session and the Tower game: from save `slot`, or (None) with a
+/// cleared player 1 who enters the select screen.
+fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn Error>> {
     let mut hud_sets = HudSets::default();
     let (session, sources, game, recovered) = {
         let front = world.resource::<Front>();
-        let loaded = front.store.load(slot)?;
-        let region = loaded.save.region()?;
-        let (record, controls) = profile::load_character(0, &region, &front.pdats, &front.tables).map_err(|e| e.to_string())?;
+        let (record, controls, recovered, slot) = match from {
+            Some(slot) => {
+                let loaded = front.store.load(slot)?;
+                let region = loaded.save.region()?;
+                let (record, controls) = profile::load_character(0, &region, &front.pdats, &front.tables).map_err(|e| e.to_string())?;
+                (record, controls, loaded.recovered, slot)
+            }
+            None => {
+                let mut record = Record::zeroed(0x2b00);
+                profile::clear_player(&mut record, true, false, &front.pdats).map_err(|e| e.to_string())?;
+                (record, [0, 2, 1, 1], None, 0)
+            }
+        };
         let (pc, model_pkg, sfx_pkg) = load_char(front, CharKey::of(&record))?;
         let b = &front.base;
         // DEBUG (automated render comparisons): GDL_DEBUG_LEVEL=<name> starts
@@ -4253,7 +4275,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
             game.controls.control[0].set_u32(o, v);
         }
         init_hud(&mut game, &sources, &session, front, &mut hud_sets);
-        (session, sources, game, loaded.recovered)
+        (session, sources, game, recovered)
     };
     let attention = Vec3::from_array(game.players[0].v3(0x810));
     let stage = game.sounds.stage.as_ref().map(|s| s.stream_name(0, 0));
@@ -4261,7 +4283,20 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None });
+    let mut game = game;
+    let mut select = None;
+    if from.is_none() {
+        // init_player_select(0): player 1's port pressed Start on the title.
+        // The Tower only loads behind the select screen (LoadTowerAndSelect);
+        // init_next_level enters it afterwards, so this build's EnterTower
+        // does not count.
+        game.globals.tower_counter = world.resource::<Session>().carried[0];
+        game.globals.active_players |= 1;
+        game.players[0].set_i32(0xfc, 0);
+        let pdats = world.resource::<Session>().pdats.clone();
+        select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
+    }
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -4429,6 +4464,7 @@ fn act(world: &mut EcsWorld, action: Action) {
     let result: Result<(), Box<dyn Error>> = (|| {
         match action {
             Action::Play { slot } => start_game(world, slot)?,
+            Action::StartSelect => start_select(world)?,
             Action::Create { class, colour, name } => {
                 let slot = {
                     let front = world.resource::<Front>();

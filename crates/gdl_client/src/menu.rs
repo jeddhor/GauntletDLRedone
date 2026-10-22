@@ -44,6 +44,8 @@ pub enum Action {
     QuitGame,
     Exit,
     Volumes { music: u8, sfx: u8 },
+    /// The title's Start: the select screen (init_player_select(0)).
+    StartSelect,
     /// Tower menu → Manage Character (the select screen).
     ManageCharacter,
     /// Tower menu → Shop: the host fills `shop` and opens the page.
@@ -271,9 +273,16 @@ impl Menu {
                     self.page = Page::Title { at: wrap(at, 2, key == Key::Up) };
                     None
                 }
+                // do_titlescreen → init_player_select(0); DEBUG: with
+                // GDL_DEBUG_NATIVE_SELECT the native save list (and the
+                // capture import) instead.
                 Key::Accept if at == 0 => {
-                    self.page = Page::Select { at: 0 };
-                    None
+                    if std::env::var("GDL_DEBUG_NATIVE_SELECT").is_ok() {
+                        self.page = Page::Select { at: 0 };
+                        None
+                    } else {
+                        Some(Action::StartSelect)
+                    }
                 }
                 Key::Accept => {
                     self.page = Page::Options { at: 0, back: Box::new(page) };

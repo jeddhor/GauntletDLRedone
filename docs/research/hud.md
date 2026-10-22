@@ -495,3 +495,12 @@ exit → tally/shop → player 1 at Save…Done → Done → the Tower; in the T
 player 2 pressed Start (U), chose New, the default name JUSTIN and the
 Jester: the Tower reloaded with both players, each with its own model and
 panel.
+
+The title's Start (do_titlescreen → init_player_select(0)) builds the
+Tower behind the select screen with player 1's port active; that build's
+EnterTower does not count (TowerCounter restored: the original enters the
+Tower in init_next_level after the select). Loading a file returns to menu
+1 with Done chosen (+0x2ac4); Done enters the Tower. GUI check: title →
+Start → Load → SLOT 1 → TEST → Sorceress → Done → the Tower and Sumner's
+welcome. DEBUG: GDL_DEBUG_NATIVE_SELECT keeps the native save list (and
+the PS2-capture import).
