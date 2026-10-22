@@ -414,3 +414,20 @@ ported. Help sites whose original point is a local vector (ids 0x1b, 0x14,
 0xe) use the player's attention point or none; AudioHelp/AudioExp cues are
 emitted as events but not voiced; low-res/Japanese help variants are not
 modelled. The scroll box's timing uses wall-clock vblanks (59.94 Hz).
+
+## Control Style (DoOptions 0xd/0xe, action 0x21)
+
+controls_options entry 0 starts controlstyle_options (0x21e408) with
+control_style = PlayerControl +0x2c and start_controlsmenu (three
+opt_ctlblit blits: CONTROLER_1 (96, 104), CONTROLER_2 (352, 104),
+CONTROLER_3 (128, 232), texture size). Each frame the entry label is
+opt_controls_desc[style] (Default, Arcade, One Handed, Robotron) and
+do_controlsmenu draws the sixteen lines of GetStringListMsg(3, style)
+(ENGLISH.ROM list CONTROLS_DESC → CONTROLS1–4, font 2, scale 0.4) in
+OPTCTL_FONT −1 (the entry's) at OPTCTL_SCALE 1.0 with stringtext_dy
+OPTCTL_DY 2, colour optmenu_rgb_ctls (black), at ctl_label_pos (alignment
+0 left / 1 centre / 2 right of 256 + x; y centred). Left/Right step the
+style mod 4; Select (0x21) or Back stores it in +0x2c and
+end_controlsmenu. Native (gdl_core::game::optmenu::ControlsMenu,
+menu::Page::ControlStyle) and seen in gdl_play; the remap itself is
+update_controls' +0x2c set (game/pad.rs).

@@ -112,6 +112,70 @@ impl OptStyle {
     }
 }
 
+/// The Control Style screen (DoOptions 0xd/0xe case 0x21):
+/// start_controlsmenu's three blits (opt_ctlblit, 0x18 each: texture name,
+/// x, y, w, h), do_controlsmenu's sixteen labels (ctl_label_pos, 0xc each:
+/// alignment 0 left / 1 centre / 2 right of 256 + x, y centre) of
+/// GetStringListMsg(3, control_style) (ENGLISH.ROM CONTROLS_DESC) in
+/// OPTCTL_FONT at OPTCTL_SCALE with stringtext_dy OPTCTL_DY and colour
+/// optmenu_rgb_ctls; the entry label is opt_controls_desc[style].
+#[derive(Clone, Debug)]
+pub struct ControlsMenu {
+    pub blits: Vec<(String, i32, i32, i32, i32)>,
+    pub labels: Vec<(i32, i32, i32)>,
+    pub font: i32,
+    pub scale: f32,
+    pub dy: i32,
+    pub rgb: u32,
+    pub styles: Vec<String>,
+}
+
+impl ControlsMenu {
+    pub fn from_elf(elf: &Elf) -> Result<Self, Box<dyn std::error::Error>> {
+        let i = |b: &[u8], o: usize| i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        let tb = elf.object("opt_ctlblit")?;
+        let mut blits = Vec::new();
+        for k in 0..3 {
+            let r = &tb[0x18 * k..0x18 * k + 0x18];
+            let name = cstr(&elf.read(i(r, 0) as u32, 32)?);
+            blits.push((name, i(r, 4), i(r, 8), i(r, 0xc), i(r, 0x10)));
+        }
+        let lb = elf.object("ctl_label_pos")?;
+        let labels = (0..16).map(|k| (i(lb, 0xc * k), i(lb, 0xc * k + 4), i(lb, 0xc * k + 8))).collect();
+        let w = |n: &str| -> Result<u32, Box<dyn std::error::Error>> { Ok(u32::from_le_bytes(elf.object(n)?[..4].try_into()?)) };
+        let c = elf.object("optmenu_rgb_ctls")?;
+        let k = |j: usize| i(c, 4 * j).clamp(0, 255) as u32;
+        let d = elf.object("opt_controls_desc")?;
+        let styles = (0..4).map(|j| cstr(&d[0x10 * j..0x10 * j + 0x10])).collect();
+        Ok(Self { blits, labels, font: w("OPTCTL_FONT")? as i32, scale: f32::from_bits(w("OPTCTL_SCALE")?), dy: w("OPTCTL_DY")? as i32, rgb: k(0) << 16 | k(1) << 8 | k(2), styles })
+    }
+}
+
+impl Hud {
+    /// do_controlsmenu's blits for `style` (0..4).
+    pub fn controls_blits(&self, ctl: &ControlsMenu, style: usize) -> Vec<Blit> {
+        let mut out = Vec::new();
+        for (name, x, y, w, h) in &ctl.blits {
+            out.push(self.make_pub(self.lookup(name), *x, *y, *w, *h));
+        }
+        // GetStringListMsg(3, style): list 3's entry `style`.
+        let Some(e) = self.text.as_ref().and_then(|t| t.lists.get(3)).and_then(|(_, v)| v.get(style)).copied() else { return out };
+        let e = e as i32;
+        for (k, &(mode, lx, ly)) in ctl.labels.iter().enumerate() {
+            let k = k as i32;
+            let w = self.string_text_width(ctl.scale, e, k);
+            let h = self.string_text_height(ctl.scale, e, k, ctl.dy);
+            let x = match mode {
+                1 => -(lx + 0x100),
+                2 => (w / 2 - 0x100) - lx,
+                _ => -(w / 2 + 0x100 + lx),
+            };
+            out.extend(self.string_text_blits(x, ly - h / 2, ctl.font, ctl.rgb, e, k, ctl.dy, ctl.scale));
+        }
+        out
+    }
+}
+
 impl OptMenu {
     /// The menu record at a symbol (title_menu, tower_menu, …) or address.
     pub fn from_elf(elf: &Elf, at: u32) -> Result<Self, Box<dyn std::error::Error>> {

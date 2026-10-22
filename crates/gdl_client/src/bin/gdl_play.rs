@@ -326,6 +326,8 @@ struct Front {
     select_pkg: Package,
     /// POWERUPS (powerup_anim: the option menus' ICON_ARROW tree).
     powerups_pkg: Package,
+    /// The Control Style screen's tables.
+    controls_menu: Option<gdl_core::game::optmenu::ControlsMenu>,
     menu_clock: (Option<(&'static str, usize)>, f32),
     base: Base,
 }
@@ -3536,6 +3538,15 @@ fn present_hud(
                 e.mark = i32::from(i == cur);
             }
         }
+        if let gdl_client::menu::Page::ControlStyle { style, .. } = &front.menu.page
+            && let Some(ctl) = front.controls_menu.as_ref()
+        {
+            // DoOptions 0xe: the entry shows opt_controls_desc[style].
+            if let (Some(e), Some(name)) = (menu.entries.first_mut(), ctl.styles.get(*style)) {
+                e.label = name.clone();
+            }
+            front_list.extend(front.ui_hud.controls_blits(ctl, *style));
+        }
         if let gdl_client::menu::Page::HintText { list, at } = &front.menu.page {
             // DoOptions case 0x16: "A Hint for You" (general); the other
             // categories' titles (guardian/legend/rune names from
@@ -4115,6 +4126,7 @@ fn act(world: &mut EcsWorld, action: Action) {
                     }
                 }
                 let ctl = match key {
+                    "controlstyle_options" => Some((0, 0x2c, idx as u32)),
                     "control_rumble_options" => Some((1, 0x30, idx as u32)),
                     "control_autoattack_options" => Some((2, 0x38, u32::from(idx == 0))),
                     "control_autoaim_options" => Some((3, 0x34, u32::from(idx == 0))),
@@ -4357,6 +4369,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let shared_labels = std::collections::HashSet::new();
     let static_pkg = load_package(&package_entry(&catalog, "STATIC", true)?)?;
     let mut ui_hud = gdl_core::game::hud::HudTables::from_elf(&elf).map(gdl_core::game::hud::Hud::new).unwrap_or_default();
+    // TEXT/ENGLISH.ROM (StringInit) for the front end's string lists.
+    ui_hud.text = Some(english.clone());
     let fonts = load_fonts(&catalog, ui_hud.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default());
     let title_pkg = load_package(&package_entry(&catalog, "TITLE", true)?)?;
     let select_pkg = load_package(&package_entry(&catalog, "SELECT", true)?)?;
@@ -4388,11 +4402,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         "control_rumble_options",
         "control_autoaim_options",
         "control_autoattack_options",
+        "controlstyle_options",
     ] {
         if let Some(m) = elf.symbol(n).and_then(|sym| gdl_core::game::optmenu::OptMenu::from_elf(&elf, sym.address).ok()) {
             menus.insert(n, m);
         }
     }
+    let controls_menu = gdl_core::game::optmenu::ControlsMenu::from_elf(&elf).ok();
     let mut front = Front {
         menu: {
             let mut m = Menu::new(music_v, sfx_v);
@@ -4422,6 +4438,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         title_clock: 0.0,
         select_pkg,
         powerups_pkg,
+        controls_menu,
         menu_clock: (None, 0.0),
         base: Base { package_cfg, start, levels, monster_paths, monsters, anim_paths, audio_rom, shared_labels },
     };

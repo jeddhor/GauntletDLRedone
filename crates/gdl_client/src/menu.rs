@@ -86,6 +86,10 @@ pub enum Page {
     /// control_autoaim_options, control_autoattack_options).
     Submenu { key: &'static str, at: usize, back: Box<Page> },
     Choice { key: &'static str, at: usize, back: Box<Page> },
+    /// Control Style (controlstyle_options, DoOptions 0xd/0xe case 0x21):
+    /// Left/Right cycle the four styles; Select or Back stores the style
+    /// in PlayerControl +0x2c.
+    ControlStyle { style: usize, back: Box<Page> },
 }
 
 /// The entries of the submenus and choice menus (ELF records).
@@ -138,6 +142,7 @@ pub fn page_record(page: &Page) -> Option<(&'static str, usize)> {
         Page::Audio { at, .. } => ("audio_options", *at),
         Page::HintText { .. } => ("hint_general_menu", 0),
         Page::Submenu { key, at, .. } | Page::Choice { key, at, .. } => (*key, *at),
+        Page::ControlStyle { .. } => ("controlstyle_options", 0),
         _ => return None,
     })
 }
@@ -303,6 +308,10 @@ impl Menu {
                             _ => None,
                         };
                         let here = Page::Submenu { key: k, at, back };
+                        if (k, at) == ("controls_options", 0) {
+                            self.page = Page::ControlStyle { style: self.controls[0] as usize & 3, back: Box::new(here) };
+                            return None;
+                        }
                         self.page = match choice {
                             Some(c) => Page::Choice { key: c, at: self.choice_value(c), back: Box::new(here) },
                             None => Page::NotPorted { what: names[at].trim().to_string(), back: Box::new(here) },
@@ -312,6 +321,22 @@ impl Menu {
                 }
                 None
             }
+            Page::ControlStyle { style, back } => match key {
+                Key::Left | Key::Right => {
+                    let style = if key == Key::Left { (style + 3) % 4 } else { (style + 1) % 4 };
+                    self.page = Page::ControlStyle { style, back };
+                    None
+                }
+                Key::Accept | Key::Back => {
+                    self.page = *back;
+                    self.controls[0] = style as u32;
+                    Some(Action::Choose { key: "controlstyle_options", idx: style })
+                }
+                _ => {
+                    self.page = Page::ControlStyle { style, back };
+                    None
+                }
+            },
             Page::Choice { key: k, at, back } => {
                 let n = submenu_entries(k).len();
                 match key {
@@ -507,6 +532,7 @@ impl Menu {
             Page::Audio { at, .. } => list("AUDIO\n(left/right to change)", &[format!("Music  {:>3}", self.music), format!("Sound  {:>3}", self.sfx)], *at),
             Page::NotPorted { what, .. } => format!("{what}\n\nnot ported yet\n\n(Enter / Esc to go back)"),
             Page::Submenu { key, at, .. } | Page::Choice { key, at, .. } => list(key, &s(submenu_entries(key)), *at),
+            Page::ControlStyle { style, .. } => list("Control Style", &s(&["Default", "Arcade", "One Handed", "Robotron"][*style..=*style]), 0),
             Page::Select { at } => list("SELECT A CHARACTER", &self.select_items(), *at),
             Page::Class { at } => list("TO BUILD A CHARACTER", &s(&CLASS_NAMES), *at),
             Page::Colour { class, at } => list(&format!("{}\nchoose a colour", CLASS_NAMES[*class as usize]), &s(&COLOUR_NAMES), *at),

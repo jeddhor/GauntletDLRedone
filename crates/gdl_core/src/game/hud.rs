@@ -721,6 +721,34 @@ impl Hud {
         }
     }
 
+    /// DrawStringText(x, y, font, colour, entry, line) as blits at
+    /// DrawStringScale `draw_scale`: DrawStringTextSub's sub-lines step
+    /// FontHeight + dy (dy < 0: stringtext_dy, passed in as `dy`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn string_text_blits(&self, x: i32, y: i32, font: i32, colour: u32, e: i32, line: i32, dy: i32, draw_scale: f32) -> Vec<Blit> {
+        let mut out = Vec::new();
+        let Some(text) = self.string_text(e, line) else { return out };
+        let Some((efont, scale, space)) = self.entry_style(e as usize) else { return out };
+        let font = if (0..10).contains(&font) && efont < 10 { font as usize } else { efont };
+        let scale = scale * draw_scale;
+        let space = if 0.0 < space {
+            space * scale
+        } else if space < 0.0 {
+            -space
+        } else {
+            1.0
+        };
+        let fh = self.font_height(font, scale);
+        let mut y = y;
+        for l in text.split('\n').take(16) {
+            if let Some(m) = self.message(scale, space, x, y, font, pack_rgb(colour, 0x80), self.font_z, 0, l) {
+                out.extend(self.glyphs(&m));
+            }
+            y += dy + fh;
+        }
+        out
+    }
+
     /// DrawStringTextMulti(x, y, dy, font, colour, entry): every line of the
     /// entry; y & 0x1000 centres the block.
     pub fn draw_string_text_multi(&mut self, x: i32, y: i32, dy: i32, colour: u32, e: i32) {
