@@ -675,7 +675,7 @@ impl Game {
                     for k in 0..4 {
                         self.player_give_rune(k, rune);
                     }
-                    self.audio("AudioPickupRune", Some(idx), 0);
+                    self.audio_pickup_rune(idx);
                     self.got_it(idx, def.subtype(), amount);
                     // RuneDispTimer = 300: HUD presentation.
                     self.start_gem_fx(r.v3(0x40), 0x400)?;
@@ -687,7 +687,7 @@ impl Game {
                         }
                     }
                     let n = (0..0xd).filter(|b| bits & (1 << b) != 0).count() as i32;
-                    self.audio("AudioNumRunesFound", None, n);
+                    self.audio_num_runes_found(n);
                     expire = true;
                 }
             }

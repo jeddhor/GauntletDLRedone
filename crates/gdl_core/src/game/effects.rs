@@ -1969,7 +1969,7 @@ impl Game {
         if let Some(i) = self.start_fx_missile(0.0, kind, at, [0.0; 3], 0x2b, 0, 4, 0)? {
             self.sfx_set_damage(i, 50.0, blast, 0.0, fl, 0);
         }
-        self.events.push(Event::Audio { cue: "AudioWorldExplosion", player: None, arg: 0 });
+        self.audio_world_cue(1, at)?;
         Ok(())
     }
 
@@ -2251,7 +2251,7 @@ impl Game {
                         // reversed and this step undone, the lifetime capped
                         // at ATime + 10 (else 1 s shorter), damage ≤ 15. The
                         // CreateDirMatrix turn (flag 0x20000) is presentation.
-                        self.events.push(Event::Audio { cue: "AudioWeaponReflect", player: None, arg: 0 });
+                        self.audio_weapon_reflect(p)?;
                         let r = self.fx_mut(i);
                         r.set_u32(fx::FLAGS, flags & 0xffff_f3ff | 8);
                         let v = r.v3(fx::VELOCITY);
@@ -2581,7 +2581,7 @@ impl Game {
                         // and the CreateDirMatrix orientation (flag 0x20000) are
                         // presentation.
                         if self.fx(i).u32_(fx::WALL_SOUND) != 0 {
-                            self.events.push(Event::Audio { cue: "AudioWeaponReflect", player: None, arg: 0 });
+                            self.audio_weapon_reflect(h)?;
                         }
                         let n = crate::player_collision::hit_normal(&self.collision, &wh)?;
                         let v = self.fx(i).v3(fx::VELOCITY);

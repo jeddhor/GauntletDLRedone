@@ -75,7 +75,7 @@ impl Game {
         match m.load_done {
             0 => {
                 if !m.skip {
-                    self.audio("AudioEnterNextStage", None, 0);
+                    self.audio_enter_next_stage();
                 }
                 m.load_done = 1;
             }
@@ -114,7 +114,7 @@ impl Game {
                             break;
                         }
                         m.dashes[i] = true;
-                        self.audio("AudioMapDot", None, 0);
+                        self.audio_map_dot();
                     }
                     i += 1;
                 }

@@ -452,6 +452,7 @@ impl Game {
             spew_items: Vec::new(),
             stage_save: None,
             wave_timer: Default::default(),
+            bg_duck: Default::default(),
             secret_char: inp.elf.object("secret_char")?.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect(),
             boss1_items: {
                 let b = inp.elf.object("boss1_items")?;
@@ -498,6 +499,7 @@ impl Game {
                     bank: a.bank.clone(),
                     word_10: a.word_10,
                     enter_sound: a.enter_sound,
+                    word_14: a.word_14,
                     stream: a.stream.clone(),
                     areas: a.areas,
                     word_2a: a.word_2a,

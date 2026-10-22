@@ -243,7 +243,7 @@ impl Game {
             return 0;
         }
         if self.globals.cur_world != 0xd && self.players[p].u32_(0x134) & 0x11_0000 == 0 {
-            self.audio("AudioHeartBeat", Some(p), 0);
+            self.audio_heart_beat(p);
         }
         let v = if h < 100.0 {
             if h < 25.0 { 0x1e } else { 0x3c }
@@ -508,7 +508,7 @@ impl Game {
                         if 599 < self.players[k].i16_(0x928) {
                             let v = self.players[k].i16_(0x928) - 0x21c;
                             self.players[k].set_i16(0x928, v);
-                            self.audio("AudioWaitToExit", Some(k), 0);
+                            self.audio_wait_to_exit(k);
                         }
                     }
                     if self.globals.game_mode == 0x4010 {
@@ -550,9 +550,9 @@ impl Game {
                     if 0.0 < t && add(t, 2.0)? < self.globals.time {
                         let n = self.players[k].i32_(0x90c);
                         if 0x2d <= n {
-                            self.audio("AudioSuchBravery", Some(k), 0);
+                            self.audio_praise(false);
                         } else if 0x1e <= n {
-                            self.audio("AudioHeroicEffort", Some(k), 0);
+                            self.audio_praise(true);
                         }
                         self.players[k].set_f32(0x910, 0.0);
                         self.players[k].set_i32(0x90c, 0);

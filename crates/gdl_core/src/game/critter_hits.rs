@@ -1014,7 +1014,7 @@ impl Game {
                     }
                     _ => {}
                 }
-                self.audio("AudioLegendItem", None, 3);
+                self.audio_legend_item(3, Some(p));
                 if result < 2 {
                     result = 2;
                 }

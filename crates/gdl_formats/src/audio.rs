@@ -216,6 +216,12 @@ impl AudioRom {
         None
     }
 
+    /// AudioSoundLength: the name record's duration (seconds) of an ID.
+    pub fn length_of(&self, id: i32) -> Option<f32> {
+        let g = self.ids.iter().position(|&x| x == id)?;
+        self.sounds.get(g).map(|s| s.1)
+    }
+
     /// (bank, call) of an ID: bank = id >> 16, call = id & 0xfff.
     pub fn split(id: i32) -> (usize, usize) {
         ((id >> 16) as usize, (id & 0xfff) as usize)

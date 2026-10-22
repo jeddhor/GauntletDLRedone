@@ -1857,8 +1857,8 @@ impl Game {
         self.enemies[i].set_f32(0x214, left);
         let at = self.enemies[i].v3(0x40);
         if 0.0 <= left {
-            // do_death_sound: the 0x66 loop panned at Death (audio).
-            self.audio("do_death_sound", Some(p), 0);
+            // do_death_sound(Death +0x40): the 0x66 loop panned at Death.
+            self.do_death_sound(at);
             self.death_touch = true;
         } else {
             self.enemies[i].set_i32(0x334, 1);
@@ -2491,9 +2491,7 @@ impl Game {
                         if !still {
                             if self.enemies[k].i32_(e::TYPE) == 0x1d {
                                 let r = self.rng.rand_int(2).ok_or_else(|| super::Unsupported("RandInt(2)".into()))?;
-                                let cue = if r == 0 { "AudioSuchBravery" } else { "AudioHeroicEffort" };
-                                let killer = self.enemies[k].i16_(0x212);
-                                self.audio(cue, usize::try_from(killer).ok(), 0);
+                                self.audio_praise(r != 0);
                             }
                             self.kill_enemy(k)?;
                         }

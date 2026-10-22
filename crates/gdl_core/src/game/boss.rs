@@ -108,8 +108,10 @@ impl Game {
                     if 0 <= self.quest_weapon_sfx {
                         self.delete_effect(self.quest_weapon_sfx as usize, true);
                         self.quest_weapon_sfx = -1;
-                        self.audio("AudioLegendItem", None, 3);
-                        self.audio("AudioLegendItem", None, 4);
+                        // AudioLegendItem(3/4, BossCritInst +0x50).
+                        let at = usize::try_from(self.boss_crit_inst - 1).ok().and_then(|b| self.critters.get(b)).and_then(Option::as_ref).map(|c| c.rec.v3(0x50));
+                        self.audio_legend_item(3, at);
+                        self.audio_legend_item(4, at);
                     }
                     self.globals.quest_item_state = 6;
                 }
@@ -155,7 +157,7 @@ impl Game {
                 self.good_wiz_alpha = (self.good_wiz_alpha - 4).max(0);
                 if self.good_wiz_alpha == 0 {
                     self.globals.good_wizard = 5;
-                    self.events.push(Event::Audio { cue: "AudioGoodWizard", player: None, arg: bt });
+                    self.audio_good_wizard(bt, 0);
                     self.good_wiz_timer = add(time, SPEECH_SECONDS)?;
                 }
             }

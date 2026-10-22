@@ -42,6 +42,7 @@ pub mod wavetimer;
 pub mod tower;
 pub mod world_anim;
 pub mod sound;
+pub mod sound_cues;
 pub mod stage;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
@@ -214,7 +215,7 @@ pub enum Event {
     /// A sound request (AudioSFX/SFX2/SFX3/queue): ID = bank << 16 | call.
     Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, queue: bool },
     /// AudioLOOP(id, position, volume, priority): a looping sound.
-    LoopSound { id: i32, position: [f32; 3], volume: i32, priority: i32 },
+    LoopSound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32 },
     /// BossDeath's boss key effect (BossKeySfx) at a position.
     BossKey { position: [f32; 3] },
     /// AudioSuicideYellKill-style stop of every playing instance of an ID.
@@ -417,6 +418,8 @@ pub struct Game {
     /// secret_char 0x23f5a8: the secret character each treasure room's
     /// coins unlock (by level index).
     pub secret_char: Vec<i32>,
+    /// LowerBGMusic's duck (sound_cues.rs).
+    pub bg_duck: sound_cues::BgDuck,
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).

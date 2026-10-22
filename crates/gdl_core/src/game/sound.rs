@@ -9,6 +9,7 @@
 //! 0x15f1c8 per GetEnemyTypes slot (monster hurt/kill/bite), the level's
 //! WDATA SNDS world sounds (PlayWorldSound 0x15c4f0) and AUDS stage record.
 use super::enemies::e;
+use super::sound_cues::CueTables;
 use super::{Event, Game, R};
 use crate::numeric::{div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
 use gdl_formats::audio::AudioRom;
@@ -23,6 +24,8 @@ pub struct Stage {
     pub word_10: i16,
     /// Stage +0x12: world sound for AudioEffect 5 and AudioExplodeWall.
     pub enter_sound: i16,
+    /// Stage +0x14: AudioEnterNextStage's second line (−1: none).
+    pub word_14: i32,
     pub stream: String,
     pub areas: i16,
     pub word_2a: i16,
@@ -81,6 +84,8 @@ pub struct SoundTables {
     pname: [[[i32; 17]; 4]; 2],
     /// WDATA SNDS: (id, volume, priority).
     pub world: Vec<(i32, i16, i16)>,
+    /// The sound_cues.rs tables (EE addresses in its doc).
+    pub cues: CueTables,
     pub stage: Option<Stage>,
 }
 
@@ -123,6 +128,23 @@ impl SoundTables {
             gen_die: t(0x23_db70, 56)?,
             gen_hit: t(0x23_dba8, 56)?,
             pantab: t(0x23_ccc0, 20)?,
+            cues: CueTables {
+                turbo_a: t(0x23_d0e0, 128)?,
+                turbo_b: t(0x23_d160, 32)?,
+                turbo_c: t(0x23_d180, 32)?,
+                walk: t(0x23_d3f8, 40)?,
+                click2: t(0x23_d428, 8)?,
+                map_dot: t(0x23_ce30, 56)?,
+                tally: t(0x23_ce68, 56)?,
+                runes: t(0x23_cea0, 44)?,
+                transport: t(0x23_dac8, 56)?,
+                world_explosion: t(0x23_db00, 56)?,
+                world_hit: t(0x23_db38, 56)?,
+                lvl_snd: t(0x23_d7c8, 576)?,
+                gwiz: t(0x23_dbe0, 352)?,
+                legend: [t(0x23_da08, 48)?, t(0x23_da38, 48)?, t(0x23_da68, 48)?, t(0x23_da98, 48)?],
+                ricochet_time: 0.0,
+            },
             enemy_idx: vec![-1; 0x2d],
             mon: [[-1; 8]; 12],
             pname: [[[-1; 17]; 4]; 2],
@@ -249,6 +271,21 @@ impl Game {
             self.events.push(Event::Sound { id, position: Some(pos), volume: v, priority, queue: false });
         }
         Ok(())
+    }
+
+    /// AudioLOOP(id, position, volume, priority) once (AudioSoundExists).
+    pub(crate) fn loop_sound(&mut self, id: i32, pos: Option<V3>, volume: i32, priority: i32) {
+        if self.sound_on() && 0 <= id && self.sounds.loops.insert(id) {
+            self.events.push(Event::LoopSound { id, position: pos, volume, priority });
+        }
+    }
+
+    /// AudioSoundKill(id).
+    pub(crate) fn kill_sound(&mut self, id: i32) {
+        if 0 <= id {
+            self.sounds.loops.remove(&id);
+            self.events.push(Event::StopSound { id });
+        }
     }
 
     /// AudioQueAdd4 / AudioVQueAdd4: queued (serialised) voice line.
@@ -509,7 +546,7 @@ impl Game {
         let mode = if self.globals.start_of_stage != 0 || self.globals.end_of_stage != 0 { 0 } else { mode };
         if mode == 0 {
             if self.sound_on() && 0 <= lp && self.sounds.loops.insert(lp) {
-                self.events.push(Event::LoopSound { id: lp, position: pos, volume: 0xe0, priority: 0x72 });
+                self.events.push(Event::LoopSound { id: lp, position: Some(pos), volume: 0xe0, priority: 0x72 });
             }
             return Ok(());
         }

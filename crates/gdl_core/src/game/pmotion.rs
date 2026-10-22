@@ -255,7 +255,8 @@ impl Game {
                         self.players[kk].set_u16(0x92c, 1);
                         self.players[p].set_u16(0x92c, 0);
                         self.help(0x32, self.players[kk].u32_(0) as usize);
-                        self.audio("AudioItSwap", Some(kk), 0);
+                        let at = self.players[kk].v3(0x60);
+                        self.audio_it_swap(at);
                         it_swap = true;
                     }
                 }
@@ -602,10 +603,11 @@ impl Game {
                             self.damage_enemy(1.0, en, me as i32, 0, None, None, 1)?;
                             want = a;
                             if self.players[p].i16_(0x936) == 0 {
-                                self.audio("AudioPlayerHalo", Some(p), 0);
+                                self.audio_player_sfx(p, 0x52, 0x3c);
                                 self.players[p].set_i16(0x936, 1);
                             }
-                            self.audio("AudioDeathHurt", None, en as i32);
+                            let at = self.enemies[en].v3(0x60);
+                            self.audio_death_hurt(at);
                             self.players[p].or_u32(0x13c, 1);
                             if self.enemies[en].i16_(0x21a) == 2 {
                                 self.players[p].or_u32(0x13c, 3);
@@ -811,8 +813,18 @@ impl Game {
                 // +0x138 & 1) are presentation.
                 if self.players[p].u16_(0x93a) & 3 != 0 {
                     if r138 & 1 == 0 {
+                        // AudioWalk(player, side, surface): 4 in water, 3
+                        // with the 0x10000 shield, else (+0x898 >> 2) & 2.
                         let side = self.players[p].u16_(0x93a) >> 1 & 1;
-                        self.audio("AudioWalk", Some(p), side as i32);
+                        let r = &self.players[p];
+                        let surface = if r.f32_(0x8a4) > r.f32_(0x88c) {
+                            4
+                        } else if r.u32_(0x134) & 0x1_0000 != 0 {
+                            3
+                        } else {
+                            (r.u32_(0x898) >> 2 & 2) as i32
+                        };
+                        self.audio_walk(p, i32::from(side), surface)?;
                     }
                     self.players[p].and_u16(0x93a, 0xfffc);
                 }
@@ -1093,7 +1105,6 @@ impl Game {
         if self.players[p].i32_(0x80c) == 0 || bt < 0 {
             return Ok(());
         }
-        let me = self.players[p].u32_(0) as usize;
         if self.quest_weapon_sfx < 0 && self.players[p].i32_(0x80c) < 4 {
             // The quest weapon glow (header 0x5c, 999999 s) parented to the
             // player's +0x6a8 hand node (0x21 < BossType < 0x28) or tree at
@@ -1116,11 +1127,13 @@ impl Game {
             }
             self.players[p].set_i32(0x80c, 3);
             self.players[p].set_i16(0x1d2, 0x3c);
-            self.audio("AudioLegendItem", Some(me), 0);
+            let at = self.players[p].v3(0x60);
+            self.audio_legend_item(0, Some(at));
         }
         if self.players[p].i32_(0x80c) == 3 && self.players[p].i16_(0x1d2) < 1 {
             self.players[p].set_i32(0x80c, 4);
-            self.audio("AudioLegendItem", Some(me), 1);
+            let at = self.players[p].v3(0x60);
+            self.audio_legend_item(1, Some(at));
         }
         if 3 < self.players[p].i32_(0x80c) && self.players[p].u32_(0x8d8) & 0xffff_fffe == 0 {
             let cur = self.players[p].u32_(0x1e0);
@@ -1153,7 +1166,8 @@ impl Game {
             }
         self.players[p].set_i32(0x80c, 0);
         self.players[p].set_u32(0x8d8, 0);
-        self.audio("AudioLegendItem", Some(me as usize), 2);
+        let at = self.players[p].v3(0x60);
+        self.audio_legend_item(2, Some(at));
         let Ok(b) = usize::try_from(self.boss_crit_inst - 1) else {
             return super::unsupported("legend item finale without BossCritInst");
         };
@@ -1320,7 +1334,7 @@ impl Game {
             self.players[p].and_u32(0x8d8, 0xfdff_ffff);
             self.player_use_powerup(1.0, p, 5, 0x1000_0000)?;
             self.shake_camera(f32::from_bits(0x3e99_999a), 0, 0, 0x1e, 200);
-            self.audio("AudioThunderHammer", Some(p), 0);
+            self.audio_player_sfx(p, 0x50, 0x28);
         }
         if self.players[p].u32_(0x8d8) & 0x100_0000 != 0 {
             // Breath weapons (+0x138): horn/mask 0x38, fire 0x34, electric
@@ -1340,14 +1354,19 @@ impl Game {
                 let k = self.start_fx_sub(0.0, header, None, 0x2a)?;
                 if 0 <= k {
                     self.sfx_set_damage(k as usize, damage, 20.0, 0.0, flags, me + 1);
-                    let cue = if r138 & 0x3000 == 0 { "AudioPlayerBreath" } else if r138 & 0x1000 != 0 { "AudioHorn" } else { "AudioMask" };
-                    self.audio(cue, Some(p), 0);
+                    if r138 & 0x3000 == 0 {
+                        self.audio_player_breath(p);
+                    } else if r138 & 0x1000 != 0 {
+                        self.audio_player_sfx(p, 0x5a, 0x28);
+                    } else {
+                        self.audio_player_sfx(p, 0x5b, 0x28);
+                    }
                     if r138 & 0x400 != 0 && self.players[p].u32_(0x768) != 0 {
                         // The turbo dragon's own head node (powerup model).
                         let t = sub(self.players[p].f32_(0x800), self.players[p].f32_(0x8e8))?;
                         self.players[p].set_f32(0x800, t);
                         self.players[p].set_f32(0x8e8, 0.0);
-                        self.audio("AudioPlayerTurbo", Some(p), 0);
+                        self.audio_player_turbo(p, 0, 0);
                     }
                     // SfxSetParent(+0x6ac head node). HYPOTHESIS: the head sits
                     // at the attention offset +0x810.
@@ -1471,10 +1490,10 @@ impl Game {
             } else {
                 "AudioThrowWeapon"
             };
-            if cue == "AudioThrowWeapon" {
-                self.audio_throw_weapon(p)?;
-            } else {
-                self.audio(cue, Some(p), 0);
+            match cue {
+                "AudioThrowWeapon" => self.audio_throw_weapon(p)?,
+                "AudioGauntletL" => self.audio_player_sfx(p, 0x5c, 0x28),
+                _ => self.audio_player_sfx(p, 0x5d, 0x28),
             }
             let v = (self.players[p].u32_(0x8d8) & 0xffff_00ff) | 0x1000_0000;
             self.players[p].set_u32(0x8d8, v);
@@ -1490,7 +1509,7 @@ impl Game {
                     if self.players[p].u16_(0x92e) & 2 == 0 {
                         0
                     } else {
-                        self.audio("AudioTurboDefense", Some(p), 0);
+                        self.audio_turbo_defense(p);
                         1
                     }
                 } else if self.controls.control[p].u32_(4) & 0x10000 != 0 {

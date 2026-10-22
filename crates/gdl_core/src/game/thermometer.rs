@@ -75,7 +75,7 @@ impl Game {
         let r = h.round() as i32;
         t.column = (0x66 - r, r + 0x1b, (101.0 - h) * 0.007_812_5);
         if let Some(c) = cue {
-            self.audio(c, None, 0);
+            self.audio_rune_hint(c == "AudioRuneIsNear");
         }
     }
 

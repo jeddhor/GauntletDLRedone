@@ -447,3 +447,18 @@ values. Native: menu::Page::Screen; gdl_play shifts the final
 DisplayToLinear pass by dx/4 of 640 columns and 2·dy of 448 rows
 (HYPOTHESIS: MAGH 3 VCK units and frame-mode raster lines) and applies
 the saved values at boot; keyboard C is Center (NATIVE).
+
+## Audio cues (2026-10-21)
+
+The Audio* functions that were emitted as named placeholders (silent in
+gdl_play) are transcribed in gdl_core::game::sound_cues (addresses and
+tables in its module doc): cursor/buzzer/click, Tower FX, tally loops,
+rune pickup (with LowerBGMusic) and rune counts, the stage-entry lines,
+map dots, Death's hurt and loop, heartbeat, wait-to-exit, praise, It swap,
+halo/horn/mask/gauntlets/thunder hammer/breath, turbo defence and turbo,
+footsteps by surface (water 4, shield 3, floor flags), weapon ricochets
+(once a second), level-up and help lines (AudioExp by character × 9,
+AudioHelp/AudioHasItem), legend-item sounds by world (jump table 0x2a90c0:
+snd1–4.517–520), transport / world explosion / world hit by world, the good
+wizard's lines (gwiz_sidx), the thermometer's rune hints. Music (map,
+shop, boss areas) is the background-music work that follows.

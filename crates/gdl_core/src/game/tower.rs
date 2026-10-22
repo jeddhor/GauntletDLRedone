@@ -688,7 +688,8 @@ impl Game {
                     let font = h.text.as_ref().and_then(|r| r.entries.get(0x18)).and_then(|e| r_font(h, r_fonts(h), e.font)).unwrap_or(0);
                     let done = self.hud.caption(f32::from_bits(0x3f2a_c083), &text, font, (frame >> 1) - self.tower.caption.1, 0x138);
                     if self.tower.plyr_sidx < 0 {
-                        self.audio("AudioExp", Some(p), lv);
+                        let ch = self.players[p].i32_(0xc);
+                        self.audio_exp(p, ch, lv);
                         self.tower.plyr_sidx = 1;
                     }
                     if self.tower.plyr_fxidx < 0 && 0xef < frame {
@@ -844,19 +845,6 @@ impl Game {
             _ => -1,
         };
         self.queue(id, 0xe0, 2);
-    }
-
-    /// AudioTowerFX 0x161408: AudioSFX(id, 0, 0xff, 10).
-    fn audio_tower_fx(&mut self, n: i32) {
-        let id = match n {
-            1 => 0xe00a3,
-            2 => 0x16,
-            10 => 0xe00aa,
-            0xe => 0xe00ab,
-            0x15 => 0xe00a9,
-            _ => -1,
-        };
-        self.sfx(id, None, 0xff, 10);
     }
 
     /// SumnerGhostStart 0x174998: the WIZARD tree of item_anim (AtreeInit

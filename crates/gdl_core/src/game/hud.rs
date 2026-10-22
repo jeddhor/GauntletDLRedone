@@ -1846,9 +1846,15 @@ impl Game {
         };
         if h[6] != 0 {
             if id == 0x65 && 9 < self.hud.help.lv {
-                self.audio("AudioExp", player, self.hud.help.lv.min(99));
+                if let Some(p) = player {
+                    let ch = self.players[p].i32_(0xc);
+                    self.audio_exp(p, ch, self.hud.help.lv.min(99));
+                }
+            } else if let Some(p) = player {
+                self.audio_help(p, h[6]);
             } else {
-                self.audio("AudioHelp", player, h[6]);
+                // AudioHelp(−1, …): the line without a player (queued).
+                self.queue(h[6], 0xe0, 2);
             }
         }
         if self.globals.aux_levels & 0x10 == 0 {

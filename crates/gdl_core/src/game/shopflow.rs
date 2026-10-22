@@ -157,7 +157,7 @@ impl Game {
                         if self.show_piles(flow, k) {
                             tally = true;
                         } else if start {
-                            self.audio("AudioCursorSelect", Some(k), 0);
+                            self.audio_cursor_select();
                             flow.players[k].piles_hidden = true;
                             self.players[k].set_i32(0x980, 4);
                             self.players[k].set_i32(0x988, 0);
@@ -198,7 +198,7 @@ impl Game {
                         } else {
                             flow.players[k].inv_timer = 0;
                             flow.players[k].inv_closing = false;
-                            self.audio("AudioTowerFX", None, 2);
+                            self.audio_tower_fx(2);
                             self.players[k].set_i32(0x980, 10);
                         }
                     }
@@ -206,7 +206,7 @@ impl Game {
                         if self.draw_inventory_panel(flow, k) && step == 11 {
                             self.players[k].set_i32(0x980, 12);
                         } else if step == 10 && start {
-                            self.audio("AudioCursorSelect", Some(k), 0);
+                            self.audio_cursor_select();
                             flow.players[k].inv_closing = true;
                             self.players[k].set_i32(0x980, 11);
                         }
@@ -226,7 +226,9 @@ impl Game {
                 }
             }
             // DoAudioTallySFX: the world's tally loop while a pile grows.
-            self.audio("DoAudioTallySFX", None, i32::from(tally));
+            // PrevGameWorld: the realm level just left (still loaded here).
+            let pw = self.globals.cur_world;
+            self.do_audio_tally_sfx(tally, pw);
         }
         if !done {
             return Ok(0);
@@ -380,7 +382,7 @@ impl Game {
         let valid = |k: usize| items.get(k).is_some_and(|it| it.price <= gold) && !skip.get(k).copied().unwrap_or(false);
         let mut cur = self.players[p].i32_(0x984).max(0) as usize;
         if down || up {
-            self.audio("AudioClick2", Some(p), i32::from(up));
+            self.audio_click2(p, i32::from(up));
             let afford = flow.players[p].afford.max(1) as usize;
             for _ in 0..=items.len() {
                 if down {
@@ -407,7 +409,7 @@ impl Game {
                 Purchase::Leave => leave = true,
                 Purchase::Bought => {
                     flow.players[p].bought += 1;
-                    self.audio("AudioPickup", Some(p), 0);
+                    self.audio_pickup(p);
                     let gold = self.players[p].i32_(0x1a20);
                     // The cursor steps back to an affordable, unskipped entry.
                     let skip = self.shop_skiplist(p, items)?;
@@ -416,7 +418,7 @@ impl Game {
                     }
                     self.players[p].set_i32(0x984, cur as i32);
                 }
-                Purchase::Refused => self.audio("AudioBuzzer", None, 0),
+                Purchase::Refused => self.audio_buzzer(),
             }
         } else if edges & 0x800_0000 != 0 && cur != 0 {
             cur = 0;
@@ -450,7 +452,7 @@ impl Game {
         let shown = (timer & 0xffff) as u16;
         if timer == 0 {
             if !after {
-                self.audio("AudioGainedLevel", Some(p), 1);
+                self.audio_gained_level(p, 1);
             }
             self.players[p].set_u32(0x988, 1);
         }
@@ -553,7 +555,7 @@ impl Game {
         let mut dismissed = false;
         if ready {
             if self.controls.control[p].u32_(8) & 0x200_0000 != 0 {
-                self.audio("AudioCursorSelect", Some(p), 0);
+                self.audio_cursor_select();
                 self.players[p].set_u32(0x988, 0);
                 dismissed = true;
             } else {
@@ -647,7 +649,7 @@ impl Game {
         let mut dismissed = false;
         if 0x149 < shown {
             if self.controls.control[p].u32_(8) & 0x200_0000 != 0 {
-                self.audio("AudioCursorSelect", Some(p), 0);
+                self.audio_cursor_select();
                 self.players[p].set_u32(0x988, 0);
                 dismissed = true;
             } else {

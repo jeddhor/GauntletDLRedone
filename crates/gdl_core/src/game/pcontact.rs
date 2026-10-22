@@ -492,7 +492,8 @@ impl Game {
             0x30000 | 0x40000 | 0x50000 => {
                 self.players[p].set_f32(0x8c4, later);
                 self.damage_player(15.0, p, 1, 0x20, Some(d))?;
-                self.audio("AudioWorldHitPlyr", Some(p), 0);
+                let at = self.players[p].v3(0x70);
+                self.audio_world_cue(2, at)?;
             }
             0x20000 => {
                 self.damage_player(10.0, p, 1, 0x10, Some(d))?;
@@ -608,7 +609,7 @@ impl Game {
             if c.solid.is_none() {
                 return Ok(1);
             }
-            self.audio("AudioTransport", Some(p), 0);
+            self.audio_world_cue(0, dest)?;
             self.players[p].set_i32(0x918, 0x3c);
             return Ok(1);
         }
