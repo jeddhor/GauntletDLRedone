@@ -88,8 +88,10 @@ CritterDoTransition/DoActions/Translate/Rotate/LookAtPlayer and floor snap.
 
 - Skeleton: crate::tree_pose evaluates DoAnimation locals at the clock's
   sequence/frame and composes them with GetWorldMat's parent order onto the
-  instance matrix. Sequence blending, node scale, NodeLookAtPos head turns
-  and ADDA attachments (presentation) are not applied. Key gaps of 256+
+  instance matrix. Node scale, NodeLookAtPos head turns and ADDA
+  attachments (presentation) are not applied; sequence blending does not
+  occur (CritterAnimate's AnimateATree clears f12, the blend duration, at
+  0x112a30 — 2026-10-22). Key gaps of 256+
   frames use a direct float reciprocal (sample_channels_long_gaps,
   HYPOTHESIS).
 - Effects parented to a node are spawned at its world position and do not

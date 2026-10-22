@@ -1291,7 +1291,9 @@ impl Game {
         Ok(out.return_flags)
     }
 
-    /// Native pose of the critter tree at its clock (blending not modelled).
+    /// Native pose of the critter tree at its clock. CritterAnimate's
+    /// AnimateATree passes blend 0 (clear f12 at 0x112a30), so critter
+    /// clocks never blend.
     fn critter_update_pose(&mut self, i: usize) -> R<()> {
         let t = self.crit(i).ty;
         let Some(tree) = self.critter_data.files[t.0].trees[t.1] else { return Ok(()) };

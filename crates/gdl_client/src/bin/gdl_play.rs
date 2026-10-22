@@ -4160,8 +4160,8 @@ fn present_player(
             t.push_str(&format!(
                 "\n\nINTERIM BUILD (the M12 slice is not accepted). player updates {}\n\
                  Native, compared with reference traces: players, enemies, items, effects, world animation, camera\n\
-                 Approximate: session globals start from the capture, audio mixing, critter poses without sequence blending,\n\
-                 the GS's per-draw truncation in lighting   F9: debug skip to next level{}",
+                 Approximate: session globals start from the capture, audio mixing, the GS's per-draw truncation in lighting\n\
+                 F9: debug skip to next level{}",
                 sim.updates,
                 g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),
             ));

@@ -58,8 +58,9 @@ ALSA (research/audio.md); mixing is approximate. `--virtual` runs are silent.
 Bosses (research/critters.md): the native critter engine (boss AI, grab and
 fire cones, the chimera's heads, BOSSGEN, death, coin spew, the good wizard;
 statue golems, gargoyles and generals) with PlayerCollideCritters; critters
-are drawn from their skeletons without sequence blending (not modelled). The
-HUD shows the boss meters.
+are drawn from their skeletons (AnimateATree passes blend 0, so critter
+sequences never blend in the original either). The HUD shows the boss
+meters.
 
 Current state (2026-10-22): the simulation (do_players, do_enemies,
 ProcessItems, ProcessEffects, world animation, the StdCam) is compared update
@@ -69,8 +70,8 @@ the Tower traces except sound items' audio handles (gameplay.md). The
 paragraphs below up to the smoke tests describe the 2026-10-16..18 interim
 build and are kept as history; the materials, item poses, enemy frames,
 missiles and effects they call presentation-only have since been ported
-(rendering.md). Still approximate: audio mixing (SPU curves), critter
-sequence blending, the GS's per-draw integer truncation in lighting
+(rendering.md). Still approximate: audio mixing (SPU curves), the GS's
+per-draw integer truncation in lighting
 (rendering.md "Tower lighting comparison"). Smoke test 2026-10-22 (Xvfb):
 attract → title → Load → the Tower, the welcome scroll pages, crystals
 collected with their pickup effects and the crystal counter.
