@@ -1087,7 +1087,9 @@ impl Game {
             self.crit_mut(i).rec.set_f32(at, v);
             self.crit_mut(i).rec.set_f32(at + 4, time);
             if fl & 0x80_0000 != 0 {
-                return unsupported("do_heal_players from a critter hit");
+                // do_heal_players(effective damage, player, critter matrix).
+                let at = self.crit(i).rec.v3(0x40);
+                self.do_heal_players(eff, p, at)?;
             }
             let lv = self.level_f32(0x9c);
             if kind_c != 4 && 0.0 < lv {

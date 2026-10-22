@@ -166,3 +166,25 @@ MulMat4 with InvertMat4's rigid inverse.
   calls AddExp(player, 1, −2).
 - Checked: the 51-level pad sweep (sw21 for B1 after the morph port; B1's
   poison cloud now persists and the scripted player ends with less health).
+
+## Healing magic (damage flag 0x800000, 2026-10-21)
+
+start_magic sets damage flag 0x800000 for casters past level 0x18. With it:
+- damage_enemy / CritterDamage call do_heal_players 0x132620(damage
+  (an enemy's clamped to its health), player, target matrix): past level
+  0x4a the caster heals damage × ((level − 0x4b) × 0.016 + 0.1), other
+  players in state 1 within the caster's +0x120 (x/z fqdist, from the
+  instructions — Ghidra drops the arguments) half that; NewHelp 0x93,
+  StartHealFx(0x32).
+- ProcessEffects calls HealItem 0x15b010 on each item the blast reaches
+  (before DamageItem): by the caster's +8 & 3 and level it turns gold piles
+  and gold chests to silver (25) or gold (50) (CHESTG1/CHESTG3,
+  TREAS_SILVER/TREAS_GOLD), spoiled food to APPLE (25) or CHICKEN (50),
+  revives kind-8 items (bits 1: +0xda 600; at 50 the "<name>_D" tree or
+  deletion) and kind-10 items (bits 3: +0xf4 = 4; at 50 DamageItem(10000));
+  heal FX 0x2f/0x30/0x31 and help 0x8b–0x92.
+- ReplaceItemAtree now keeps an item-slot → tree map (Game::item_trees)
+  that gdl_play draws (it also shows the existing BADMEAT/GAPPLE/TREAS_JUNK
+  swaps, which were previously dropped events).
+- Checked headlessly: G1 game runs with --plevel 30/80 and magic, turbo +
+  magic and attack + magic: no unsupported path; NewHelp 0x93 at level 80.

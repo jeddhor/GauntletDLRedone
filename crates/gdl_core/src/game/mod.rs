@@ -12,6 +12,7 @@ pub mod critters;
 pub mod doplayers;
 pub mod damage;
 pub mod effects;
+pub mod heal;
 pub mod healthmeter;
 pub mod hud;
 pub mod optmenu;
@@ -182,8 +183,6 @@ pub struct Globals {
 /// Presentation side effects requested by the simulation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Event {
-    /// ReplaceItemAtree(item, powerup_anim, tree): the item's model changes.
-    ItemTree { slot: usize, tree: &'static str },
     /// NewHelp(id, player): help/hint text; player usize::MAX = −1 (all).
     Help { id: i32, player: usize },
     /// Sumner's hint animation starts / the HintMenu opens (tower UI).
@@ -276,6 +275,8 @@ pub struct Game {
     pub speech_tables: std::collections::HashMap<&'static str, Vec<i32>>,
     /// MBTreeGetAlpha of item trees the simulation reads (Tower crystals).
     pub item_alpha: std::collections::HashMap<usize, i32>,
+    /// ReplaceItemAtree: item slots drawing another tree (presentation).
+    pub item_trees: std::collections::HashMap<usize, String>,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
     pub old_enemy_shrink: f32,

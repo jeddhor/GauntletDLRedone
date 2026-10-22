@@ -101,6 +101,7 @@ impl Game {
             }
         }
         self.items.records[slot].set_i16(0xd8, -1);
+        self.item_trees.remove(&slot);
         if slot < self.items.first_empty {
             self.items.first_empty = slot;
         }

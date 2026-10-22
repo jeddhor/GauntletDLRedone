@@ -1065,8 +1065,17 @@ impl Game {
         self.enemies[i].set_i16(0x2ea, 0);
         let mut d = damage;
         let mut f = flags;
-        if f & 0x80_0000 != 0 && pl.is_some() {
-            return unsupported("vampiric heal (do_heal_players)");
+        if f & 0x80_0000 != 0
+            && let Some(p) = pl
+        {
+            // The draining hit heals (at most the enemy's health):
+            // do_heal_players(damage, player, enemy matrix).
+            let h = self.enemies[i].f32_(e::HEALTH);
+            if h < d {
+                d = h;
+            }
+            let at = self.enemies[i].v3(0x40);
+            self.do_heal_players(d, p, at)?;
         }
         if let Some(p) = pl {
             let target = self.level_f32(0x9c);

@@ -378,6 +378,7 @@ impl Game {
     pub fn add_item_sub(&mut self, def: usize, at: Option<([[f32; 3]; 3], [f32; 3])>) -> R<usize> {
         let max = self.items.records.len() + 500;
         let slot = self.items.new_item_ptr(max.max(self.items.max_items))?;
+        self.item_trees.remove(&slot);
         match at {
             Some((m, t)) => {
                 self.items.set_item(slot, None, def, m, t)?;

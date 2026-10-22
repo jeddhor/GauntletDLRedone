@@ -1218,7 +1218,7 @@ impl Game {
                             // StartFXMat 0x20 / 0x21; treasure becomes junk.
                             self.start_fx_no_loop(0x20, item_pos)?;
                             self.start_fx_no_loop(0x21, item_pos)?;
-                            self.events.push(Event::ItemTree { slot, tree: "TREAS_JUNK" });
+                            self.replace_item_atree(slot, "TREAS_JUNK");
                             self.items.records[slot].set_i32(0xf4, 10);
                         }
                     }
@@ -1236,7 +1236,7 @@ impl Game {
                         if st == 3 && result == -2 {
                             // Shot food spoils: BADMEAT (meat, +0xe4 == 2) or GAPPLE.
                             let (tree, value) = if self.items.records[slot].i16_(0xe4) == 2 { ("BADMEAT", -100) } else { ("GAPPLE", -0x32) };
-                            self.events.push(Event::ItemTree { slot, tree });
+                            self.replace_item_atree(slot, tree);
                             self.items.records[slot].set_i32(0xf4, value);
                             self.help(0x88, usize::MAX);
                         }
@@ -2510,7 +2510,7 @@ impl Game {
                             continue;
                         }
                         if self.fx(i).u32_(fx::DAMAGE_FLAGS) & 0x80_0000 != 0 && 0 < owner {
-                            return unsupported("HealItem (vampiric area effect)");
+                            self.heal_item(it, owner - 1)?;
                         }
                         if skip == 0 {
                             let h = self.fx(i).i16_(fx::HITS) + 1;

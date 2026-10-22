@@ -2738,7 +2738,9 @@ fn present_world(
                     let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&key)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None, None)]);
                     (Some(key), parts, tf)
                 } else {
-                    let name = String::from_utf8_lossy(d.name()).into_owned();
+                    // ReplaceItemAtree (Game::item_trees) overrides the
+                    // definition's tree.
+                    let name = g.item_trees.get(&slot.index).cloned().unwrap_or_else(|| String::from_utf8_lossy(d.name()).into_owned());
                     let key = format!("{name}#{}", r.u16_(0xd8) & 1);
                     if slot.key.as_deref() == Some(key.as_str()) {
                         (Some(key), None, tf)

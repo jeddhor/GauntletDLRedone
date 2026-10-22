@@ -335,6 +335,7 @@ impl Game {
                 }
             },
             item_alpha: std::collections::HashMap::new(),
+            item_trees: std::collections::HashMap::new(),
             speech_tables: ["crystal_sidx", "garg_sidx", "shard_sidx"]
                 .into_iter()
                 .map(|n| (n, inp.elf.object(n).map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default()))
