@@ -6,6 +6,7 @@
 // The two passes are folded into one fragment: framebuffer colour values are
 // computed in GS (display) space and converted for the sRGB target.
 #import bevy_pbr::forward_io::VertexOutput
+#import bevy_pbr::mesh_view_bindings::view
 
 struct GsParams {
     // Constant colour in GS units (rgb 1.0 = 255, alpha 1.0 = 0x80).
@@ -21,7 +22,7 @@ struct GsParams {
     plight_pos: array<vec4<f32>, 8>,
     plight_col: array<vec4<f32>, 8>,
     // x: keep-A overlay bound (MBTreeSetAltTex −4), y: chrome (−3), z:
-    // uv_xform applies.
+    // uv_xform applies, w: the GS frame's 16-bit writes are modelled.
     extra: vec4<f32>,
     // MBTreeSetUVScaleAdd: U scale, U add, V scale, V add.
     uv_xform: vec4<f32>,
@@ -61,6 +62,18 @@ fn point_lights(n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
         }
     }
     return pl;
+}
+
+// One write to the PSMCT16S frame with DTHE (rendering.md "GS output
+// stage"): clamp(c + DM[y & 3][x & 3], 0, 255) >> 3, read back as v << 3,
+// at the fragment's PS2 pixel (the viewport is the 640×384 3-D area).
+fn gs_write(c: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
+    var dm = array<f32, 16>(-4.0, 2.0, -3.0, 3.0, 0.0, -2.0, 1.0, -1.0, -3.0, 3.0, -4.0, 2.0, 1.0, -1.0, 0.0, -2.0);
+    let uv = (frag - view.viewport.xy) / view.viewport.zw;
+    let p = vec2<u32>(clamp(floor(uv * vec2(640.0, 384.0)), vec2(0.0), vec2(639.0, 383.0)));
+    let d = dm[(p.y & 3u) * 4u + (p.x & 3u)];
+    let v = clamp(floor(min(c, vec3(1.0)) * 255.0 + 0.001) + d, vec3(0.0), vec3(255.0));
+    return floor(v / 8.0) * 8.0 / 255.0;
 }
 
 @fragment
@@ -119,6 +132,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef VERTEX_UVS_B
     let l = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r * (255.0 / 128.0);
     if params.options.y > 0.5 {
+        // The base pass's own frame write truncates before the lightmap
+        // pass reads it back (opaque texels; translucent ones blend first).
+        if params.extra.w > 0.5 && alpha >= 0.999 {
+            rgb = gs_write(rgb, in.position.xy);
+        }
         rgb = rgb * l;
     }
 #endif

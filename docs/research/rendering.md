@@ -406,9 +406,14 @@ base draws set FBA_1 = 1 (textures 185, 404, 502, 123, 415 in the Tower
 dump), so the lightmap pass's DATE/DATM test passes wherever the base wrote;
 draws with FBA 0 (characters, effects) keep the texel alpha's bit 7, which
 the keep-A pass tests. gdl_play quantises the final frame once per PS2 pixel
-in DisplayToLinear (GDL_NO_DITHER=1 disables); the per-draw truncations
-(base then lightmap, stacked additive glows) are not modelled, which leaves
-dark lightmapped surfaces about 3 per channel brighter than the reference.
+in DisplayToLinear and, for opaque lightmapped texels, the base pass's own
+write before the lightmap multiply (gs.wgsl gs_write at the fragment's PS2
+pixel from the view viewport; GDL_NO_DITHER=1 disables both). Blended draws
+and stacked additive glows truncate per draw on the GS and are not modelled
+(fixed-function blending). Tower at the reference camera: the dark floor
+blocks went from ~30 to ~25 summed RGB against the reference's ~24
+(private/reports/render-tower-native-v3-basewrite.png); overall mean
+36.2/26.1/11.8 against 33.5/24.5/10.3.
 
 ## VU1 microcode (2026-10-22, Tower state)
 

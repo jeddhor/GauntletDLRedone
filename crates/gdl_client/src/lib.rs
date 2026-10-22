@@ -243,7 +243,8 @@ pub struct GsParams {
     pub plight_pos: [Vec4; 8],
     pub plight_col: [Vec4; 8],
     /// x: the keep-A overlay bound, y: chrome (MBTreeSetAltTex −3), z:
-    /// `uv_xform` applies.
+    /// `uv_xform` applies, w: the 16-bit frame writes are modelled (the
+    /// base write before the lightmap pass; GDL_NO_DITHER clears it).
     pub extra: Vec4,
     /// MBTreeSetUVScaleAdd (MB_tex_shift_node, node flag 0x10000000): U
     /// scale, U add, V scale, V add.
@@ -431,6 +432,11 @@ fn record_sampler(flags: u16) -> ImageSampler {
     ImageSampler::Descriptor(sampler)
 }
 
+/// 1 unless GDL_NO_DITHER is set: GsParams.extra.w.
+fn frame_writes() -> f32 {
+    if std::env::var_os("GDL_NO_DITHER").is_some() { 0.0 } else { 1.0 }
+}
+
 fn raw_image(width: u16, height: u16, data: Vec<u8>, format: TextureFormat, sampler: ImageSampler) -> Image {
     let mut image = Image::new(
         Extent3d { width: width as u32, height: height as u32, depth_or_array_layers: 1 },
@@ -536,7 +542,7 @@ pub fn materials_for(
         base.insert(
             bitmap.index as u16,
             materials.add(GsMaterial {
-                params: GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0), ..default() },
+                params: GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0), extra: Vec4::new(0.0, 0.0, 0.0, frame_writes()), ..default() },
                 lit: false,
                 base: Some(image),
                 lightmap: None,
