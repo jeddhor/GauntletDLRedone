@@ -71,7 +71,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    AtreeMatchAnyHeader does (realm package, POWERUPS, level package), so
    keys, gems, food, treasure and scrolls animate; the client's interim
    "YOU DIED" banner removed (the original's all-dead end and GAME OVER
-   are ported).
+   are ported). Items ride moving floors (PlaceItem parent). Enemy node
+   round trip (GetObjWorldMat/UpdateObjWorldMat), spawn AnimInfo/matrix and
+   check_enemy_pos probe fixes: enemies 270/270 (combat) and 267/270
+   (fight) with ProcessItems in the replay.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

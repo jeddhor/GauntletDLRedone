@@ -2813,7 +2813,7 @@ impl Game {
             match self.enemies[k].i32_(e::STATE) {
                 1 | 7 => {
                     if self.enemies[k].i32_(e::TYPE) != self.globals.boss_type {
-                        self.enemy_update_offsets(k)?;
+                        self.enemy_get_obj_world_mat(k)?;
                         if self.stop_time != 0 {
                             // StopTime: the animation start (+0xa4) moves with
                             // time, freezing the pose; knockback and collision run.
@@ -2835,21 +2835,26 @@ impl Game {
                             self.find_closest_player(k)?;
                             self.enemy_attack_control(k)?;
                             self.enemy_knockback_control(k)?;
-                            if !self.enemy_ai_control(k)? {
-                                let a = self.do_enemy_action(k)?;
-                                self.enemies[k].set_u32(0xe0, a);
-                                let v = if a != self.enemies[k].u32_(0xe4) { 0 } else { -1 };
-                                self.enemies[k].set_i32(0x3a4, v);
+                            if self.enemy_ai_control(k)? {
+                                // 0x13b8f8: straight to the common tail (no
+                                // skin effects, no UpdateObjWorldMat).
+                                self.do_enemies_tail(k)?;
+                                continue;
                             }
+                            let a = self.do_enemy_action(k)?;
+                            self.enemies[k].set_u32(0xe0, a);
+                            let v = if a != self.enemies[k].u32_(0xe4) { 0 } else { -1 };
+                            self.enemies[k].set_i32(0x3a4, v);
                         }
                         self.enemy_process_skin_fx(k)?;
+                        self.enemy_update_obj_world_mat(k)?;
                     }
                 }
                 // GetObjWorldMat (the attention/collision points) for states
                 // 6 and 8 too, before the type checks (0x13b8c0, 0x13b8f0).
-                6 => self.enemy_update_offsets(k)?,
+                6 => self.enemy_get_obj_world_mat(k)?,
                 8 => {
-                    self.enemy_update_offsets(k)?;
+                    self.enemy_get_obj_world_mat(k)?;
                     if self.enemies[k].i32_(e::TYPE) == self.globals.boss_type {
                         // boss shadow follows; presentation only
                     } else if self.enemies[k].i32_(e::TYPE) == 0x1e {
@@ -2868,6 +2873,7 @@ impl Game {
                             self.enemies[k].set_i32(0x39c, alpha + 4 * self.globals.vb_elapsed);
                             let y = add(mul(self.globals.spf, 10.0)?, self.ef(k, 0x44))?;
                             self.enemies[k].set_f32(0x44, y);
+                            self.enemy_update_obj_world_mat(k)?;
                         } else {
                             if self.enemies[k].i32_(0x334) != 0 {
                                 let h = if self.enemies[k].i16_(0x21a) == 2 { 0x81 } else { 0x83 };
@@ -2896,27 +2902,36 @@ impl Game {
                                 self.audio_praise(r != 0, who);
                             }
                             self.kill_enemy(k)?;
+                        } else {
+                            self.enemy_update_obj_world_mat(k)?;
                         }
                     }
                 }
                 _ => {}
             }
-            let rec = &mut self.enemies[k];
-            let used = rec.i16_(e::LOGIC);
-            rec.set_i16(0x328, used);
-            rec.set_i16(e::LOGIC, rec.i16_(0x326));
-            if rec.i32_(0x37c) <= rec.i32_(0x380) {
-                rec.set_i32(0x380, rec.i32_(0x380) - rec.i32_(0x37c));
-            }
-            for n in 0..3 {
-                let o = 0x270 + 4 * n;
-                let v = mul(rec.f32_(o), 0.8)?;
-                rec.set_f32(o, if v.abs() < 0.01 { 0.0 } else { v });
-            }
-            if 0.0 < rec.f32_(0x274) {
-                let v = sub(rec.f32_(0x274), mul(self.globals.spf, 100.0)?)?;
-                rec.set_f32(0x274, if v < 0.0 { 0.0 } else { v });
-            }
+            self.do_enemies_tail(k)?;
+        }
+        Ok(())
+    }
+
+    /// do_enemies' per-enemy tail (0x13bbd4): the logic words, the brain
+    /// period and the decaying push velocity.
+    fn do_enemies_tail(&mut self, k: usize) -> R<()> {
+        let rec = &mut self.enemies[k];
+        let used = rec.i16_(e::LOGIC);
+        rec.set_i16(0x328, used);
+        rec.set_i16(e::LOGIC, rec.i16_(0x326));
+        if rec.i32_(0x37c) <= rec.i32_(0x380) {
+            rec.set_i32(0x380, rec.i32_(0x380) - rec.i32_(0x37c));
+        }
+        for n in 0..3 {
+            let o = 0x270 + 4 * n;
+            let v = mul(rec.f32_(o), 0.8)?;
+            rec.set_f32(o, if v.abs() < 0.01 { 0.0 } else { v });
+        }
+        if 0.0 < rec.f32_(0x274) {
+            let v = sub(rec.f32_(0x274), mul(self.globals.spf, 100.0)?)?;
+            rec.set_f32(0x274, if v < 0.0 { 0.0 } else { v });
         }
         Ok(())
     }

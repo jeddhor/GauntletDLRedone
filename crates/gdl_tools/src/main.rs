@@ -1389,6 +1389,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     if let Some(v) = a["enemies"].get("frame_main") {
                         game.frame_main = word(&hexb(v)?) as i32;
                     }
+                    // The enemy nodes hold what UpdateObjWorldMat stored last
+                    // update: derived from the seeded records.
+                    game.enemy_node = vec![None; game.enemies.len()];
                     for k in 0..game.enemies.len().min(eb.len() / ESIZE) {
                         let rec = gdl_core::game::record::Record(eb[k * ESIZE..(k + 1) * ESIZE].to_vec());
                         let (t, st) = (rec.i32_(0), rec.i32_(0xc8));
@@ -1665,6 +1668,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let before_enemies = hexb(&b["enemies"]["enemies"])?;
                     let base_of = |n: &str| -> Result<u32, Box<dyn Error>> { Ok(word(&hexb(e0.get(n).ok_or("trace base")?)?)) };
                     let (items_base, world_base) = (base_of("Items")?, base_of("WorldBase")?);
+                    game.enemy_node = vec![None; game.enemies.len()];
                     for k in 0..game.enemies.len().min(eb.len() / 0x3b0) {
                         // An enemy killed this update (state 1 → 8) died in
                         // ProcessEffects after do_players: the before record.

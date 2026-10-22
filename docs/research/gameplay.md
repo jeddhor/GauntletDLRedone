@@ -378,3 +378,26 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   tree; presentation-dependent). Found: keys, gems, food, treasure and
   scrolls had no native clock (their trees are in POWERUPS; items.md "Item
   trees"); 79/270 before the fix.
+- With ProcessItems in the replay the generator spawns run natively, and
+  the traces then exposed (all fixed 2026-10-22): InitAnim's AnimInfo
+  mirrors at a spawn (+0x90 the tree's sequence count — type 13 levels
+  1/2/3 hold 9/12/10, type 12 holds 7 — +0x92, +0x94 the frame count);
+  InitAnimInfo 0x110750 zeroes the AnimInfo, so a spawn's previous sequence
+  (+0xa0) is 0; init_enemy's GetObjWorldMat of SetEnemyObj's new node makes
+  the record matrix the identity (a reused slot kept the dead enemy's rows);
+  check_enemy_pos sets only the record's y to the floor — the probe it
+  passes to EnemyCollidePlayer / EnemyCollideEnemy / ItemCollide keeps its
+  own y (the port had floored it, so one spawn chose the opposite
+  direction); and the ±0.0 matrix signs: do_enemies' state 1/7 opens with
+  GetObjWorldMat (the record matrix from the enemy node, which
+  UpdateObjWorldMat stored at the end of the previous update with
+  UnparentMatrix's −0.0 → +0.0) and closes with UpdateObjWorldMat — unless
+  enemy_ai_control returned nonzero (0x13b8f8 jumps to the common tail,
+  skipping the skin effects too); an idle enemy (no do_enemy_move) keeps
+  the node's +0.0. Game::enemy_node models the node (players already had
+  player_node). Results: combat 270/270, fight 267/270
+  (replay-items-combat-g1-v4.json, replay-items-fight-g1-v10.json; the
+  three left are ProcessEffects' kills at 430/512 and the generator
+  destruction's +0x2a4 link clearing at 474). Without ProcessItems the
+  fight trace replays 253/270 (replay-enemies-fight-g1-v6.json),
+  trace-enemies-g1-v4 179/180.

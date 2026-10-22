@@ -399,6 +399,39 @@ impl Game {
         Ok(())
     }
 
+    /// The record matrix +0x10..+0x4c (4 × 4).
+    fn enemy_record_matrix(&self, i: usize) -> [[f32; 4]; 4] {
+        let r = &self.enemies[i];
+        std::array::from_fn(|a| std::array::from_fn(|b| r.f32_(0x10 + 0x10 * a + 4 * b)))
+    }
+
+    /// GetObjWorldMat(+0x10, +0x240, +0x234) under EnemyRootNode: the record
+    /// matrix becomes the node's (as UpdateObjWorldMat stored it, −0.0 made
+    /// +0.0), then the attention/collision points.
+    pub(crate) fn enemy_get_obj_world_mat(&mut self, i: usize) -> R<()> {
+        let m = match self.enemy_node.get(i).copied().flatten() {
+            Some(m) => m,
+            None => super::doplayers::unparent_matrix(self.enemy_record_matrix(i), None)?,
+        };
+        let r = &mut self.enemies[i];
+        for (a, row) in m.iter().enumerate() {
+            for (b, v) in row.iter().enumerate() {
+                r.set_f32(0x10 + 0x10 * a + 4 * b, *v);
+            }
+        }
+        self.enemy_update_offsets(i)
+    }
+
+    /// UpdateObjWorldMat(+0x10): the node takes the record matrix
+    /// (UnparentMatrix under the root).
+    pub(crate) fn enemy_update_obj_world_mat(&mut self, i: usize) -> R<()> {
+        let m = super::doplayers::unparent_matrix(self.enemy_record_matrix(i), None)?;
+        if let Some(n) = self.enemy_node.get_mut(i) {
+            *n = Some(m);
+        }
+        Ok(())
+    }
+
     /// UpdateObjOffsets on the enemy object block (+0x10).
     pub fn enemy_update_offsets(&mut self, i: usize) -> R<()> {
         let rec = &mut self.enemies[i];
@@ -428,6 +461,21 @@ impl Game {
             rec.set_u32(0x230, if t == 0x1f { 0x4040_0000 } else { 0 });
         }
         self.attach_enemy_anim(i, t, level)?;
+        // SetEnemyObj's new node (MBNewNode(EnemyRootNode, identity)), then
+        // GetObjWorldMat: the record matrix becomes the identity (translation
+        // 0 until the position is set). A reused slot otherwise kept the
+        // previous enemy's rows (trace-fight-g1-v3 step 474).
+        {
+            let rec = &mut self.enemies[i];
+            for r in 0..4 {
+                for c in 0..4 {
+                    rec.set_f32(0x10 + 16 * r + 4 * c, if r == c { 1.0 } else { 0.0 });
+                }
+            }
+        }
+        if let Some(n) = self.enemy_node.get_mut(i) {
+            *n = Some(std::array::from_fn(|r| std::array::from_fn(|c| if r == c { 1.0 } else { 0.0 })));
+        }
         if 4 <= level {
             level = 2;
         }
@@ -448,6 +496,7 @@ impl Game {
             rec.set_i16(0x21a, level as i16);
         }
         rec.set_f32(0x44, add(rec.f32_(0x44), rec.f32_(0x230))?);
+        self.enemy_update_obj_world_mat(i)?;
         self.enemy_update_offsets(i)?;
         let y = self.enemies[i].f32_(0x44);
         self.enemies[i].set_f32(0x2a8, y);
@@ -523,6 +572,7 @@ impl Game {
         self.init_enemy(s, pos, t, level, ai)?;
         self.enemies[s].set_u32(e::GENERATOR, generator);
         let finish = |g: &mut Game| -> R<i32> {
+            g.enemy_update_obj_world_mat(s)?;
             g.enemy_update_offsets(s)?;
             g.enemies[s].set_i32(0xe0, 1);
             let genfx = g.enemy_load.genfx.get(ti).copied().unwrap_or(0);
@@ -594,8 +644,8 @@ impl Game {
         if 6.0 < sub(hit.position[1], pos[1])?.abs() {
             return Ok(-1);
         }
-        let mut p = p;
-        p[1] = hit.position[1];
+        // Only the record's y takes the floor: the probe the collision tests
+        // below receive keeps its own y (FloorCollide copies its input).
         self.enemies[i].set_f32(0x44, hit.position[1]);
         // UpdateObjColOffset only (+0x60).
         {
@@ -1089,7 +1139,9 @@ impl Game {
                         self.sfx(0x67, Some(pos), 0xe0, 0xd);
                     }
                 }
-                // SetEnemyObj(…, 1) swaps the statue model; matrix preserved.
+                // SetEnemyObj(…, 1) swaps the statue model; matrix preserved
+                // (CopyMat4 around it), then UpdateObjWorldMat into the new node.
+                self.enemy_update_obj_world_mat(i)?;
                 self.enemy_update_offsets(i)?;
                 return Ok(0);
             } else {

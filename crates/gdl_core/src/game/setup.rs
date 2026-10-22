@@ -366,6 +366,7 @@ impl Game {
             enemy_wall_point: [0.0; 3],
             enemy_wall_contact: None,
             enemy_anims: vec![None; 25],
+            enemy_node: vec![None; 25],
             player_clips: Default::default(),
             player_floor_parent: [None; 4],
             player_team_parent: [None; 4],
@@ -636,6 +637,11 @@ impl Game {
             self.enemies[i].set_i32(0xec + 8 * k, *v);
         }
         let mut anim = EnemyAnim { clock: fresh_clock(), clips, current: 0, tree: (t, lvl) };
+        // AtreeInit's InitAnimInfo 0x110750 zeroes the AnimInfo (sequence and
+        // previous sequence 0; its InitAnim(0) keeps them 0), so InitAnim(START)
+        // leaves the previous sequence 0 (trace-fight-g1-v3 steps 198/474).
+        anim.clock.sequence = 0;
+        anim.clock.previous_sequence = 0;
         // generate_enemy: InitAnim(START) when the type has one.
         let start = table.get(1).map_or(-1, |e| e.0);
         let first = if 0 <= start { start as u16 } else { 0 };
@@ -656,6 +662,13 @@ impl Game {
                 },
             )?;
             anim.current = first;
+            // InitAnim's AnimInfo mirrors: +0x90 the tree's sequence count,
+            // +0x92 the sequence, +0x94 its frame count (trace-fight-g1-v3:
+            // type 13 levels 1/2/3 hold 9/12/10, type 12 holds 7).
+            let r = &mut self.enemies[i];
+            r.set_i16(0x90, anim.clips.len() as i16);
+            r.set_u16(0x92, first);
+            r.set_i16(0x94, clip.frames);
         }
         self.enemies[i].set_u32(0x80, 1); // atree present (native marker)
         self.enemy_anims[i] = Some(anim);

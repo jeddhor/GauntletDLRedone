@@ -338,6 +338,10 @@ pub struct Game {
     pub enemy_wall_point: [f32; 3],
     pub enemy_wall_contact: Option<crate::collision::Hit>,
     pub enemy_anims: Vec<Option<enemy_ai::EnemyAnim>>,
+    /// Each enemy node's matrix under EnemyRootNode as UpdateObjWorldMat last
+    /// stored it (−0.0 normalised); GetObjWorldMat copies it back into the
+    /// record. None: not yet stored (taken from the record).
+    pub enemy_node: Vec<Option<[[f32; 4]; 4]>>,
     /// Each player's sequence timings (the class ANIM tree DoPlayerAction's
     /// AnimInfo at +0x94 plays).
     pub player_clips: [Vec<crate::animation_clock::ClipTiming>; 4],
