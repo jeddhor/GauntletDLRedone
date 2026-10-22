@@ -2876,7 +2876,7 @@ fn present_particles(
 /// record steps run first: load_player_geo/load_player (profile::level_start)
 /// and PlayerSaveState (the Tower: without the backup copy; the
 /// Underworld 0xc: not called).
-fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], returning: bool) -> Result<Game, Box<dyn Error>> {
+fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], returning: bool, load_in_game_players: Option<i32>) -> Result<Game, Box<dyn Error>> {
     let elf = gdl_formats::elf::Elf::parse(&session.elf_bytes)?;
     let lv = &session.levels[idx];
     let wdata = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&lv.wdata)?)?;
@@ -2961,10 +2961,9 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
     let mut order: Vec<&Animations> = item_pkgs.iter().collect();
     order.insert(usize::from(lv.items.first().is_some_and(|p| *p == realm)), &powerups);
     let mut item_anims = HashMap::new();
+    let mut item_anim_nodes = std::collections::HashMap::new();
     for a in order {
-        for (k, t) in a.trees.iter().enumerate() {
-            item_anims.entry(t.label.clone()).or_insert_with(|| setup::clips_of(a, k));
-        }
+        setup::add_item_trees(&mut item_anims, &mut item_anim_nodes, a);
     }
     let mut effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &weapons, &powerups)?;
     for (n, a) in item_pkgs.iter().enumerate().take(2) {
@@ -2978,6 +2977,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
         start,
         enemy_anims,
         item_anims,
+        item_anim_nodes,
         effect_tables,
         audio_rom: session.audio_rom.clone(),
         mb_objects: Some(session.object_labels.iter().cloned().chain(session.level.objects.definitions.iter().map(|d| d.label.clone())).collect()),
@@ -2996,6 +2996,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
                 Ok((wad.clone(), w, m))
             })
             .collect::<Result<Vec<_>, _>>()?,
+        load_in_game_players,
     })?;
     {
         // EnterTower: SetPlayerStartPos(GetWorldOrder(LastWorldPlayed)) puts
@@ -4943,7 +4944,10 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
             eprintln!("DEBUG level {n}: starting in {} (index {idx})", b.levels[idx].name);
         }
         let (session, sources, slots) = session_for(front, &record, controls, idx, slot)?;
-        let mut game = build_game(&session, idx, &slots, false)?;
+        // The Tower is entered from the select screen: no player is in the
+        // game when GauntWorldInit's world_update runs.
+        let from_select = (b.levels[idx].world == 0xd).then_some(0);
+        let mut game = build_game(&session, idx, &slots, false, from_select)?;
         // player_get_from_save: the saved control options into PlayerControl
         // (+0x2c style, +0x30 vibration, +0x38 auto attack, +0x34 auto aim).
         for (o, v) in [0x2c, 0x30, 0x38, 0x34].into_iter().zip(session.controls) {
@@ -4996,7 +5000,7 @@ fn start_flyby(world: &mut EcsWorld, idx: usize) -> Result<(), Box<dyn Error>> {
         let mut record = Record::zeroed(0x2b00);
         profile::clear_player(&mut record, true, false, &front.pdats).map_err(|e| e.to_string())?;
         let (session, sources, slots) = session_for(front, &record, [0, 2, 1, 1], idx, 0)?;
-        let mut game = build_game(&session, idx, &slots, false)?;
+        let mut game = build_game(&session, idx, &slots, false, None)?;
         init_hud(&mut game, &sources, &session, front, &mut hud_sets, false);
         let elf = gdl_formats::elf::Elf::parse(&front.elf_bytes)?;
         let yaw_off0 = elf.object("yaw_off").ok().and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap_or([0; 4])));
@@ -6132,7 +6136,7 @@ fn advance_level(
     let returning = (13..=0xffff).contains(&skip) && stage.is_some();
     let built = loaded.and_then(|_| {
         let slots = slot_starts(&front, &sources, &carry, &control_options)?;
-        build_game(&session, idx, &slots, returning)
+        build_game(&session, idx, &slots, returning, None)
     });
     // EnterTower: TowerStartPos = −1 once used.
     if session.levels[idx].world == 0xd {

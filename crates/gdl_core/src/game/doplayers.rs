@@ -33,22 +33,9 @@ pub(crate) fn mat_mul(left: &[[f32; 4]; 4], right: &[[f32; 4]; 4]) -> R<[[f32; 4
     Ok(std::array::from_fn(|i| std::array::from_fn(|j| w[i * 4 + j])))
 }
 
-/// InvertMat4 0x1d5b20: the transposed rotation and the translation
-/// −(t · rowᵢ) summed with VU operations (x + y, then + z); w = 1.
+/// InvertMat4 0x1d4e80 (collision::invert_mat4).
 fn invert_mat4(m: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
-    let mut out = [[0.0f32; 4]; 4];
-    for (i, row) in out.iter_mut().take(3).enumerate() {
-        for (j, v) in row.iter_mut().take(3).enumerate() {
-            *v = m[j][i];
-        }
-    }
-    let t = [-m[3][0], -m[3][1], -m[3][2]];
-    for i in 0..3 {
-        let r = m[i];
-        out[3][i] = add_rz(add_rz(mul(t[0], r[0])?, mul(t[1], r[1])?)?, mul(t[2], r[2])?)?;
-    }
-    out[3][3] = 1.0;
-    Ok(out)
+    crate::collision::invert_mat4(m).map_err(|e| Unsupported(e.0.to_string()))
 }
 
 /// Whether a parent world matrix is translation-only (identity rotation;

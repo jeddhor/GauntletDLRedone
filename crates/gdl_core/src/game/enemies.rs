@@ -1059,7 +1059,9 @@ impl Game {
         Ok(out)
     }
 
-    /// SetupDynGrid: items then active enemies (PlaceEnemyInGrid).
+    /// SetupDynGrid: items then active enemies (PlaceEnemyInGrid); every
+    /// caller (world_update, GauntWorldInit, init_next_level) runs
+    /// CreateDynobjGrid next.
     pub fn setup_dyn_grid(&mut self) -> R<()> {
         self.grid.place_items(&mut self.items)?;
         for k in 0..self.enemies.len() {
@@ -1072,6 +1074,7 @@ impl Game {
             self.grid.enemy_head[c] = k as i16;
             self.enemies[k].set_i16(e::GRID_NEXT, prev);
         }
+        self.collision.create_dynobj_grid().map_err(|e| super::Unsupported(format!("CreateDynobjGrid: {e:?}")))?;
         Ok(())
     }
 

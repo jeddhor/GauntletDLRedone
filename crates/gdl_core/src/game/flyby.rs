@@ -531,18 +531,19 @@ impl Game {
         self.globals.time += spf;
         self.globals.atime += spf;
         self.globals.itime = (self.globals.time * 1000.0) as i32;
-        if let Err(e) = self.do_world_animation() {
-            self.log.note("world_update", &e);
-        }
-        self.sync_collision();
-        if self.globals.paused == 0
-            && self.globals.help == 0
-            && let Err(e) = self.world_update_lightning()
-        {
-            self.log.note("world_update", &e);
-        }
-        if let Err(e) = self.setup_dyn_grid() {
-            self.log.note("world_update", &e);
+        // world_update: start_enemyinfo, then nothing while paused or in help.
+        self.start_enemyinfo = self.globals.start_of_stage == 0 || self.level.get(0x48..0x4c).is_some_and(|b| b != [0; 4]);
+        if self.globals.paused == 0 && self.globals.help == 0 {
+            if let Err(e) = self.do_world_animation() {
+                self.log.note("world_update", &e);
+            }
+            self.sync_collision();
+            if let Err(e) = self.setup_dyn_grid() {
+                self.log.note("world_update", &e);
+            }
+            if let Err(e) = self.world_update_lightning() {
+                self.log.note("world_update", &e);
+            }
         }
         if let Err(e) = self.process_items() {
             self.log.note("do_items", &e);

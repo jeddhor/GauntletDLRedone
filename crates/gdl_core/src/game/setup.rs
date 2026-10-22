@@ -76,6 +76,20 @@ pub fn clips_of(anim: &Animations, tree: usize) -> Vec<ClipTiming> {
         .collect()
 }
 
+/// Add a package's item trees in AtreeMatchAnyHeader order (the first
+/// package defining a label keeps it); `nodes` gets per label whether the tree
+/// has a type-1 node (AtreeNodeInit +0x2c: AnimateNode passes those to
+/// DoAnimation) and its node count (AtreeInitSub's AnimInfo +0x38).
+pub fn add_item_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32)>, anim: &Animations) {
+    for (k, t) in anim.trees.iter().enumerate() {
+        if lib.contains_key(&t.label) {
+            continue;
+        }
+        lib.insert(t.label.clone(), clips_of(anim, k));
+        nodes.insert(t.label.clone(), (t.nodes.iter().any(|n| n.node_type == 1), t.nodes.len() as i32));
+    }
+}
+
 /// EnemyDesc 0x136ff8 level suffixes 4..7: offset_step5[level + 0x94]
 /// (ELF bytes at 0x22d858 = "ABSF"); other levels print as numbers.
 pub const LEVEL_LETTERS: &[u8; 4] = b"ABSF";
@@ -165,6 +179,8 @@ pub struct LevelInputs<'a> {
     pub enemy_anims: EnemyAnimData,
     /// Item animation trees by definition name.
     pub item_anims: HashMap<String, Vec<ClipTiming>>,
+    /// Per item tree label: a type-1 node, and the node count (add_item_trees).
+    pub item_anim_nodes: HashMap<String, (bool, i32)>,
     pub effect_tables: super::effects::EffectTables,
     /// AUDIO/AUDATPS2.ROM; None disables sound events.
     pub audio_rom: Option<gdl_formats::audio::AudioRom>,
@@ -174,6 +190,11 @@ pub struct LevelInputs<'a> {
     /// Critter files the level loads (LoadGauntWorldStart) with their model
     /// package ANIM.PS2 (bytes kept for key sampling).
     pub critters: Vec<super::critters::CritterInput>,
+    /// NumInGamePlayers as GauntWorldInit's world_update sees it (before
+    /// AddItemInstList's SetPlayerVars): 0 when the level is entered from the
+    /// select screen (the Tower of a new or loaded game); None = the start
+    /// state's.
+    pub load_in_game_players: Option<i32>,
 }
 
 /// Whether a loaded critter file has a TYPE in CritterETypes[kind][0] (TYPE
@@ -300,11 +321,13 @@ impl Game {
         // (fog, start_of_stage, SetupDynGrid on no items) is not modelled
         // (HYPOTHESIS: nothing it changes reaches the simulation).
         let g0 = &s.globals;
-        let animate = (0 < g0.num_in_game_players || g0.game_mode & 0x8000 != 0)
+        let animate = (0 < inp.load_in_game_players.unwrap_or(g0.num_in_game_players) || g0.game_mode & 0x8000 != 0)
             && 0x18694 < (g0.trig_cam_delay.wrapping_sub(0xb) as u32)
             && g0.paused == 0
             && g0.help == 0;
         let spf = g0.spf;
+        let mut load_nodes = super::item_runtime::RecordedWobjNodes::default();
+        let anim_objects = world_anims.anim_objects();
         let loaded = load_items(inp.world, &mut collision, ItemTables::from_elf(inp.elf)?, session, s.extra.vb_counter, &mut |w, col| {
             for e in world_anims.entries.iter().filter(|e| e.active) {
                 if let Some(o) = w.objects.get_mut(e.object) {
@@ -323,8 +346,32 @@ impl Game {
                     }
                 }
             }
+            // world_update's CreateDynobjGrid (after SetupDynGrid): the poses
+            // AddItemInstList's PlaceItem tests matrix objects at.
+            w.sync_collision(col);
+            col.create_dynobj_grid().map_err(|e| crate::items::UnsupportedItem(format!("load-time CreateDynobjGrid: {e:?}")))?;
+            Ok(())
+        }, &mut |w, col| {
+            // AddItemInstList's ProcessItemWobjs. OnWobj is 0 for every
+            // object (inferred: no player or enemy has a floor in the new
+            // level yet); SPF, start_of_stage and vb_elapsed are the start
+            // state's (the load-time values are not captured; they matter
+            // only for an elevator away from its target and for the fade
+            // transparency). The node writes are replayed on the game below.
+            // SetItem's kind-13 FindWorldAnimNode at the instance positions
+            // and the load-time poses (nothing moves them before PlaceItem).
+            for slot in 0..w.records.len() {
+                w.attach_sound_node(slot, col, &anim_objects)?;
+            }
+            let ons = vec![0; w.wobjs.len()];
+            let g = super::item_runtime::WobjGlobals { spf, start_of_stage: g0.start_of_stage != 0, vb_elapsed: g0.vb_elapsed };
+            super::item_runtime::process_item_wobjs_sub(w, &ons, g, &mut load_nodes).map_err(|e| crate::items::UnsupportedItem(format!("load-time ProcessItemWobjs: {}", e.0)))?;
+            w.sync_collision(col);
             Ok(())
         })?;
+        // GauntWorldInit's SetupDynGrid/CreateDynobjGrid after AddItemInstList.
+        loaded.world.sync_collision(&mut collision);
+        collision.create_dynobj_grid().map_err(|e| format!("CreateDynobjGrid: {e:?}"))?;
         let mut players: [Record; 4] = std::array::from_fn(|_| Record::zeroed(PLAYER));
         for (k, h) in s.players.iter().enumerate() {
             let b = hex(h)?;
@@ -414,6 +461,7 @@ impl Game {
             combo_effects: inp.elf.object("ComboEffects").map(|b| b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()).unwrap_or_default(),
             item_anims: vec![None; item_count],
             item_anim_lib: inp.item_anims.clone(),
+            item_anim_nodes: inp.item_anim_nodes.clone(),
             camera: None,
             camera_rest: None,
             std_camera: {
@@ -562,6 +610,8 @@ impl Game {
             },
             log: FrameLog::default(),
         };
+        // AddItemInstList's ProcessItemWobjs node writes (fade objects).
+        load_nodes.apply(&mut game);
         // init_next_level: InitLighting(1); GauntWorldInit's lightning.
         game.init_lighting();
         game.init_lightning().map_err(|e| format!("lightning: {}", e.0))?;
@@ -616,7 +666,7 @@ impl Game {
             }
         }
         for slot in 0..item_count {
-            game.attach_item_anim(slot);
+            game.set_item_geo(slot).map_err(|e| format!("SetItemGeo: {}", e.0))?;
         }
         if let Some(n) = load_note {
             game.log.unsupported.insert(n, 0);
@@ -736,31 +786,35 @@ impl Game {
         self.globals.time += spf;
         self.globals.atime += spf;
         self.globals.itime = (self.globals.time * 1000.0) as i32;
-        // world_update: DoWorldAnimation first (paused/help skip the update).
-        if let Err(e) = self.do_world_animation() {
-            self.log.note("world_update", &e);
-        }
-        self.sync_collision();
+        // game_main: do_auto_exit before world_update.
         self.do_auto_exit();
-        if let Err(e) = self.boss_world_update() {
-            self.log.note("world_update", &e);
-        }
-        if let Err(e) = self.quest_item_update() {
-            self.log.note("world_update", &e);
-        }
-        if let Err(e) = self.world_update_stage_start() {
-            self.log.note("world_update", &e);
-        }
+        // world_update 0x163480: start_enemyinfo = start_of_stage == 0 or
+        // level_data +0x48; then it returns at once while paused or in help;
+        // DoWorldAnimation, SetupDynGrid and CreateDynobjGrid come first.
+        self.start_enemyinfo = self.globals.start_of_stage == 0 || self.level.get(0x48..0x4c).is_some_and(|b| b != [0; 4]);
         if self.globals.paused == 0 && self.globals.help == 0 {
+            if let Err(e) = self.do_world_animation() {
+                self.log.note("world_update", &e);
+            }
+            self.sync_collision();
+            if let Err(e) = self.setup_dyn_grid() {
+                self.log.note("world_update", &e);
+            }
+            if let Err(e) = self.boss_world_update() {
+                self.log.note("world_update", &e);
+            }
+            if let Err(e) = self.quest_item_update() {
+                self.log.note("world_update", &e);
+            }
+            if let Err(e) = self.world_update_stage_start() {
+                self.log.note("world_update", &e);
+            }
             if let Err(e) = self.world_update_lightning() {
                 self.log.note("world_update", &e);
             }
             if let Err(e) = self.world_update_end_of_stage() {
                 self.log.note("world_update", &e);
             }
-        }
-        if let Err(e) = self.setup_dyn_grid() {
-            self.log.note("world_update", &e);
         }
         if let Err(e) = self.process_items() {
             self.log.note("do_items", &e);
@@ -825,13 +879,7 @@ impl Game {
     /// exclusion, the node y) live, so every writer syncs before the next
     /// query in the same update.
     pub fn sync_collision(&mut self) {
-        for o in 0..self.collision.objects.len() {
-            self.collision.runtime_flags[o] = self.items.objects[o].flags_10;
-            self.collision.runtime_exclusion[o] = self.items.object_exclusion[o];
-        }
-        for w in &self.items.wobjs {
-            self.collision.node_y[w.object] = Some(self.items.object_node_y[w.object]);
-        }
+        self.items.sync_collision(&mut self.collision);
     }
 
     /// sync_collision for one object.

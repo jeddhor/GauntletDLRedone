@@ -61,8 +61,18 @@ pub struct Triangle {
 pub struct CollisionWorld {
     pub objects: Vec<CollisionObject>,
     pub triangles: Vec<Triangle>,
-    /// Objects with flags 0x1000/0x1000000 (WorldDynCollide candidates).
+    /// Objects with flags 0x1000/0x1000000 (WorldDynCollide candidates). The
+    /// original's list (InitDynobjList) is the first grid cell word's
+    /// entries (WORLDS header +20, cells[0]: count << 22 | contents offset,
+    /// plain i16 object indices); it is this set, in this order, in G1, L1,
+    /// A1 and K4, and no grid row uses cell 0.
     pub dynamic: Vec<usize>,
+    /// CreateDynobjGrid 0x11f5f8's GetWorldMat per 0x1000000 dynamic object
+    /// (the dynobj entry's +0x00 matrix). WorldDynCollide passes the entry to
+    /// WorldObjCollide (a3 at 0x11fd70), so the dynamic pass tests those
+    /// objects at the pose of the last grid build (world_update after
+    /// SetupDynGrid; GauntWorldInit after AddItemInstList).
+    pub dyn_matrix: Vec<Option<[[f32; 4]; 4]>>,
     /// Runtime +0x10 flags and +0x35 exclusion bytes, kept by the game.
     pub runtime_flags: Vec<u32>,
     pub runtime_exclusion: Vec<i8>,
@@ -201,7 +211,9 @@ impl CollisionWorld {
         let node_rot = vec![None; objects.len()];
         let node_local = vec![None; objects.len()];
         let node_scale = vec![None; objects.len()];
+        let dyn_matrix = vec![None; objects.len()];
         Ok(Self {
+            dyn_matrix,
             node_rot,
             node_local,
             node_scale,
@@ -438,26 +450,88 @@ impl CollisionWorld {
         Ok(Some((world(local, true)?, n)))
     }
 
-    /// World matrix of an object at its rest pose: identity rotation (world
-    /// animations are not ported) and node translation; root offset objects
-    /// take the item-driven y.
+    /// GetWorldMat 0x1d06b8 of an object's node: its local matrix
+    /// (node_matrix), times each ancestor's local (object parents while the
+    /// object has flag 0x1000000) with MulMat4 0x1d55a0 in order, then the
+    /// world root nodes every object node hangs from: an identity under
+    /// MulMat4 (+0x60 0x1000; it turns −0.0 into +0.0) and a translation-only
+    /// identity (+0x60 4: add.s of a zero translation). Read from the G1 and
+    /// Tower savestates (nodes 0x1693be0/0x16935e0, 0x1dee0a0/0x1dedaa0).
     pub fn object_matrix(&self, o: usize) -> R<[[f32; 4]; 4]> {
-        if self.rotated_chain(o) {
-            return self.object_matrix_rotated(o);
+        self.chain_world(self.node_matrix(o), self.node_parent(o))
+    }
+
+    /// The object's node parent: its object parent when flag 0x1000000 is
+    /// set (static objects hold the parent-chain sum and hang from the root).
+    pub fn node_parent(&self, o: usize) -> Option<usize> {
+        if self.objects[o].flags & 0x100_0000 != 0 { self.objects[o].parent } else { None }
+    }
+
+    /// The object node's local matrix: a world animation's, else the run-time
+    /// rotation rows (identity) with the node translation (root offset
+    /// objects take the item-driven y).
+    pub fn node_matrix(&self, o: usize) -> [[f32; 4]; 4] {
+        if let Some(m) = self.node_local[o] {
+            return m;
         }
         let ob = &self.objects[o];
-        let local_t = match (ob.parent, self.node_y[o]) {
+        let t = match (ob.parent, self.node_y[o]) {
             (None, Some(y)) => [ob.position[0], y, ob.position[2]],
             _ => ob.position,
         };
-        let t = match ob.parent {
-            Some(p) if self.objects[o].flags & 0x100_0000 != 0 => {
-                let pm = self.object_matrix(p)?;
-                [add_rz(local_t[0], pm[3][0])?, add_rz(local_t[1], pm[3][1])?, add_rz(local_t[2], pm[3][2])?]
+        let r = self.node_rot[o].unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        [[r[0][0], r[0][1], r[0][2], 0.0], [r[1][0], r[1][1], r[1][2], 0.0], [r[2][0], r[2][1], r[2][2], 0.0], [t[0], t[1], t[2], 1.0]]
+    }
+
+    /// UpdateObjWorldMat's UnparentMatrix 0x1d0620 for a node under the
+    /// object `parent`: recursive, so the outermost ancestor goes first —
+    /// the translation-only root (sub.s), the identity root
+    /// (MulMat4(InvertMat4(identity), m)), then each object ancestor's local
+    /// inverse down to the parent (MulMat4(InvertMat4(local), m)). Each level
+    /// inverts its own local: a transposed animated rotation with scale is not
+    /// an exact inverse, so this differs from inverting the parent's world.
+    pub fn unparent_chain(&self, local: [[f32; 4]; 4], parent: Option<usize>) -> R<[[f32; 4]; 4]> {
+        let mut chain = Vec::new();
+        let mut k = parent;
+        while let Some(p) = k {
+            chain.push(p);
+            if chain.len() > 128 {
+                return Err(UnsupportedCollision("object parent chain policy exceeded"));
             }
-            _ => local_t,
-        };
-        Ok([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [t[0], t[1], t[2], 1.0]])
+            k = self.node_parent(p);
+        }
+        let mut m = local;
+        for v in m[3].iter_mut().take(3) {
+            *v = sub(*v, 0.0)?;
+        }
+        let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        m = mul_mat4(&invert_mat4(&identity)?, &m)?;
+        for &p in chain.iter().rev() {
+            m = mul_mat4(&invert_mat4(&self.node_matrix(p))?, &m)?;
+        }
+        Ok(m)
+    }
+
+    /// GetWorldMat from a node's local matrix under the object `parent`
+    /// (None: directly under the world root).
+    pub fn chain_world(&self, local: [[f32; 4]; 4], parent: Option<usize>) -> R<[[f32; 4]; 4]> {
+        let mut m = local;
+        let mut k = parent;
+        let mut guard = 0;
+        while let Some(p) = k {
+            m = mul_mat4(&self.node_matrix(p), &m)?;
+            k = self.node_parent(p);
+            guard += 1;
+            if guard > 128 {
+                return Err(UnsupportedCollision("object parent chain policy exceeded"));
+            }
+        }
+        let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        m = mul_mat4(&identity, &m)?;
+        for v in m[3].iter_mut().take(3) {
+            *v = add(0.0, *v)?;
+        }
+        Ok(m)
     }
 
     /// object_matrix at the file rest pose (no item-driven y, no run-time
@@ -479,52 +553,20 @@ impl CollisionWorld {
         self.node_y[o].is_some() || self.node_rot[o].is_some() || self.node_local[o].is_some()
     }
 
-    fn rotated_chain(&self, o: usize) -> bool {
-        let mut k = Some(o);
-        while let Some(i) = k {
-            if self.node_rot[i].is_some() || self.node_local[i].is_some() {
-                return true;
-            }
-            k = if self.objects[i].flags & 0x100_0000 != 0 { self.objects[i].parent } else { None };
-        }
-        false
-    }
-
-    /// object_matrix with run-time rotations: local rows × parent rows and
-    /// local translation × parent rows + parent translation (row vectors).
-    /// The original GetWorldMat operation order is not verified.
-    fn object_matrix_rotated(&self, o: usize) -> R<[[f32; 4]; 4]> {
-        let ob = &self.objects[o];
-        let t = match (ob.parent, self.node_y[o]) {
-            (None, Some(y)) => [ob.position[0], y, ob.position[2]],
-            _ => ob.position,
-        };
-        let rows = self.node_rot[o].unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
-        let local = match self.node_local[o] {
-            Some(m) => m,
-            None => [[rows[0][0], rows[0][1], rows[0][2], 0.0], [rows[1][0], rows[1][1], rows[1][2], 0.0], [rows[2][0], rows[2][1], rows[2][2], 0.0], [t[0], t[1], t[2], 1.0]],
-        };
-        match ob.parent {
-            Some(p) if ob.flags & 0x100_0000 != 0 => {
-                let pm = self.object_matrix(p)?;
-                let mut out = [[0.0f32; 4]; 4];
-                for r in 0..4 {
-                    for c in 0..3 {
-                        let v = add(add(mul(local[r][0], pm[0][c])?, mul(local[r][1], pm[1][c])?)?, mul(local[r][2], pm[2][c])?)?;
-                        out[r][c] = if r == 3 { add(v, pm[3][c])? } else { v };
-                    }
-                }
-                out[3][3] = 1.0;
-                Ok(out)
-            }
-            _ => Ok(local),
-        }
-    }
-
     /// YawMat3 0x1d5388 on an object's node rotation (rows 0 and 2).
     pub fn yaw_object(&mut self, o: usize, a: f32) -> R<()> {
         let m = self.node_rot[o].get_or_insert([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
         yaw_mat3(m, a)
+    }
+
+    /// CreateDynobjGrid: cache each 0x1000000 dynamic object's world matrix
+    /// (the cells themselves are not modelled; see dyn_collide).
+    pub fn create_dynobj_grid(&mut self) -> R<()> {
+        for k in 0..self.dynamic.len() {
+            let o = self.dynamic[k];
+            self.dyn_matrix[o] = if self.runtime_flags[o] & 0x100_0000 != 0 { Some(self.object_matrix(o)?) } else { None };
+        }
+        Ok(())
     }
 
     /// WorldDynCollide/WorldObjCollide for dynamic objects. Candidates are all
@@ -541,7 +583,13 @@ impl CollisionWorld {
             if c.q.object_mask & flags == 0 || i32::from(excl) & c.q.exclusion_mask != 0 || flags & 0x1000_0000 != 0 {
                 continue;
             }
-            let m = self.object_matrix(o)?;
+            // 0x1000000: the grid build's matrix (fresh GetWorldMat only
+            // before any build); 0x1000 roots: the live node.
+            let cached = if flags & 0x100_0000 != 0 { self.dyn_matrix[o] } else { None };
+            let m = match cached {
+                Some(m) => m,
+                None => self.object_matrix(o)?,
+            };
             let p = [m[3][0], m[3][1], m[3][2]];
             let first = c.q.first;
             let d = [sub(p[0], first[0])?, sub(p[1], first[1])?, sub(p[2], first[2])?];
@@ -589,21 +637,24 @@ impl CollisionWorld {
                 continue;
             }
             let (triangle, local) = hit.ok_or(UnsupportedCollision("hit without triangle"))?;
+            // WorldCollide's tail turns the local hit into the output struct
+            // with a fresh GetWorldMat for 0x1000000 objects.
+            let out = if cached.is_some() { self.object_matrix(o)? } else { m };
             let position = if offset_only {
-                [add(local[0], m[3][0])?, add(local[1], m[3][1])?, add(local[2], m[3][2])?]
+                [add(local[0], out[3][0])?, add(local[1], out[3][1])?, add(local[2], out[3][2])?]
             } else {
                 // MulVec4Mat4 (VU0 under EE rounding).
                 let col = |c_: usize| -> R<f32> {
-                    let mut acc = mul(m[0][c_], local[0])?;
-                    acc = add_rz(acc, mul(m[1][c_], local[1])?)?;
-                    acc = add_rz(acc, mul(m[2][c_], local[2])?)?;
-                    Ok(add_rz(acc, m[3][c_])?)
+                    let mut acc = mul(out[0][c_], local[0])?;
+                    acc = add_rz(acc, mul(out[1][c_], local[1])?)?;
+                    acc = add_rz(acc, mul(out[2][c_], local[2])?)?;
+                    Ok(add_rz(acc, out[3][c_])?)
                 };
                 [col(0)?, col(1)?, col(2)?]
             };
             let slot = if flags & 0x200 != 0 { &mut found.water } else { &mut found.solid };
             if distance < slot.map_or(w(0x6258d727), |h| h.distance) {
-                *slot = Some(Hit { object: o, triangle, distance, position, matrix: Some(m) });
+                *slot = Some(Hit { object: o, triangle, distance, position, matrix: Some(out) });
             }
         }
         Ok(())
@@ -924,6 +975,34 @@ pub fn create_mat3_norm(k: f32, n: V3) -> R<[[f32; 4]; 3]> {
         [n[0], ny, n[2], 0.0],
         [mul(-f1, ny)?, mul(sub(1.0, mul(ny, ny)?)?, k)?, mul(-ny, f4)?, 0.0],
     ])
+}
+
+/// InvertMat4 0x1d4e80: the transposed rotation (w 0) and the translation
+/// −t · rowᵢ with VU operations — vsub from vf0 (0 − t, so +0 stays +0),
+/// vmul, then (x + y) + z; w keeps the input's.
+pub fn invert_mat4(m: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
+    let mut out = [[0.0f32; 4]; 4];
+    for (i, row) in out.iter_mut().take(3).enumerate() {
+        for (j, v) in row.iter_mut().take(3).enumerate() {
+            *v = m[j][i];
+        }
+    }
+    let t = [sub_rz(0.0, m[3][0])?, sub_rz(0.0, m[3][1])?, sub_rz(0.0, m[3][2])?];
+    for i in 0..3 {
+        let r = m[i];
+        out[3][i] = add_rz(add_rz(mul(t[0], r[0])?, mul(t[1], r[1])?)?, mul(t[2], r[2])?)?;
+    }
+    out[3][3] = m[3][3];
+    Ok(out)
+}
+
+/// MulMat4 0x1d55a0(parent, child) on row matrices: child × parent with the
+/// VU0 multiply/accumulate order (world_transform::multiply).
+pub fn mul_mat4(parent: &[[f32; 4]; 4], child: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
+    let mut a: [f32; 16] = std::array::from_fn(|k| parent[k / 4][k % 4]);
+    let mut b: [f32; 16] = std::array::from_fn(|k| child[k / 4][k % 4]);
+    let w = crate::world_transform::multiply(&mut a, &mut b)?;
+    Ok(std::array::from_fn(|i| std::array::from_fn(|j| w[i * 4 + j])))
 }
 
 /// Row 1 of create_mat3_norm (the normal, or ±y past the 0x3f7fbe77 limits).

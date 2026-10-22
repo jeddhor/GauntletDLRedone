@@ -220,7 +220,7 @@ impl ReferenceItems {
             }
             if reused || game.items.geo[slot] != geo {
                 game.items.geo[slot] = geo;
-                game.attach_item_anim(slot);
+                game.attach_item_anim(slot).map_err(|e| e.0)?;
             }
             if let Some(Some(an)) = game.item_anims.get_mut(slot) {
                 an.clock = Self::clock_of(&new);
@@ -1145,8 +1145,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         let mut collision = gdl_core::collision::CollisionWorld::from_world(&world)?;
         let seed = int("rng_seed")? as u32;
         // NATIVE: without the load-time world_update (no world animation state
-        // here); items on moving floors are placed on the rest pose.
-        let loaded = gdl_core::items::load_items(&world, &mut collision, tables, session, seed, &mut |_, _| Ok(()))?;
+        // here) and AddItemInstList's ProcessItemWobjs (no game globals);
+        // items on moving floors and elevators are placed on the rest pose.
+        let loaded = gdl_core::items::load_items(&world, &mut collision, tables, session, seed, &mut |_, _| Ok(()), &mut |_, _| Ok(()))?;
         let w = &loaded.world;
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
         let report = serde_json::json!({
@@ -1180,9 +1181,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         let ianim = gdl_formats::animation::Animations::parse(&iraw)?;
         let frames: usize = args[7].to_str().ok_or("frames")?.parse()?;
         let mut item_anims = std::collections::HashMap::new();
-        for (k, t) in ianim.trees.iter().enumerate() {
-            item_anims.insert(t.label.clone(), gdl_core::game::setup::clips_of(&ianim, k));
-        }
+        let mut item_anim_nodes = std::collections::HashMap::new();
+        gdl_core::game::setup::add_item_trees(&mut item_anims, &mut item_anim_nodes, &ianim);
         let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
         let mut opts = std::collections::HashMap::new();
         let mut critters = Vec::new();
@@ -1219,16 +1219,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         // enemy packages; not modelled — no G1 generator needs it).
         if let Some(p) = opts.get("powerups") {
             let pw = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(p), 64 * 1024 * 1024)?)?;
-            for (k, t) in pw.trees.iter().enumerate() {
-                item_anims.entry(t.label.clone()).or_insert_with(|| gdl_core::game::setup::clips_of(&pw, k));
-            }
+            gdl_core::game::setup::add_item_trees(&mut item_anims, &mut item_anim_nodes, &pw);
         }
         if let Some(extra) = opts.get("items2") {
             // item_anim2: the level's own package (after the realm's).
             let more = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(extra), 64 * 1024 * 1024)?)?;
-            for (k, t) in more.trees.iter().enumerate() {
-                item_anims.entry(t.label.clone()).or_insert_with(|| gdl_core::game::setup::clips_of(&more, k));
-            }
+            gdl_core::game::setup::add_item_trees(&mut item_anims, &mut item_anim_nodes, &more);
         }
         if let Some(w) = opts.get("world") {
             // Other realms: CurWorld/CurLevel for the session tables (the
@@ -1242,7 +1238,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         };
         let effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &anim_of("weapons")?, &anim_of("powerups")?)?;
         let mut game = gdl_core::game::Game::new_level(gdl_core::game::setup::LevelInputs {
-            world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, effect_tables,
+            world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, item_anim_nodes, effect_tables,
+            // load_players=N: the select-screen entry (the Tower of a new game: 0).
+            load_in_game_players: match opts.get("load_players") {
+                Some(n) => Some(n.parse()?),
+                None => None,
+            },
             audio_rom: match opts.get("rom") {
                 Some(p) => Some(gdl_formats::audio::AudioRom::parse(&bounded_read(Path::new(p), 4 * 1024 * 1024)?)?),
                 None => None,
@@ -1571,6 +1572,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             let mut effect_updates_equal = 0;
             let mut item_updates_equal = 0;
             let mut by_item_offset: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+            // Per item slot over every update (item_diffs keeps 60 per update).
+            let mut by_item_slot: std::collections::BTreeMap<u64, usize> = std::collections::BTreeMap::new();
             for w in samples.windows(2) {
                 let (b, a) = (&w[0], &w[1]);
                 let mut ref_after = ReferenceItems(ref_before.0.clone());
@@ -1882,6 +1885,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 for d in &item_diffs {
                     *by_item_offset.entry(d["offset"].as_str().unwrap_or("?").to_string()).or_default() += 1;
+                    *by_item_slot.entry(d["item"].as_u64().unwrap_or(u64::MAX)).or_default() += 1;
                 }
                 updates.push(serde_json::json!({"step":a["step"],"seed_solved":solved,"error":res.err().map(|e| e.0),
                     "words_differing":diffs.len(),"diffs":diffs.iter().take(60).collect::<Vec<_>>(),
@@ -1891,7 +1895,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             let report = serde_json::json!({"scope":"per-update replay of a reference enemies trace through the native do_enemies (all 25 records, every u32 except presentation pointers 0x70 0x80 0x84 0x88 0x8c 0xc0 0xc4 0x1f0; generator/floor links mapped)",
                 "items_mode":items_mode,"item_scope":"items_replay: ProcessItems then do_enemies; Items array words except +0x70..+0xc7 and the +0xe6 link, export_live_items convention",
-                "item_updates_equal":item_updates_equal,"differing_item_offsets":by_item_offset,
+                "item_updates_equal":item_updates_equal,"differing_item_offsets":by_item_offset,"differing_item_slots":by_item_slot,
                 "frame_mode":frame_mode,"player_updates_equal":player_updates_equal,"effect_updates_equal":effect_updates_equal,
                 "world_anim_updates_equal":world_anim_updates_equal,
                 "item_floor_parents":game.items.floor_parent.iter().enumerate().filter_map(|(k, p)| p.map(|(o, l)| serde_json::json!({"item":k,"object":o,"local":l}))).collect::<Vec<_>>(),

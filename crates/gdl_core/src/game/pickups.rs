@@ -414,6 +414,12 @@ impl Game {
         })
     }
 
+    /// SetItem's kind-13 FindWorldAnimNode for a slot created in play.
+    fn attach_item_sound_node(&mut self, slot: usize) -> R<()> {
+        let objs = self.world_anims.anim_objects();
+        self.items.attach_sound_node(slot, &self.collision, &objs).map_err(|e| super::Unsupported(e.0))
+    }
+
     /// AddItemSub: a new item from a definition, optionally at a matrix
     /// (then placed on the floor); without one it uses the identity at the origin.
     pub fn add_item_sub(&mut self, def: usize, at: Option<([[f32; 3]; 3], [f32; 3])>) -> R<usize> {
@@ -423,12 +429,16 @@ impl Game {
         match at {
             Some((m, t)) => {
                 self.items.set_item(slot, None, def, m, t)?;
+                self.attach_item_sound_node(slot)?;
                 self.items.place_item(slot, &mut self.collision)?;
             }
-            None => self.items.set_item(slot, None, def, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3])?,
+            None => {
+                self.items.set_item(slot, None, def, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3])?;
+                self.attach_item_sound_node(slot)?;
+            }
         }
-        // SetItemGeo: the new item's tree and clock (spawned items had none).
-        self.attach_item_anim(slot);
+        // SetItemGeo: the new item's tree and its started clock.
+        self.set_item_geo(slot)?;
         Ok(slot)
     }
 

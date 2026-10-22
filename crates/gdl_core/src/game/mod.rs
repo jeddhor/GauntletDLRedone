@@ -374,6 +374,8 @@ pub struct Game {
     /// The item trees' clip timings by label in AtreeMatchAnyHeader order
     /// (SetItemGeo attaches one to every item created later as well).
     pub item_anim_lib: std::collections::HashMap<String, Vec<crate::animation_clock::ClipTiming>>,
+    /// Item tree labels whose AnimateNode reaches DoAnimation (a type-1 node).
+    pub item_anim_nodes: std::collections::HashMap<String, (bool, i32)>,
     /// Culling view (MBWorldSphereClip inputs) derived from the StdCam.
     pub camera: Option<item_runtime::Camera>,
     /// The start camera parameters (the culling planes come from here).

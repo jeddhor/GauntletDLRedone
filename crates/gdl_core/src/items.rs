@@ -261,6 +261,15 @@ pub struct ItemWorld {
     /// (UpdateObjWorldMat); ProcessItems' GetObjWorldMat rebuilds the record
     /// matrix from them every update.
     pub floor_parent: Vec<Option<(usize, [[f32; 4]; 4])>>,
+    /// Kind 13's +0xf8, SetItem's FindWorldAnimNode(10.0, position): the
+    /// world-animated object whose node the item follows (ProcessItems case
+    /// 0xd copies its GetWorldMat into the record matrix).
+    pub sound_node: Vec<Option<usize>>,
+    /// The render node (+0x70) matrix of a sound item without a floor
+    /// parent (SetItem's, then PlaceItem's UpdateObjWorldMat): case 0xd moves
+    /// only the record, so GetObjWorldMat keeps rebuilding the record (and
+    /// +0x50/+0x60) from this anchor.
+    pub sound_anchor: Vec<Option<[[f32; 4]; 4]>>,
     /// SetItem's SetItemGeo decision per slot (the item gets its definition's
     /// tree, +0x4c): not for kind 4 (placed enemies; statues take enemy or
     /// critter trees), 13, 12 other than subtype 2, nor an instance with flag
@@ -345,6 +354,8 @@ impl ItemWorld {
             quest_item: None,
             rng: Rand::new(0),
             floor_parent: Vec::new(),
+            sound_node: Vec::new(),
+            sound_anchor: Vec::new(),
             geo: Vec::new(),
         })
     }
@@ -880,7 +891,9 @@ impl ItemWorld {
                 if inst.is_some() {
                     self.definitions[def].0[0x28..0x38].copy_from_slice(&name);
                 }
-                // +0xf8 = FindWorldAnimNode(10.0, position): presentation node.
+                // +0xf8 = FindWorldAnimNode(10.0, position): sound_node,
+                // set by the caller (attach_sound_node: it needs the posed
+                // world animation objects).
                 r.set_u16(0xd8, r.u16_(0xd8) | 0x40);
             }
             _ => {}
@@ -1041,12 +1054,16 @@ impl ItemWorld {
         // A static floor leaves the node's parent as it was.
         if let Some(o) = floor.filter(|&o| collision.runtime_flags.get(o).is_some_and(|f| f & 0x1000 != 0)) {
             let m: [[f32; 4]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x10 + 0x10 * i + 4 * j)));
-            let pm = collision.object_matrix(o).map_err(|e| UnsupportedItem(format!("PlaceItem parent: {e:?}")))?;
-            let local = crate::game::doplayers::unparent_matrix(m, Some(&pm)).map_err(|e| UnsupportedItem(e.0))?;
+            let local = collision.unparent_chain(m, Some(o)).map_err(|e| UnsupportedItem(format!("PlaceItem parent: {e:?}")))?;
             if self.floor_parent.len() <= slot {
                 self.floor_parent.resize(slot + 1, None);
             }
             self.floor_parent[slot] = Some((o, local));
+        } else if self.sound_node.get(slot).is_some_and(|n| n.is_some()) {
+            if self.sound_anchor.len() <= slot {
+                self.sound_anchor.resize(slot + 1, None);
+            }
+            self.sound_anchor[slot] = Some(std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x10 + 0x10 * i + 4 * j))));
         }
         let r = &mut self.records[slot];
         if let (true, Some(bound), Some(f)) = (kind == 5 && r.u16_(0xf4) & 0x400 != 0, r.u32_(0xf0).checked_sub(1), floor) {
@@ -1056,6 +1073,62 @@ impl ItemWorld {
             }
         }
         Ok(floor)
+    }
+}
+
+/// FindWorldAnimNode 0x11cd38(limit, position): over the world animation
+/// entries with data (+0xc), the object whose node's world translation
+/// (GetWorldMat) is strictly nearest below `limit` (FPU distance, SQRT.S).
+pub fn find_world_anim_node(collision: &CollisionWorld, anim_objects: &[usize], limit: f32, p: [f32; 3]) -> R<Option<usize>> {
+    let mut best = limit;
+    let mut found = None;
+    for &o in anim_objects {
+        let m = collision.object_matrix(o).map_err(|e| UnsupportedItem(format!("FindWorldAnimNode: {e:?}")))?;
+        let d = [sub(m[3][0], p[0])?, sub(m[3][1], p[1])?, sub(m[3][2], p[2])?];
+        let s = add(add(mul(d[0], d[0])?, mul(d[1], d[1])?)?, mul(d[2], d[2])?)?;
+        let dist = crate::numeric::sqrt_rn(s)?;
+        if dist < best {
+            best = dist;
+            found = Some(o);
+        }
+    }
+    Ok(found)
+}
+
+impl ItemWorld {
+    /// SetItem's kind-13 FindWorldAnimNode(10.0, position) for `slot` at the
+    /// record's current position (call before PlaceItem moves it).
+    pub fn attach_sound_node(&mut self, slot: usize, collision: &CollisionWorld, anim_objects: &[usize]) -> R<()> {
+        let r = &self.records[slot];
+        if !r.active() || self.definitions[r.definition()].kind() != 13 {
+            return Ok(());
+        }
+        let node = find_world_anim_node(collision, anim_objects, 10.0, r.position())?;
+        let m: [[f32; 4]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x10 + 0x10 * i + 4 * j)));
+        if self.sound_node.len() <= slot {
+            self.sound_node.resize(slot + 1, None);
+        }
+        if self.sound_anchor.len() <= slot {
+            self.sound_anchor.resize(slot + 1, None);
+        }
+        self.sound_node[slot] = node;
+        // SetItem's node starts at the record matrix; PlaceItem's
+        // UpdateObjWorldMat moves it (not for definitions it skips, +10 bit 0).
+        self.sound_anchor[slot] = node.map(|_| m);
+        Ok(())
+    }
+
+    /// Copy the run-time object words (+0x10 flags, +0x35 exclusion, the
+    /// wobj node y) into the collision world, which reads them as the
+    /// original reads the objects.
+    pub fn sync_collision(&self, collision: &mut CollisionWorld) {
+        for o in 0..collision.objects.len() {
+            collision.runtime_flags[o] = self.objects[o].flags_10;
+            collision.runtime_exclusion[o] = self.object_exclusion[o];
+        }
+        for w in &self.wobjs {
+            collision.node_y[w.object] = Some(self.object_node_y[w.object]);
+        }
     }
 }
 
@@ -1070,8 +1143,8 @@ pub struct LoadedItems {
 }
 
 /// AddItemInstList 0x1531d0 up to PlaceItem: RandomItemNum = vb_counter,
-/// NewItem per instance, coin count, then PlaceItem per slot.
-/// ProcessItemWobjs (between NewItem and PlaceItem) is not yet ported.
+/// NewItem per instance, coin count, ProcessItemWobjs (`before_place`, the
+/// caller's step: it needs the game's globals), then PlaceItem per slot.
 pub fn load_items(
     world: &World,
     collision: &mut CollisionWorld,
@@ -1079,6 +1152,7 @@ pub fn load_items(
     session: ItemSession,
     seed: u32,
     before_instances: &mut dyn FnMut(&mut ItemWorld, &mut CollisionWorld) -> R<()>,
+    before_place: &mut dyn FnMut(&mut ItemWorld, &mut CollisionWorld) -> R<()>,
 ) -> R<LoadedItems> {
     let start = session.random_item_num;
     let mut w = ItemWorld::new(world, collision, tables, session)?;
@@ -1102,6 +1176,9 @@ pub fn load_items(
             Err(e) => outcome.push(Err(e.0)),
         }
     }
+    // ProcessItemWobjs moves the elevators to inity + y (and sets the object
+    // words) before PlaceItem finds each item's floor.
+    before_place(&mut w, collision)?;
     for slot in 0..w.records.len() {
         if w.records[slot].i32_(0) == 0 && !w.records[slot].active() {
             continue;

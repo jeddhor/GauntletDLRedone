@@ -87,8 +87,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    the object words (now synced by each writer), PlayerCollideFloor's
    re-queries writing player_floor_col, run-time flags in the floor/wall
    tests and matrix-object floor normals; the same fixes bring G1 fight
-   player 0 to 270/270. Open: Tower item matrices on moving floors and the
-   +0x96 AnimInfo reset byte (gameplay.md).
+   player 0 to 270/270. Items since: whole-update replays match every item
+   word (fight 270/270, varied 175/175; the Tower only an audio handle) after
+   porting the item reset-byte handshake, load-time ProcessItemWobjs,
+   CreateDynobjGrid's cached poses, GetWorldMat/UnparentMatrix as node
+   chains, sound items' world-animation nodes and SetItemGeo's clock start;
+   world_update's order and paused gate (gameplay.md, items.md).
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

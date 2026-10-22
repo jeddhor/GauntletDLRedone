@@ -51,6 +51,7 @@ def main():
     ap.add_argument('--items-seed', help='export_live_items.py JSON replacing the loaded items (replays)')
     ap.add_argument('--items-replay', action='store_true', help='with --enemy-replay: run ProcessItems before do_enemies and compare the Items array')
     ap.add_argument('--frame-replay', action='store_true', help='with --enemy-replay: the whole update (ProcessItems, do_enemies, do_players, ProcessEffects) from the before state')
+    ap.add_argument('--load-players', type=int, help='NumInGamePlayers at GauntWorldInit\'s world_update (0: entered from the select screen, as the Tower of a new game)')
     ap.add_argument('--pads', help='record-based players: MASK_HEX:UPDATES,... (bit i = joyGetStatus entry i of port 0)')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
     ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
@@ -138,6 +139,8 @@ def main():
             cmd += ['frame_replay=1']
     if a.items_seed:
         cmd += [f'items_seed={a.items_seed}']
+    if a.load_players is not None:
+        cmd += [f'load_players={a.load_players}']
     if a.potions:
         cmd += [f'potions={a.potions}']
     if a.crystals:

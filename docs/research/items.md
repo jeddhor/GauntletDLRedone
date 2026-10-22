@@ -82,15 +82,77 @@ parent (229, 420, 817); every one of the 1,360 objects has its +0x28 node.
 Native (2026-10-22): place_item records the floor parent and the node matrix
 relative to it (doplayers::unparent_matrix, shared with UpdatePlayerWorldMat),
 ProcessItems' second loop rebuilds the record matrix from the parent's
-current matrix (parented_matrix) before the offsets; the +0xf8
-world-animation node of kind 13 is not modelled (unknowns.md "Item world
-matrices"). GauntWorldInit calls world_update (0x163338) right before
+current matrix before the offsets. GauntWorldInit calls world_update (0x163338) right before
 AddItemInstList, so the items are placed on the posed floors: native runs
 that DoWorldAnimation in load_items' before-instances step (item 307's
-local relative to object 821 then matches the fixture node's to 2e-5; 21
-items parented natively, 23 in the fixture — item 308 is parented to
-object 227 natively but not in the fixture, open). The same +0x28 reading corrected PlayerCheckMovingFloor and
+local relative to object 821 then matches the fixture node's to 2e-5). The
+same +0x28 reading corrected PlayerCheckMovingFloor and
 OtherPlayerOnOtherMovingObject, which had required a +0x18 parent.
+
+Matrix chains (2026-10-22, from the savestates' nodes): GetObjWorldMat is
+GetWorldMat(record +0x70 node), which multiplies the node's local by each
+ancestor's local in turn (MulMat4 0x1d55a0, VU0 multiply/accumulate) up to
+the world root nodes: an identity with +0x60 0x1000 (MulMat4: −0.0 becomes
++0.0) under a translation-only identity (+0x60 4, add.s); unparented items
+hang from a translation-only identity of their own. UpdateObjWorldMat's
+UnparentMatrix 0x1d0620 is recursive — outermost level first, each level
+inverting its own local (InvertMat4 0x1d4e80: transposed rotation,
+translation −t · rowᵢ from vsub 0 − t). With world-animated parents whose
+rotation carries scale (G1's 387: [1][1] = 0x3f80003e) the transpose is not
+an exact inverse, so inverting the composed parent world instead drifts by
+~2e-3 at a 300-unit translation: native now follows both chains
+(collision::chain_world, unparent_chain) and its item node locals equal the
+fixture's bit for bit (items 52, 307, 398, 420). Kind 13 sound items
+(S_CROWS, S_CARPETFLY): SetItem stores FindWorldAnimNode(10.0, position)
+0x11cd38 at +0xf8 (the world-animation object, over the entries with data,
+whose GetWorldMat translation is strictly nearest below 10; FPU distance and
+SQRT.S), and ProcessItems case 0xd copies that node's GetWorldMat into the
+record matrix before the distance test; the render node stays where SetItem
+(or PlaceItem, which skips definitions with +10 bit 0) put it, so loop 2
+rebuilds the record — and +0x50/+0x60 — from that anchor first. SetItemGeo
+starts a tree's clock at once: AtreeInitSub's InitAnimInfo 0x110750 (zeroed
+AnimInfo, reset byte 1, +0x28/+0x2c 1.0 — record +0xac/+0xb0 — and
+InitAnim(0) with the library present), +0x38 (record +0xbc) the tree's node
+count, then AnimateATree(+0xde, 2). +0xfe of a sound item is the audio
+driver's: AudioLOOP's queue id (negated while pending) or AudioFindTID's
+one-bit track mask; native keeps 1 while playing (not modelled: the IOP
+queue and track allocation).
+
+Load order (2026-10-22, from the savestates' node +0x74 links): AddItemInstList
+runs ProcessItemWobjs between the NewItem loop and PlaceItem, so root elevators
+(0x1000 without 0x1000000, read live from node +0x30) already sit at inity + y
+when items are placed — G1ELEV3 (227, inity 17.42, starty −8) is at 9.42, and
+item 308 (instance y 27.34) lands on the ledge at 27.27, unparented, as in
+the fixture. Matrix objects (0x1000000) are tested by WorldDynCollide at the
+pose CreateDynobjGrid cached in world_update (collision.md), i.e. before that
+ProcessItemWobjs: the Tower's L1FLOOR_LINE10 (2874, child of L1ELEV02 2873,
+starty −19) is still at its rest −13.27, so the BRIDGEPAD triggers 141 and
+147 (instance y −10.66, −6.25) are parented to it with locals (−2.1484, 0.1,
+−8.2344) and (−0.3047, 0.1, −8.9609) — the savestate's node locals — and
+148 (−27.83) finds no floor (−27.73). Native follows both: 23 parented G1
+items as in the fixture, and the Tower's three as in its savestate. The
+load-time ProcessItemWobjs uses OnWobj 0 (inferred: nobody stands on the new
+level yet) and the start state's SPF, start_of_stage and vb_elapsed (the
+load-time values are not captured; they matter only for an elevator away
+from its target and the fade transparency). The load-time world_update's
+DoWorldAnimation is gated as at run time (NumInGamePlayers or game mode
+0x8000, the trigger-camera delay, not paused or in help); GauntWorldInit
+runs it before AddItemInstList's SetPlayerVars, so a level entered from the
+select screen (the Tower of a new or loaded game: init_next_level after
+LoadTowerAndSelect) does not animate — the Tower's items on object 1851
+(67, 210, 211) have the savestate's locals only without that step, G1's 307
+only with it. LevelInputs::load_in_game_players carries it (gdl_play: 0 for
+the Tower from start_session; game_run.py --load-players 0).
+
+AnimateATree calls DoAnimateTree(…, 1), whose AnimateNode passes every
+type-1 tree node (AtreeNodeInit's +0x2c) to DoAnimation; DoAnimation
+(0x10fd10..0x10fd2c) turns a nonzero AnimInfo reset byte (+0x12; item
++0x96) into 2, and CalcAnimInfo clears 2 on the next update. Native applies
+it to item clocks whose tree has a type-1 node (631 of the 679 item trees in
+the 27 item packages; none has a type-1 node with +0x34 < 0, the null-cache
+case). Before, the loop wraps of the Tower's crystals and lights left +0x96
+at 1 (reference 2). Enemy clocks stay at 1 in every reference sample (their
+trees reach no DoAnimation in the update) and native leaves them.
 
 World numbers come from worlddatas (EE 0x23deb0; 14 × 44 B, number +0, letter
 +0xf): castle 1 … town 7 (G, Poison Fields) … tower 0xd. SetItem's generator

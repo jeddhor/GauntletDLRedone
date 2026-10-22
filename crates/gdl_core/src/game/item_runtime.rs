@@ -54,6 +54,9 @@ pub struct ItemAnim {
     pub clock: ClockState,
     pub clips: Vec<ClipTiming>,
     pub current: u16,
+    /// The tree has a type-1 node: AnimateATree's DoAnimateTree(…, 1) runs
+    /// DoAnimation on it.
+    pub animated: bool,
 }
 
 impl Game {
@@ -104,6 +107,12 @@ impl Game {
         if let Some(f) = self.items.floor_parent.get_mut(slot) {
             *f = None;
         }
+        if let Some(n) = self.items.sound_node.get_mut(slot) {
+            *n = None;
+        }
+        if let Some(n) = self.items.sound_anchor.get_mut(slot) {
+            *n = None;
+        }
         self.item_trees.remove(&slot);
         if slot < self.items.first_empty {
             self.items.first_empty = slot;
@@ -138,6 +147,11 @@ impl Game {
         if out.return_flags & 1 != 0 {
             a.current = clip;
         }
+        // DoAnimation 0x10fd10..0x10fd2c: a nonzero AnimInfo reset byte
+        // (+0x12) becomes 2; CalcAnimInfo clears 2 on the next update.
+        if a.animated && a.clock.reset_byte != 0 {
+            a.clock.reset_byte = 2;
+        }
         // AnimInfo mirrors read by ProcessItems: +0x90 count, +0x94 frames, +0x92 sequence.
         let frames = a.clips[a.current as usize].frames;
         let count = a.clips.len() as i16;
@@ -150,17 +164,60 @@ impl Game {
 
     /// SetItemGeo 0x151688's AtreeInit: the slot's clock for its
     /// definition's tree (+0x4c, matched by name), none for a static model.
-    pub fn attach_item_anim(&mut self, slot: usize) {
+    pub fn attach_item_anim(&mut self, slot: usize) -> R<()> {
         if self.item_anims.len() <= slot {
             self.item_anims.resize(slot + 1, None);
         }
-        let Some(r) = self.items.records.get(slot) else { return };
+        let Some(r) = self.items.records.get(slot) else { return Ok(()) };
         if !self.items.geo.get(slot).copied().unwrap_or(false) {
             self.item_anims[slot] = None;
-            return;
+            return Ok(());
         }
         let name = String::from_utf8_lossy(self.items.definitions[r.definition()].name()).into_owned();
-        self.item_anims[slot] = self.item_anim_lib.get(&name).map(|clips| ItemAnim { clock: super::setup::fresh_clock(), clips: clips.clone(), current: 0 });
+        let (animated, nodes) = self.item_anim_nodes.get(&name).copied().unwrap_or((false, 0));
+        self.item_anims[slot] = self.item_anim_lib.get(&name).map(|clips| ItemAnim { clock: super::setup::fresh_clock(), clips: clips.clone(), current: 0, animated });
+        if let Some(a) = self.item_anims[slot].as_mut() {
+            // AtreeInitSub's InitAnimInfo 0x110750: the AnimInfo zeroed with
+            // reset byte 1 and +0x28/+0x2c 1.0 (record +0xac, +0xb0); +0x38
+            // (record +0xbc) the tree's node count.
+            a.clock.sequence = 0;
+            a.clock.previous_sequence = 0;
+            a.clock.reset_byte = 1;
+            a.clock.mode_bits = 0;
+            // ... and its InitAnim(sequence 0) with the library present.
+            if let Some(c) = a.clips.first().copied() {
+                a.clock = crate::animation_clock::initialize(
+                    a.clock,
+                    crate::animation_clock::ClockInit {
+                        sequence: 0,
+                        frames: c.frames,
+                        timing_factor: c.timing_factor,
+                        repeat: c.repeat,
+                        start_frame: 0,
+                        enabled_word: 1,
+                        playback_scale: 1.0,
+                        blend_duration: 0.0,
+                        now: self.globals.atime,
+                        anim_time_scale: self.globals.anim_time_scale,
+                    },
+                )?;
+            }
+            let r = &mut self.items.records[slot];
+            r.set_f32(0xac, 1.0);
+            r.set_i32(0xbc, nodes);
+        }
+        Ok(())
+    }
+
+    /// SetItemGeo 0x151688 with a tree: AtreeInit (attach_item_anim), then
+    /// AnimateATree(+0x80, +0xde, 2) — the clock starts at creation.
+    pub fn set_item_geo(&mut self, slot: usize) -> R<()> {
+        self.attach_item_anim(slot)?;
+        if self.has_item_anim(slot) {
+            let clip = self.items.records[slot].i8_(0xde).max(0) as u16;
+            self.animate_item(slot, clip, 2)?;
+        }
+        Ok(())
     }
 
     fn has_item_anim(&self, slot: usize) -> bool {
@@ -633,10 +690,13 @@ impl Game {
             }
             let mut r = r.clone();
             // GetObjWorldMat 0x103450: the record matrix from the node's world
-            // matrix — under a moving floor parent MulMat4(parent, node)
-            // (doplayers::parented_matrix); otherwise the record's own.
-            if let Some(Some((o, local))) = self.items.floor_parent.get(slot) {
-                let world = super::doplayers::parented_matrix(local, &self.parent_world(*o)?)?;
+            // matrix — under a moving floor parent GetWorldMat's MulMat4 chain
+            // from the node's local; otherwise the record's own.
+            let node = match self.items.floor_parent.get(slot) {
+                Some(Some((o, local))) => Some(self.collision.chain_world(*local, Some(*o)).map_err(|e| super::Unsupported(format!("item world: {e:?}")))?),
+                _ => self.items.sound_anchor.get(slot).copied().flatten(),
+            };
+            if let Some(world) = node {
                 for (i, row) in world.iter().enumerate() {
                     for (j, v) in row.iter().enumerate() {
                         r.set_f32(0x10 + 0x10 * i + 4 * j, *v);
@@ -705,9 +765,20 @@ impl Game {
     /// ProcessItems case 0xd: a world sound (+0xfc < 1: the +0xf4 loop at a
     /// level by the nearest player's distance against the +0xf0 radius,
     /// DoItemSound 0x15d2b0) or a music attention area (+0xfc − 1, chosen
-    /// when a player is inside the radius; +0x100 the change mode). The
-    /// +0xf8 node (a moving world node) is presentation.
+    /// when a player is inside the radius; +0x100 the change mode). First
+    /// the record matrix becomes the +0xf8 node's world matrix.
     fn process_sound_item(&mut self, slot: usize, attn: &mut (i32, i32)) -> R<()> {
+        // GetWorldMat(+0xf8 node, record +0x10): the item rides its node
+        // (+0x50/+0x60 keep the anchor).
+        if let Some(Some(o)) = self.items.sound_node.get(slot).copied() {
+            let m = self.collision.object_matrix(o).map_err(|e| super::Unsupported(format!("sound item node: {e:?}")))?;
+            let r = &mut self.items.records[slot];
+            for (i, row) in m.iter().enumerate() {
+                for (j, v) in row.iter().enumerate() {
+                    r.set_f32(0x10 + 0x10 * i + 4 * j, *v);
+                }
+            }
+        }
         let r = self.items.records[slot].clone();
         let radius = r.f32_(0xf0);
         let pos = r.v3(0x40);
@@ -1382,138 +1453,247 @@ impl Game {
     /// ProcessItemWobjs: drive trigger-bound objects (elevators by y offset,
     /// matrix objects through their world-animation direction bits).
     pub fn process_item_wobjs(&mut self) -> R<()> {
-        for k in 0..self.items.wobjs.len() {
-            let o = self.items.wobjs[k].object;
-            let mut b16 = self.items.objects[o].byte_16;
-            let on = self.on_wobj(o, true);
-            let tf = self.items.objects[o].word_14 >> 8;
-            // Bridge/trap/elevator audio cues are presentation; +0x17 mirrors +0x16.
-            self.items.objects[o].byte_17 = b16;
-            self.items.object_exclusion[o] = 0;
-            let flags = self.items.objects[o].flags_10;
-            let moving;
-            if flags & 0x800 != 0 {
-                moving = false; // world particle systems only
-            } else if tf & 0x10 != 0 {
-                // Fade objects (0x154a18): the condition fades the tree out
-                // (+0x35 = 0xff) and hides it (MBTreeSetFlags 2) once its
-                // transparency passes 0xf7; otherwise MBTreeClearFlags(2)
-                // and the transparency falls back to 0. Transparency
-                // = 0xff − node +0x53 (MBTreeSetAlpha(tree, a, 1)); 8 per
-                // vblank, immediate during start_of_stage. While the alpha
-                // changes (0x154af0, 0x154b30) the object counts as moving:
-                // +0x35 = 1 and flag 0x20000000 below.
-                let out = if tf & 0x20 == 0 { b16 & 0xf == 0 } else { b16 & 0x2f != 0 };
-                self.items.object_exclusion[o] = if out { -1 } else { 0 };
-                let mut a = self.node_alpha.get(o).copied().flatten().map_or(0, i32::from);
-                let start = self.globals.start_of_stage != 0;
-                let step = self.globals.vb_elapsed * 8;
-                let mut m = false;
-                if out {
-                    if a < 0xff {
-                        a = if start { 0xff } else { a + step };
-                        if 0xf7 < a {
-                            self.node_set_flags_at(o, 2);
-                            a = 0xff;
-                        } else {
-                            self.node_clear_flags_at(o, 2);
-                            m = true;
-                        }
-                        self.world_node_set_alpha(Some(o), a);
-                    }
-                } else {
-                    self.node_clear_flags_at(o, 2);
-                    if a != 0 {
-                        a = if start { 0 } else { (a - step).max(0) };
-                        m = true;
-                        self.world_node_set_alpha(Some(o), a);
-                    }
-                }
-                moving = m;
-            } else if flags & 0x200_0000 == 0 {
-                if tf & 8 != 0 || on < 2 {
-                    let w = &self.items.wobjs[k];
-                    let target = if b16 & 0x20 == 0 { w.starty } else { w.endy };
-                    let mut d = sub(target, w.y)?;
-                    let step = mul(self.globals.spf, 4.0)?;
-                    let mut m = true;
-                    if 0.001 < d {
-                        if step < d {
-                            d = step;
-                        }
-                    } else if d < -0.001 {
-                        if d < -step {
-                            d = -step;
-                        }
-                    } else if tf & 0x20 == 0 {
-                        m = false;
-                    } else {
-                        b16 ^= 0x20;
-                    }
-                    if m {
-                        let w = &mut self.items.wobjs[k];
-                        w.y = add(d, w.y)?;
-                        self.items.objects[o].flags_10 |= 0x800_0000;
-                    } else {
-                        self.items.objects[o].flags_10 &= 0xf7ff_ffff;
-                    }
-                    let w = &self.items.wobjs[k];
-                    self.items.object_node_y[o] = add(w.inity, w.y)?;
-                    moving = m;
-                } else {
-                    let w = &self.items.wobjs[k];
-                    self.items.object_node_y[o] = add(w.inity, w.y)?;
-                    continue;
-                }
-            } else if tf & 8 != 0 || on < 2 {
-                let f = &mut self.items.objects[o].flags_10;
-                let mut m = true;
-                if tf & 0x20 == 0 {
-                    *f = if b16 & 0x20 != 0 { (*f | 0x20_0000) & 0xffef_ffff } else { (*f | 0x10_0000) & 0xffdf_ffff };
-                    if *f & 0x50_0000 == 0x50_0000 || *f & 0xa0_0000 == 0xa0_0000 {
-                        m = false;
-                    }
-                } else if b16 & 0xf == 0 {
-                    if *f & 0x80_0000 != 0 {
-                        *f |= 0x30_0000;
-                        b16 &= 0xcf;
-                        m = false;
-                    }
-                } else {
-                    *f &= 0xffcf_ffff;
-                    b16 |= 0x30;
-                }
-                moving = m;
-            } else {
-                let w = &mut self.items.objects[o];
-                w.flags_10 |= 0x30_0000;
-                w.byte_16 &= 0xef;
-                continue;
-            }
-            if moving && tf & 8 == 0 {
-                self.items.object_exclusion[o] = 1;
-            }
-            let f = &mut self.items.objects[o];
-            if moving {
-                if b16 & 0x10 == 0 {
-                    b16 |= 0x10;
-                }
-                f.flags_10 |= 0x2000_0000;
-            } else {
-                b16 &= 0xef;
-                f.flags_10 &= 0xdfff_ffff;
-            }
-            if tf & 0x47 == 0 && (on == 0 || tf & 0x10 == 0) {
-                b16 = 0;
-            }
-            f.byte_16 = b16;
-        }
+        // OnWobj reads players and enemies only, which the loop leaves alone.
+        let ons: Vec<i32> = self.items.wobjs.iter().map(|w| self.on_wobj(w.object, true)).collect();
+        let g = WobjGlobals { spf: self.globals.spf, start_of_stage: self.globals.start_of_stage != 0, vb_elapsed: self.globals.vb_elapsed };
+        let mut nodes = GameWobjNodes {
+            alpha: &mut self.node_alpha,
+            set: &mut self.node_mb_set,
+            clear: &mut self.node_mb_clear,
+            version: &mut self.node_state_version,
+        };
+        process_item_wobjs_sub(&mut self.items, &ons, g, &mut nodes)?;
         // The rest of the update's collision sees the new words.
         for k in 0..self.items.wobjs.len() {
             self.sync_collision_object(self.items.wobjs[k].object);
         }
         Ok(())
     }
+}
+
+/// The ProcessItemWobjs globals: SPF, start_of_stage and vb_elapsed.
+#[derive(Clone, Copy)]
+pub(crate) struct WobjGlobals {
+    pub spf: f32,
+    pub start_of_stage: bool,
+    pub vb_elapsed: i32,
+}
+
+/// The world node state ProcessItemWobjs' fade branch reads and writes:
+/// transparency (0xff − node +0x53 under flag 0x200) and MB tree flag 2.
+pub(crate) trait WobjNodes {
+    fn alpha(&self, o: usize) -> i32;
+    fn set_flags(&mut self, o: usize, bits: u32);
+    fn clear_flags(&mut self, o: usize, bits: u32);
+    fn set_alpha(&mut self, o: usize, a: i32);
+}
+
+/// The game's node state (Game::node_set_flags_at and friends).
+struct GameWobjNodes<'a> {
+    alpha: &'a mut Vec<Option<u8>>,
+    set: &'a mut Vec<u32>,
+    clear: &'a mut Vec<u32>,
+    version: &'a mut u32,
+}
+
+impl WobjNodes for GameWobjNodes<'_> {
+    fn alpha(&self, o: usize) -> i32 {
+        self.alpha.get(o).copied().flatten().map_or(0, i32::from)
+    }
+    fn set_flags(&mut self, i: usize, bits: u32) {
+        let (Some(s), Some(c)) = (self.set.get(i), self.clear.get(i)) else { return };
+        if s & bits != bits || c & bits != 0 {
+            self.set[i] |= bits;
+            self.clear[i] &= !bits;
+            *self.version = self.version.wrapping_add(1);
+        }
+    }
+    fn clear_flags(&mut self, i: usize, bits: u32) {
+        let (Some(s), Some(c)) = (self.set.get(i), self.clear.get(i)) else { return };
+        if c & bits != bits || s & bits != 0 {
+            self.clear[i] |= bits;
+            self.set[i] &= !bits;
+            *self.version = self.version.wrapping_add(1);
+        }
+    }
+    fn set_alpha(&mut self, o: usize, a: i32) {
+        if let Some(v) = self.alpha.get_mut(o) {
+            let a = Some(a.clamp(0, 0xff) as u8);
+            if *v != a {
+                *v = a;
+                *self.version = self.version.wrapping_add(1);
+            }
+        }
+    }
+}
+
+/// Node writes recorded before the game exists (load-time ProcessItemWobjs),
+/// replayed on it by `apply`; reads see the recorded transparency (fresh
+/// nodes: 0).
+#[derive(Default)]
+pub(crate) struct RecordedWobjNodes {
+    alpha: std::collections::HashMap<usize, i32>,
+    ops: Vec<(usize, u8, i32)>,
+}
+
+impl WobjNodes for RecordedWobjNodes {
+    fn alpha(&self, o: usize) -> i32 {
+        self.alpha.get(&o).copied().unwrap_or(0)
+    }
+    fn set_flags(&mut self, o: usize, bits: u32) {
+        self.ops.push((o, 0, bits as i32));
+    }
+    fn clear_flags(&mut self, o: usize, bits: u32) {
+        self.ops.push((o, 1, bits as i32));
+    }
+    fn set_alpha(&mut self, o: usize, a: i32) {
+        self.alpha.insert(o, a.clamp(0, 0xff));
+        self.ops.push((o, 2, a));
+    }
+}
+
+impl RecordedWobjNodes {
+    pub(crate) fn apply(self, game: &mut Game) {
+        for (o, op, v) in self.ops {
+            match op {
+                0 => game.node_set_flags_at(o, v as u32),
+                1 => game.node_clear_flags_at(o, v as u32),
+                _ => game.world_node_set_alpha(Some(o), v),
+            }
+        }
+    }
+}
+
+/// ProcessItemWobjs 0x154790 over the item world; `ons` holds
+/// OnWobj(object, 1) per wobj. AddItemInstList runs it before PlaceItem
+/// (load time) and ProcessItems at its end.
+pub(crate) fn process_item_wobjs_sub(items: &mut crate::items::ItemWorld, ons: &[i32], g: WobjGlobals, nodes: &mut dyn WobjNodes) -> R<()> {
+    for (k, &on) in ons.iter().enumerate().take(items.wobjs.len()) {
+        let o = items.wobjs[k].object;
+        let mut b16 = items.objects[o].byte_16;
+        let tf = items.objects[o].word_14 >> 8;
+        // Bridge/trap/elevator audio cues are presentation; +0x17 mirrors +0x16.
+        items.objects[o].byte_17 = b16;
+        items.object_exclusion[o] = 0;
+        let flags = items.objects[o].flags_10;
+        let moving;
+        if flags & 0x800 != 0 {
+            moving = false; // world particle systems only
+        } else if tf & 0x10 != 0 {
+            // Fade objects (0x154a18): the condition fades the tree out
+            // (+0x35 = 0xff) and hides it (MBTreeSetFlags 2) once its
+            // transparency passes 0xf7; otherwise MBTreeClearFlags(2)
+            // and the transparency falls back to 0. Transparency
+            // = 0xff − node +0x53 (MBTreeSetAlpha(tree, a, 1)); 8 per
+            // vblank, immediate during start_of_stage. While the alpha
+            // changes (0x154af0, 0x154b30) the object counts as moving:
+            // +0x35 = 1 and flag 0x20000000 below.
+            let out = if tf & 0x20 == 0 { b16 & 0xf == 0 } else { b16 & 0x2f != 0 };
+            items.object_exclusion[o] = if out { -1 } else { 0 };
+            let mut a = nodes.alpha(o);
+            let start = g.start_of_stage;
+            let step = g.vb_elapsed * 8;
+            let mut m = false;
+            if out {
+                if a < 0xff {
+                    a = if start { 0xff } else { a + step };
+                    if 0xf7 < a {
+                        nodes.set_flags(o, 2);
+                        a = 0xff;
+                    } else {
+                        nodes.clear_flags(o, 2);
+                        m = true;
+                    }
+                    nodes.set_alpha(o, a);
+                }
+            } else {
+                nodes.clear_flags(o, 2);
+                if a != 0 {
+                    a = if start { 0 } else { (a - step).max(0) };
+                    m = true;
+                    nodes.set_alpha(o, a);
+                }
+            }
+            moving = m;
+        } else if flags & 0x200_0000 == 0 {
+            if tf & 8 != 0 || on < 2 {
+                let w = &items.wobjs[k];
+                let target = if b16 & 0x20 == 0 { w.starty } else { w.endy };
+                let mut d = sub(target, w.y)?;
+                let step = mul(g.spf, 4.0)?;
+                let mut m = true;
+                if 0.001 < d {
+                    if step < d {
+                        d = step;
+                    }
+                } else if d < -0.001 {
+                    if d < -step {
+                        d = -step;
+                    }
+                } else if tf & 0x20 == 0 {
+                    m = false;
+                } else {
+                    b16 ^= 0x20;
+                }
+                if m {
+                    let w = &mut items.wobjs[k];
+                    w.y = add(d, w.y)?;
+                    items.objects[o].flags_10 |= 0x800_0000;
+                } else {
+                    items.objects[o].flags_10 &= 0xf7ff_ffff;
+                }
+                let w = &items.wobjs[k];
+                items.object_node_y[o] = add(w.inity, w.y)?;
+                moving = m;
+            } else {
+                let w = &items.wobjs[k];
+                items.object_node_y[o] = add(w.inity, w.y)?;
+                continue;
+            }
+        } else if tf & 8 != 0 || on < 2 {
+            let f = &mut items.objects[o].flags_10;
+            let mut m = true;
+            if tf & 0x20 == 0 {
+                *f = if b16 & 0x20 != 0 { (*f | 0x20_0000) & 0xffef_ffff } else { (*f | 0x10_0000) & 0xffdf_ffff };
+                if *f & 0x50_0000 == 0x50_0000 || *f & 0xa0_0000 == 0xa0_0000 {
+                    m = false;
+                }
+            } else if b16 & 0xf == 0 {
+                if *f & 0x80_0000 != 0 {
+                    *f |= 0x30_0000;
+                    b16 &= 0xcf;
+                    m = false;
+                }
+            } else {
+                *f &= 0xffcf_ffff;
+                b16 |= 0x30;
+            }
+            moving = m;
+        } else {
+            let w = &mut items.objects[o];
+            w.flags_10 |= 0x30_0000;
+            w.byte_16 &= 0xef;
+            continue;
+        }
+        if moving && tf & 8 == 0 {
+            items.object_exclusion[o] = 1;
+        }
+        let f = &mut items.objects[o];
+        if moving {
+            if b16 & 0x10 == 0 {
+                b16 |= 0x10;
+            }
+            f.flags_10 |= 0x2000_0000;
+        } else {
+            b16 &= 0xef;
+            f.flags_10 &= 0xdfff_ffff;
+        }
+        if tf & 0x47 == 0 && (on == 0 || tf & 0x10 == 0) {
+            b16 = 0;
+        }
+        f.byte_16 = b16;
+    }
+    Ok(())
 }
 
 /// ExtractYPR 0x1d6950: (pitch, yaw, roll) from matrix rows (12 floats).

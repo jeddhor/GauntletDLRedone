@@ -99,9 +99,31 @@ through WorldVector 0x1d5948 for matrix objects; 0x1000 objects with +0x10 bit 0
 keep the file normal). PlayerCollideFloor's two re-queries pass player_floor_col
 (0x2341a0); its forward probe passes none.
 
+WorldDynCollide passes each dynobj entry to WorldObjCollide as its matrix
+argument (a3 at 0x11fd70), and CreateDynobjGrid 0x11f5f8 stored the object's
+GetWorldMat there. So 0x1000000 objects are tested at the pose of the last grid
+build, which follows SetupDynGrid in world_update (0x163508), in GauntWorldInit
+after AddItemInstList (0x1633a0) and in init_next_level (0x126a6c); 0x1000 roots
+use their live node (+0x30). WorldCollide's tail then turns the hit into the
+output struct with a fresh GetWorldMat. Native caches the matrices in
+create_dynobj_grid (called from setup_dyn_grid and at load). The dynobj list
+(InitDynobjList 0x11f3f8) is the first grid cell word's entries — cells[0],
+count << 22 | contents offset, plain i16 object indices; in G1, L1, A1 and K4
+it is exactly native's flag-selected set (0x1000 or 0x1000000 with triangles),
+in the same order, and no grid row uses cell 0.
+
+object_matrix is GetWorldMat 0x1d06b8: the node's local times each object
+ancestor's local (while the object has 0x1000000) with MulMat4, then the world
+root nodes — an identity under MulMat4 (+0x60 0x1000) and a translation-only
+identity (+0x60 4). Read from the G1 and Tower savestates (0x1693be0 under
+0x16935e0; 0x1dee0a0 under 0x1dedaa0; every object node hangs from the first
+through its parents). The earlier port multiplied by the parent's composed
+world with scalar sums, which reassociates the products and kept −0.0 where the
+root's MulMat4 gives +0.0.
+
 ## Not yet native
 
-The dyngrid itself (SetupDynGrid's cells and NextDynGrid order: a dynamic object
-reached through two cells is tested once per query via +0x42, so only the
-candidate order could differ). The CheckNum wrap after 255 queries is reproduced
+The dyngrid cells themselves (NextDynGrid order: a dynamic object reached
+through two cells is tested once per query via +0x42, so only the candidate
+order could differ). The CheckNum wrap after 255 queries is reproduced
 per native world, but its original value depends on every caller.

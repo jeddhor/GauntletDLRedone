@@ -495,8 +495,20 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   replays combat 270/270 (replay-player-combat-g1-v16.json) and fight
   267/270 (kill credit from enemy deaths, which the player replay does not
   run; replay-player-fight-g1-v11.json).
-- Tower items still differing (open): the AnimInfo reset byte +0x96
-  (native 1, reference 2) of two groups (items 0..40 from step 2, 49..63
-  from step 16); the matrices of items parented to moving floors (67, 210,
-  211 on object 1851: x/z; 141, 147 on 2874: y −13.17 against −32.17; 203
-  +0x50/+0x60; 166 all rows); item 160 +0xfc from step 50.
+- Items in the whole-update replays (2026-10-22, report field
+  differing_item_slots counts every update; item_diffs keeps 60 per
+  update): trace-fight-g1-v6 270/270 and trace-varied-g1-v2 175/175 for
+  every item word (replay-frame-fight-g1-r11, replay-frame-varied-g1-r14),
+  the Tower 92/170 with only item 160's +0xfe audio handle left
+  (replay-frame-tower-r11, run with --load-players 0). Fixed on the way
+  (items.md): DoAnimation's reset-byte handshake for item trees with a
+  type-1 node; AddItemInstList's ProcessItemWobjs before PlaceItem;
+  WorldDynCollide's cached CreateDynobjGrid poses; the load-time
+  world_update gate for a select-screen entry; GetWorldMat and the recursive
+  UnparentMatrix as chains over the nodes' locals and the world root nodes;
+  kind 13's FindWorldAnimNode node and its anchor; SetItemGeo's
+  InitAnimInfo + AnimateATree start of the clock. world_update now returns at
+  once while paused or in help (DoWorldAnimation, SetupDynGrid and
+  CreateDynobjGrid first, then the boss, quest, stage-start, lightning and
+  end-of-stage parts), sets start_enemyinfo every update (start_of_stage == 0
+  or LEVL +0x48), and do_auto_exit runs before it (game_main).

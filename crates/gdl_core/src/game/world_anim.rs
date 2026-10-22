@@ -66,6 +66,13 @@ impl WorldAnimSet {
     }
 }
 
+impl WorldAnimSet {
+    /// The objects of the entries with data (+0xc set), in entry order.
+    pub fn anim_objects(&self) -> Vec<usize> {
+        self.entries.iter().filter(|e| e.active).map(|e| e.object).collect()
+    }
+}
+
 /// CreateRYPMatrix: rows 0..2 (translation and w untouched by the caller).
 pub fn create_ryp_matrix(a: [f32; 3]) -> R<[[f32; 3]; 3]> {
     let c0 = ffcos(a[0])?;
