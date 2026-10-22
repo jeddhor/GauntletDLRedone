@@ -54,10 +54,10 @@ replaced by a plausible gameplay rule or generated asset.
 | Multi-player start positions | get_player_pos / try_location ported from instructions; actual-disc headless runs only | Two-pad reference run: compare players 2–4's start records and a respawn |
 | Good-wizard sequence | Ported (goodwiz.rs); not compared with a reference boss kill | Capture a reference boss kill and compare GoodWizard states and auto_exit_timer |
 | CritterDamagedPlayer anger value | f12 after damage_player is undefined; effect damage used | Read the value in a reference capture |
-| Rotated node composition | Rotators compose rotated nodes as rows × parent rows (unverified) | Transcribe GetWorldMat and compare a rotator level |
+| Rotated node composition | GetWorldMat transcribed (2026-10-22): MulMat4 by each ancestor's local, then the world root nodes; UnparentMatrix recursive per level (collision.md, items.md). Item node locals equal the G1 and Tower savestates' bit for bit; no rotator level compared | Trace a level with a rotator (item kind 12) |
 | Gameplay camera | StdCam module ported (research/camera.md): 250/250 traced updates and pb matrices bit-exact in G1, including transmitter switches. Stage-start zoom (StdCamStartUpdate) and its stack-record contents (HYPOTHESIS: zero) are not trace-checked; fixture-started runs settle with StdCamInit(1) (HYPOTHESIS); trigger/boss cameras (old Cam array, do_camera) not ported; source of the 64-row viewport inset and 384 window height not identified | Trace a level start (camera from the start transmitter through the zoom); port do_camera/StandardCamera for trigger and boss cameras; find the window setup writer |
-| Interim throw hold | G1 teleport test: player stayed in action 0x61 for ~900 updates with one missile static (interim player) | Reproduce with the reference player controller |
-| Co-op join and camera | Joining players copy player 1's record; camera = average of living players | Port the join flow (LoadPlyrData, can_join) and the multi-player camera |
+| Interim throw hold | Resolved: the interim player was replaced by do_players; throws and missiles match the reference (trace-fight-g1-v6, trace-combat-g1-v4) | — |
+| Co-op join and camera | Joining goes through the select screen (init_player_select(1), pselect.rs) and load_player_geo / get_player_pos placement; the StdCam with several players is ported but neither is compared with a reference | Trace a two-player session |
 | Enemy tree alpha at spawn | enemy_alpha starts at 255 (HYPOTHESIS); presentation only | Read MBTreeGetAlpha for a fresh tree in a capture |
 
 External data consultation cannot establish PS2 offsets or behavior without local
@@ -68,7 +68,7 @@ which is data only and must not be executed.
 Resumed 2026-10-14 by a new agent session. The current resume queue and log paths
 are in [state.md](../state.md); movement evidence is in [movement.md](movement.md).
 | Physical pad → joyGetStatus entry | Entries 0–3 are the d-pad (left/right/up/down, observed level bits); remap shows attack = entry 0xd, magic 0xa, turbo 0xc, potion 0xb (by GetPlayerDMotion use) | Press each PS2 button in the reference and read plr_levels 0x2bacc0 |
-| Player node under PlayerRootNode | 150 traced updates consistent with GetWorldMat = local matrix; −0.0 → +0.0 | Trace a moving floor (node parent ≠ root) and a grabbed player |
+| Player node under PlayerRootNode | 150 traced updates consistent with GetWorldMat = local matrix; −0.0 → +0.0. Moving-floor parents now traced: the Tower (player on 2903 under fade object 2902) and G1's moving floors match; native's translation-only path equals MulMat4 there (identity rotations). A rotating floor and a grabbed player are untested | Trace a rotating floor and a grabbed player |
 | Milestones table | update_player_milestone reads Milestones (0x70 each) / NumMilestones; kind-5 locators are the likely source | Export the Milestones builder and compare with a capture |
 | Panel inputs | button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, menu_on/optmenu/full-screen inventory flags from the front end, MBOX texture search order across packages | Export ResetModels; front-end port |
 | MBTreeSetAlpha draw use | Node +0x53 = ~alpha and flag 0x200; drawn as material alpha × (255 − alpha)/255 (HYPOTHESIS) | Trace the +0x53 byte through the draw path or compare a fading exit/crystal in a capture |
