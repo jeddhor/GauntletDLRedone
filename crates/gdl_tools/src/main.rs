@@ -1793,7 +1793,13 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let mut seed = rand_after;
                 let mut solved = false;
                 let mut res = Ok(());
+                // Traces without the help globals: every solve attempt starts
+                // from the help box state before the update.
+                let help_before = game.hud.help.clone();
                 for _ in 0..4 {
+                    if b["enemies"].get("help_flag").is_none() {
+                        game.hud.help = help_before.clone();
+                    }
                     seed_all(&mut game)?;
                     game.rng.state = seed;
                     res = if items_mode { game.process_items() } else { Ok(()) };

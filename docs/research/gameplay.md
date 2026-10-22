@@ -524,3 +524,13 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   player 1's box by 120 vblanks, Sumner on his pedestal. Native's client
   showed the label twice after three quick pickups (two do_got_it panels;
   not compared with a reference of several pickups).
+- trace-combat-g1-v4: trace-combat-g1-v3's schedule re-recorded with the
+  current probe (world animations, objects, help globals); all 541 enemy
+  and player samples are byte-identical to v3. Whole-update replay
+  (replay-frame-combat-g1-r16.json): enemies, items, player 0, effects and
+  world animation 270/270. The old +0x197c diff at step 496 was a replay
+  artifact: +0x197e is HELP_SEEN + 0x6e (PlayerMotion's NewHelp(0x6e) at a
+  full turbo meter with 15 visible enemies); the first solve attempt showed
+  it, and the retry kept the help box state while the player record was
+  reseeded, so NewHelp's priority test refused it. The replay now restores
+  the help state per attempt when a trace lacks the help globals.
