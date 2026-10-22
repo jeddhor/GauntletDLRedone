@@ -984,7 +984,7 @@ impl Camera {
     }
 
     /// CalcFrustrumNormals 0x1150f0 (planes through the origin).
-    fn frustum_normals(&self, yaw: f32, l: V3) -> R<[V3; 4]> {
+    pub(crate) fn frustum_normals(&self, yaw: f32, l: V3) -> R<[V3; 4]> {
         let r0 = yaw_vec3(-yaw, LVECTOR)?;
         let u0 = [
             sub(mul(l[1], r0[2])?, mul(l[2], r0[1])?)?,
@@ -1270,7 +1270,12 @@ impl Camera {
     /// and +0x50 against plane 3. `collide(from, to)` is PlayerWallCollide
     /// then PlayerCollideFloor and returns true when the slide is refused.
     pub fn limit_player_dpos(&self, player: &Record, dpos: &mut V3, slide: bool, collide: &mut dyn FnMut(V3, V3) -> R<bool>) -> R<LimitResult> {
-        let c = &self.std;
+        self.limit_player_dpos_on(&self.std, player, dpos, slide, collide)
+    }
+
+    /// NewCamLimitPlayerDpos on another camera record (CamLimitPlayerDpos's
+    /// BossCam).
+    pub fn limit_player_dpos_on(&self, c: &Record, player: &Record, dpos: &mut V3, slide: bool, collide: &mut dyn FnMut(V3, V3) -> R<bool>) -> R<LimitResult> {
         let nr = -c.f32_(o::MAX_RADIUS);
         let (t, l) = (c.v3(o::TARGET), c.v3(o::LOOK));
         let apex = [add(mul(nr, l[0])?, t[0])?, add(mul(nr, l[1])?, t[1])?, add(mul(nr, l[2])?, t[2])?];
@@ -2266,6 +2271,11 @@ impl super::Game {
     /// update: front-end modes keep a fixed camera, boss modes and levels with
     /// a BossCritInst run BossCameraUpdate, otherwise StdCamUpdate
     /// (new_camera_switch is 1). TriggerCamUpdate is not ported yet.
+    /// main's camera dispatch after game_main (replays).
+    pub fn camera_step_pub(&mut self) -> R<()> {
+        self.camera_step()
+    }
+
     pub(crate) fn camera_step(&mut self) -> R<()> {
         if self.trigger_cam_update()? {
             let w = self.std_camera.as_ref().map(|c| c.window.clone());

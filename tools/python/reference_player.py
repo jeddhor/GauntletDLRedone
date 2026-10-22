@@ -16,7 +16,10 @@ ELF = pathlib.Path('private/disc/SLUS_200.47')
 GLOBALS = ['Time', 'SPF', 'ATime', 'AnimTimeScale', 'vb_elapsed', 'AuxLevels', 'game_mode', 'cam_wait',
            'start_of_stage', 'NumVisibleEnemies', 'StopTime', 'EnemyShrink', 'QuestItemState', 'BossType',
            'BossActive', 'WldBtm', 'paused', 'help', 'trig_cam_active', 'NumActivePlayers', 'skip_wave',
-           'quit_level', 'auto_exit_flag', 'someone_wants_to_exit', 'firstgetidx', 'disable_player_controls']
+           'quit_level', 'auto_exit_flag', 'someone_wants_to_exit', 'firstgetidx', 'disable_player_controls',
+           # Camera state main's dispatch reads (boss camera, transmitters, DoShake).
+           'BossCameraMode', 'BossCam', 'BossCamMode', 'CurTransmitter', 'Cur3DTransmitter', 'shaking', 'shake_type',
+           'shake_priority', 'shake_delay', 'shake_count', 'shake_rad']
 
 
 def elf_symbols(names):
@@ -39,13 +42,20 @@ def elf_symbols(names):
 
 
 def player_probe(memory):
-    sym = elf_symbols(set(GLOBALS) | {'players', 'PlayerControl', 'MboxWinPtr', 'StdCamera', 'Options', 'PlayerRootNode', 'Cam'})
+    sym = elf_symbols(set(GLOBALS) | {'players', 'PlayerControl', 'MboxWinPtr', 'StdCamera', 'Options', 'PlayerRootNode', 'Cam',
+                                      'BossCamera', 'BossCamData'})
     player, control = sym['players'], sym['PlayerControl']
     win, = struct.unpack_from('<I', memory, sym['MboxWinPtr'])
     blocks = {'player0': (player, 0x2b00), 'control': (control, 0xf0), 'win': (win, 0xb0),
               'stdcam': (sym['StdCamera'], 0x1b0), 'options': (sym['Options'], 0x30),
               # Cam[0]'s matrix rows (Cam +0x10..+0x3c) and eye (+0x40..+0x4c).
-              'cam0': (sym['Cam'] + 0x10, 0x40)}
+              'cam0': (sym['Cam'] + 0x10, 0x40),
+              # The boss camera record (0x1b0, the StdCam layout).
+              'bosscam': (sym['BossCamera'], 0x1b0)}
+    # The level's BCAM record (BossCamData, 0x54 bytes) when one is bound.
+    bcam, = struct.unpack_from('<I', memory, sym['BossCamData'])
+    if bcam and bcam % 4 == 0 and 0x100000 <= bcam < 0x2000000 - 0x54:
+        blocks['bcam'] = (bcam, 0x54)
     blocks.update({g: (sym[g], 4) for g in GLOBALS})
     if any(a % 4 or n % 4 or n <= 0 for a, n in blocks.values()):
         raise ValueError('player blocks must be aligned')

@@ -1808,6 +1808,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let mut crit_before = ReferenceCritters::default();
             let have_crit = frame_mode && crit_before.apply(s0)? && !crit_before.globals.is_empty();
             let mut critter_updates_equal = 0;
+            let mut camera_updates_equal = 0;
             let mut world_anim_updates_equal = 0;
             let mut player_updates_equal = 0;
             let mut effect_updates_equal = 0;
@@ -1955,6 +1956,40 @@ fn run() -> Result<(), Box<dyn Error>> {
                         if 0xac <= win.len() {
                             let v = |o: usize| [fl(&win[o..]), fl(&win[o + 4..]), fl(&win[o + 8..])];
                             game.replay_set_view([v(0x70), v(0x80), v(0x90)], v(0xa0));
+                        }
+                        // The camera state main's dispatch reads (traces from
+                        // trace-b6-boss-v4): the boss camera record, mode and
+                        // BCAM record, the transmitter indices, DoShake's
+                        // globals and the window eye BossCamGetCurrent reads.
+                        if let Some(bc_raw) = bp.get("bosscam") {
+                            let gw = |n: &str| -> Result<i32, Box<dyn Error>> { Ok(word(&hexb(&bp[n])?) as i32) };
+                            let (cur, cur3d) = (gw("CurTransmitter")?, gw("Cur3DTransmitter")?);
+                            if let Some(bc) = game.boss_camera.as_mut() {
+                                bc.rec = gdl_core::game::record::Record(hexb(bc_raw)?);
+                                bc.mode = gw("BossCameraMode")?;
+                                if let Some(d) = bp.get("bcam") {
+                                    bc.data = Some(hexb(d)?);
+                                }
+                                bc.cur_transmitter = cur;
+                            }
+                            let shake = gdl_core::game::camera::Shake {
+                                shaking: gw("shaking")?,
+                                kind: gw("shake_type")?,
+                                priority: gw("shake_priority")?,
+                                delay: gw("shake_delay")?,
+                                count: gw("shake_count")?,
+                                radius: f32::from_bits(gw("shake_rad")? as u32),
+                            };
+                            if let Some(c) = game.std_camera.as_mut() {
+                                c.cur3d = cur3d;
+                                c.shake = shake;
+                                if 0xac <= win.len() {
+                                    c.pb.eye = [fl(&win[0xa0..]), fl(&win[0xa4..]), fl(&win[0xa8..])];
+                                }
+                            }
+                            game.globals.cur_transmitter = cur;
+                            game.globals.cur3d_transmitter = cur3d;
+                            game.boss_cam_mode = gw("BossCamMode")?;
                         }
                         // Cam[0]'s matrix (traces from trace-b6-boss-v3).
                         if let Some(c0) = bp.get("cam0") {
@@ -2220,6 +2255,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let item_diffs = if items_mode { ref_before.compare(&game, &hexb(&a["enemies"]["WorldInfo"])?, items_base) } else { Vec::new() };
                 let (mut player_diffs, effect_diffs) = (Vec::new(), if frame_mode { fx_before.compare(&game, items_base) } else { Vec::new() });
                 let mut critter_diffs = Vec::new();
+                let mut camera_diffs: Vec<serde_json::Value> = Vec::new();
                 if frame_mode {
                     let after = hexb(&a["player"]["player0"])?;
                     for o in (0..0x2b00).step_by(4) {
@@ -2236,6 +2272,55 @@ fn run() -> Result<(), Box<dyn Error>> {
                     }
                     if effect_diffs.is_empty() && res.is_ok() {
                         effect_updates_equal += 1;
+                    }
+                    // main's camera dispatch after game_main, compared with
+                    // the after sample (traces with the boss camera state).
+                    if let Some(abc) = a["player"].get("bosscam") {
+                        let cr = game.camera_step_pub();
+                        let mut d = Vec::new();
+                        if let Err(e) = &cr {
+                            d.push(serde_json::json!({"camera":"unsupported","detail":e.0}));
+                        }
+                        let rb = hexb(abc)?;
+                        if let Some(bc) = &game.boss_camera {
+                            for o in (0..0x1b0).step_by(4) {
+                                if bc.rec.u32_(o) != word(&rb[o..]) {
+                                    d.push(serde_json::json!({"camera":"bosscam","offset":format!("{o:#x}"),"native":format!("{:08x}", bc.rec.u32_(o)),"reference":format!("{:08x}", word(&rb[o..]))}));
+                                }
+                            }
+                            let m = word(&hexb(&a["player"]["BossCameraMode"])?);
+                            if bc.mode as u32 != m {
+                                d.push(serde_json::json!({"camera":"BossCameraMode","native":bc.mode,"reference":m}));
+                            }
+                        }
+                        let rs = hexb(&a["player"]["stdcam"])?;
+                        let wa = hexb(&a["player"]["win"])?;
+                        if let Some(c) = &game.std_camera {
+                            for o in (0..0x1b0).step_by(4) {
+                                if c.std.u32_(o) != word(&rs[o..]) {
+                                    d.push(serde_json::json!({"camera":"stdcam","offset":format!("{o:#x}"),"native":format!("{:08x}", c.std.u32_(o)),"reference":format!("{:08x}", word(&rs[o..]))}));
+                                }
+                            }
+                            let rows = c.pb.cam_rows;
+                            for (k, row) in rows.iter().enumerate() {
+                                for (j, v) in row.iter().enumerate() {
+                                    let r = word(&wa[0x70 + 0x10 * k + 4 * j..]);
+                                    if v.to_bits() != r {
+                                        d.push(serde_json::json!({"camera":"window","row":k,"col":j,"native":format!("{:08x}", v.to_bits()),"reference":format!("{r:08x}")}));
+                                    }
+                                }
+                            }
+                            for (j, v) in c.pb.eye.iter().enumerate() {
+                                let r = word(&wa[0xa0 + 4 * j..]);
+                                if v.to_bits() != r {
+                                    d.push(serde_json::json!({"camera":"window eye","col":j,"native":format!("{:08x}", v.to_bits()),"reference":format!("{r:08x}")}));
+                                }
+                            }
+                        }
+                        if d.is_empty() && res.is_ok() {
+                            camera_updates_equal += 1;
+                        }
+                        camera_diffs = d;
                     }
                     if have_crit {
                         critter_diffs = crit_before.compare(&game, items_base)?;
@@ -2265,7 +2350,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "item_words_differing":item_diffs.len(),"item_diffs":item_diffs.iter().take(60).collect::<Vec<_>>(),
                     "player_words_differing":player_diffs.len(),"player_diffs":player_diffs.iter().take(40).collect::<Vec<_>>(),
                     "effect_words_differing":effect_diffs.len(),"effect_diffs":effect_diffs.iter().take(40).collect::<Vec<_>>(),
-                    "critter_words_differing":critter_diffs.len(),"critter_diffs":critter_diffs.iter().take(60).collect::<Vec<_>>()}));
+                    "critter_words_differing":critter_diffs.len(),"critter_diffs":critter_diffs.iter().take(60).collect::<Vec<_>>(),
+                    "camera_words_differing":camera_diffs.len(),"camera_diffs":camera_diffs.iter().take(40).collect::<Vec<_>>()}));
             }
             let report = serde_json::json!({"scope":"per-update replay of a reference enemies trace through the native do_enemies (all 25 records, every u32 except presentation pointers 0x70 0x80 0x84 0x88 0x8c 0xc0 0xc4 0x1f0; generator/floor links mapped)",
                 "items_mode":items_mode,"item_scope":"items_replay: ProcessItems then do_enemies; Items array words except +0x70..+0xc7 and the +0xe6 link, export_live_items convention",
@@ -2274,6 +2360,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "frame_mode":frame_mode,"player_updates_equal":player_updates_equal,"effect_updates_equal":effect_updates_equal,
                 "world_anim_updates_equal":world_anim_updates_equal,
                 "critter_updates_equal":have_crit.then_some(critter_updates_equal),
+                "camera_updates_equal":camera_updates_equal,
                 "item_floor_parents":game.items.floor_parent.iter().enumerate().filter_map(|(k, p)| p.map(|(o, l)| serde_json::json!({"item":k,"object":o,"local":l}))).collect::<Vec<_>>(),
                 "items_without_native_clock":(0..game.items.records.len()).filter(|&k| game.items.records[k].active() && game.item_anims.get(k).is_none_or(|a| a.is_none()))
                     .map(|k| String::from_utf8_lossy(game.items.definitions[game.items.records[k].definition()].name()).into_owned())

@@ -861,12 +861,42 @@ impl Game {
         Ok(())
     }
 
-    /// CameraLimitPlayerDpos 0x1a2428 with the StdCam (new camera switch):
-    /// the slide's collision test is PlayerWallCollide then PlayerCollideFloor.
+    /// CameraLimitPlayerDpos 0x1a2428 (the slide's collision test is
+    /// PlayerWallCollide then PlayerCollideFloor): with BossCameraMode set,
+    /// CamLimitPlayerDpos(BossCam) — CalcFrustrumNormals from the boss
+    /// record's +0xec yaw and +0xe0 look into its +0x40 planes, then
+    /// NewCamLimitPlayerDpos on it — keeping the displacement's y and
+    /// returning 1 (skipped for a dead or dying boss of type 0x24/0x25/0x29
+    /// while gold is active; BOSS_CAM_TEST is 0); otherwise the StdCam's
+    /// (newcam_mode 2; the old camera's screen_limitation is not ported and
+    /// the StdCam stands in).
     fn camera_limit_player_dpos(&mut self, p: usize, d: &mut V3, slide: bool) -> R<i32> {
+        let boss_mode = self.boss_camera.as_ref().map_or(0, |b| b.mode);
+        if boss_mode != 0 {
+            let g = &self.globals;
+            if (g.boss_is_dead != 0 || self.boss_is_dying != 0) && matches!(g.boss_type, 0x24 | 0x25 | 0x29) && self.is_gold_active() {
+                return Ok(1);
+            }
+        }
         let Some(cam) = self.std_camera.take() else {
             return Ok(1);
         };
+        let mut boss = if boss_mode != 0 { self.boss_camera.take() } else { None };
+        if let Some(bc) = boss.as_mut() {
+            use super::camera::o;
+            match cam.frustum_normals(bc.rec.f32_(o::YAW), bc.rec.v3(o::LOOK)) {
+                Ok(planes) => {
+                    for (k, n) in planes.iter().enumerate() {
+                        bc.rec.set_v3(o::PLANES + 0x10 * k, *n);
+                    }
+                }
+                Err(e) => {
+                    self.std_camera = Some(cam);
+                    self.boss_camera = boss;
+                    return Err(e);
+                }
+            }
+        }
         let rec = self.players[p].clone();
         let radius = rec.f32_(0x828);
         let height = rec.f32_(0x82c);
@@ -893,12 +923,24 @@ impl Game {
             let f = collide_floor(world, radius, height, &mut state, from, &mut dd, w, wall.as_ref(), wb)?;
             Ok(f < 0)
         };
-        let r = cam.limit_player_dpos(&rec, d, slide, &mut collide);
+        let keep_y = d[1];
+        let r = match &boss {
+            Some(bc) => cam.limit_player_dpos_on(&bc.rec, &rec, d, slide, &mut collide),
+            None => cam.limit_player_dpos(&rec, d, slide, &mut collide),
+        };
         self.std_camera = Some(cam);
+        let boss_path = boss.is_some();
+        if boss_path {
+            self.boss_camera = boss;
+        }
         let r = r?;
         if r.floor_reset {
             let y = self.player_water.map_or(self.players[p].f32_(0x88c), |(_, wy)| wy);
             self.players[p].set_f32(0x8a4, y);
+        }
+        if boss_path {
+            d[1] = keep_y;
+            return Ok(1);
         }
         Ok(r.code)
     }
