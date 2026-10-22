@@ -233,6 +233,18 @@ impl Controls {
         }
     }
 
+    /// controls_remove_active_player 0x107268 (one player): its port's
+    /// edges cleared and both mappings released (controls_set_active_players
+    /// recomputes from joy_remap on the next update).
+    pub fn remove_active_player(&mut self, k: usize) {
+        if let Ok(port) = usize::try_from(self.joy_remap[k]) {
+            self.plr_edges[port] = 0;
+            self.plr_repedges[port] = 0;
+            self.joy_assigned[port] = -1;
+        }
+        self.joy_remap[k] = -1;
+    }
+
     /// Bind player `k` to `port` (what ControlsUpdate does when a port's
     /// button 0x14 claims a lost controller slot).
     pub fn assign(&mut self, k: usize, port: usize) {

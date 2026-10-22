@@ -204,6 +204,9 @@ pub enum Event {
     /// A trigger camera the original activates here (camera system not
     /// ported yet): "crystal", "sumner", "window", "rune".
     CameraRequest { kind: &'static str, arg: i32 },
+    /// inactivate_player's clear_player(k, 1): the host rebuilds the slot's
+    /// record (it holds every class's PDAT).
+    PlayerInactivated { player: usize },
     /// add_got_it(player, kind, amount): HUD pickup notice.
     GotIt { player: usize, kind: i32, amount: i32 },
     /// Audio* calls, by original function name (cues not yet transcribed).

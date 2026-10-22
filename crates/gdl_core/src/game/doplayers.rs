@@ -489,7 +489,7 @@ impl Game {
                         let v = self.players[k].u16_(0x1cc).wrapping_sub(vb as u16) as i16;
                         self.players[k].set_i16(0x1cc, v);
                         if v < 1 {
-                            return unsupported("setup_player_display (player slot timer)");
+                            self.setup_player_display(k);
                         }
                     }
                 }
@@ -603,7 +603,8 @@ impl Game {
                     if self.globals.game_mode == 0x4010 && self.players[k].i32_(0x2ad4) == 1 {
                         let ed = self.controls.control[k].u32_(8);
                         if ed & 0x800_0000 != 0 {
-                            return unsupported("inactivate_player (continue declined)");
+                            // Back at the continue prompt: the player leaves.
+                            self.inactivate_player(k);
                         }
                         if ed & 0x200_0000 != 0 {
                             self.players[k].set_i32(0x2ad4, 0);

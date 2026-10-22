@@ -2506,6 +2506,16 @@ fn simulate(
             Event::GeneratorHit { destroyed: true, .. } => sim.last_event = "generator destroyed".into(),
             Event::GotIt { kind, amount, .. } => sim.last_event = format!("picked up (kind {kind}, amount {amount})"),
             Event::PlayerDied { .. } => sim.last_event = "YOU DIED".into(),
+            Event::PlayerInactivated { player } => {
+                // inactivate_player's clear_player(k, 1) with every PDAT.
+                let demo = sim.game.globals.demo_mode != 0;
+                if let Err(e) = profile::clear_player(&mut sim.game.players[player], true, demo, &session.pdats) {
+                    sim.error = Some(format!("clear_player: {e}"));
+                }
+                if 0 < player {
+                    sim.coop[player - 1] = false;
+                }
+            }
             Event::Audio { cue: "AudioEnemyDies", .. } => sim.kills += 1,
             // NewHelp draws its own box (Game::new_help / DoHelp).
             Event::HintMenu { .. } => sim.hint_menu = true,
@@ -4198,6 +4208,12 @@ fn front_system(world: &mut EcsWorld) {
     let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
     let (keys, toggle) = menu_keys(world, naming);
     if screen == Screen::Playing {
+        // game_main: no active player left (each declined to continue) →
+        // init_over → the title.
+        if world.get_resource::<Sim>().is_some_and(|s| (0..4).all(|k| s.game.players[k].i32_(0xfc) == 0)) {
+            end_game(world);
+            return;
+        }
         if world.get_resource::<Sim>().is_some_and(|s| s.message_box.is_some()) {
             // ScrollMessageBox's own loop: vblanks from wall time (NTSC).
             let dt = world.resource::<Time>().delta_secs();

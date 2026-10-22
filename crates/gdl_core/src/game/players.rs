@@ -620,6 +620,28 @@ impl Game {
         Ok(())
     }
 
+    /// inactivate_player 0x1319a0: +0x2ac4, +0xfc, +0x2ad4, +0x2ad8 = 0, the
+    /// controller released, +0x1cc = 0xb4 (do_players' state-0 timer then
+    /// re-runs setup_player_display), the notices, keys and powerups go,
+    /// the panel is set up again; clear_player(k, 1) is the host's
+    /// (Event::PlayerInactivated). The geometry, see-through and death sound
+    /// parts are presentation.
+    pub fn inactivate_player(&mut self, k: usize) {
+        let r = &mut self.players[k];
+        r.set_u32(0x2ac4, 0);
+        r.set_i32(0xfc, 0);
+        r.set_u32(0x2ad4, 0);
+        r.set_u32(0x2ad8, 0);
+        self.controls.remove_active_player(k);
+        self.players[k].set_i16(0x1cc, 0xb4);
+        self.players[k].set_i32(0x1a14, 0);
+        super::profile::init_player_powerups(&mut self.players[k]);
+        if self.globals.game_mode & 0x4000 != 0 {
+            self.setup_player_display(k);
+        }
+        self.events.push(super::Event::PlayerInactivated { player: k });
+    }
+
     /// kill_player 0x131a98, after the dying state. In the Tower the
     /// player plays on with PlayerRestoreState; elsewhere PlayersSetWaveDied,
     /// player_set_continue (+0xfc = 0xb, +0x2ad4 = 1), health 0, drop_keys

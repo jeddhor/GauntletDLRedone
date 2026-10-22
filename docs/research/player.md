@@ -253,3 +253,15 @@ start_magic sets damage flag 0x800000 for casters past level 0x18. With it:
   bronze/silver/gold voices by value.
 - Checked headlessly: S1–S9 load and run (sandglass expiry auto-exits);
   the secret-exit → room → return trip has not been played through.
+
+## Continue and game over (2026-10-21)
+
+- do_players state 0xb with +0x2ad4 = 1 (the continue prompt) in game mode
+  0x4010: Back → inactivate_player 0x1319a0 (+0x2ac4/+0xfc/+0x2ad4/
+  +0x2ad8 = 0, controls_remove_active_player 0x107268, +0x1cc = 0xb4, keys
+  and powerups gone, the panel re-set; clear_player(k, 1) by the host); X
+  clears +0x2ad4. State 0's +0x1cc timer re-runs setup_player_display.
+- With no active player left game_main calls init_over: gdl_play returns
+  to the title. In single player the wave ends on the frame the player
+  reaches 0xb (do_players reports it done), so the prompt only matters
+  while others play.
