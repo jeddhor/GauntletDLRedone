@@ -53,6 +53,7 @@ def main():
     parser.add_argument('--movement', action='store_true', help='capture raw slot-0 player record, controls and camera block')
     parser.add_argument('--stdcam', action='store_true', help='capture StdCamera, pb camera block, window record and camera inputs')
     parser.add_argument('--player', action='store_true', help='capture player 0, PlayerControl, window, StdCamera and player globals')
+    parser.add_argument('--enemies', action='store_true', help='capture the enemies array, the rand state and enemy globals')
     parser.add_argument('--leave-held', action='store_true',
                         help='diagnostic: keep final keys held after the last step for a following debugger stop. '
                              'Release them with keyup while the render window has focus; releases delivered to '
@@ -60,7 +61,7 @@ def main():
     parser.add_argument('--out', type=pathlib.Path, required=True)
     args = parser.parse_args()
     # StdCam traces need longer walks to cross transmitter zones (600 bound).
-    segments = schedule_segments(args.schedule, args.steps, args.keys, 600 if args.stdcam or args.player else 120)
+    segments = schedule_segments(args.schedule, args.steps, args.keys, 600 if args.stdcam or args.player or args.enemies else 120)
     step_keys = [s['keys'] for s in segments for _ in range(s['steps'])]
     if not 1 <= args.steps <= 120 or not args.out.resolve().is_relative_to(pathlib.Path('private').resolve()):
         raise ValueError('trace must be private and bounded to 1..120 vblanks')
@@ -128,6 +129,11 @@ def main():
                 from reference_player import player_probe
                 capture_player, player_regions = player_probe(memory)
                 regions.extend(player_regions)
+            capture_enemies = None
+            if args.enemies:
+                from reference_enemies import enemy_probe
+                capture_enemies, enemy_regions = enemy_probe(memory)
+                regions.extend(enemy_regions)
             capture_movement = None
             if args.movement:
                 from reference_movement import movement_probe
@@ -152,6 +158,8 @@ def main():
                 samples[0]['stdcam'] = capture_stdcam(read)
             if capture_player:
                 samples[0]['player'] = capture_player(read)
+            if capture_enemies:
+                samples[0]['enemies'] = capture_enemies(read)
             for step, wanted in enumerate(step_keys, start=1):
                 for key in list(held):
                     if key not in wanted:
@@ -185,6 +193,8 @@ def main():
                     samples[-1]['stdcam'] = capture_stdcam(read)
                 if capture_player:
                     samples[-1]['player'] = capture_player(read)
+                if capture_enemies:
+                    samples[-1]['enemies'] = capture_enemies(read)
             report = dict(schema_version=2, source_profile=source['profile_id'], fixture_sha256=fixture_hash,
                           launch=launch, transport='Xvfb keyboard F10 + paused PINE; one verified vblank per step',
                           alignment='emulator vblank boundary, not a guaranteed guest-update edge',

@@ -1068,6 +1068,282 @@ fn run() -> Result<(), Box<dyn Error>> {
                 eprintln!("player 1 in front at {at:?}");
             }
         }
+        if let Some(tp) = opts.get("enemy_replay") {
+            // Per-update replay of a reference_trace --player --enemies trace
+            // through the native do_enemies: each update starts from the
+            // reference's 25 enemy records (animation clocks from the +0x84
+            // AnimInfo, the tree's level found by its InitActions table at
+            // +0xe8), player 0, controls and globals, with SetupDynGrid rebuilt;
+            // the visibility flags are the reference result's +0x2ee/+0x2f0.
+            // main reseeds rand every loop (srand(pbGetCPUTime() >> 3)), so the
+            // seed is solved from the reference's state after the update by
+            // inverting newlib's LCG over the native call count.
+            let trace: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(tp), 256 * 1024 * 1024)?)?;
+            let samples = trace["samples"].as_array().ok_or("trace samples")?;
+            let clips = anim_of("clips")?;
+            game.player_clips[0] = gdl_core::game::setup::clips_of(&clips, 0);
+            let hexb = |v: &serde_json::Value| -> Result<Vec<u8>, Box<dyn Error>> {
+                let s = v.as_str().ok_or("hex field")?;
+                (0..s.len()).step_by(2).map(|i| Ok(u8::from_str_radix(&s[i..i + 2], 16)?)).collect()
+            };
+            let word = |b: &[u8]| u32::from_le_bytes(b[..4].try_into().unwrap());
+            let fl = |b: &[u8]| f32::from_le_bytes(b[..4].try_into().unwrap());
+            // items_seed=FILE (tools/python/export_live_items.py): the fixture's
+            // live item records and item world-object words in the native
+            // convention replace the freshly loaded ones.
+            if let Some(ip) = opts.get("items_seed") {
+                let v: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(ip), 64 * 1024 * 1024)?)?;
+                for r in v["records"].as_array().ok_or("items_seed records")? {
+                    let slot = r["slot"].as_u64().ok_or("slot")? as usize;
+                    let bytes = hexb(&r["record"])?;
+                    let rec: [u8; 0x110] = bytes.try_into().map_err(|_| "item record size")?;
+                    while game.items.records.len() <= slot {
+                        game.items.records.push(gdl_core::items::ItemRecord([0; 0x110]));
+                    }
+                    game.items.records[slot] = gdl_core::items::ItemRecord(rec);
+                }
+                for (k, o) in v["objects"].as_array().ok_or("items_seed objects")?.iter().enumerate() {
+                    if let Some(w) = game.items.objects.get_mut(k) {
+                        let f = |n: usize| o[n].as_u64().unwrap_or(0);
+                        w.flags_10 = f(0) as u32;
+                        w.word_14 = f(1) as u16;
+                        w.byte_16 = f(2) as u8;
+                        w.byte_17 = f(3) as u8;
+                    }
+                }
+                game.sync_collision();
+            }
+            const LCG_MUL: u32 = 0x41c6_4e6d;
+            const LCG_INV: u32 = {
+                // Inverse of LCG_MUL modulo 2^32 (Newton iteration).
+                let mut x: u32 = LCG_MUL;
+                let mut i = 0;
+                while i < 5 {
+                    x = x.wrapping_mul(2u32.wrapping_sub(LCG_MUL.wrapping_mul(x)));
+                    i += 1;
+                }
+                x
+            };
+            let back = |mut s: u32, n: u32| {
+                for _ in 0..n {
+                    s = s.wrapping_sub(0x3039).wrapping_mul(LCG_INV);
+                }
+                s
+            };
+            let steps_between = |from: u32, to: u32| -> Option<u32> {
+                let mut s = from;
+                for n in 0..200_000u32 {
+                    if s == to {
+                        return Some(n);
+                    }
+                    s = s.wrapping_mul(LCG_MUL).wrapping_add(0x3039);
+                }
+                None
+            };
+            const ESIZE: usize = 0x3b0;
+            // Guest pointers: presentation/tree/anim links stay raw (the native
+            // only tests +0x80 for zero) and are not compared; the generator
+            // (+0x2a4, an Items record) and floor (+0x2ac, a WorldBase object of
+            // 0x3c bytes) links become the native slot/object + 1.
+            let pointer_words: std::collections::HashSet<usize> = [0x70, 0x80, 0x84, 0x88, 0x8c, 0xc0, 0xc4, 0x1f0].into_iter().collect();
+            let s0 = samples.first().ok_or("empty trace")?;
+            let items_base = word(&hexb(&s0["enemies"]["Items"])?);
+            let world_base = word(&hexb(&s0["enemies"]["WorldBase"])?);
+            let link = |v: u32, base: u32, size: u32| -> u32 {
+                if v == 0 || v < base || !(v - base).is_multiple_of(size) {
+                    return if v == 0 { 0 } else { u32::MAX };
+                }
+                (v - base) / size + 1
+            };
+            let native_words = |raw: &[u8]| -> Vec<u8> {
+                let mut r = raw.to_vec();
+                for k in 0..r.len() / ESIZE {
+                    for (o, base, size) in [(0x2a4, items_base, 0x110), (0x2ac, world_base, 0x3c)] {
+                        let at = k * ESIZE + o;
+                        let v = link(u32::from_le_bytes(r[at..at + 4].try_into().unwrap()), base, size);
+                        r[at..at + 4].copy_from_slice(&v.to_le_bytes());
+                    }
+                }
+                r
+            };
+            let mut updates = Vec::new();
+            let mut equal_updates = 0;
+            let mut by_offset: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+            for w in samples.windows(2) {
+                let (b, a) = (&w[0], &w[1]);
+                if b["observation"]["scalars"]["AFrame"]["raw_u32"] == a["observation"]["scalars"]["AFrame"]["raw_u32"] {
+                    continue;
+                }
+                let eb = native_words(&hexb(&b["enemies"]["enemies"])?);
+                let ea = native_words(&hexb(&a["enemies"]["enemies"])?);
+                let rand_after = word(&hexb(&a["enemies"]["rand_next"])?);
+                let seed_all = |game: &mut gdl_core::game::Game| -> Result<(), Box<dyn Error>> {
+                    let (bp, ap) = (&b["player"], &a["player"]);
+                    game.players[0] = gdl_core::game::record::Record(hexb(&bp["player0"])?);
+                    let ctl = hexb(&ap["control"])?;
+                    for k in 0..4 {
+                        game.controls.control[k] = gdl_core::game::record::Record(ctl[k * 0x3c..(k + 1) * 0x3c].to_vec());
+                    }
+                    let g = |n: &str| -> Result<Vec<u8>, Box<dyn Error>> { hexb(&ap[n]) };
+                    let gl = &mut game.globals;
+                    gl.time = fl(&g("Time")?);
+                    gl.spf = fl(&g("SPF")?);
+                    gl.atime = fl(&g("ATime")?);
+                    gl.anim_time_scale = fl(&g("AnimTimeScale")?);
+                    gl.vb_elapsed = word(&g("vb_elapsed")?) as i32;
+                    gl.game_mode = word(&g("game_mode")?);
+                    gl.cam_wait = word(&g("cam_wait")?) as i32;
+                    gl.start_of_stage = word(&g("start_of_stage")?) as i32;
+                    gl.enemy_shrink = fl(&g("EnemyShrink")?);
+                    gl.quest_item_state = word(&g("QuestItemState")?);
+                    gl.boss_type = word(&g("BossType")?) as i32;
+                    gl.boss_active = word(&g("BossActive")?) as i32;
+                    gl.world_bottom = fl(&g("WldBtm")?);
+                    gl.paused = word(&g("paused")?) as i32;
+                    gl.help = word(&g("help")?) as i32;
+                    gl.trig_cam_active = word(&g("trig_cam_active")?) as i32;
+                    gl.num_active_players = word(&g("NumActivePlayers")?) as i32;
+                    gl.boss_index = word(&hexb(&b["enemies"]["BossIndex"])?) as i32;
+                    game.stop_time = word(&g("StopTime")?) as i32;
+                    game.suicide_bomber_index = word(&hexb(&b["enemies"]["SuicideBomberIndex"])?) as i32;
+                    // find_closest_player's stagger (frame_main & 7); traces
+                    // before trace-enemies-g1-v3 lack it.
+                    if let Some(v) = a["enemies"].get("frame_main") {
+                        game.frame_main = word(&hexb(v)?) as i32;
+                    }
+                    for k in 0..game.enemies.len().min(eb.len() / ESIZE) {
+                        let rec = gdl_core::game::record::Record(eb[k * ESIZE..(k + 1) * ESIZE].to_vec());
+                        let (t, st) = (rec.i32_(0), rec.i32_(0xc8));
+                        game.enemies[k] = rec;
+                        game.enemy_anims[k] = None;
+                        if st == 0 {
+                            continue;
+                        }
+                        let r = &game.enemies[k];
+                        let level = (1..=3).find(|l| {
+                            game.enemy_anim_data.trees.get(&(t, *l)).is_some_and(|(_, tab)| {
+                                tab.iter().enumerate().all(|(i, (idx, v))| r.i32_(0xe8 + 8 * i) == *idx && r.i32_(0xec + 8 * i) == *v)
+                            })
+                        });
+                        let Some(level) = level else { continue };
+                        let clips = game.enemy_anim_data.trees[&(t, level)].0.clone();
+                        // The +0x84 AnimInfo: the player's +0x94 layout less 0x10.
+                        let clock = gdl_core::animation_clock::ClockState {
+                            sequence: r.u16_(0x92),
+                            previous_sequence: r.u16_(0xa0),
+                            reset_byte: r.u8_(0x96),
+                            option_bits: r.u8_(0x97),
+                            enabled_word: r.u16_(0xa2),
+                            loop_word: r.u16_(0xb8),
+                            mode_bits: r.u16_(0xba),
+                            frame: r.f32_(0x9c),
+                            blend_fraction: r.f32_(0x98),
+                            start_time: r.f32_(0xa4),
+                            blend_end_time: r.f32_(0xa8),
+                            period_scale: r.f32_(0xb0),
+                            last_time: r.f32_(0xb4),
+                        };
+                        let current = clock.sequence;
+                        game.enemy_anims[k] = Some(gdl_core::game::enemy_ai::EnemyAnim { clock, clips, current, tree: (t, level) });
+                    }
+                    // The generator item records the enemies link to (traces
+                    // from trace-enemies-g1-v4): +0x00 definition pointer →
+                    // index (WorldInfo +0x68, 0x50 bytes), presentation words
+                    // (+0x70..+0xc7, +0xe6 dyngrid link) left native.
+                    if let (Some(gens), Some(wi)) = (b["enemies"]["generator_items"].as_object(), b["enemies"].get("WorldInfo")) {
+                        let wi = hexb(wi)?;
+                        let defs = word(&wi[0x68..]);
+                        for (slot, hex) in gens {
+                            let slot: usize = slot.parse()?;
+                            let raw = hexb(hex)?;
+                            let Some(rec) = game.items.records.get_mut(slot) else { continue };
+                            let keep = rec.0;
+                            let mut new = [0u8; 0x110];
+                            new.copy_from_slice(&raw[..0x110]);
+                            let ptr = word(&raw[0..]);
+                            let def = if ptr == 0 { 0 } else { ptr.wrapping_sub(defs) / 0x50 };
+                            new[0..4].copy_from_slice(&def.to_le_bytes());
+                            new[0x70..0xc8].copy_from_slice(&keep[0x70..0xc8]);
+                            new[0xe6..0xe8].copy_from_slice(&keep[0xe6..0xe8]);
+                            rec.0 = new;
+                        }
+                    }
+                    game.setup_dyn_grid().map_err(|e| e.0)?;
+                    Ok(())
+                };
+                let vis: Vec<(bool, bool)> = (0..25)
+                    .map(|k| {
+                        let o = k * ESIZE;
+                        (i16::from_le_bytes([ea[o + 0x2ee], ea[o + 0x2ef]]) != 0, i16::from_le_bytes([ea[o + 0x2f0], ea[o + 0x2f1]]) != 0)
+                    })
+                    .collect();
+                let visible = |_: &gdl_core::game::Game, k: usize| vis.get(k).copied().unwrap_or((false, false));
+                // Solve the seed: run, count the calls, re-seed from LCG^-n.
+                let mut seed = rand_after;
+                let mut solved = false;
+                let mut res = Ok(());
+                for _ in 0..4 {
+                    seed_all(&mut game)?;
+                    game.rng.state = seed;
+                    res = game.do_enemies(&visible);
+                    if game.rng.state == rand_after {
+                        solved = true;
+                        break;
+                    }
+                    let n = steps_between(seed, game.rng.state).unwrap_or(0);
+                    seed = back(rand_after, n);
+                }
+                // The native clock lives beside the record: write it back to
+                // the +0x84 AnimInfo for the comparison.
+                for k in 0..25 {
+                    if let Some(Some(an)) = game.enemy_anims.get(k) {
+                        let c = an.clock;
+                        let r = &mut game.enemies[k];
+                        r.set_u16(0x92, c.sequence);
+                        r.set_u16(0xa0, c.previous_sequence);
+                        r.set_u8(0x96, c.reset_byte);
+                        r.set_u8(0x97, c.option_bits);
+                        r.set_u16(0xa2, c.enabled_word);
+                        r.set_u16(0xb8, c.loop_word);
+                        r.set_u16(0xba, c.mode_bits);
+                        r.set_f32(0x9c, c.frame);
+                        r.set_f32(0x98, c.blend_fraction);
+                        r.set_f32(0xa4, c.start_time);
+                        r.set_f32(0xa8, c.blend_end_time);
+                        r.set_f32(0xb0, c.period_scale);
+                        r.set_f32(0xb4, c.last_time);
+                    }
+                }
+                let mut diffs = Vec::new();
+                for k in 0..25 {
+                    for o in (0..ESIZE).step_by(4) {
+                        if pointer_words.contains(&o) {
+                            continue;
+                        }
+                        let n = game.enemies[k].u32_(o);
+                        let r = word(&ea[k * ESIZE + o..]);
+                        if n != r {
+                            *by_offset.entry(o).or_default() += 1;
+                            diffs.push(serde_json::json!({"enemy":k,"offset":format!("{o:#x}"),"native":format!("{n:08x}"),"reference":format!("{r:08x}"),"before":format!("{:08x}", word(&eb[k * ESIZE + o..]))}));
+                        }
+                    }
+                }
+                if diffs.is_empty() && res.is_ok() {
+                    equal_updates += 1;
+                }
+                updates.push(serde_json::json!({"step":a["step"],"seed_solved":solved,"error":res.err().map(|e| e.0),
+                    "words_differing":diffs.len(),"diffs":diffs.iter().take(60).collect::<Vec<_>>()}));
+            }
+            let report = serde_json::json!({"scope":"per-update replay of a reference enemies trace through the native do_enemies (all 25 records, every u32 except presentation pointers 0x70 0x80 0x84 0x88 0x8c 0xc0 0xc4 0x1f0; generator/floor links mapped)",
+                "trace":tp.to_string(),"updates":updates.len(),"equal_updates":equal_updates,
+                "differing_offsets":by_offset.iter().map(|(o, n)| (format!("{o:#x}"), *n)).collect::<std::collections::BTreeMap<_, _>>(),
+                "results":updates,
+                "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>()});
+            let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
+            serde_json::to_writer_pretty(&mut file, &report)?;
+            file.write_all(b"\n")?;
+            return Ok(());
+        }
         if let Some(tp) = opts.get("replay") {
             // Per-update replay of a reference_trace --player trace: each game
             // update starts from the reference's player-0 record, controls,

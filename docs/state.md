@@ -57,6 +57,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    clamps; DoLighting moved before game_main with LEVL flag 8 (S5) and the
    do_players player light. Tower vs reference at the same camera:
    private/reports/render-tower-compare-v2.txt.
+   2026-10-22: enemy replay against the reference (gameplay.md "Enemy
+   replay"): reference_enemies.py probe, game-run enemy_replay with the
+   rand seed solved per update; 179/180 updates equal for all 25 G1
+   enemies; fixed DoEnemyItemCollide's delay distance.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

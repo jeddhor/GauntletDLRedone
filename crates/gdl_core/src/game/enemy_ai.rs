@@ -2115,15 +2115,15 @@ impl Game {
         Ok(wall)
     }
 
-    /// find_closest_item(position, kind filter): nearest blocking item and its xz distance.
-    fn find_closest_item(&self, r: f32, p: V3) -> R<(Option<usize>, f32)> {
-        self.find_closest_item_kind(r, p, 0)
-    }
-
-    /// find_closest_item 0x1545a0 with a kind filter (kind 4 skips placed
-    /// enemies already activated, +0xf8 bit 1).
-    pub(crate) fn find_closest_item_kind(&self, r: f32, p: V3, kind: i32) -> R<(Option<usize>, f32)> {
+    /// find_closest_item 0x154568 (radius, position, kind filter; kind 4
+    /// skips placed enemies already activated, +0xf8 bit 1) over
+    /// StartItemGrid(position, radius): the nearest blocking item (+0xd8 &
+    /// 0x4040) with its xz distance less the definition radius (third
+    /// argument), and the nearest distance over every item that passed the
+    /// filters, blocking or not (fourth argument).
+    pub(crate) fn find_closest_item_kind(&self, r: f32, p: V3, kind: i32) -> R<(Option<usize>, f32, f32)> {
         let mut best = 100_000.0;
+        let mut any = 100_000.0;
         let mut found = None;
         for slot in self.grid.items_near(&self.items, r, p)? {
             let rec = &self.items.records[slot];
@@ -2142,12 +2142,15 @@ impl Game {
             }
             let ip = rec.v3(0x60);
             let dist = sub(fqdist(sub(ip[0], p[0])?, sub(ip[2], p[2])?)?.0, d.f32_(0xc))?;
+            if dist < any {
+                any = dist;
+            }
             if rec.u16_(0xd8) & 0x4040 != 0 && dist < best {
                 best = dist;
                 found = Some(slot);
             }
         }
-        Ok((found, best))
+        Ok((found, best, any))
     }
 
     /// DoEnemyItemCollide(enemy, from, to, moving).
@@ -2169,7 +2172,9 @@ impl Game {
             check = true;
         }
         if check && self.enemies[i].i32_(0x340) < 1 {
-            let (found, dist) = self.find_closest_item(r, to)?;
+            // find_closest_item(r, to, 0, NULL, &any): the delay uses the
+            // nearest item of any kind; the collision test the blocking one.
+            let (found, _, dist) = self.find_closest_item_kind(r, to, 0)?;
             let d = sub(dist, r)?;
             if 0.0 < d {
                 let v = mul(mul(self.ef(i, 0xcc), 0.5)?, d)? as i32;

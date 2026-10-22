@@ -47,6 +47,8 @@ def main():
     ap.add_argument('--quest', help='DEBUG: QuestItemState 2 at this update')
     ap.add_argument('--boss-kill', help='DEBUG: lethal CritterDamage on the boss at this update')
     ap.add_argument('--replay', help='per-update replay of a reference_trace --player trace')
+    ap.add_argument('--enemy-replay', help='per-update replay of a reference_trace --player --enemies trace through do_enemies')
+    ap.add_argument('--items-seed', help='export_live_items.py JSON replacing the loaded items (with --enemy-replay)')
     ap.add_argument('--pads', help='record-based players: MASK_HEX:UPDATES,... (bit i = joyGetStatus entry i of port 0)')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
     ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
@@ -116,6 +118,10 @@ def main():
         cmd += [f'clips={clips}', f'pads={a.pads}', f'sfx={sfx}']
     if a.replay:
         cmd += [f'clips={clips}', f'replay={a.replay}']
+    if a.enemy_replay:
+        cmd += [f'clips={clips}', f'enemy_replay={a.enemy_replay}']
+        if a.items_seed:
+            cmd += [f'items_seed={a.items_seed}']
     if a.potions:
         cmd += [f'potions={a.potions}']
     if a.crystals:
@@ -148,6 +154,13 @@ def main():
         cmd += [f'boss_health={a.boss_health}']
     subprocess.run(cmd, check=True)
     r = json.loads(pathlib.Path(a.report).read_text())
+    if a.enemy_replay:
+        print('updates', r['updates'], 'equal', r['equal_updates'], 'offsets', r['differing_offsets'])
+        for u in r['results'][:12]:
+            print(u['step'], 'seed', u['seed_solved'], u['error'], u['words_differing'], [(d['enemy'], d['offset'], d['native'], d['reference']) for d in u['diffs'][:6]])
+        for x in r['unsupported']:
+            print('UNSUPPORTED', x)
+        return
     if a.replay:
         print('updates', r['updates'], 'equal', r['equal_updates'])
         for u in r['results']:

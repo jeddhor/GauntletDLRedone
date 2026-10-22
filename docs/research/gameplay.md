@@ -270,3 +270,35 @@ original amounts/times/flags. make_skiplist's loop reads one record past
 the table in the original; the native table stops at its end.
 
 Death (kill_player 0x131a98): see research/saves.md and playtest.md.
+
+## Enemy replay against the reference (2026-10-22, actual disc)
+
+- Probe: reference_trace.py --player --enemies (tools/python/reference_enemies.py):
+  per vblank the 25 enemy records (`enemies`, 0x3b0 each), newlib's rand
+  state (_impure_ptr → +0x58), BossIndex, SuicideBomberIndex, frame_main,
+  Items, WorldBase, WorldInfo and the generator item records the enemies
+  link to. Trace private/reports/trace-enemies-g1-v4.json: the slot-1
+  fixture, 120 vblanks idle, 120 walking Up, 120 idle (180 game updates;
+  all 25 slots live: type 12 logics 2/4, type 13 logics 5/6/7).
+- Replay: game_run.py --enemy-replay TRACE [--items-seed LIVE_ITEMS] (gdl_tools
+  game-run enemy_replay=): each update starts from the reference's records
+  (AnimInfo +0x84 → the native clock; the tree's level from the InitActions
+  table at +0xe8; generator +0x2a4 / floor +0x2ac pointers → slot / object
+  + 1), player 0, controls, globals, frame_main and generator records;
+  SetupDynGrid rebuilt; visibility from the reference's +0x2ee/+0x2f0. main
+  reseeds rand every loop (srand(pbGetCPUTime() >> 3)), so the seed is
+  solved by inverting the LCG over the native call count (solved in every
+  update). Live items: tools/python/export_live_items.py
+  (private/reports/live-items-g1-fixture-v1.json).
+- Result (private/reports/replay-enemies-g1-v7.json): **179/180 updates
+  equal** over every u32 of all 25 records except the presentation pointers
+  +0x70/+0x80/+0x84/+0x88/+0x8c/+0xc0/+0xc4/+0x1f0. The other update (step
+  182) is a generator spawning into slot 1 during do_items, outside
+  do_enemies.
+- Found and fixed on the way: DoEnemyItemCollide's +0x340 delay uses
+  find_closest_item's fourth output — the nearest item of any kind that
+  passes the filters — not the nearest blocking item (the port had 30
+  where the reference had 15..19). Replay inputs found necessary:
+  frame_main (find_closest_player's (frame_main & 7) stagger) and the
+  generator records (generator 131's +0xd8 gained 0x4000 at step 148, after
+  which it blocks enemies through check_vacancy).

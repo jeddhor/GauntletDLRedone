@@ -1305,7 +1305,7 @@ impl Game {
             if flags & 0x2000 != 0 {
                 // ActivateNearestEnemy 0x1546f8(trigger +0x40).
                 let at = self.items.records[slot].v3(0x40);
-                if let (Some(k), d) = self.find_closest_item_kind(10.0, at, 4)?
+                if let (Some(k), d, _) = self.find_closest_item_kind(10.0, at, 4)?
                     && d < 10.0
                 {
                     let v = self.items.records[k].u32_(0xf8) | 1;
