@@ -1718,7 +1718,12 @@ fn run_attract(
             }
         }
         Some(AttractRun::Group { left }) => {
+            // do_screen2d (tables 1/2): the group shot and
+            // DrawGlowTextMLines(1.0, −0x1b0, −0x140, "Press\nStart").
             front.attract_blits = front.ui_hud.screen_blits("GROUP_SHOT_MIDWAY");
+            front.title_clock += vb as f32;
+            let glow = front.ui_hud.glow_text_lines(1.0, -0x1b0, -0x140, "Press\nStart", front.title_clock as u32);
+            front.attract_blits.extend(glow);
             *left -= vb;
             next = *left < 1;
         }

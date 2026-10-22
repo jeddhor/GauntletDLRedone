@@ -805,6 +805,22 @@ impl Hud {
         }
     }
 
+    /// DrawGlowTextMLines: `text` split at newlines (FixMLineText), one
+    /// DrawGlowText per line FontHeight(glow_font) apart; a negative `y`
+    /// centres the block on −y.
+    pub fn glow_text_lines(&self, scale: f32, x: i32, y: i32, text: &str, vb: u32) -> Vec<Blit> {
+        const GLOW_FONT: usize = 6;
+        let lines: Vec<&str> = text.split('\n').collect();
+        let fh = self.font_height(GLOW_FONT, 1.0);
+        let mut y = if y < 0 { -(fh * lines.len() as i32 / 2) - y } else { y };
+        let mut out = Vec::new();
+        for l in lines {
+            out.extend(self.glow_text(scale, x, y, l, vb));
+            y += fh;
+        }
+        out
+    }
+
     /// DrawGlowText 0x102ab0: glow_font (6) at `scale` twice — the
     /// FONT32_GLOW layer (flag 0x4000, hilite_color 0x8200ea, alpha pulsing
     /// over hilite_fade 40 / hold 5 by vb_counter), then white; font z 0.25.

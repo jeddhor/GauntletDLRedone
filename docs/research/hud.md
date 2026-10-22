@@ -586,7 +586,11 @@ the sequence, Screen2D table 0 (SONY "sony_screen00..03" at screenblitxy
 during the card check: one state per 30 Hz frame over ports 0–1 × slots
 0–3; the native card is port 0 slot 0, formatted with room, so the check
 takes 18 frames and shows no message), Screen2D tables 1/2 ("group1"
-Group_shot_midway00..03 for screen2dtimeleft 60 vblanks), the MPEG2
+Group_shot_midway00..03 for screen2dtimeleft 60 vblanks, with
+DrawGlowTextMLines(1.0, −0x1b0, −0x140, "Press\nStart"): two DrawGlowText
+lines FontHeight(glow_font) apart, centred on y 0x140 and x 0x1b0 — the
+reference's lower-right Press/Start; NATIVE: the next flyby level loads
+when the flyby starts, not behind the group shot), the MPEG2
 movies, the credits (init_credits: CRED_ALL00..03, FontInitSpecial
 ("credits", 8) = font 0xd, AudioStreamStart("castle2b", 1); scroll_credits:
 credit_text / credit_text2 / credit_text3 from y 0x17f − scroll, 21/15/15
