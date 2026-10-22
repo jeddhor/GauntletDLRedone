@@ -485,3 +485,19 @@ channel (per-draw truncation). Open: the reference's L1LINE154/131 emblem
 shows dark texel-edge outlines native lacks (same TEX1: MMAG linear, LOD
 < 0). S5 with the player light: render-s5-player-light-v1.png (no
 reference capture of S5).
+
+## G1 lighting comparison (2026-10-22)
+
+Reference: slot 1 (poison-fields-original.p2s) after 12 vblanks
+(reference_screenshot.py; private/reference/captures/render/g1-fixture-v4.png,
+camera g1-fixture-v4-camera.json; the 2-vblank attempt showed a black frame
+and a first attempt captured the native window, both discarded). Native:
+GDL_DEBUG_LEVEL=G1 pinned to that camera (private/reports/render-g1-native-v1.png;
+different moment: enemies near the player, an unbroken barrel). Lightmapped
+ground at matching pixels: data formula 52/37/20, native 52/36/14,
+reference 44/28/11. The G1#079 water (texture 123, no colour stream, no
+lightmap, flag 0x1000) is about twice as bright natively in block means;
+the G1 dump's water draw received vertex colour 128 (as native's factor 1),
+so the difference is attributed to the water texmod frame at capture time
+(not verified). Overall mean (rows 100..352): reference 21.7/22.3/7.5,
+native 25.4/27.3/11.4.
