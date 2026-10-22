@@ -139,13 +139,18 @@ path. Other classes not exercised; no reference comparison.
 
 ## Unported (Unsupported when reached)
 
-Thunder
-hammer / breath / familiar events (0x2000000, 0x1000000, 0x10000000 with
-+0x138 0x80), players in states 2/3 (selecting/joining), inactivate_player,
-setup_player_display, PlayerProcessFamiliar/Scale for boss state 5, rotating
-Milestones: AddLocatorInstList's kind-5 locators (FloorPos drop + 0.5),
-update_player_milestone's +0x950 history. Floor parents with rotation use
-MulMat4 with InvertMat4's rigid inverse.
+(2026-10-22 review.) The paths this list named earlier are ported: the
+thunder hammer / breath / familiar events (PlayerMotion 0x2000000,
+0x1000000, 0x10000000), the select/join states through the select screen,
+inactivate_player, setup_player_display, PlayerProcessFamiliar/Scale,
+update_player_milestone with AddLocatorInstList's kind-5 milestones, the
+team moves. What remains Unsupported in the player code are guards for
+states the disc does not reach or that would read garbage in the original
+(a sequence without clip timing, QuestItemState 2 without BossCritInst, a
+team-move wall bounce without a normal, DAMG/SFXX chain cycles, effects
+parented to effects, get_player_pos beside a player without a floor
+record, the debug menu's Next/PrevWorldLevel). Floor parents with rotation
+use MulMat4 with InvertMat4's rigid inverse.
 
 ## Power melee and magic modes (2026-10-21)
 
