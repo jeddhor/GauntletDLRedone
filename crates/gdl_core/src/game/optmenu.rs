@@ -137,7 +137,7 @@ impl ControlsMenu {
         let mut blits = Vec::new();
         for k in 0..3 {
             let r = &tb[0x18 * k..0x18 * k + 0x18];
-            let name = cstr(&elf.read(i(r, 0) as u32, 32)?);
+            let name = cstr(elf.read(i(r, 0) as u32, 32)?);
             blits.push((name, i(r, 4), i(r, 8), i(r, 0xc), i(r, 0x10)));
         }
         let lb = elf.object("ctl_label_pos")?;
