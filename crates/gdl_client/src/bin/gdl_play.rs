@@ -429,17 +429,19 @@ fn present_critters(
     }
 }
 
-/// Sumner (SumnerInit's GWIZ tree, 0) or his ghost (SumnerGhostStart's
-/// WIZARD tree, 1) and one of their tree nodes.
+/// Sumner (SumnerInit's GWIZ tree, 0), his ghost (SumnerGhostStart's
+/// WIZARD tree, 1) or the good wizard after a boss (DoGoodWizard's WIZARD
+/// tree, 2) and one of their tree nodes.
 #[derive(Component)]
 struct SumnerRoot(u8);
 #[derive(Component)]
 struct SumnerPart(u8, usize);
 
 /// Sumner drawn from the GWIZ tree of the level's item package at his
-/// lookout matrix, and while he speaks his ghost from the WIZARD tree at the
-/// waypoint, each posed by its animation clock (presentation of
-/// game::tower::SumnerState / GhostState).
+/// lookout matrix, while he speaks his ghost from the WIZARD tree at the
+/// waypoint, and after a boss the good wizard (WIZARD, faded in by
+/// MBTreeSetAlpha), each posed by its animation clock (presentation of
+/// game::tower::SumnerState / GhostState and game::goodwiz::GoodWiz).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_sumner(
     mut commands: Commands,
@@ -449,12 +451,18 @@ fn present_sumner(
     libs: Res<Libraries>,
     root: Query<Entity, With<MirrorRoot>>,
     mut body: Query<(&SumnerRoot, &mut Transform, &mut Visibility), Without<SumnerPart>>,
-    mut parts: Query<(&SumnerPart, &mut Transform), Without<SumnerRoot>>,
+    mut parts: Query<(Entity, &SumnerPart, &mut Transform), Without<SumnerRoot>>,
+    (children, mut req): (Query<&Children>, ResMut<MatRequests>),
 ) {
     let t = &sim.game.tower;
-    let shown = [t.sumner.as_ref().map(|s| (s.matrix, s.current, s.clock.frame)), t.ghost.as_ref().map(|g| (g.matrix, g.current, g.clock.frame))];
+    let w = &sim.game.good_wiz;
+    let shown = [
+        t.sumner.as_ref().map(|s| (s.matrix, s.current, s.clock.frame)),
+        t.ghost.as_ref().map(|g| (g.matrix, g.current, g.clock.frame)),
+        w.matrix.and_then(|m| w.clock.map(|(c, cur)| (m, cur, c.frame))),
+    ];
     let items = &session.levels[session.current].items;
-    for (which, label) in [(0u8, "GWIZ"), (1, "WIZARD")] {
+    for (which, label) in [(0u8, "GWIZ"), (1, "WIZARD"), (2, "WIZARD")] {
         let Some((pkg_name, pkg, ti)) = items.iter().find_map(|n| {
             let p = sources.packages.get(n)?;
             let ti = p.anim.as_ref()?.trees.iter().position(|t| t.label == label)?;
@@ -501,11 +509,21 @@ fn present_sumner(
             }
         }
         if let Ok(pose) = gdl_client::tree_pose(anim, ti, &pkg.anim_bytes, current as usize, frame.max(0.0), true) {
-            for (part, mut t) in &mut parts {
-                if part.0 == which
-                    && let Some(mat) = pose.get(part.1)
-                {
+            for (holder, part, mut t) in &mut parts {
+                if part.0 != which {
+                    continue;
+                }
+                if let Some(mat) = pose.get(part.1) {
                     *t = Transform::from_matrix(*mat);
+                }
+                // The good wizard's MBTreeSetAlpha (0 opaque … 0xff clear).
+                if which == 2
+                    && let Ok(meshes) = children.get(holder)
+                {
+                    let a = (255 - w.alpha.clamp(0, 255)) as f32 / 255.0;
+                    for m in meshes.iter() {
+                        req.alpha(m, a);
+                    }
                 }
             }
         }
@@ -614,7 +632,7 @@ fn camera_face_rotation(mode: u32, p: Vec3, eye: Vec3, rows: [Vec3; 3]) -> Mat3 
 
 fn present_camera_face(sim: Res<Sim>, mut nodes: Query<(&CameraFace, &mut Transform)>) {
     let Some(cam) = &sim.game.std_camera else { return };
-    let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+    let eye = Vec3::from_array(cam.pb.eye);
     let rows = cam.pb.cam_rows.map(Vec3::from_array);
     for (face, mut tf) in &mut nodes {
         let m = camera_face_rotation(face.mode, face.anchor, eye, rows);
@@ -695,7 +713,7 @@ fn present_compass(
 ) {
     let show = session.prefs[6] != 0 && !ui.paused && sim.shop.is_none() && sim.map.is_none();
     let Some(cam) = sim.game.std_camera.as_ref() else { return };
-    let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+    let eye = Vec3::from_array(cam.pb.eye);
     let rows = cam.pb.cam_rows.map(Vec3::from_array);
     let tan_v = (presentation.fov * 0.5).tan() * 384.0 / 640.0;
     let tan_h = tan_v * 640.0 / 384.0;
@@ -738,7 +756,7 @@ struct DistanceFade {
 
 fn present_distance_fade(sim: Res<Sim>, q: Query<(&DistanceFade, &MeshMaterial3d<gdl_client::GsMaterial>)>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
     let Some(cam) = &sim.game.std_camera else { return };
-    let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+    let eye = Vec3::from_array(cam.pb.eye);
     let forward = Vec3::from_array(cam.pb.cam_rows[2]);
     for (fade, m) in &q {
         let depth = (fade.at - eye).dot(forward);
@@ -774,6 +792,9 @@ struct MatReq {
     /// overrides only its own pair (the other stays identity).
     uv: Option<Vec4>,
     alpha: Option<f32>,
+    /// MBTreeSetColor (0..1 per channel). HYPOTHESIS: the node colour
+    /// (flag 0x100) scales the vertex colour like MBBlitSetColor.
+    color: Option<Vec3>,
     /// MBTreeSetAmbientAdd / 255.
     ambient: f32,
 }
@@ -976,7 +997,7 @@ fn apply_material_requests(
             }
             None => (None, None, 1.0, 0.0),
         };
-        if image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 && r.as_ref().is_none_or(|r| r.uv.is_none()) {
+        if image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 && r.as_ref().is_none_or(|r| r.uv.is_none() && r.color.is_none()) {
             if ov.is_some() {
                 m.0 = base;
                 commands.entity(e).remove::<MatOverride>();
@@ -1017,6 +1038,9 @@ fn apply_material_requests(
                 p.extra.y = 1.0;
             }
             p.tint.w = b.params.tint.w * alpha;
+            if let Some(c) = r.as_ref().and_then(|r| r.color) {
+                p.tint = (b.params.tint.truncate() * c).extend(p.tint.w);
+            }
             if b.lit {
                 p.scale.y += ambient;
             } else {
@@ -1220,7 +1244,7 @@ fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, mut mater
         lights.push([p.x, p.y, p.z, radius, c[0], c[1], c[2], 2.0]);
     }
     if let Some(cam) = &g.std_camera {
-        let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE)) * MIRROR;
+        let eye = Vec3::from_array(cam.pb.eye) * MIRROR;
         lights.sort_by(|a, b| (Vec3::new(a[0], a[1], a[2]) - eye).length_squared().total_cmp(&(Vec3::new(b[0], b[1], b[2]) - eye).length_squared()));
     }
     lights.truncate(8);
@@ -1300,7 +1324,6 @@ struct Sim {
     error: Option<String>,
     updates: u64,
     exp: i64,
-    kills: u32,
     sparks: Vec<(Vec3, f32)>,
     last_event: String,
     /// Co-op players 1–3 in play (PLACEHOLDER join, see `simulate`).
@@ -2382,10 +2405,15 @@ fn play_audio(audio: &mut Option<NonSendMut<gdl_client::audio::AudioOut>>, event
     let Some(a) = audio.as_mut() else { return };
     for e in events {
         match e {
-            Event::Sound { id, position, volume, priority, queue } => {
-                // Presentation pan: offset along the camera's right axis.
-                let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
-                a.play(*id, *volume, pan, *priority, *queue);
+            Event::Sound { id, position, volume, priority, pan } => {
+                // Presentation pan: offset along the camera's right axis, or
+                // the fixed pan (0..0xfe, 0x7f centre).
+                let pan = match (position, pan) {
+                    (Some(p), _) => ((Vec3::from_array(*p) - me).dot(right) / 20.0).clamp(-1.0, 1.0),
+                    (None, Some(v)) => ((*v - 0x7f) as f32 / 127.0).clamp(-1.0, 1.0),
+                    (None, None) => 0.0,
+                };
+                a.play(*id, *volume, pan, *priority);
             }
             Event::LoopSound { id, position, volume, priority } => {
                 let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
@@ -2420,7 +2448,17 @@ fn simulate(
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
     front: Res<Front>,
 ) {
-    if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started || ui.paused || sim.message_box.is_some() {
+    if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started {
+        return;
+    }
+    if ui.paused || sim.message_box.is_some() {
+        // main keeps running AudioQueUpdate / AudioPoll (DoOptions,
+        // ScrollMessageBox): queued lines go on while the game waits.
+        let vb = sim.game.globals.vb_elapsed;
+        sim.game.main_audio(vb);
+        let new: Vec<Event> = sim.game.events.drain(..).collect();
+        let me = Vec3::from_array(sim.game.players[0].v3(0x50));
+        play_audio(&mut audio, &new, me, presentation.basis[0]);
         return;
     }
     let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().collect();
@@ -2442,6 +2480,7 @@ fn simulate(
     if let Some((mut m, next)) = sim.map.take() {
         let g = &mut sim.game;
         g.hud.begin_frame();
+        g.main_audio(g.globals.vb_elapsed);
         if g.do_mapscreen(&mut m) {
             sim.shop_done = Some(next);
         } else {
@@ -2455,6 +2494,7 @@ fn simulate(
     if let Some((mut flow, tower)) = sim.shop.take() {
         let g = &mut sim.game;
         g.hud.begin_frame();
+        g.main_audio(g.globals.vb_elapsed);
         let r = g.update_controls(&ports).and_then(|_| g.do_shop(&mut flow, &front.shop));
         match r {
             Ok(0) => sim.shop = Some((flow, tower)),
@@ -2522,6 +2562,18 @@ fn simulate(
         r.set_f32(0x14c, 0.0);
         r.set_u32(0x150, f);
     }
+    // DEBUG: GDL_DEBUG_BOSS_KILL=<update> deals lethal CritterDamage to the
+    // boss (Game::debug_damage_boss) from that update on, once a second
+    // until it dies (it is not damageable before it activates), e.g. to see
+    // the good wizard.
+    if let Some(at) = std::env::var("GDL_DEBUG_BOSS_KILL").ok().and_then(|v| v.parse::<u64>().ok())
+        && at <= sim.updates
+        && (sim.updates - at).is_multiple_of(60)
+        && sim.game.globals.boss_is_dead == 0
+    {
+        let r = sim.game.debug_damage_boss();
+        eprintln!("GDL_DEBUG_BOSS_KILL at {at}: {r:?}");
+    }
     // DEBUG: GDL_DEBUG_TELEPORT=x,y,z moves player 1 there once (update
     // 600), e.g. onto a secret exit. Not a game feature.
     if sim.updates == 600
@@ -2555,7 +2607,6 @@ fn simulate(
                     sim.coop[player - 1] = false;
                 }
             }
-            Event::Audio { cue: "AudioEnemyDies", .. } => sim.kills += 1,
             // NewHelp draws its own box (Game::new_help / DoHelp).
             Event::HintMenu { .. } => sim.hint_menu = true,
             Event::ScrollMessage { text, .. } => {
@@ -2698,7 +2749,7 @@ struct CameraFaceLocal {
 
 fn present_camera_face_local(sim: Res<Sim>, parents: Query<&Transform, Without<CameraFaceLocal>>, mut q: Query<(&CameraFaceLocal, &ChildOf, &mut Transform)>) {
     let Some(cam) = &sim.game.std_camera else { return };
-    let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+    let eye = Vec3::from_array(cam.pb.eye);
     let rows = cam.pb.cam_rows.map(Vec3::from_array);
     for (face, child_of, mut tf) in &mut q {
         let Ok(p) = parents.get(child_of.parent()) else { continue };
@@ -2813,7 +2864,7 @@ fn present_world(
                         let key = format!("{}:{}", session.throw.1, node.start.to_bits());
                         let fresh = slot.key.as_deref() != Some(key.as_str());
                         if fresh {
-                            label_effect_tree(&mut commands, entity, &sources, &session.throw.0, &session.throw.1, node.start);
+                            label_effect_tree(&mut commands, (entity, slot.index), &sources, &session.throw.0, &session.throw.1, node.start);
                         }
                         let parts = fresh.then(|| missile_parts(&sources, &libs, &session.throw));
                         (Some(key), parts, tf)
@@ -2837,7 +2888,7 @@ fn present_world(
                         };
                         let key = format!("H{h}:{}", node.start.to_bits());
                         if slot.key.as_deref() != Some(key.as_str()) {
-                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing });
+                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing, slot: slot.index });
                         }
                         let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_index_parts(&sources, &libs, &pkg, head.tree));
                         (Some(key), parts, tf)
@@ -2849,7 +2900,7 @@ fn present_world(
                         let key = format!("F{pkg}:{label}:{}", node.start.to_bits());
                         let fresh = slot.key.as_deref() != Some(key.as_str());
                         if fresh {
-                            label_effect_tree(&mut commands, entity, &sources, &pkg, label, node.start);
+                            label_effect_tree(&mut commands, (entity, slot.index), &sources, &pkg, label, node.start);
                         }
                         let parts = fresh.then(|| tree_parts(&sources, &libs, &pkg, label));
                         (Some(key), parts, tf)
@@ -2863,7 +2914,7 @@ fn present_world(
                         let key = format!("{label}:{}", node.start.to_bits());
                         let fresh = slot.key.as_deref() != Some(key.as_str());
                         if fresh {
-                            label_effect_tree(&mut commands, entity, &sources, pkg, &label, node.start);
+                            label_effect_tree(&mut commands, (entity, slot.index), &sources, pkg, &label, node.start);
                         }
                         let parts = fresh.then(|| tree_parts(&sources, &libs, pkg, &label));
                         (Some(key), parts, tf)
@@ -2920,11 +2971,11 @@ fn start_shop(sim: &mut Sim, front: &Front, k: usize) {
 /// Animate a slot's tree `label` of `pkg` from `start` (HYPOTHESIS: sequence
 /// 0 at the sequence's timing factor, as StartFXTree trees); without the
 /// tree the slot's previous EffectTree is removed.
-fn label_effect_tree(commands: &mut Commands, entity: Entity, sources: &Sources, pkg: &str, label: &str, start: f32) {
+fn label_effect_tree(commands: &mut Commands, (entity, slot): (Entity, usize), sources: &Sources, pkg: &str, label: &str, start: f32) {
     let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, a.trees[i].sequences.first().map_or(30, |q| q.timing_factor))));
     match tree {
         Some((tree, timing)) => {
-            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1) });
+            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1), slot });
         }
         None => {
             commands.entity(entity).remove::<EffectTree>();
@@ -2950,6 +3001,8 @@ struct EffectTree {
     tree: usize,
     start: f32,
     timing: i16,
+    /// The effect slot (its node's MBTreeSetColor / MBTreeSetAlpha).
+    slot: usize,
 }
 
 /// Pose effect trees' nodes (sequence 0) at the effect's current frame;
@@ -2984,6 +3037,17 @@ fn present_effect_trees(
                     show_oframe(f, 0, frame, &mut v);
                 }
                 meshes.push((e, idx.0));
+            }
+        }
+        // MBTreeSetAlpha (setPrimAlpha: (255 − v) / 255) and MBTreeSetColor.
+        if let Some(Some(n)) = sim.game.effects.nodes.get(fx.slot) {
+            for &(e, _) in &meshes {
+                if let Some(a) = n.alpha {
+                    req.alpha(e, (255 - a.clamp(0, 255)) as f32 / 255.0);
+                }
+                if let Some(c) = n.tint {
+                    req.get(e).color = Some(Vec3::new((c >> 16 & 0xff) as f32, (c >> 8 & 0xff) as f32, (c & 0xff) as f32) / 255.0);
+                }
             }
         }
         let mods = texmods.entry((fx.pkg.clone(), fx.tree)).or_insert_with(|| anim.trees.get(fx.tree).map(|t| tree_texmods(pkg, t)).unwrap_or_default());
@@ -3171,7 +3235,9 @@ fn present_player(
             p.tan_h = 1.0 / sx.abs();
             p.tan_v = 1.0 / sy.abs();
         }
-        let eye = Vec3::from_array(cam.std.v3(gdl_core::game::camera::o::EYE));
+        // MBCameraUpdate's window eye and rows (the StdCam or, on boss
+        // levels, the BossCam record copied into the pb camera).
+        let eye = Vec3::from_array(cam.pb.eye);
         let [_, up, forward] = cam.pb.cam_rows.map(Vec3::from_array);
         *t = Transform::from_translation(eye * MIRROR).looking_to(forward * MIRROR, up * MIRROR);
         // DEBUG (render comparisons, tools/python/reference_camera.py):
@@ -3223,7 +3289,11 @@ fn present_player(
             p.i32_(0x1a18),
             session.title,
             session.levels[session.current].name,
-            sim.kills,
+            // The class kill counters (+0xb2c / +0xb3c, as the tally reads them).
+            {
+                let c = p.u32_(0xc) as usize;
+                p.i32_(0xb2c + 0x1c * c) + p.i32_(0xb3c + 0x1c * c)
+            },
             live,
             generators,
             sim.last_event,
@@ -3917,7 +3987,7 @@ fn start_game(world: &mut EcsWorld, slot: u32) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, kills: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), coop: [false; 3], message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -4279,7 +4349,7 @@ fn front_system(world: &mut EcsWorld) {
         let blocked = world.get_resource::<Session>().is_some_and(|s| s.banner.is_some() || s.finished.is_some())
             || world.get_resource::<Sim>().is_some_and(|s| {
                 let g = &s.game;
-                s.shop.is_some() || s.map.is_some() || 0 <= g.globals.welcome_flag || g.globals.start_of_stage != 0 || g.disable_player_controls != 0
+                s.shop.is_some() || s.map.is_some() || 0 <= g.globals.welcome_flag || g.globals.start_of_stage != 0 || g.disable_player_controls != 0 || g.good_wiz.optmenu_disable
             });
         if !paused {
             if toggle && !blocked {
@@ -4668,9 +4738,12 @@ fn advance_level(
             session.levels.get(session.current + 1).map_or(session.world_number << 8 | 0xff, |l| l.world << 8 | l.index as i32)
         };
         sim.game.level_done = Some(next);
+        sim.game.exit_ready = true;
     }
     if session.banner.is_none()
         && session.finished.is_none()
+        // game_main: the exit waits for do_players and the voice queue.
+        && sim.game.exit_ready
         && let Some(wave) = sim.game.level_done.take()
     {
         let world = wave >> 8;

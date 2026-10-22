@@ -327,8 +327,9 @@ or the class list) — through CaptionTextSub 0x165290 at y 0x138, scale
 GameText's FONT '8Hi_fonts5' matches no font_desc name, so StringInitSub
 leaves font 0 (font8x8). The text (font z 0.25) draws over the letterbox
 (z 0.5), which is now a z-sorted blit pair (AAAWHITE, colour 0).
-HYPOTHESIS: a player's speech ends once the caption is revealed and 0x168
-frames passed (AudioSoundPlaying of the speech is not modelled). During it
+A player's speech ends once the caption is revealed, 0x168 frames passed
+and AudioSoundPlaying(AudioExp's line) is clear (audio_queue track timing,
+2026-10-21). During it
 StartLevelUpFX (LevelUpEffects 0x2407e8: headers 0x39 + colour) after 0xf0
 frames and StartGemFX (gem_color.39 0x23f588 = 6, 4, 2, 5) after 0x10e,
 both parented to the player. GDL_DEBUG_EXP=<exp>:<update> sets player 1's

@@ -466,7 +466,7 @@ impl Game {
             let rr = &mut self.items.records[chest];
             rr.set_u16(0xd8, rr.u16_(0xd8) | 0x40);
             if self.sounds.rom.is_some() {
-                self.events.push(Event::Sound { id: 0x2d, position: None, volume: 0xe0, priority: 0x14, queue: false });
+                self.events.push(Event::Sound { id: 0x2d, position: None, volume: 0xe0, priority: 0x14, pan: None });
             }
             return Ok(());
         }
@@ -554,7 +554,8 @@ impl Game {
                     if self.players_give_secret_coin() {
                         // AudioSecretChar (AudioVQueAdd4 0x3b0025), the
                         // "AllCoins" scroll, the room's timer to 1 s.
-                        self.queue(0x3b_0025, 0xe0, 2);
+                        // AudioVQueAdd4(−1, 1.0, 0x3b0025, 0xe0, 0x7f, 2).
+                        self.vque_add(1.0, super::audio_queue::QueEntry::new(0x3b_0025, 0xe0, 0x7f, 2));
                         self.events.push(Event::ScrollNamed { player_mask: u32::MAX, name: "AllCoins", line: Some(0), audio: 0x3b_0025 });
                         self.globals.wave_timer = 1.0;
                         self.globals.wave_complete = 1;

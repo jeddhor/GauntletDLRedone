@@ -76,7 +76,14 @@ original (PCSX2 reference on Xvfb :191, private captures):
    2026-10-21: the Audio* cue placeholders, background music (areas,
    parts, map/shop music, boss attention) and kind-0xd world sounds
    (docs/research/audio.md). Remaining audio: golem names, demon fireball,
-   SPU curves.
+   SPU curves. 2026-10-21: the EE voice queue and track timing in the
+   simulation (level/shop/map exits and the good wizard wait on it), the
+   good wizard after a boss (goodwiz.rs: model, captions, speech, exit),
+   PlayerGiveShard, StartBlockFX/StartGenFX, boss meters hidden at
+   BossDeath, the boss-arena camera eye fix. Next: game_main's exit flow
+   (every realm exit → init_shop(0) → the Tower; next_world /
+   other_players_next_level / EndTower → the map) instead of the client's
+   interim next-level shortcut.
 
 ---
 

@@ -113,10 +113,31 @@ BossGenerateEnemy (acts only for Garm 0x2c), BossSpewCoins + StartSpewItem +
 ProcessSpewItems (spew_tab 0x25d1a8; passes 0/1 rotate the unscaled vector
 but still draw three Random values), acosf (kernel 0x1e9980), modify_boss_ene
 sound names, BossType from level_data +0x44 (LoadWorldData), and the
-completion: BossDeath → StartGoodWizard → DoGoodWizard timing (speech phases
-use a placeholder 6 s each, HYPOTHESIS) → auto_exit_timer (WizDelayGoldLeft
-600 / WizDelayNoGold 120) → do_auto_exit → auto_exit_flag → players leave for
-TowerWave 0xd00.
+completion: BossDeath (PlayerGiveShard(p, GetWorldOrder(CurWorld)) → +0x1a24
+bit for players in state 1; the health meters' blits hidden) →
+StartGoodWizard → DoGoodWizard (game/goodwiz.rs, 2026-10-21): a 5 s wait
+(10 s for 0x2a/0x2c); the WIZARD tree of the level's item package
+(item_anim2 = items/level<code>) at calc_wizard_pos ((BossStartPos + the
+players in state 1/8) / (n + 1), the first player's y doubled, 3 up;
+(0, −12, 6) for 0x2a/0x2b), turned toward a player by calc_good_wiz_attn
+(atan2f, at most SPF·π/2 a frame) and faded in by 4 a frame; the boss's
+GameText speech 0x93..0xa3 (CaptionText(−1, message, line, frame / 2,
+0x10), each line held 0x3c vblanks once revealed, the phase ending 0.5 s
+after the last line) with AudioGoodWizard(boss, 0 / all_rune_stones); the
+rune phrase 0x9b..0x9e by the realm's runes found (worldseltab +0x10 bits,
++0x14 count) or Skorne's 0xa0/0xa1 (hide_rune_stones: all twelve rune
+bits), 1 s after its last line; the closing line (shards 0x3fe and runes
+0xfff → 7, shards 0x1fe → 6, else 5); auto_exit_timer WizDelayGoldLeft 600
+(WizDelayNoGold 120 without gold and without all rune stones; past state 8
+without gold at most 120); AudioStillPlaying holds state 9; TextureExit
+skins at EXIT_SKIN_TIME 35 → do_auto_exit → auto_exit_flag → game_main's
+exit (do_players done and the voice queue empty) to TowerWave 0xd00.
+Headless (actual disc data, GDL_DEBUG boss-kill): A5, B6, C5, D5, E2, F2,
+G5, H4, J5, K5 run the sequence to level_done 0xd00
+(private/reports/game-run-<level>-goodwiz-v1.json); I5's boss does not
+activate on the scripted walk. Native GUI A5: the wizard and the captions
+"You have defeated the fearsome Chimera…", "You have not found any
+runestones from this realm." shown.
 
 Also ported: grab/release (CritterGrabPlayer, CritterReleasePlayer, the
 grabbed-player pin), fire cones (DoDamage type 4 → CritterFirePlayerCollide

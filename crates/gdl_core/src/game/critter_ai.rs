@@ -1979,11 +1979,15 @@ impl Game {
         if let Some(ch) = self.crit(i).child {
             self.critter_del_inst(ch)?;
         }
-        self.critters[i] = None;
         if self.boss_crit_inst == i as i32 + 1 {
-            // BossCritInst keeps pointing at the freed slot in the original;
-            // its +4 type word reads 0 afterwards.
+            // BossCritInst keeps pointing at the freed slot in the original
+            // (its +4 type word reads 0 afterwards); BossCamBossCalc goes on
+            // reading the instance. HYPOTHESIS: the pool does not reuse it
+            // before the level ends, so its last bytes (and the type's +0x78
+            // radius as it was) stand in.
+            self.boss_stale = Some((self.crit(i).rec.clone(), self.critter_type_f32(i, 0x78)));
         }
+        self.critters[i] = None;
         Ok(())
     }
 
@@ -1991,12 +1995,16 @@ impl Game {
     /// boss key effect (BossType < 0x2a) and health meter hide.
     fn boss_death(&mut self, i: usize) -> R<()> {
         self.globals.boss_is_dead = 1;
-        // StartGoodWizard 0x165cf0 (optmenu_disable is presentation).
-        self.globals.good_wizard = 1;
+        self.start_good_wizard();
+        // BossDeath calls PlayerGiveShard(p, GetWorldOrder(CurWorld)) for
+        // players in state 1 or 8; PlayerGiveShard 0x176c08 sets +0x1a24
+        // bit n only on a player in state 1.
+        let w = self.globals.cur_world;
+        let order = self.world_order.iter().take(0xe).position(|&x| x == w).unwrap_or(0) as u32;
         for p in 0..4 {
-            let st = self.players[p].i32_(pd::STATE);
-            if st == 1 || st == 8 {
-                self.events.push(super::Event::Audio { cue: "PlayerGiveShard", player: Some(p), arg: self.globals.cur_world });
+            if self.players[p].i32_(pd::STATE) == 1 {
+                let v = self.players[p].u16_(0x1a24) | (1u16 << (order & 0xf));
+                self.players[p].set_u16(0x1a24, v);
             }
         }
         let t = self.crit(i).ty;
@@ -2011,6 +2019,8 @@ impl Game {
             self.events.push(super::Event::BossKey { position: at });
             self.boss_key_position = Some(at);
         }
+        // The health meters' blits hidden.
+        self.health_meters.hidden = true;
         Ok(())
     }
 }

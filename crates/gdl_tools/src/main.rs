@@ -1064,6 +1064,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // DEBUG: the boss reached the legend-item stage (QuestItemState 2).
                     game.globals.quest_item_state = 2;
                 }
+                if let Some(at) = opts.get("boss-kill").and_then(|v| v.parse::<usize>().ok())
+                    && at <= f
+                    && (f - at).is_multiple_of(60)
+                    && game.globals.boss_is_dead == 0
+                {
+                    // DEBUG: lethal CritterDamage on the boss (Game::debug_damage_boss),
+                    // once a second until it dies.
+                    let r = game.debug_damage_boss().map_err(|e| e.0)?;
+                    eprintln!("boss-kill at {f}: CritterDamage {r}");
+                }
                 game.step_with(None, &mut |g| {
                     g.update_controls(&pads)?;
                     g.do_players().map(|_| ())
@@ -1074,6 +1084,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),"floor_y":r.f32_(0x88c),"water_y":r.f32_(0x8a4),
                         "turbo":r.f32_(0x800),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
                         "legend":r.i32_(0x80c),"quest":game.globals.quest_item_state,"boss_dead":game.globals.boss_is_dead,
+                        "good_wizard":game.globals.good_wizard,"wiz":[game.good_wiz.alpha,game.good_wiz.speech_idx,game.good_wiz.speech_frame],"wiz_pos":game.good_wiz.matrix.map(|m| m[3]),
+                        "auto_exit":[game.auto_exit_timer,game.globals.auto_exit_flag],"que":[game.audio_que.entries[0].len(),game.audio_que.entries[1].len()],
+                        "exit":[game.players_done,game.exit_ready],"level_done":game.level_done,"shards":r.u16_(0x1a24),"boss_cam":game.boss_camera.as_ref().map(|c| [c.rec.v3(gdl_core::game::camera::o::EYE), c.rec.v3(gdl_core::game::camera::o::TARGET)]),
                         "boss_health":usize::try_from(game.boss_crit_inst - 1).ok().and_then(|b| game.critters.get(b)).and_then(|c| c.as_ref()).map(|c| c.rec.f32_(0x4f4))}));
                 }
                 continue;
@@ -1107,7 +1120,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         }
         let sounds: Vec<String> = game.events.iter().filter(|e| matches!(e, gdl_core::game::Event::Sound { .. })).take(200).map(|e| format!("{e:?}")).collect();
-        let events: Vec<String> = game.events.iter().filter(|e| !matches!(e, gdl_core::game::Event::Audio { .. } | gdl_core::game::Event::Sound { .. })).take(400).map(|e| format!("{e:?}")).collect();
+        let events: Vec<String> = game.events.iter().filter(|e| !matches!(e, gdl_core::game::Event::Sound { .. })).take(400).map(|e| format!("{e:?}")).collect();
         let generators: Vec<_> = game.items.records.iter().enumerate()
             .filter(|(_, r)| r.active() && game.items.definitions[r.definition()].kind() == 3)
             .map(|(k, r)| serde_json::json!({"slot":k,"name":String::from_utf8_lossy(game.items.definitions[r.definition()].name()),

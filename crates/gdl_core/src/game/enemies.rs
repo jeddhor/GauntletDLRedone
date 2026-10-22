@@ -527,7 +527,7 @@ impl Game {
             g.enemies[s].set_i32(0xe0, 1);
             let genfx = g.enemy_load.genfx.get(ti).copied().unwrap_or(0);
             if 2.0 < g.enemies[s].f32_(e::HALF_HEIGHT) && level < 4 && genfx != 0 {
-                g.audio("StartGenFX", None, level);
+                g.start_gen_fx(pos, level)?;
             }
             Ok(slot)
         };

@@ -29,6 +29,8 @@ pub struct HealthMeters {
     pub meters: Vec<HealthMeter>,
     pub x: i32,
     pub next_x: i32,
+    /// BossDeath's MBBlitSetHide(1) on every HealthMeterBG / FG blit.
+    pub hidden: bool,
 }
 
 impl Game {
@@ -76,6 +78,9 @@ impl Game {
     /// quest-item time runs).
     pub fn health_meter_blits(&self) -> Vec<Blit> {
         let mut out = Vec::new();
+        if self.health_meters.hidden {
+            return out;
+        }
         let frozen = usize::try_from(self.boss_crit_inst - 1).ok().and_then(|b| self.critters.get(b)).and_then(Option::as_ref).is_some_and(|c| 0 < c.rec.i16_(0xb4c));
         for m in &self.health_meters.meters {
             let sep = if m.name.is_empty() { "" } else { "_" };

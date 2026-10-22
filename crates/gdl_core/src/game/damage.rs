@@ -167,7 +167,7 @@ impl Game {
                 if 2.0 < sub(d, blocked)? && self.players[player].i16_(pd::BLOCK_TIMER) < 1 {
                     let k = mul(blocked, 0.01)?;
                     let k = k.clamp(0.333, 1.0);
-                    self.audio("StartBlockFX", Some(player), 0);
+                    self.start_block_fx(player, k)?;
                     let pl = &mut self.players[player];
                     pl.set_i16(pd::BLOCK_TIMER, mul(k, 60.0)? as i32 as i16);
                     pl.or_u16(pd::STATUS, 0x2000);

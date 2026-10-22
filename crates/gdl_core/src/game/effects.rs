@@ -98,6 +98,11 @@ pub struct EffectNode {
     pub parent: Option<EffectParent>,
     /// SfxSetHitTarget's node (+0xe4): (critter, node index).
     pub target: Option<(usize, usize)>,
+    /// MBTreeSetColor's 0xRRGGBB (node +0x64, flag 0x100) and
+    /// MBTreeSetAlpha's value (0 opaque … 0xff transparent; node +0x53 =
+    /// ~value): presentation.
+    pub tint: Option<u32>,
+    pub alpha: Option<i32>,
 }
 
 /// An effect node parented to a player node: local position and rotation.
@@ -476,6 +481,8 @@ impl Game {
             radius: 0.0,
             parent: None,
             target: None,
+            tint: None,
+            alpha: None,
         });
         let r = self.fx_mut(i);
         r.set_u32(0x14, 1);
@@ -1719,6 +1726,34 @@ impl Game {
         let i = self.start_fx_tree(0.0, Visual::Header(0x43), h.frames, h.timing, Some(position), 0)?;
         self.fx_mut(i).set_u32(fx::KIND, 0x43);
         Ok(())
+    }
+
+    /// StartGenFX 0x17f580(position, level): for levels 1..3 with
+    /// EffectHeaders[0x50 + level] initialised, StartFXSub(0, 0x50 +
+    /// level, position, 0, 0x800) — a generator's spawn flash.
+    pub(crate) fn start_gen_fx(&mut self, at: V3, level: i32) -> R<i32> {
+        if !(1..=3).contains(&level) {
+            return Ok(-1);
+        }
+        self.start_fx_sub(0.0, (0x50 + level) as usize, Some(at), 0)
+    }
+
+    /// StartBlockFX 0x17f200(player) with the caller's f12 (damage_player's
+    /// block factor k): StartFXSub(k, 0x42, none, 0, 0x80980), the tree
+    /// coloured streak_color 0x24eed0[player colour] and alpha 0x40,
+    /// SfxSetParent to the player's node.
+    pub(crate) fn start_block_fx(&mut self, p: usize, k: f32) -> R<i32> {
+        const STREAK_COLOR: [u32; 4] = [0xff_ff00, 0xff, 0xff_0000, 0xff00];
+        let i = self.start_fx_sub(k, 0x42, None, 0)?;
+        if let Ok(slot) = usize::try_from(i) {
+            let colour = self.players[p].u32_(4) as usize;
+            if let Some(n) = self.effects.nodes[slot].as_mut() {
+                n.tint = STREAK_COLOR.get(colour).copied();
+                n.alpha = Some(0x40);
+            }
+            self.parent_fx_to_player(slot, p, [0.0; 3]);
+        }
+        Ok(i)
     }
 
     /// StartFXNoLoop 0x17e348: StartFXSub(0, header, position, 0,

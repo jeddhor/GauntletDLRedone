@@ -335,3 +335,15 @@ enemy MBTreeSetAlpha fades, chrome (0x8000/0xa0000, setChrome), the colour
 scale of setPrimColor and DoLighting, VU1 vertex lighting of characters
 (point lights MBPosLight*, setPrimColor scales, AmbientSpecial flashes), fog (InitFog/FogFadeIn; FGE was 0 in the
 G1 frame), Z modifiers, sorted transparency order.
+
+## Effect colour and alpha (2026-10-21)
+
+StartBlockFX 0x17f200 (damage_player's block, f12 = the clamped block factor
+k as the effect time): EffectHeaders 0x42, MBTreeSetColor(streak_color
+0x24eed0[player colour] = 0xffff00 / 0xff / 0xff0000 / 0xff00, 0xRRGGBB),
+MBTreeSetAlpha 0x40, SfxSetParent to the player's node. MBTreeSetAlpha
+stores ~value at node +0x53 and sets flag 0x200; setPrimAlpha draws
++0x53 × 0.5019608 / 128, i.e. (255 − value) / 255. MBTreeSetColor stores
+node +0x64 with flag 0x100; the client modulates by the colour
+(HYPOTHESIS, unknowns.md). StartGenFX 0x17f580: EffectHeaders 0x50 + level
+for generator spawns of levels 1..3 at the enemy's position.

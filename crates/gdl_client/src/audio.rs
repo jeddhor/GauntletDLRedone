@@ -29,7 +29,6 @@ struct Voice {
     pos: f64,
     gain: [f32; 2],
     priority: i32,
-    queued: bool,
     /// An owner's voice (DoItemSound's per-item track): updated in place.
     tag: Option<u32>,
 }
@@ -37,7 +36,6 @@ struct Voice {
 #[derive(Default)]
 struct Mixer {
     voices: Vec<Voice>,
-    queue: Vec<Voice>,
     music: Option<(Arc<Vec<i16>>, u32, u32, f64)>,
     music_gain: f32,
     /// The stage music loops (its last part) or plays once.
@@ -53,11 +51,6 @@ impl Mixer {
     fn render(&mut self, out: &mut [f32], channels: usize) {
         out.fill(0.0);
         let frames = out.len() / channels.max(1);
-        if !self.voices.iter().any(|v| v.queued)
-            && let Some(next) = (!self.queue.is_empty()).then(|| self.queue.remove(0))
-        {
-            self.voices.push(next);
-        }
         let out_rate = f64::from(self.out_rate.max(1));
         if let Some((pcm, rate, ch, pos)) = self.music.as_mut() {
             let ch = (*ch).max(1) as usize;
@@ -159,14 +152,15 @@ impl AudioOut {
         self.banks.get(&b).and_then(Option::as_ref)
     }
 
-    /// Start sound `id` with request volume, pan (−1..1) and priority.
-    pub fn play(&mut self, id: i32, volume: i32, pan: f32, priority: i32, queued: bool) {
-        self.play_ex(id, volume, pan, priority, queued, false);
+    /// Start sound `id` with request volume, pan (−1..1) and priority (the
+    /// simulation's audio queue already serialises voice lines).
+    pub fn play(&mut self, id: i32, volume: i32, pan: f32, priority: i32) {
+        self.play_ex(id, volume, pan, priority, false);
     }
 
     /// AudioLOOP: the call's chain repeats until stopped.
     pub fn play_loop(&mut self, id: i32, volume: i32, pan: f32, priority: i32) {
-        self.play_ex(id, volume, pan, priority, false, true);
+        self.play_ex(id, volume, pan, priority, true);
     }
 
     /// DoItemSound: the owner's looping voice started, or its volume and
@@ -185,7 +179,7 @@ impl AudioOut {
             v.gain = gain(c_vol);
             return;
         }
-        self.play_ex(id, volume, pan, priority, false, true);
+        self.play_ex(id, volume, pan, priority, true);
         if let Ok(mut m) = self.mixer.lock()
             && let Some(v) = m.voices.iter_mut().rev().find(|v| v.id == id && v.tag.is_none())
         {
@@ -200,7 +194,7 @@ impl AudioOut {
         }
     }
 
-    fn play_ex(&mut self, id: i32, volume: i32, pan: f32, priority: i32, queued: bool, force_loop: bool) {
+    fn play_ex(&mut self, id: i32, volume: i32, pan: f32, priority: i32, force_loop: bool) {
         let (b, call) = AudioRom::split(id);
         let Some((vbk, pcm)) = self.bank(b) else { return };
         let Some(c) = vbk.calls.get(call) else { return };
@@ -228,17 +222,11 @@ impl AudioOut {
         let g = (volume.max(0) as f32 / 256.0) * (f32::from(c.volume) / 127.0);
         let pan = pan.clamp(-1.0, 1.0);
         let gain = [g * (1.0 - pan.max(0.0)), g * (1.0 + pan.min(0.0))];
-        let v = Voice { id, chain, rates, loop_from: loop_from.or(Some(0)), loops, part: 0, pos: 0.0, gain, priority, queued, tag: None };
+        let v = Voice { id, chain, rates, loop_from: loop_from.or(Some(0)), loops, part: 0, pos: 0.0, gain, priority, tag: None };
         if let Ok(mut m) = self.mixer.lock() {
-            if queued {
-                if m.queue.len() < 8 {
-                    m.queue.push(v);
-                }
-                return;
-            }
             if MAX_VOICES <= m.voices.len() {
                 // Steal the lowest-priority voice (approximation of DCS voiceFind).
-                if let Some((k, _)) = m.voices.iter().enumerate().filter(|(_, x)| !x.queued).min_by_key(|(_, x)| x.priority) {
+                if let Some((k, _)) = m.voices.iter().enumerate().min_by_key(|(_, x)| x.priority) {
                     m.voices.remove(k);
                 } else {
                     return;
@@ -257,7 +245,6 @@ impl AudioOut {
     pub fn stop_all(&mut self) {
         if let Ok(mut m) = self.mixer.lock() {
             m.voices.clear();
-            m.queue.clear();
             m.music = None;
         }
     }
@@ -349,7 +336,7 @@ fn start_alsa(mixer: Arc<Mutex<Mixer>>) -> Option<std::thread::JoinHandle<()>> {
 mod tests {
     use super::*;
 
-    fn voice(pcm: Vec<i16>, rate: u32, loops: bool, queued: bool) -> Voice {
+    fn voice(pcm: Vec<i16>, rate: u32, loops: bool) -> Voice {
         Voice {
             id: 1,
             chain: vec![Arc::new(pcm)],
@@ -360,7 +347,6 @@ mod tests {
             pos: 0.0,
             gain: [1.0, 0.5],
             priority: 0,
-            queued,
             tag: None,
         }
     }
@@ -369,7 +355,7 @@ mod tests {
     fn mixer_plays_a_chain_once_and_resamples() {
         // Synthetic: 4 samples at 24 kHz into a 48 kHz output → 8 frames.
         let mut m = Mixer { out_rate: 48_000, sfx_gain: 1.0, ..Default::default() };
-        m.voices.push(voice(vec![16384; 4], 24_000, false, false));
+        m.voices.push(voice(vec![16384; 4], 24_000, false));
         let mut out = vec![0f32; 2 * 10];
         m.render(&mut out, 2);
         assert_eq!(out[0], 0.5);
@@ -380,14 +366,12 @@ mod tests {
     }
 
     #[test]
-    fn queued_lines_play_one_at_a_time_and_loops_persist() {
+    fn loops_persist_after_a_one_shot_ends() {
         let mut m = Mixer { out_rate: 48_000, sfx_gain: 1.0, ..Default::default() };
-        m.queue.push(voice(vec![100; 2], 48_000, false, true));
-        m.queue.push(voice(vec![100; 2], 48_000, false, true));
-        m.voices.push(voice(vec![1; 2], 48_000, true, false));
+        m.voices.push(voice(vec![100; 2], 48_000, false));
+        m.voices.push(voice(vec![1; 2], 48_000, true));
         let mut out = vec![0f32; 2 * 4];
         m.render(&mut out, 2);
-        assert_eq!(m.queue.len(), 1);
-        assert_eq!(m.voices.len(), 1); // the queued line finished; the loop persists
+        assert_eq!(m.voices.len(), 1); // the one-shot finished; the loop persists
     }
 }

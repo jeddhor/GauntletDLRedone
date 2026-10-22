@@ -113,8 +113,8 @@ impl Game {
 
     /// world_update's end-of-stage block (game mode 0x4010): GlobalInten
     /// falls 1 → 0 over the first second after WorldEndTime (the
-    /// TransitionBlit fades out over two), then −1 and end_of_stage 2.
-    /// HYPOTHESIS: AudioQueUpdate reports an empty queue.
+    /// TransitionBlit fades out over two), then −1 and end_of_stage 2 once
+    /// AudioQueUpdate reports an empty queue.
     pub(crate) fn world_update_end_of_stage(&mut self) -> R<()> {
         if self.globals.game_mode != 0x4010 || self.globals.end_of_stage == 0 {
             return Ok(());
@@ -128,7 +128,9 @@ impl Game {
             self.lighting.global_inten = sub(1.0, t)?;
         } else {
             self.lighting.global_inten = -1.0;
-            self.globals.end_of_stage = 2;
+            if !self.que_update() {
+                self.globals.end_of_stage = 2;
+            }
         }
         Ok(())
     }

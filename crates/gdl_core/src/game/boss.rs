@@ -1,13 +1,9 @@
-//! Boss completion: StartGoodWizard 0x165cf0 / DoGoodWizard 0x165d08 timing,
-//! do_auto_exit 0x124458 and the auto exit (research/critters.md).
-//!
-//! The wizard's appearance, captions and speech are presentation; their
-//! durations come from CaptionText/AudioStillPlaying, which are not
-//! simulated: each speech phase waits a fixed SPEECH_SECONDS (HYPOTHESIS).
+//! Boss completion: do_auto_exit 0x124458 and the auto exit, boss spews
+//! and the quest item (research/critters.md); the good wizard is goodwiz.rs.
 use super::critter_ai::yaw_vec3;
 use super::damage::pd;
 use super::effects::{fx, Visual};
-use super::{Event, Game, R};
+use super::{Game, R};
 use crate::numeric::{add_guarded_rz as add, div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
 
 /// spew_tab 0x25d1a8: (bronze, silver, gold) coins per active player by CurWorld.
@@ -20,11 +16,6 @@ const COINS: [(&[u8], i32); 3] = [(b"COIN_BRONZE", 500), (b"COIN_SILVER", 1000),
 
 /// TowerWave (GauntInitWorldData 0x161568: 0xd00), the hub after a boss.
 pub const TOWER_WAVE: i32 = 0xd00;
-/// WizDelayGoldLeft 0x23e284 = 600, WizDelayNoGold 0x23e288 = 120 (vblanks).
-const WIZ_DELAY_GOLD_LEFT: i32 = 600;
-const WIZ_DELAY_NO_GOLD: i32 = 120;
-/// Placeholder length of each good-wizard speech phase (not from the source).
-const SPEECH_SECONDS: f32 = 6.0;
 
 impl Game {
     /// do_auto_exit 0x124458 (game_main, before world_update).
@@ -39,7 +30,7 @@ impl Game {
     }
 
     /// IsGoldActive 0x154e78: any live kind-1 subtype-1 item (gold).
-    fn is_gold_active(&self) -> bool {
+    pub(crate) fn is_gold_active(&self) -> bool {
         self.items.records.iter().any(|r| {
             let d = &self.items.definitions[r.definition()];
             r.active() && d.kind() == 1 && d.subtype() == 1
@@ -130,64 +121,6 @@ impl Game {
         }
         // SetAmbientSpecial(0.1, -0.8): the darkened screen while the item is up.
         self.set_ambient_special(f32::from_bits(0x3dcc_cccd), f32::from_bits(0xbf4c_cccd))?;
-        Ok(())
-    }
-
-    /// DoGoodWizard's state machine with placeholder speech lengths.
-    fn do_good_wizard(&mut self) -> R<()> {
-        let time = self.globals.time;
-        let bt = self.globals.boss_type;
-        match self.globals.good_wizard {
-            1 => {
-                let wait = if bt == 0x2a || bt == 0x2c { 10.0 } else { 5.0 };
-                self.good_wiz_timer = add(time, wait)?;
-                self.globals.good_wizard = 2;
-            }
-            2 => {
-                if self.good_wiz_timer <= time {
-                    self.globals.good_wizard = 3;
-                }
-            }
-            3 => {
-                self.good_wiz_alpha = 0xff;
-                self.events.push(Event::Audio { cue: "GoodWizardAppears", player: None, arg: bt });
-                self.globals.good_wizard = 4;
-            }
-            4 => {
-                self.good_wiz_alpha = (self.good_wiz_alpha - 4).max(0);
-                if self.good_wiz_alpha == 0 {
-                    self.globals.good_wizard = 5;
-                    self.audio_good_wizard(bt, 0);
-                    self.good_wiz_timer = add(time, SPEECH_SECONDS)?;
-                }
-            }
-            5..=7 => {
-                if self.good_wiz_timer <= time {
-                    self.globals.good_wizard += 1;
-                    self.good_wiz_timer = add(time, SPEECH_SECONDS)?;
-                }
-            }
-            8 => {
-                self.auto_exit_timer = if self.is_gold_active() { WIZ_DELAY_GOLD_LEFT } else { WIZ_DELAY_NO_GOLD };
-                self.globals.good_wizard = 9;
-            }
-            9 => self.globals.good_wizard = 10,
-            10 => {
-                if self.auto_exit_timer <= 35 {
-                    // SetSkinFX(0.5, TextureExit, 10, 1) on players in state 1.
-                    for k in 0..4 {
-                        if self.players[k].i32_(0xfc) == 1 {
-                            super::skin::set_skin_fx(&mut self.players[k], 0x7b4, 0.5, super::skin::SkinTex::Exit, 10, 1.0);
-                        }
-                    }
-                    self.globals.good_wizard = 11;
-                }
-            }
-            _ => {}
-        }
-        if 8 < self.globals.good_wizard && !self.is_gold_active() && WIZ_DELAY_NO_GOLD < self.auto_exit_timer {
-            self.auto_exit_timer = WIZ_DELAY_NO_GOLD;
-        }
         Ok(())
     }
 

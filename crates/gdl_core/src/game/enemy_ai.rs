@@ -2491,7 +2491,9 @@ impl Game {
                         if !still {
                             if self.enemies[k].i32_(e::TYPE) == 0x1d {
                                 let r = self.rng.rand_int(2).ok_or_else(|| super::Unsupported("RandInt(2)".into()))?;
-                                self.audio_praise(r != 0);
+                                // AudioSuchBravery / AudioHeroicEffort(+0x212).
+                                let who = i32::from(self.enemies[k].i16_(0x212));
+                                self.audio_praise(r != 0, who);
                             }
                             self.kill_enemy(k)?;
                         }

@@ -9,6 +9,7 @@
 //! 0x15f1c8 per GetEnemyTypes slot (monster hurt/kill/bite), the level's
 //! WDATA SNDS world sounds (PlayWorldSound 0x15c4f0) and AUDS stage record.
 use super::enemies::e;
+use super::audio_queue::QueEntry;
 use super::sound_cues::CueTables;
 use super::{Event, Game, R};
 use crate::numeric::{div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
@@ -74,7 +75,7 @@ pub struct SoundTables {
     door: Vec<i32>,
     gen_die: Vec<i32>,
     gen_hit: Vec<i32>,
-    pantab: Vec<i32>,
+    pub(crate) pantab: Vec<i32>,
     /// enemy_idx by enemy type → GetEnemyTypes slot.
     enemy_idx: Vec<i32>,
     /// monkill1, monkill1L3, monkill2, monkill2L3, monhurt1, monhurt2,
@@ -82,6 +83,10 @@ pub struct SoundTables {
     mon: [[i32; 8]; 12],
     /// snd_pname1/2 by colour × character (InitNameAudio; colour sounds are −1).
     pname: [[[i32; 17]; 4]; 2],
+    /// snd_pname1s/2s 0x2c2788 (S_<COLOUR><CHAR>1S / 2S).
+    pname_s: [[[i32; 17]; 4]; 2],
+    /// audio_select_state 0x23ccb8 (AudioSelect; AudioStopAll clears it).
+    pub audio_select_state: i32,
     /// WDATA SNDS: (id, volume, priority).
     pub world: Vec<(i32, i16, i16)>,
     /// The sound_cues.rs tables (EE addresses in its doc).
@@ -148,19 +153,24 @@ impl SoundTables {
             enemy_idx: vec![-1; 0x2d],
             mon: [[-1; 8]; 12],
             pname: [[[-1; 17]; 4]; 2],
+            pname_s: [[[-1; 17]; 4]; 2],
+            audio_select_state: 0,
             world: Vec::new(),
             stage,
             rom: None,
         };
         let Some(rom) = rom else { return Ok(s) };
         let find = |n: &str| rom.find(n);
-        // InitNameAudio: S_<COLOUR><CHAR>1 / 2 (colour words stay −1).
+        // InitNameAudio: S_<COLOUR><CHAR>1 / 2 and 1S / 2S (colour words
+        // stay −1).
         let colours = ["YEL", "BLU", "RED", "GRE"];
         let chars = ["WAR", "VAL", "WIZ", "ARC", "DWF", "KNI", "SOR", "JES", "MIN", "FAL", "JAC", "TIG", "OGR", "UNI", "MED", "HYE", "SUM"];
         for (c, col) in colours.iter().enumerate() {
             for (k, ch) in chars.iter().enumerate().take(16) {
                 s.pname[0][c][k] = find(&format!("S_{col}{ch}1")).unwrap_or(-1);
                 s.pname[1][c][k] = find(&format!("S_{col}{ch}2")).unwrap_or(-1);
+                s.pname_s[0][c][k] = find(&format!("S_{col}{ch}1S")).unwrap_or(-1);
+                s.pname_s[1][c][k] = find(&format!("S_{col}{ch}2S")).unwrap_or(-1);
             }
         }
         // SetEnemyAudio for each GetEnemyTypes slot (subtypes 5 and 9 skipped).
@@ -247,14 +257,14 @@ impl Game {
     /// AudioSFX(id, position, volume, priority): pan from AudioAng.
     pub fn sfx(&mut self, id: i32, pos: Option<V3>, volume: i32, priority: i32) {
         if self.sound_on() && 0 <= id {
-            self.events.push(Event::Sound { id, position: pos, volume, priority, queue: false });
+            self.events.push(Event::Sound { id, position: pos, volume, priority, pan: None });
         }
     }
 
     /// AudioSFX2(id, pan, volume, priority): fixed pan (pantab), no position.
-    pub fn sfx2(&mut self, id: i32, _pan: i32, volume: i32, priority: i32) {
+    pub fn sfx2(&mut self, id: i32, pan: i32, volume: i32, priority: i32) {
         if self.sound_on() && 0 <= id {
-            self.events.push(Event::Sound { id, position: None, volume, priority, queue: false });
+            self.events.push(Event::Sound { id, position: None, volume, priority, pan: Some(pan) });
         }
     }
 
@@ -268,7 +278,7 @@ impl Game {
         let k = k.clamp(0.0, 1.0);
         if 0.0 < k {
             let v = mul(volume as f32, k)? as i32;
-            self.events.push(Event::Sound { id, position: Some(pos), volume: v, priority, queue: false });
+            self.events.push(Event::Sound { id, position: Some(pos), volume: v, priority, pan: None });
         }
         Ok(())
     }
@@ -288,11 +298,11 @@ impl Game {
         }
     }
 
-    /// AudioQueAdd4 / AudioVQueAdd4: queued (serialised) voice line.
-    pub(crate) fn queue(&mut self, id: i32, volume: i32, priority: i32) {
-        if self.sound_on() && 0 <= id {
-            self.events.push(Event::Sound { id, position: None, volume, priority, queue: true });
-        }
+    /// AudioQueAdd4(−1, 1.0, id, volume, AudioAng(player), priority): a
+    /// player's voice line on queue channel 0.
+    fn player_line(&mut self, p: usize, id: i32, volume: i32, priority: i32) {
+        let at = self.players[p].v3(0x50);
+        self.que_add0(1.0, QueEntry::at(id, volume, at, priority));
     }
 
     fn class_of(&self, p: usize) -> usize {
@@ -305,19 +315,30 @@ impl Game {
         v.get(k).copied().unwrap_or(-1)
     }
 
-    /// AudioWithName(delay, first, player, message, extra): colour/name vox.
-    pub fn audio_with_name(&mut self, first: i32, p: usize, message: i32, extra: i32) {
+    /// AudioWithName 0x15d9f8(delay, first, player, message, extra): the
+    /// lines `first`, the colour word (snd_pcolor, −1 from InitNameAudio),
+    /// the name (snd_pname1/2 by colour × character, the `…S` set while
+    /// audio_select_state; the chicken's 0x1002a/0x1002b), `message` and
+    /// `extra` on queue channel 1 (AudioVQueAdd4, pan pantab[player]); the
+    /// first may wait at most `delay` seconds, and a refused line ends it.
+    pub fn audio_with_name(&mut self, delay: f32, first: i32, p: usize, message: i32, extra: i32) {
+        let pan = Self::tab(&self.sounds.pantab, p);
         let name = if self.chicken(p) {
             if first != -1 { 0x1002a } else { 0x1002b }
         } else {
             let colour = self.players[p].u32_(4) as usize;
             let ch = self.players[p].u32_(0xc) as usize;
             let set = usize::from(first == -1);
-            self.sounds.pname[set].get(colour).and_then(|c| c.get(ch)).copied().unwrap_or(-1)
+            let t = if self.sounds.audio_select_state != 0 { &self.sounds.pname_s } else { &self.sounds.pname };
+            t[set].get(colour).and_then(|c| c.get(ch)).copied().unwrap_or(-1)
         };
+        let mut wait = delay;
         for id in [first, name, message, extra] {
             if 0 <= id {
-                self.queue(id, 0xe0, 2);
+                if self.vque_add(wait, QueEntry::new(id, 0xe0, pan, 2)) == 0.0 {
+                    return;
+                }
+                wait = -1.0;
             }
         }
     }
@@ -341,7 +362,7 @@ impl Game {
         let r = self.rng.rand_int(4).ok_or_else(|| super::Unsupported("RandInt(4)".into()))? as usize;
         let v = Self::tab(&self.sounds.pain, r + 4 * self.class_of(p));
         let id = if self.chicken(p) { 0x60 } else { v };
-        self.queue(id, 0xe0, 100);
+        self.player_line(p, id, 0xe0, 100);
         Ok(())
     }
 
@@ -354,14 +375,15 @@ impl Game {
         }
     }
 
+    /// AudioNeedFood 0x15dd80(kind, player).
     pub fn audio_need_food(&mut self, kind: i32, p: usize) {
-        let m = match kind {
-            1 => 0x1_0005,
-            2 => 0x1_0003,
-            3 => 0x2_0000,
-            _ => 0x1_0004,
+        let (delay, m) = match kind {
+            1 => (1.0, 0x1_0005),
+            2 => (1.0, 0x1_0003),
+            3 => (0.5, 0x2_0000),
+            _ => (2.0, 0x1_0004),
         };
-        self.audio_with_name(-1, p, m, -1);
+        self.audio_with_name(delay, -1, p, m, -1);
     }
 
     pub fn audio_player_hit(&mut self, p: usize, kind: i32) {
@@ -376,14 +398,14 @@ impl Game {
         let v = Self::tab(&self.sounds.poison, self.class_of(p));
         if 0 <= v {
             let id = if self.chicken(p) { 0x62 } else { v };
-            self.queue(id, 0xc0, 0x42);
+            self.player_line(p, id, 0xc0, 0x42);
         }
     }
 
     pub fn audio_player_stolen(&mut self, p: usize) {
         let v = Self::tab(&self.sounds.stolen, self.class_of(p));
         if !self.chicken(p) && 0 <= v {
-            self.queue(v, 0xc0, 0x6e);
+            self.player_line(p, v, 0xc0, 0x6e);
         }
     }
 
@@ -393,23 +415,24 @@ impl Game {
         if r == 0 {
             let v = Self::tab(&self.sounds.eat, which.max(0) as usize + 4 * self.class_of(p));
             if !self.chicken(p) && 0 <= v {
-                self.queue(v, 0xc0, 0x42);
+                self.player_line(p, v, 0xc0, 0x42);
             }
             return Ok(());
         }
         let v = Self::tab(&self.sounds.eatsfx, self.class_of(p));
         if 0 <= v {
             let id = if self.chicken(p) { 0x61 } else { v };
-            self.queue(id, 0xc0, 0x42);
+            self.player_line(p, id, 0xc0, 0x42);
         }
         Ok(())
     }
 
+    /// AudioGainedLevel 0x160e78(player, direction).
     pub fn audio_gained_level(&mut self, p: usize, dir: i32) {
         if 0 < dir {
-            self.audio_with_name(-1, p, 0x2_0010, 0x1_003d);
+            self.audio_with_name(3.0, -1, p, 0x2_0010, 0x1_003d);
         } else if dir < 0 {
-            self.audio_with_name(-1, p, 0x1_003e, -1);
+            self.audio_with_name(3.0, -1, p, 0x1_003e, -1);
         }
     }
 

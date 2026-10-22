@@ -230,7 +230,8 @@ impl Game {
             let pw = self.globals.cur_world;
             self.do_audio_tally_sfx(tally, pw);
         }
-        if !done {
+        // AudioStillPlaying(1) every frame: the shop waits for its lines.
+        if self.audio_still_playing() || !done {
             return Ok(0);
         }
         self.bank_music_end();

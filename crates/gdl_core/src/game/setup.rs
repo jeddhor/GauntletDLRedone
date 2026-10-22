@@ -414,8 +414,14 @@ impl Game {
             class_tables: crate::player_class::ClassTables::from_elf(inp.elf)?,
             effects: super::effects::Effects::new(inp.effect_tables),
             boss_crit_inst: s.extra.boss_crit_inst,
+            boss_stale: None,
             target_cone_mode: s.extra.target_cone_mode,
             level_done: None,
+            players_done: false,
+            exit_ready: false,
+            vb_counter: s.extra.vb_counter,
+            audio_que: Default::default(),
+            attract_audio: false,
             randpottype: s.extra.randpottype,
             active_player_mask: 0,
             enemy_alpha: vec![0xff; 25],
@@ -447,8 +453,8 @@ impl Game {
             safe_rock_items: Vec::new(),
             safe_rock_counter: Vec::new(),
             boss_key_position: None,
-            good_wiz_timer: 0.0,
-            good_wiz_alpha: 0,
+            good_wiz: super::goodwiz::GoodWiz { clips: inp.item_anims.get("WIZARD").cloned(), ..Default::default() },
+            worldsel: super::goodwiz::worldsel_from_elf(inp.elf),
             auto_exit_timer: 0,
             spew_items: Vec::new(),
             stage_save: None,
@@ -657,6 +663,8 @@ impl Game {
     /// do_enemies, do_players (`players`), ProcessEffects.
     pub fn step_with(&mut self, visible_override: Option<&Visibility>, players: &mut dyn FnMut(&mut Game) -> R<()>) {
         self.frame_main += 1;
+        // main: AudioQueUpdate / AudioPoll before game_main.
+        self.main_audio(self.globals.vb_elapsed);
         // MBResetBlits after the previous frame's render: temp blits and
         // font messages are per frame.
         self.hud.begin_frame();
@@ -719,7 +727,14 @@ impl Game {
         if let Err(e) = players(self) {
             self.log.note("do_players", &e);
         }
-        if let Err(e) = self.process_effects() {
+        // game_main: do_players done and AudioStillPlaying clear → the
+        // level's end (the host's transition); ProcessEffects is skipped.
+        if self.players_done && !self.audio_still_playing() {
+            self.exit_ready = true;
+            if self.level_done.is_none() {
+                self.level_done = Some(self.game_main_exit_wave());
+            }
+        } else if let Err(e) = self.process_effects() {
             self.log.note("ProcessEffects", &e);
         }
         // main's camera dispatch (StdCamUpdate) and MBEndFrame.

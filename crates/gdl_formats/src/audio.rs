@@ -216,10 +216,12 @@ impl AudioRom {
         None
     }
 
-    /// AudioSoundLength: the name record's duration (seconds) of an ID.
+    /// The name record's duration (seconds) of an ID, found as
+    /// AudioAnyQueAdd4 / AudioTrackSet do: bank `id >> 16`'s first name
+    /// index (+0x26) + `id & 0xfff`, record +0x14.
     pub fn length_of(&self, id: i32) -> Option<f32> {
-        let g = self.ids.iter().position(|&x| x == id)?;
-        self.sounds.get(g).map(|s| s.1)
+        let bank = self.banks.get(usize::try_from(id >> 16).ok()?)?;
+        self.sounds.get(usize::from(bank.first) + (id & 0xfff) as usize).map(|s| s.1)
     }
 
     /// (bank, call) of an ID: bank = id >> 16, call = id & 0xfff.

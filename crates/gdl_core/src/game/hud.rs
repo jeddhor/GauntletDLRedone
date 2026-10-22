@@ -1853,8 +1853,8 @@ impl Game {
             } else if let Some(p) = player {
                 self.audio_help(p, h[6]);
             } else {
-                // AudioHelp(−1, …): the line without a player (queued).
-                self.queue(h[6], 0xe0, 2);
+                // AudioHelp(−1, …): the line without a player.
+                self.vque_add(0.5, super::audio_queue::QueEntry::new(h[6], 0xe0, 0x7f, 2));
             }
         }
         if self.globals.aux_levels & 0x10 == 0 {

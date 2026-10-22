@@ -173,10 +173,19 @@ Cur3DTransmitter 0x21f120 and CurTransmitter 0x21f11c are never reset
 (only GetTransmitter3D/GetTransmitter write them), so the previous level's
 index carries over (`Globals::cur3d_transmitter`, `cur_transmitter`).
 
-Inputs not yet available natively (HYPOTHESIS): good_wiz_objgrp's
-position/flag (calc_good_wiz_attn, the good wizard's presentation group) is
-taken as absent; the boss key effect is taken as living until the level
-ends (BossKeySfx's effect lifetime is not tracked).
+good_wiz_objgrp +0x40 (the wizard's attention point, set by DoGoodWizard's
+state 3) feeds the kind-2 view once the node exists. After BossDeath,
+BossCritInst still points at the freed instance and BossCamBossCalc keeps
+reading it; natively the instance's last record and type radius stand in
+(HYPOTHESIS: the pool does not reuse it before the level ends). The boss
+key effect is taken as living until the level ends (BossKeySfx's effect
+lifetime is not tracked, HYPOTHESIS).
+
+Presentation fix (2026-10-21): the window camera is drawn from
+MBCameraUpdate's pb eye and rows; the client had taken the eye from the
+StdCam record, which BossCameraUpdate does not write, so boss arenas were
+drawn from the level-start eye with the boss camera's rotation (the player
+at the screen's top edge in A5).
 
 Not trace-checked: no capture or trace of a boss arena exists yet.
 

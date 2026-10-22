@@ -620,9 +620,10 @@ impl Game {
     /// MoreShards, AllShards, NewRunes line 0, Rune13No, All12RunesNo,
     /// All12RunesYes, Rune13Yes) at y 0x138; once the caption is shown the
     /// speech time runs out and SumnerSpeechEnd follows. Sumner's camera
-    /// at the nearest waypoint while he speaks. HYPOTHESIS: a player's level
-    /// speech ends when the caption is revealed and 0x168 frames passed
-    /// (AudioSoundPlaying of the speech is not observable here).
+    /// at the nearest waypoint while he speaks. A player's level speech
+    /// ends once the caption is revealed, 0x168 frames passed and its line
+    /// (AudioExp's sound) no longer plays (AudioSoundPlaying; the track
+    /// timing of audio_queue).
     fn sumner_do_speech(&mut self) -> R<()> {
         let t = &mut self.tower;
         if t.sumner_speech_time <= 0.0 || self.globals.cam_wait != 0 || self.globals.start_of_stage != 0 {
@@ -688,9 +689,9 @@ impl Game {
                     let font = h.text.as_ref().and_then(|r| r.entries.get(0x18)).and_then(|e| r_font(h, r_fonts(h), e.font)).unwrap_or(0);
                     let done = self.hud.caption(f32::from_bits(0x3f2a_c083), &text, font, (frame >> 1) - self.tower.caption.1, 0x138);
                     if self.tower.plyr_sidx < 0 {
+                        // sumner_plyr_sidx = AudioExp(...): the level line.
                         let ch = self.players[p].i32_(0xc);
-                        self.audio_exp(p, ch, lv);
-                        self.tower.plyr_sidx = 1;
+                        self.tower.plyr_sidx = self.audio_exp(p, ch, lv);
                     }
                     if self.tower.plyr_fxidx < 0 && 0xef < frame {
                         // StartLevelUpFX(0, colour): LevelUpEffects[colour]
@@ -706,7 +707,7 @@ impl Game {
                         });
                         self.tower.plyr_fxidx2 = self.sumner_player_fx(p, h)?;
                     }
-                    if !done || frame < 0x168 {
+                    if !done || frame < 0x168 || self.audio_sound_playing(self.tower.plyr_sidx) {
                         break;
                     }
                     self.tower.caption = (0, 0, 0x3c);
@@ -831,7 +832,7 @@ impl Game {
             0x10 => 0x3000b,
             _ => -1,
         };
-        self.queue(id, 0xe0, 2);
+        self.speech_line(id);
     }
 
     /// AudioRuneSpeech 0x161358.
@@ -844,7 +845,7 @@ impl Game {
             0x24 => 0xe00a7,
             _ => -1,
         };
-        self.queue(id, 0xe0, 2);
+        self.speech_line(id);
     }
 
     /// SumnerGhostStart 0x174998: the WIZARD tree of item_anim (AtreeInit
@@ -1195,9 +1196,8 @@ impl Game {
                 }
                 let table = if garg { "garg_sidx" } else { "crystal_sidx" };
                 let audio = self.speech_sidx(table, n);
-                if 0 <= audio {
-                    self.queue(audio, 0xe0, 2);
-                }
+                // AudioCrystalSpeech 0x161298 / AudioGargSpeech 0x1612f8.
+                self.speech_line(audio);
                 self.events.push(Event::ScrollNamed { player_mask: u32::MAX, name, line: Some(n), audio });
                 for k in 0..4 {
                     let o = self.class_at(k, rec) + 2 * n;
@@ -1264,10 +1264,10 @@ impl Game {
 
 /// The FONT table names of a text ROM, resolved against font_desc
 /// (StringInitSub: no match leaves font 0).
-fn r_fonts(h: &super::hud::Hud) -> Vec<String> {
+pub(crate) fn r_fonts(h: &super::hud::Hud) -> Vec<String> {
     h.text.as_ref().map(|r| r.fonts.clone()).unwrap_or_default()
 }
-fn r_font(h: &super::hud::Hud, fonts: Vec<String>, k: u32) -> Option<usize> {
+pub(crate) fn r_font(h: &super::hud::Hud, fonts: Vec<String>, k: u32) -> Option<usize> {
     let name = fonts.get(k as usize)?;
     h.tables.as_ref()?.font_desc.iter().position(|n| n == name)
 }

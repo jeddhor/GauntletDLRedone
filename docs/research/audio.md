@@ -66,9 +66,33 @@
   100+ units from the start. Audible output is not verified (the test X
   server has no audio device).
 
+- `gdl_core::game::audio_queue` (2026-10-21): the EE voice queue
+  (AudioAnyQueAdd4 0x122ea0 with channel 0 = AudioQueAdd4, 1 =
+  AudioVQueAdd4 while GoodWizard < 3; AudioQueUpdate 0x122ab0;
+  AudioQueEmpty 0x122e58). Entries carry the ROM duration × 60 vblanks; a
+  line is refused when it would wait longer than its max-wait; the head
+  starts (→ `Event::Sound`) when its end time is 0 and retires at it.
+  AudioStillPlaying = AudioQueUpdate's "entries left": it holds the level
+  exit (game_main after do_players), the shop exit (do_shop), the map
+  loader (do_mapscreen state 2), the good wizard (state 9) and the end of
+  stage (world_update). main's AudioQueUpdate / AudioPoll run every frame
+  in every mode (`Game::main_audio`; the client also ticks it while paused,
+  in message boxes, the map and the shop). AudioSoundPlaying reads the
+  started tracks' end times (Sumner's level speech). Per-call max-waits from
+  the decompiles: AudioWithName (the first line: AudioExp / AudioWaitToExit
+  5, AudioHasItem 4 / 1 for 0x1003d, AudioGainedLevel 3, AudioNeedFood
+  1/1/0.5/2), player lines 1 (channel 0, panned by position), praise and
+  rune hints 3, help 0.5, secret coin 1, speeches 10 (channel 1, not held
+  by GoodWizard), runes found / stage entry none. AudioHasItem passes the
+  item's sound as AudioWithName's extra line (`move a3,a1`); the `…1S` /
+  `…2S` names are used while audio_select_state. The client's own queue
+  was removed. Synthetic tests: serialisation and max-wait refusal, track
+  ends.
+
 ## Not yet
 
-The golem enemy sound names (SetEnemyAudio type 0x1d, guarded),
+The golem enemy sound names (SetEnemyAudio type 0x1d, guarded), AudioSelect
+(select-screen music 0xc0000; the select screen is not ported),
 AudioDemonFireBall, tower coin sounds, exact SPU volume/pan curves, the
 +0xf8 world-node motion of moving sound items (the position stays the
 placement), AudioLoadStage bank residency (the host loads banks on demand).

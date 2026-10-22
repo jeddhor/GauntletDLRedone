@@ -7,6 +7,7 @@
 //! world explosion, world hit), lvl_snd 0x23d7c8 (16 characters × 9),
 //! gwiz_sidx 0x23dbe0 (11 bosses × 8), snd1–4.517–520 0x23da08.. (legend
 //! items by world).
+use super::audio_queue::QueEntry;
 use super::{Game, R};
 
 type V3 = [f32; 3];
@@ -36,10 +37,9 @@ fn at(v: &[i32], k: i64) -> i32 {
 }
 
 impl Game {
+    /// pantab 0x23ccc0[player] (0x7f for every player on this disc).
     fn pan_of(&self, p: usize) -> i32 {
-        // pantab by player (presentation pan; Event::Sound has no pan field
-        // for SFX2: the client pans by position or centres).
-        p as i32
+        self.sounds.pantab.get(p).copied().unwrap_or(0x7f)
     }
 
     /// AudioCursorSelect 0x1606c8: AudioFX(0x11, 0x7f, 3).
@@ -98,12 +98,13 @@ impl Game {
     /// AudioNumRunesFound 0x15e0e8(n): one → 0x10030; 2..12 → snd.153[n − 2]
     /// then 0x10031 (queued voice lines).
     pub fn audio_num_runes_found(&mut self, n: i32) {
+        // AudioVQueAdd4(−1, −1, id, 0xe0, 0x7f, 2).
         if n == 1 {
-            self.queue(0x1_0030, 0xe0, 2);
+            self.vque_add(-1.0, QueEntry::new(0x1_0030, 0xe0, 0x7f, 2));
         } else if (2..0xd).contains(&n) {
             let id = at(&self.sounds.cues.runes, i64::from(n - 2));
-            self.queue(id, 0xe0, 2);
-            self.queue(0x1_0031, 0xe0, 2);
+            self.vque_add(-1.0, QueEntry::new(id, 0xe0, 0x7f, 2));
+            self.vque_add(-1.0, QueEntry::new(0x1_0031, 0xe0, 0x7f, 2));
         }
     }
 
@@ -114,8 +115,8 @@ impl Game {
         let (w, second) = (st.word_10, st.word_14);
         let Some(&(id, _, _)) = usize::try_from(w).ok().and_then(|k| self.sounds.world.get(k)) else { return };
         if 0 <= second {
-            self.queue(id, 0xe0, 2);
-            self.queue(second, 0xe0, 2);
+            self.vque_add(-1.0, QueEntry::new(id, 0xe0, 0x7f, 2));
+            self.vque_add(-1.0, QueEntry::new(second, 0xe0, 0x7f, 2));
         }
     }
 
@@ -154,17 +155,18 @@ impl Game {
         self.sfx2(0, self.pan_of(p), vol, 9);
     }
 
-    /// AudioWaitToExit 0x15df40(player): AudioWithName(0x30014 in the
-    /// Tower, else 0x2000c).
+    /// AudioWaitToExit 0x15df40(player): AudioWithName(5.0, −1, player,
+    /// 0x30014 in the Tower, else 0x2000c).
     pub fn audio_wait_to_exit(&mut self, p: usize) {
         let m = if self.globals.cur_world == 0xd { 0x3_0014 } else { 0x2_000c };
-        self.audio_with_name(-1, p, m, -1);
+        self.audio_with_name(5.0, -1, p, m, -1);
     }
 
-    /// AudioSuchBravery 0x15deb0 / AudioHeroicEffort 0x15dee8: 0x10000 /
-    /// 0x10001 queued.
-    pub fn audio_praise(&mut self, heroic: bool) {
-        self.queue(if heroic { 0x1_0001 } else { 0x1_0000 }, 0xe0, 2);
+    /// AudioSuchBravery 0x15deb0 / AudioHeroicEffort 0x15dee8(player):
+    /// AudioVQueAdd4(−1, 3.0, 0x10000 / 0x10001, 0xe0, pantab[player], 2).
+    pub fn audio_praise(&mut self, heroic: bool, p: i32) {
+        let pan = usize::try_from(p).map_or(0x7f, |p| self.pan_of(p));
+        self.vque_add(3.0, QueEntry::new(if heroic { 0x1_0001 } else { 0x1_0000 }, 0xe0, pan, 2));
     }
 
     /// AudioItSwap 0x15fd08(position): AudioSFX(0x3a, position, 0xb4, 0x14).
@@ -242,25 +244,36 @@ impl Game {
 
     /// AudioExp 0x160b78(player, character, level): lvl_snd[character × 9 +
     /// level / 10 − 1] below 99, else 0x1003f, with the name.
-    pub fn audio_exp(&mut self, p: usize, character: i32, level: i32) {
+    pub fn audio_exp(&mut self, p: usize, character: i32, level: i32) -> i32 {
         let id = if level < 99 { at(&self.sounds.cues.lvl_snd, i64::from(level / 10 - 1) + i64::from(character) * 9) } else { 0x1_003f };
-        self.audio_with_name(-1, p, id, -1);
+        self.audio_with_name(5.0, -1, p, id, -1);
+        id
+    }
+
+    /// AudioHasItem 0x15dc88(player, sound): AudioWithName(4.0 (1.0 for
+    /// 0x1003d), −1, player, 0x20010, sound) — `move a3,a1` passes the
+    /// sound as the extra line.
+    pub fn audio_has_item(&mut self, p: usize, id: i32) {
+        let delay = if id == 0x1_003d { 1.0 } else { 4.0 };
+        self.audio_with_name(delay, -1, p, 0x2_0010, id);
     }
 
     /// AudioHelp 0x160c08(player, sound, _) with one active player:
-    /// 0x1003d and 0x2002c → AudioHasItem (AudioWithName 0x20010), 0x1002c
-    /// and 0x2000f with the name, otherwise the line queued. With more
-    /// players the shared item lines also go through AudioHasItem.
+    /// 0x1003d and 0x2002c → AudioHasItem, 0x1002c and 0x2000f with the
+    /// name (AudioWithName delay 5), otherwise AudioVQueAdd4(−1, 0.5, sound,
+    /// 0xe0, pantab[player], 2). With more players the shared item lines
+    /// also go through AudioHasItem.
     pub fn audio_help(&mut self, p: usize, id: i32) {
         let multi = 1 < self.globals.num_active_players;
         let has_item = matches!(id, 0x1_003d | 0x2_002c)
             || (multi && (matches!(id, 0x25_0044 | 0x29_0042 | 0x27_0043 | 0x26_0035 | 0x28_0039 | 0x2c_0053 | 0x2b_0051 | 0x2d_0042 | 0x36_0023) || (0x2_0011..=0x2_0028).contains(&id) || (0x2_002b..=0x2_0031).contains(&id)));
         if has_item {
-            self.audio_with_name(-1, p, 0x2_0010, -1);
+            self.audio_has_item(p, id);
         } else if matches!(id, 0x1_002c | 0x2_000f) {
-            self.audio_with_name(-1, p, id, -1);
+            self.audio_with_name(5.0, -1, p, id, -1);
         } else {
-            self.queue(id, 0xe0, 2);
+            let pan = self.pan_of(p);
+            self.vque_add(0.5, QueEntry::new(id, 0xe0, pan, 2));
         }
     }
 
@@ -298,16 +311,25 @@ impl Game {
     }
 
     /// AudioGoodWizard 0x1611d0(boss, k): gwiz_sidx[(boss − 0x22) × 8 + k]
-    /// queued (AudioAnyQueAdd4, delay 10).
+    /// by AudioAnyQueAdd4(−1, 10.0, 1, id, 0xe0, 0x7f, 2).
     pub fn audio_good_wizard(&mut self, boss: i32, k: i32) {
         let id = at(&self.sounds.cues.gwiz, i64::from(boss - 0x22) * 8 + i64::from(k));
-        self.queue(id, 0xe0, 2);
+        self.speech_line(id);
     }
 
-    /// AudioRuneGetCloser 0x15de70 / AudioRuneIsNear 0x15de30: 0x20033 /
-    /// 0x20034 queued.
+    /// AudioAnyQueAdd4(−1, 10.0, 1, id, 0xe0, 0x7f, 2): the shard, rune,
+    /// crystal, gargoyle and good-wizard speeches (not held by GoodWizard).
+    pub fn speech_line(&mut self, id: i32) {
+        if 0 <= id {
+            self.que_add(10.0, 1, QueEntry::new(id, 0xe0, 0x7f, 2));
+        }
+    }
+
+    /// AudioRuneGetCloser 0x15de70 / AudioRuneIsNear 0x15de30:
+    /// AudioVQueAdd4(−1, 3.0, 0x20033 / 0x20034, 0xe0, AudioAng(_), 2)
+    /// (the pan's position is not passed here: centre).
     pub fn audio_rune_hint(&mut self, near: bool) {
-        self.queue(if near { 0x2_0034 } else { 0x2_0033 }, 0xe0, 2);
+        self.vque_add(3.0, QueEntry::new(if near { 0x2_0034 } else { 0x2_0033 }, 0xe0, 0x7f, 2));
     }
 }
 

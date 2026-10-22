@@ -86,7 +86,15 @@ impl Game {
                     m.load_delay -= 1;
                 }
             }
-            2..=4 => m.load_done += 1,
+            // AudioStillPlaying(10): the entry lines finish first.
+            2 => {
+                if !self.audio_still_playing() {
+                    m.load_done = 3;
+                }
+            }
+            // AudioLoadStage(stage, 1); AudioStillLoading (banks load on
+            // demand in the host).
+            3 | 4 => m.load_done += 1,
             _ => m.load_done = 99,
         }
         m.time += vb;

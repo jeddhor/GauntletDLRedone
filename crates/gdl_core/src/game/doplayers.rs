@@ -358,6 +358,13 @@ impl Game {
     /// welcome_check and TowerCheckMessages). Returns the original's result
     /// (false while any player is still active/dying).
     pub fn do_players(&mut self) -> R<bool> {
+        self.players_done = false;
+        let done = self.do_players_sub()?;
+        self.players_done = done;
+        Ok(done)
+    }
+
+    fn do_players_sub(&mut self) -> R<bool> {
         let mut result = self.globals.active_players != 0;
         let mut weakest = -1i32;
         let mut same_level = 0;
@@ -550,9 +557,9 @@ impl Game {
                     if 0.0 < t && add(t, 2.0)? < self.globals.time {
                         let n = self.players[k].i32_(0x90c);
                         if 0x2d <= n {
-                            self.audio_praise(false);
+                            self.audio_praise(false, k as i32);
                         } else if 0x1e <= n {
-                            self.audio_praise(true);
+                            self.audio_praise(true, k as i32);
                         }
                         self.players[k].set_f32(0x910, 0.0);
                         self.players[k].set_i32(0x90c, 0);

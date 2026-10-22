@@ -2172,7 +2172,8 @@ impl super::Game {
                 let boss = usize::try_from(self.boss_crit_inst - 1)
                     .ok()
                     .filter(|&i| self.critters.get(i).is_some_and(|c| c.is_some()))
-                    .map(|i| (&self.crit(i).rec, self.critter_type_f32(i, 0x78)));
+                    .map(|i| (&self.crit(i).rec, self.critter_type_f32(i, 0x78)))
+                    .or_else(|| self.boss_stale.as_ref().map(|(r, f)| (r, *f)));
                 let ctx = BossCtx {
                     players: &self.players,
                     spf: g.spf,
@@ -2181,9 +2182,10 @@ impl super::Game {
                     boss_active: g.boss_active,
                     boss_is_dying: self.boss_is_dying,
                     good_wizard: g.good_wizard,
-                    // HYPOTHESIS: good_wiz_objgrp (calc_good_wiz_attn) is not
-                    // ported; the key effect is taken as living until level end.
-                    good_wiz_pos: None,
+                    // good_wiz_objgrp +0x40 once DoGoodWizard made the node.
+                    // HYPOTHESIS: the key effect is taken as living until
+                    // level end.
+                    good_wiz_pos: self.good_wiz.matrix.map(|_| self.good_wiz.attn),
                     boss_key_pos: self.boss_key_position,
                 };
                 let done = bc.update(&mut cam, &ctx, (g.paused, g.help, g.vb_elapsed), &mut wait, &mut start);

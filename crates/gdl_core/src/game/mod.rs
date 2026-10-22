@@ -3,6 +3,7 @@
 //! ProcessEffects. Records keep their original layouts (see `record`);
 //! presentation side effects (help text, audio, FX, HUD notices, vibration)
 //! are emitted as [`Event`]s instead of being performed.
+pub mod audio_queue;
 pub mod bgmusic;
 pub mod boss;
 pub mod camera;
@@ -13,6 +14,7 @@ pub mod critters;
 pub mod doplayers;
 pub mod damage;
 pub mod effects;
+pub mod goodwiz;
 pub mod heal;
 pub mod healthmeter;
 pub mod hud;
@@ -211,10 +213,10 @@ pub enum Event {
     PlayerInactivated { player: usize },
     /// add_got_it(player, kind, amount): HUD pickup notice.
     GotIt { player: usize, kind: i32, amount: i32 },
-    /// Audio* calls, by original function name (cues not yet transcribed).
-    Audio { cue: &'static str, player: Option<usize>, arg: i32 },
     /// A sound request (AudioSFX/SFX2/SFX3/queue): ID = bank << 16 | call.
-    Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, queue: bool },
+    /// `pan`: a fixed pan (0..0xfe, 0x7f centre; AudioSFX2 / the queue)
+    /// when there is no position.
+    Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, pan: Option<i32> },
     /// AudioLOOP(id, position, volume, priority): a looping sound.
     LoopSound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32 },
     /// BossDeath's boss key effect (BossKeySfx) at a position.
@@ -386,9 +388,21 @@ pub struct Game {
     /// BossCritInst 0x25d2c0 and the difficulty word 0x21edcc (index of
     /// diff_mul_tab.15 in ResolveWorldData; also PlayerGetTarget's cone).
     pub boss_crit_inst: i32,
+    /// The freed boss instance BossCritInst still points at (critter_ai's
+    /// CritterDelInst).
+    pub boss_stale: Option<(record::Record, f32)>,
     pub target_cone_mode: i32,
     /// Destination wave (world << 8 | level) once a player finished do_exit.
     pub level_done: Option<i32>,
+    /// do_players' last result and game_main's exit test (do_players
+    /// done and AudioStillPlaying clear): the level may end.
+    pub players_done: bool,
+    pub exit_ready: bool,
+    /// vb_counter 0x2a1c78 (vblanks; the fixture's value at load).
+    pub vb_counter: u32,
+    pub audio_que: audio_queue::AudioQueue,
+    /// attract_audio_flag 0x21f6c0 (queued lines allowed in attract mode).
+    pub attract_audio: bool,
     /// randpottype 0x221540: rotating colour for untyped potions.
     pub randpottype: i32,
     /// ActivePlayerMask 0x220154 (SetPlayerVars 0x125ef8).
@@ -411,10 +425,11 @@ pub struct Game {
     pub safe_rock_idx: i32,
     pub safe_rock_items: Vec<usize>,
     pub safe_rock_counter: Vec<f32>,
-    /// good_wiz_timer, good_wiz_alpha, auto_exit_timer (vblanks).
-    pub good_wiz_timer: f32,
-    pub good_wiz_alpha: i32,
+    /// auto_exit_timer (vblanks) and the good wizard (goodwiz.rs).
     pub auto_exit_timer: i32,
+    pub good_wiz: goodwiz::GoodWiz,
+    /// worldseltab (world, rune bits, rune count).
+    pub worldsel: Vec<(i32, u32, i32)>,
     /// Players parented to a critter node by a grab: (critter, node, offset).
     pub player_grab: [Option<critters::Grab>; 4],
     /// SpewItems (item slot, velocity), at most 0x20.
@@ -498,9 +513,6 @@ impl Game {
         if let Err(e) = self.new_help(id, p, at) {
             self.log.note("NewHelp", &e);
         }
-    }
-    pub fn audio(&mut self, cue: &'static str, player: Option<usize>, arg: i32) {
-        self.events.push(Event::Audio { cue, player, arg });
     }
     pub fn got_it(&mut self, player: usize, kind: i32, amount: i32) {
         self.events.push(Event::GotIt { player, kind, amount });
