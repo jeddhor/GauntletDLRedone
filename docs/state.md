@@ -66,6 +66,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    spawns, ProcessEffects hits/kill credit and ±0.0 matrix signs. Fixed:
    unsigned auto-aim test, show_crystals timer rounding, state 6/8
    offsets, the clock loop word, InitAnim's enemy +0x94 frame count.
+   ProcessItems replay (--items-replay): 248/270 updates equal apart from
+   four world-animation-driven records; item trees now searched as
+   AtreeMatchAnyHeader does (realm package, POWERUPS, level package), so
+   keys, gems, food, treasure and scrolls animate; the client's interim
+   "YOU DIED" banner removed (the original's all-dead end and GAME OVER
+   are ported).
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

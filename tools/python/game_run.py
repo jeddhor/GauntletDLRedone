@@ -17,7 +17,7 @@ import sys
 TOOLS = os.environ.get('GDL_TOOLS', 'target/release/gdl_tools')
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from run_play import ELF, resolve  # noqa: E402
+from run_play import ELF, levl_records, resolve  # noqa: E402
 
 GAME_START = 'private/reference/start-states/poison-fields-game-v6.json'
 SIM_START = 'private/reference/start-states/poison-fields-sor-v2.json'
@@ -49,6 +49,7 @@ def main():
     ap.add_argument('--replay', help='per-update replay of a reference_trace --player trace')
     ap.add_argument('--enemy-replay', help='per-update replay of a reference_trace --player --enemies trace through do_enemies')
     ap.add_argument('--items-seed', help='export_live_items.py JSON replacing the loaded items (replays)')
+    ap.add_argument('--items-replay', action='store_true', help='with --enemy-replay: run ProcessItems before do_enemies and compare the Items array')
     ap.add_argument('--pads', help='record-based players: MASK_HEX:UPDATES,... (bit i = joyGetStatus entry i of port 0)')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
     ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
@@ -73,8 +74,11 @@ def main():
     index = level_index(wd.read_bytes(), f'{a.world}{a.level}')
     proposed = json.loads(pathlib.Path('private/reports/wad-independent.json').read_text())
     known = {n.upper() for e in proposed['entries'] for n in e['proposed_names']}
-    # HYPOTHESIS (as run_play.py): the level's own ITEMS package and the realm's.
-    item_pkgs = [f'ITEMS/LEVEL{x}/ANIM.PS2' for x in (f'{a.world}{a.level}', a.world) if f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
+    # LoadItems (as run_play.py): the realm's package while BossType < 0,
+    # then the level's own; gdl_tools searches POWERUPS between them.
+    boss = next(b for _, c, b in levl_records(wd.read_bytes()) if c == f'{a.world}{a.level}')
+    item_pkgs = [f'ITEMS/LEVEL{x}/ANIM.PS2' for x, use in ((a.world, boss < 0), (f'{a.world}{a.level}', True))
+                 if use and f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
     items = item_pkgs[0]
     tmp = pathlib.Path(a.report + '.enemies.json')
     if tmp.exists():
@@ -120,6 +124,8 @@ def main():
         cmd += [f'clips={clips}', f'replay={a.replay}']
     if a.enemy_replay:
         cmd += [f'clips={clips}', f'enemy_replay={a.enemy_replay}']
+        if a.items_replay:
+            cmd += ['items_replay=1']
     if a.items_seed:
         cmd += [f'items_seed={a.items_seed}']
     if a.potions:

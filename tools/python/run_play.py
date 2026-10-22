@@ -225,9 +225,12 @@ def main():
             monsters[t] = prefix
             packages.setdefault(prefix, package(f'MONSTERS/{prefix}'))
         out = []
-        for index, code, _ in records:
-            # HYPOTHESIS: the level's own ITEMS package and the realm's are both loaded.
-            items = [f'LEVEL{x}' for x in (code, letter) if f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
+        for index, code, boss in records:
+            # LoadItems 0x14f7d0: item_anim = items/<WorldItemDesc> (the
+            # realm's, only while BossType < 0) and item_anim2 =
+            # items/level<code> when it exists, in that order; POWERUPS is
+            # searched between them (AtreeMatchAnyHeader 0x14fa60).
+            items = [f'LEVEL{x}' for x, use in ((letter, boss < 0), (code, True)) if use and f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
             for name in items:
                 packages.setdefault(f'ITEMS_{name[5:]}', package(f'ITEMS/{name}'))
             critters = critter_files(level_kinds(wdata, index), world, known, wdata.read_bytes())

@@ -2340,6 +2340,17 @@ impl super::Game {
         self.sync_view();
     }
 
+    /// Replays: MBCameraUpdate of a seeded StdCam record (window rows, pb eye
+    /// and direction), then the culling view other systems read.
+    pub fn replay_sync_view(&mut self) {
+        if let Some(cam) = self.std_camera.as_mut() {
+            let mut std = cam.std.clone();
+            cam.mb_camera_update_pub(&mut std);
+            cam.std = std;
+        }
+        self.sync_view();
+    }
+
     fn sync_view(&mut self) {
         let Some(cam) = &self.std_camera else { return };
         let (fx, fz) = cam.forward_xz();

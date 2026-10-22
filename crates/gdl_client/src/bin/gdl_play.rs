@@ -2950,17 +2950,22 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
         let path = session.anim_paths.get(pkg).ok_or_else(|| format!("{pkg} anim path"))?;
         Ok(Animations::parse(&gdl_client::bounded_read(Path::new(path))?)?)
     };
-    let mut item_anims = HashMap::new();
-    let mut item_pkgs = Vec::new();
-    for pkg in &lv.items {
-        let items_anim = anim(pkg)?;
-        for (k, t) in items_anim.trees.iter().enumerate() {
-            item_anims.entry(t.label.clone()).or_insert_with(|| setup::clips_of(&items_anim, k));
-        }
-        item_pkgs.push(items_anim);
-    }
     let weapons = anim("WEAPONS")?;
     let powerups = anim("POWERUPS")?;
+    let item_pkgs = lv.items.iter().map(|p| anim(p)).collect::<Result<Vec<_>, _>>()?;
+    // AtreeMatchAnyHeader 0x14fa60 (an item definition's tree, +0x4c):
+    // item_anim (the realm's package, first in lv.items when loaded),
+    // powerup_anim, then item_anim2 (the level's own). Generators would then
+    // try the enemy packages (not modelled; no G1 generator needs it).
+    let realm = format!("ITEMS_{}", lv.name.get(..1).unwrap_or(""));
+    let mut order: Vec<&Animations> = item_pkgs.iter().collect();
+    order.insert(usize::from(lv.items.first().is_some_and(|p| *p == realm)), &powerups);
+    let mut item_anims = HashMap::new();
+    for a in order {
+        for (k, t) in a.trees.iter().enumerate() {
+            item_anims.entry(t.label.clone()).or_insert_with(|| setup::clips_of(a, k));
+        }
+    }
     let mut effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &weapons, &powerups)?;
     for (n, a) in item_pkgs.iter().enumerate().take(2) {
         effect_tables.add_item_package(n as u8, a);
@@ -4109,8 +4114,6 @@ fn present_player(
             b.clone()
         } else if let Some(e) = &sim.error {
             format!("SIMULATION STOPPED\n{e}")
-        } else if health <= 0.0 {
-            "YOU DIED".to_string()
         } else {
             String::new()
         };

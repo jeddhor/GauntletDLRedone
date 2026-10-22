@@ -26,8 +26,51 @@ attention position +0x50, collision position +0x60, render node +0x70,
 offset flags +0x74), offsets +0xc8, +0xd4..+0xe5 common words, +0xe6 dyngrid
 link, +0xe8 radius, +0xf0..+0x10f type-specific. Common/type fields are listed
 in the SetItem port. Native pointers: +0x00 definition index; types 5/12 +0xf0
-object index + 1; types 5/11 +0xf8 item slot + 1. Presentation pointers
-(+0x70..+0xc7, type 2/13 +0xf8) stay zero natively.
+object index + 1; types 5/11 +0xf8 item slot + 1. Guest pointers (+0x70 render
+node, +0x80 atree, +0x84/+0x88/+0x8c AnimInfo links, +0xc0/+0xc4) stay zero
+natively; +0x74 (offset flags) and the AnimInfo scalars are values. The item
+AnimInfo is at +0x84 in the enemy layout (+0x90 sequence count, +0x92
+sequence, +0x94 frame count, +0x96 reset byte, +0x9c frame, +0xa4 start,
++0xb4 last time, +0xb8 loop word, +0xba mode; observed in the fixture's
+Items array, 2026-10-22). export_live_items.py zeroes +0x70..+0xc7 — including
++0x74, which every live G1 record holds as 2 — so replays take those words
+from the traced records instead.
+
+## Item trees (InitItemInfoData 0x14fb68, SetItemGeo 0x151688)
+
+LoadItems 0x14f7d0 (GauntWorldInit, LoadTowerAndSelect; InitItems clears both
+at every LoadGauntWorldStart): item_anim = items/<WorldItemDesc> (world_data
++4, "levelG" in the fixture) only while BossType < 0, item_anim2 =
+items/level<LevelItemDesc> (level_data +8, "G1") when the file exists.
+InitItemInfoData sets every definition's +0x4c = AtreeMatchAnyHeader(+0x28
+name, kind == 3) 0x14fa60: item_anim, powerup_anim (POWERUPS), item_anim2,
+then for generators the 45 enemy_anim packages. SetItemGeo: +0x4c set →
+AtreeInit (+0x80) and AnimateATree(+0xde, 2); otherwise the static object
+(ItemFindMBObjectL1). Fixture: KEY's tree 0xdd7c30 and CHERRY's 0xdd9d74
+lie in POWERUPS (powerup_anim 0xdbce40), EXIT_PORTAL's and the IT
+generator's in item_anim 0x1909940; GRU/LOW generators and S_CROWS have none.
+Native (2026-10-22): the item clocks follow that order (realm package,
+POWERUPS, the level's own); before, POWERUPS was not searched, so keys, gems,
+food, treasure and scrolls had no clock and never animated (the renderer
+already fell back to POWERUPS for their models). Not modelled: the enemy
+package fallback for generators (no G1 generator needs it) and the placed
+DEATH (kind 4) atree that SetItem's statue path takes from the enemy package.
+No label occurs in both POWERUPS and an ITEMS package; realm I and level I5
+share BRIDGEPAD (I5 is a boss level, so only item_anim2 is loaded there).
+
+## Per-update matrices (ProcessItems loop 2, PlaceItem)
+
+ProcessItems' second loop calls GetObjWorldMat(+0x10, +0xc8, +0xc8) 0x103450
+for every item not 0xffff / 0x8100: with a render node (+0x70) the record
+matrix becomes the node's world matrix (GetWorldMat) and UpdateObjOffsets
+recomputes +0x60 and +0x50 from +0x40, +0xc8 and +0x74; without one, identity.
+PlaceItem 0x153068 parents the item node to its floor object's node when the
+object has a node (+0x28) and flag 0x1000 (MBNodeSetParent), then
+UpdateObjWorldMat makes the matrix local — so items on moving floors follow
+them. Kind 13 sound items keep FindWorldAnimNode(10.0, position) at +0xf8;
+S_CROWS' +0x40 moves with the flock while +0x50/+0x60 stay at the anchor.
+Native: offsets recomputed from the record every update; neither the moving-
+floor parent nor the +0xf8 world-animation node is modelled (unknowns.md "Item world matrices").
 
 World numbers come from worlddatas (EE 0x23deb0; 14 × 44 B, number +0, letter
 +0xf): castle 1 … town 7 (G, Poison Fields) … tower 0xd. SetItem's generator

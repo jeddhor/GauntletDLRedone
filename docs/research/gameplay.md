@@ -363,3 +363,18 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   are ProcessEffects' kill credit (+0x8f0 combo, +0xbd4/+0xbe4 kill
   counts, +0x1a1c experience), +0x894 at step 194 and +0x197c at step
   496.
+- ProcessItems replay (game_run.py --enemy-replay TRACE --items-replay):
+  each update seeds every item from the before state (item clocks from the
+  +0x84 AnimInfo), the view from the before state's StdCam record
+  (Game::replay_sync_view: MBCameraUpdate rows, eye, target), runs
+  ProcessItems (native visibility) then do_enemies with the rand seed solved
+  over both, and compares the whole Items array (guest pointers and the
+  +0xe6 link skipped). trace-fight-g1-v3: every seed solved; enemies 248/270
+  (replay-items-fight-g1-v4.json). Items: 248/270 updates equal once four
+  records are set aside (key 307 on a moving floor and the three S_CROWS
+  sound items; unknowns.md "Item world matrices"), the rest being
+  generator 127's damage by the player (ProcessEffects, steps 430/474) and
+  the AnimInfo reset byte +0x96 (1 -> 2 when DoAnimation evaluates a drawn
+  tree; presentation-dependent). Found: keys, gems, food, treasure and
+  scrolls had no native clock (their trees are in POWERUPS; items.md "Item
+  trees"); 79/270 before the fix.

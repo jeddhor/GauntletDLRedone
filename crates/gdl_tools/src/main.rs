@@ -124,45 +124,128 @@ impl ReferenceItems {
         Ok(true)
     }
 
-    /// Seed the native items in the export_live_items.py convention: +0x00
+    /// A reference record in the export_live_items.py convention: +0x00
     /// definition pointer → index (WorldInfo +0x68, 0x50 bytes), kinds 5/12
     /// +0xf0 → WORLDS object index + 1 (WorldInfo +0x04, 0x3c bytes), kinds
-    /// 5/11 +0xf8 → item slot + 1, kinds 2/13 +0xf8 cleared; presentation
-    /// words (+0x70..+0xc7, +0xe6 dyngrid link) kept native. `visible`
-    /// supplies the +0xd8 0x4000 bit do_items writes before do_enemies.
-    fn seed(&self, game: &mut gdl_core::game::Game, worldinfo: &[u8], items_base: u32, visible: Option<&ReferenceItems>) -> Result<(), Box<dyn Error>> {
+    /// 5/11 +0xf8 → item slot + 1, kinds 2/13 +0xf8 cleared.
+    fn native(raw: &[u8], worldinfo: &[u8], items_base: u32, kind_of: &dyn Fn(usize) -> i32) -> [u8; 0x110] {
         let word = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
         let (objects, defs) = (word(worldinfo, 4), word(worldinfo, 0x68));
+        let mut new = [0u8; 0x110];
+        new.copy_from_slice(&raw[..0x110]);
+        let ptr = word(raw, 0);
+        let def = if ptr == 0 { 0 } else { ptr.wrapping_sub(defs) / 0x50 };
+        new[0..4].copy_from_slice(&def.to_le_bytes());
+        let kind = kind_of(def as usize);
+        let index = |v: u32, base: u32, size: u32| if v == 0 { 0 } else { v.wrapping_sub(base) / size + 1 };
+        if matches!(kind, 5 | 12) {
+            new[0xf0..0xf4].copy_from_slice(&index(word(raw, 0xf0), objects, 0x3c).to_le_bytes());
+        }
+        if matches!(kind, 5 | 11) {
+            new[0xf8..0xfc].copy_from_slice(&index(word(raw, 0xf8), items_base, 0x110).to_le_bytes());
+        }
+        if matches!(kind, 2 | 13) {
+            new[0xf8..0xfc].fill(0);
+        }
+        new
+    }
+
+    /// Guest pointers in an item record (render node, atree and AnimInfo
+    /// links); the +0xe6 dyngrid link is a halfword handled separately.
+    const POINTERS: [usize; 7] = [0x70, 0x80, 0x84, 0x88, 0x8c, 0xc0, 0xc4];
+
+    /// The +0x84 AnimInfo (the enemy layout: the player's +0x94 less 0x10).
+    fn clock_of(r: &[u8]) -> gdl_core::animation_clock::ClockState {
+        let h = |o: usize| u16::from_le_bytes([r[o], r[o + 1]]);
+        let f = |o: usize| f32::from_le_bytes(r[o..o + 4].try_into().unwrap());
+        gdl_core::animation_clock::ClockState {
+            sequence: h(0x92),
+            previous_sequence: h(0xa0),
+            reset_byte: r[0x96],
+            option_bits: r[0x97],
+            enabled_word: h(0xa2),
+            loop_word: h(0xb8),
+            mode_bits: h(0xba),
+            frame: f(0x9c),
+            blend_fraction: f(0x98),
+            start_time: f(0xa4),
+            blend_end_time: f(0xa8),
+            period_scale: f(0xb0),
+            last_time: f(0xb4),
+        }
+    }
+
+    fn write_clock(r: &mut [u8], c: &gdl_core::animation_clock::ClockState) {
+        let mut h = |o: usize, v: u16| r[o..o + 2].copy_from_slice(&v.to_le_bytes());
+        h(0x92, c.sequence);
+        h(0xa0, c.previous_sequence);
+        h(0xa2, c.enabled_word);
+        h(0xb8, c.loop_word);
+        h(0xba, c.mode_bits);
+        r[0x96] = c.reset_byte;
+        r[0x97] = c.option_bits;
+        for (o, v) in [(0x9c, c.frame), (0x98, c.blend_fraction), (0xa4, c.start_time), (0xa8, c.blend_end_time), (0xb0, c.period_scale), (0xb4, c.last_time)] {
+            r[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        }
+    }
+
+    /// Seed the native items (see `native`); the guest pointer words and the
+    /// +0xe6 dyngrid link stay native, item animation clocks come from the
+    /// +0x84 AnimInfo. `visible` supplies the +0xd8 0x4000 bit do_items
+    /// writes before do_enemies.
+    fn seed(&self, game: &mut gdl_core::game::Game, worldinfo: &[u8], items_base: u32, visible: Option<&ReferenceItems>) -> Result<(), Box<dyn Error>> {
         if self.0.len() != game.items.records.len() {
             return Err(format!("reference NumItems {} differs from native {}", self.0.len(), game.items.records.len()).into());
         }
         for (slot, raw) in self.0.iter().enumerate() {
-            let mut new = [0u8; 0x110];
-            new.copy_from_slice(&raw[..0x110]);
-            let ptr = word(raw, 0);
-            let def = if ptr == 0 { 0 } else { ptr.wrapping_sub(defs) / 0x50 };
-            new[0..4].copy_from_slice(&def.to_le_bytes());
-            let kind = game.items.definitions.get(def as usize).map_or(-1, |d| d.kind());
-            let index = |v: u32, base: u32, size: u32| if v == 0 { 0 } else { v.wrapping_sub(base) / size + 1 };
-            if matches!(kind, 5 | 12) {
-                new[0xf0..0xf4].copy_from_slice(&index(word(raw, 0xf0), objects, 0x3c).to_le_bytes());
-            }
-            if matches!(kind, 5 | 11) {
-                new[0xf8..0xfc].copy_from_slice(&index(word(raw, 0xf8), items_base, 0x110).to_le_bytes());
-            }
-            if matches!(kind, 2 | 13) {
-                new[0xf8..0xfc].fill(0);
-            }
+            let defs = &game.items.definitions;
+            let mut new = Self::native(raw, worldinfo, items_base, &|d| defs.get(d).map_or(-1, |d| d.kind()));
             if let Some(v) = visible.and_then(|v| v.0.get(slot)) {
                 let d8 = (u16::from_le_bytes([new[0xd8], new[0xd9]]) & !0x4000) | (u16::from_le_bytes([v[0xd8], v[0xd9]]) & 0x4000);
                 new[0xd8..0xda].copy_from_slice(&d8.to_le_bytes());
             }
             let rec = &mut game.items.records[slot];
-            new[0x70..0xc8].copy_from_slice(&rec.0[0x70..0xc8]);
+            for o in Self::POINTERS {
+                new[o..o + 4].copy_from_slice(&rec.0[o..o + 4]);
+            }
             new[0xe6..0xe8].copy_from_slice(&rec.0[0xe6..0xe8]);
             rec.0 = new;
+            if let Some(Some(an)) = game.item_anims.get_mut(slot) {
+                an.clock = Self::clock_of(&new);
+                an.current = an.clock.sequence;
+            }
         }
         Ok(())
+    }
+
+    /// Differing u32 words of the native Items array (native clocks written
+    /// back to the AnimInfo) against these records; guest pointers and the
+    /// +0xe6 link skipped.
+    fn compare(&self, game: &gdl_core::game::Game, worldinfo: &[u8], items_base: u32) -> Vec<serde_json::Value> {
+        let defs = &game.items.definitions;
+        let mut out = Vec::new();
+        for (slot, raw) in self.0.iter().enumerate() {
+            let Some(rec) = game.items.records.get(slot) else {
+                out.push(serde_json::json!({"item":slot,"offset":"missing"}));
+                continue;
+            };
+            let mut n = rec.0;
+            if let Some(Some(an)) = game.item_anims.get(slot) {
+                Self::write_clock(&mut n, &an.clock);
+            }
+            let r = Self::native(raw, worldinfo, items_base, &|d| defs.get(d).map_or(-1, |d| d.kind()));
+            for o in (0..0x110).step_by(4) {
+                if Self::POINTERS.contains(&o) {
+                    continue;
+                }
+                let mask = if o == 0xe4 { 0xffff } else { u32::MAX };
+                let w = |b: &[u8]| u32::from_le_bytes(b[o..o + 4].try_into().unwrap()) & mask;
+                if w(&n) != w(&r) {
+                    out.push(serde_json::json!({"item":slot,"offset":format!("{o:#x}"),"native":format!("{:08x}", w(&n)),"reference":format!("{:08x}", w(&r))}));
+                }
+            }
+        }
+        out
     }
 }
 
@@ -931,8 +1014,17 @@ fn run() -> Result<(), Box<dyn Error>> {
             let m = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(path), 64 * 1024 * 1024)?)?;
             gdl_core::game::setup::enemy_trees(&mut enemy_anims, t.parse()?, prefix, &m);
         }
+        // AtreeMatchAnyHeader 0x14fa60 (an item definition's tree, +0x4c):
+        // item_anim, powerup_anim, then item_anim2 (generators then try the
+        // enemy packages; not modelled — no G1 generator needs it).
+        if let Some(p) = opts.get("powerups") {
+            let pw = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(p), 64 * 1024 * 1024)?)?;
+            for (k, t) in pw.trees.iter().enumerate() {
+                item_anims.entry(t.label.clone()).or_insert_with(|| gdl_core::game::setup::clips_of(&pw, k));
+            }
+        }
         if let Some(extra) = opts.get("items2") {
-            // Further item packages (the realm's, after the level's own).
+            // item_anim2: the level's own package (after the realm's).
             let more = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(extra), 64 * 1024 * 1024)?)?;
             for (k, t) in more.trees.iter().enumerate() {
                 item_anims.entry(t.label.clone()).or_insert_with(|| gdl_core::game::setup::clips_of(&more, k));
@@ -1244,6 +1336,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             // (the +0xd8 0x4000 visible bit from the after state).
             let mut ref_before = ReferenceItems::default();
             let mut have_items = ref_before.apply(s0)?;
+            // items_replay: ProcessItems runs first (native visibility from
+            // the seeded StdCam view) and the Items array is compared too.
+            let items_mode = opts.contains_key("items_replay");
+            if items_mode && !have_items {
+                return Err("items_replay needs a trace with items_delta".into());
+            }
+            let mut item_updates_equal = 0;
+            let mut by_item_offset: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
             for w in samples.windows(2) {
                 let (b, a) = (&w[0], &w[1]);
                 let mut ref_after = ReferenceItems(ref_before.0.clone());
@@ -1329,7 +1429,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // index (WorldInfo +0x68, 0x50 bytes), presentation words
                     // (+0x70..+0xc7, +0xe6 dyngrid link) left native.
                     if have_items {
-                        ref_b.seed(game, &hexb(&b["enemies"]["WorldInfo"])?, items_base, Some(&ref_before))?;
+                        ref_b.seed(game, &hexb(&b["enemies"]["WorldInfo"])?, items_base, (!items_mode).then_some(&ref_before))?;
                     } else if let (Some(gens), Some(wi)) = (b["enemies"]["generator_items"].as_object(), b["enemies"].get("WorldInfo")) {
                         let wi = hexb(wi)?;
                         let defs = word(&wi[0x68..]);
@@ -1348,6 +1448,13 @@ fn run() -> Result<(), Box<dyn Error>> {
                             rec.0 = new;
                         }
                     }
+                    if items_mode {
+                        // The view of the previous update's camera step.
+                        if let Some(c) = game.std_camera.as_mut() {
+                            c.std = gdl_core::game::record::Record(hexb(&bp["stdcam"])?);
+                        }
+                        game.replay_sync_view();
+                    }
                     game.setup_dyn_grid().map_err(|e| e.0)?;
                     Ok(())
                 };
@@ -1365,7 +1472,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                 for _ in 0..4 {
                     seed_all(&mut game)?;
                     game.rng.state = seed;
-                    res = game.do_enemies(&visible);
+                    res = if items_mode { game.process_items() } else { Ok(()) };
+                    if res.is_ok() {
+                        res = game.do_enemies(&visible);
+                    }
                     if game.rng.state == rand_after {
                         solved = true;
                         break;
@@ -1411,10 +1521,23 @@ fn run() -> Result<(), Box<dyn Error>> {
                 if diffs.is_empty() && res.is_ok() {
                     equal_updates += 1;
                 }
+                let item_diffs = if items_mode { ref_before.compare(&game, &hexb(&a["enemies"]["WorldInfo"])?, items_base) } else { Vec::new() };
+                if items_mode && item_diffs.is_empty() && res.is_ok() {
+                    item_updates_equal += 1;
+                }
+                for d in &item_diffs {
+                    *by_item_offset.entry(d["offset"].as_str().unwrap_or("?").to_string()).or_default() += 1;
+                }
                 updates.push(serde_json::json!({"step":a["step"],"seed_solved":solved,"error":res.err().map(|e| e.0),
-                    "words_differing":diffs.len(),"diffs":diffs.iter().take(60).collect::<Vec<_>>()}));
+                    "words_differing":diffs.len(),"diffs":diffs.iter().take(60).collect::<Vec<_>>(),
+                    "item_words_differing":item_diffs.len(),"item_diffs":item_diffs.iter().take(60).collect::<Vec<_>>()}));
             }
             let report = serde_json::json!({"scope":"per-update replay of a reference enemies trace through the native do_enemies (all 25 records, every u32 except presentation pointers 0x70 0x80 0x84 0x88 0x8c 0xc0 0xc4 0x1f0; generator/floor links mapped)",
+                "items_mode":items_mode,"item_scope":"items_replay: ProcessItems then do_enemies; Items array words except +0x70..+0xc7 and the +0xe6 link, export_live_items convention",
+                "item_updates_equal":item_updates_equal,"differing_item_offsets":by_item_offset,
+                "items_without_native_clock":(0..game.items.records.len()).filter(|&k| game.items.records[k].active() && game.item_anims.get(k).is_none_or(|a| a.is_none()))
+                    .map(|k| String::from_utf8_lossy(game.items.definitions[game.items.records[k].definition()].name()).into_owned())
+                    .fold(std::collections::BTreeMap::<String, usize>::new(), |mut m, n| { *m.entry(n).or_default() += 1; m }),
                 "trace":tp.to_string(),"updates":updates.len(),"equal_updates":equal_updates,
                 "differing_offsets":by_offset.iter().map(|(o, n)| (format!("{o:#x}"), *n)).collect::<std::collections::BTreeMap<_, _>>(),
                 "results":updates,
