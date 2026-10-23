@@ -173,6 +173,8 @@ pub struct EffectTables {
     pub enemy_missile_desc: [String; 3],
     /// Tree labels of weapon_anim/powerup_anim for InitCustomEffect (exact match).
     pub shared: Vec<EffectHeaderLabel>,
+    /// Source ids of item_anim / item_anim2 (set_item_role).
+    pub item_sources: [Option<u8>; 2],
     /// BallistaMissileInfo 0x24ee40, BossElecMissileInfo 0x24ee70,
     /// BossAcidMissileInfo 0x24eea0 (12 words each).
     pub ballista_info: [u32; 12],
@@ -283,6 +285,7 @@ impl EffectTables {
             enemy_missile_info,
             enemy_missile_desc,
             shared,
+            item_sources: [None; 2],
             ballista_info,
             boss_elec_info,
             boss_acid_info,
@@ -293,6 +296,21 @@ impl EffectTables {
 
     /// The level's item packages (item_anim, item_anim2), searched after
     /// weapon_anim and powerup_anim (InitCustomEffectSub 0x179aa8).
+    /// The item package source ids (0x80 + n) of item_anim (the realm's,
+    /// loaded while BossType < 0) and item_anim2 (the level's), for
+    /// InitEffects' AtreeMatch in one of them.
+    pub fn set_item_role(&mut self, role: usize, n: u8) {
+        if let Some(r) = self.item_sources.get_mut(role) {
+            *r = Some(0x80 + n);
+        }
+    }
+
+    /// AtreeMatch(item_anim (role 0) or item_anim2 (1), name).
+    pub fn item_header(&self, role: usize, name: &str) -> Option<EffectHeader> {
+        let src = self.item_sources.get(role).copied().flatten()?;
+        self.shared.iter().find(|h| h.header.source == src && h.label == name).map(|h| h.header)
+    }
+
     pub fn add_item_package(&mut self, n: u8, anim: &Animations) {
         for (k, t) in anim.trees.iter().enumerate() {
             let s = t.sequences.first();
@@ -2085,26 +2103,80 @@ impl Game {
         Ok(i)
     }
 
-    /// InitEffects 0x179e20's generator part: for every enemy type whose
-    /// package is loaded (types 0..0x2c in order) GenHitEffects[t] =
-    /// InitCustomEffectSub(enemy_anim[t], "GENHIT") and GenDieEffects[t] =
-    /// "GENDIE" (the package's tree first, then the shared ones); CurWorld
-    /// 5/6 then re-registers index 0 from item_anim (NATIVE: the realm
-    /// package's tree is not distinguished from the shared search).
+    /// The tree `name` in enemy type `t`'s package (AtreeMatch(enemy_anim[t],
+    /// name, 0)).
+    fn enemy_effect_tree(&self, t: usize, name: &str) -> Option<EffectHeader> {
+        let key = (t as i32, name.to_string());
+        let &k = self.enemy_anim_data.tree_index.get(&key)?;
+        let (frames, timing, repeat) = *self.enemy_anim_data.other_trees.get(&key)?;
+        Some(EffectHeader { source: 0xc0 + t as u8, tree: k, frames, timing, repeat })
+    }
+
+    /// InitEffect 0x179d38(index, package, name, …): the header is always
+    /// written — the AtreeMatch result, or none without a package or match.
+    fn init_effect(&mut self, idx: usize, h: Option<EffectHeader>) -> bool {
+        if let Some(slot) = self.effects.tables.headers.get_mut(idx) {
+            *slot = h;
+        }
+        h.is_some()
+    }
+
+    /// InitEffects 0x179e20 after the EffectInfo headers: per loaded enemy
+    /// type (0..0x2c in order) SUICIDEEXP into 0x50 (types not loaded as
+    /// aux, while 0x50 is unset), GENFX1..3 into 0x51..0x53 while unset
+    /// (enemy_genfx = 1 for each type that tries), TREEHIT/TREEDIE (0xb,
+    /// 0x15), ATK1FX/ATK2FX/DEATHFX1/DEATHFX2 (0x1b), DEATH_ARC/DEATH_EXP
+    /// (0x1e), then GenHitEffects[t] = InitCustomEffectSub(enemy_anim[t],
+    /// "GENHIT") and GenDieEffects[t] ("GENDIE"); CurWorld 5/6 re-register
+    /// index 0 from item_anim; boss levels LEGENDFX/LEGENDFX2/LEGENDPRJ/
+    /// LEGENDHLD (0x5a, 0x5b, 0x5d, 0x5c) from item_anim2; 0x52/0x53 fall back
+    /// to 0x51; InLevel("B6"/"I5") SAFEREXP into 0x1e from item_anim2
+    /// (trace-B6-bosskill-v1: the dragon's spew blast bursts); WORLD_EXP into
+    /// 0x5e from item_anim, else item_anim2. Textures are presentation.
     pub(crate) fn init_gen_effects(&mut self) {
+        for k in 0x50..super::effects::MAX_HEADERS.min(self.effects.tables.headers.len()) {
+            if k < 0x61 {
+                self.effects.tables.headers[k] = None;
+            }
+        }
         for t in 0..45usize {
             let ti = t as i32;
+            if let Some(g) = self.enemy_load.genfx.get_mut(t) {
+                *g = 0;
+            }
             let loaded = self.enemy_anim_data.trees.keys().any(|(tt, _)| *tt == ti);
             if !loaded {
                 self.gen_hit_effects[t] = -1;
                 self.gen_die_effects[t] = -1;
                 continue;
             }
+            let unset = |g: &Game, k: usize| g.effects.tables.headers.get(k).is_none_or(Option::is_none);
+            if self.enemy_load.loaded.get(t) != Some(&4) && unset(self, 0x50) {
+                self.init_effect(0x50, self.enemy_effect_tree(t, "SUICIDEEXP"));
+            }
+            for (k, name) in [(0x51, "GENFX1"), (0x52, "GENFX2"), (0x53, "GENFX3")] {
+                if unset(self, k) {
+                    self.init_effect(k, self.enemy_effect_tree(t, name));
+                    if let Some(g) = self.enemy_load.genfx.get_mut(t) {
+                        *g = 1;
+                    }
+                }
+            }
+            if t == 0xb || t == 0x15 {
+                self.init_effect(0x54, self.enemy_effect_tree(t, "TREEHIT"));
+                self.init_effect(0x55, self.enemy_effect_tree(t, "TREEDIE"));
+            }
+            if t == 0x1b {
+                for (k, name) in [(0x56, "ATK1FX"), (0x57, "ATK2FX"), (0x58, "DEATHFX1"), (0x59, "DEATHFX2")] {
+                    self.init_effect(k, self.enemy_effect_tree(0x1b, name));
+                }
+            }
+            if t == 0x1e {
+                self.init_effect(0x5f, self.enemy_effect_tree(0x1e, "DEATH_ARC"));
+                self.init_effect(0x60, self.enemy_effect_tree(0x1e, "DEATH_EXP"));
+            }
             for (name, die) in [("GENHIT", false), ("GENDIE", true)] {
-                let own = self.enemy_anim_data.tree_index.get(&(ti, name.to_string())).map(|&k| {
-                    let (frames, timing, repeat) = self.enemy_anim_data.other_trees[&(ti, name.to_string())];
-                    EffectHeader { source: 0xc0 + t as u8, tree: k, frames, timing, repeat }
-                });
+                let own = self.enemy_effect_tree(t, name);
                 let h = self.register_custom_effect(own, name);
                 if die {
                     self.gen_die_effects[t] = h;
@@ -2114,8 +2186,26 @@ impl Game {
             }
         }
         if (self.globals.cur_world as u32).wrapping_sub(5) < 2 {
-            self.gen_hit_effects[0] = self.register_custom_effect(None, "GENHIT");
-            self.gen_die_effects[0] = self.register_custom_effect(None, "GENDIE");
+            let own = self.effects.tables.item_header(0, "GENHIT");
+            self.gen_hit_effects[0] = self.register_custom_effect(own, "GENHIT");
+            let own = self.effects.tables.item_header(0, "GENDIE");
+            self.gen_die_effects[0] = self.register_custom_effect(own, "GENDIE");
+        }
+        if 0 <= self.globals.boss_type {
+            for (k, name) in [(0x5a, "LEGENDFX"), (0x5b, "LEGENDFX2"), (0x5d, "LEGENDPRJ"), (0x5c, "LEGENDHLD")] {
+                self.init_effect(k, self.effects.tables.item_header(1, name));
+            }
+        }
+        for k in [0x52, 0x53] {
+            if self.effects.tables.headers.get(k).is_some_and(Option::is_none) {
+                self.effects.tables.headers[k] = self.effects.tables.headers[0x51];
+            }
+        }
+        if self.in_level(b"B6\0\0") || self.in_level(b"I5\0\0") {
+            self.init_effect(0x1e, self.effects.tables.item_header(1, "SAFEREXP"));
+        }
+        if !self.init_effect(0x5e, self.effects.tables.item_header(0, "WORLD_EXP")) {
+            self.init_effect(0x5e, self.effects.tables.item_header(1, "WORLD_EXP"));
         }
     }
 

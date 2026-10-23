@@ -521,8 +521,20 @@ impl Game {
             let v = if flags & 0x0f00_0100 == 0 {
                 self.init_custom_effect(Some(f), &label(&rec, 0x10, 16), CritterFile::i16_(&rec, 0x44), CritterFile::i16_(&rec, 0x46))
             } else {
-                // Texture mods / particles: presentation (FindTexMod/MBOX_FindTexture).
-                -1
+                // FindTexMod 0x113150(model, name): the texmod record's +0x48;
+                // else MBOX_FindTexture_Sub(name, the model) / MBOX_FindTexture,
+                // a texture handle — NATIVE stand-in 0x4000_0000 + the SFXX
+                // index (≥ 0, so CritterDoTexmodNode takes the texture path;
+                // the replay does not compare the word). An empty name: −1.
+                let name = label(&rec, 0x10, 16);
+                if name.is_empty() {
+                    -1
+                } else {
+                    let found = self.critter_data.files[f].model.as_ref().and_then(|m| {
+                        gdl_formats::animation::texmods(&m.1).ok().and_then(|t| t.iter().find(|x| x.target_name == name).map(|x| x.frame_base))
+                    });
+                    found.unwrap_or(0x4000_0000 + s as i32)
+                }
             };
             CritterFile::set_i32(&mut self.critter_data.files[f].wad.sfx[s], 8, v);
         }

@@ -742,3 +742,15 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
     zero upper half). HYPOTHESIS: the world origin as the target position
     (trace-A1-death-v1 steps 105..113 match; the port had stopped with
     Unsupported, cutting player 0's update short near gates).
+- A boss death (2026-10-22). w2l6-bosskill-v1.p2s: slot 8 (B6) with the
+  dragon's health written to 10 (reference_warp.py --critter-health; a
+  WARPED capture); trace-B6-bosskill-v1: the B6 walk and throws. The first
+  hit kills it (step 203, state 1), its death move's DAMG type-9 action
+  spews five COIN_SILVER and the arena blast at step 409 (with the LAVA00
+  death skin). Whole-update replay (replay-frame-B6kill-r34.json): 250/250
+  in every part. Fixed on the way: InitEffects' per-level headers
+  (rendering.md), CritterDoTexmodNode's skin, CritterInitSfx's texture
+  words; the replay now runs world_update's DoGoodWizard / ProcessSpewItems
+  and QuestItemState parts, restores the spew list per retry and drops items
+  a retry appended. Not yet traced: the good wizard and the auto exit after
+  it (the trace ends 100 updates after the spew).

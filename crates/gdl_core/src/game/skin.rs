@@ -86,6 +86,17 @@ impl Default for SkinView {
 }
 
 /// SetSkinFX(rate, skin, texture, end, repeats).
+/// SetSkinFX with a raw texture word (CritterDoTexmodNode passes the SFXX
+/// record's +8).
+pub fn set_skin_fx_raw(r: &mut Record, o: usize, rate: f32, tex: i32, end: i32, repeats: i32) {
+    r.set_f32(o, end as f32);
+    r.set_f32(o + 4, -rate);
+    r.set_f32(o + 8, rate);
+    r.set_i32(o + 12, tex);
+    r.set_i32(o + 16, repeats);
+    r.set_f32(o + 20, 999.0);
+}
+
 pub fn set_skin_fx(r: &mut Record, o: usize, rate: f32, tex: SkinTex, end: i32, repeats: f32) {
     r.set_f32(o, end as f32);
     r.set_f32(o + 4, -rate);

@@ -37,6 +37,14 @@ impl Game {
         })
     }
 
+    /// Replay hooks for world_update's boss part and QuestItemState machine.
+    pub fn boss_world_update_pub(&mut self) -> R<()> {
+        self.boss_world_update()
+    }
+    pub fn quest_item_update_pub(&mut self) -> R<()> {
+        self.quest_item_update()
+    }
+
     /// world_update's boss part (game_mode 0x4010): DoGoodWizard, and
     /// QuestItemState = 99 once the boss is dead.
     pub(crate) fn boss_world_update(&mut self) -> R<()> {

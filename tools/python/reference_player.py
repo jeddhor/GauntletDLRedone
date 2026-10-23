@@ -19,7 +19,11 @@ GLOBALS = ['Time', 'SPF', 'ATime', 'AnimTimeScale', 'vb_elapsed', 'AuxLevels', '
            'quit_level', 'auto_exit_flag', 'someone_wants_to_exit', 'firstgetidx', 'disable_player_controls',
            # Camera state main's dispatch reads (boss camera, transmitters, DoShake).
            'BossCameraMode', 'BossCam', 'BossCamMode', 'CurTransmitter', 'Cur3DTransmitter', 'shaking', 'shake_type',
-           'shake_priority', 'shake_delay', 'shake_count', 'shake_rad', 'ZOOM_FRAMES', 'resetStdCam', 'WorldStartTime']
+           'shake_priority', 'shake_delay', 'shake_count', 'shake_rad', 'ZOOM_FRAMES', 'resetStdCam', 'WorldStartTime',
+           # The boss completion: DoGoodWizard's state and the auto exit.
+           'GoodWizard', 'good_wiz_timer', 'good_wiz_alpha', 'good_wiz_speech_idx', 'good_wiz_speech_frame',
+           'good_wiz_speech_pause', 'good_wiz_yaw', 'good_wiz_plyr_attn', 'all_rune_stones', 'auto_exit_timer',
+           'BossIsDead', 'BossIsDying', 'optmenu_disable']
 
 
 def elf_symbols(names):
@@ -43,7 +47,7 @@ def elf_symbols(names):
 
 def player_probe(memory):
     sym = elf_symbols(set(GLOBALS) | {'players', 'PlayerControl', 'MboxWinPtr', 'StdCamera', 'Options', 'PlayerRootNode', 'Cam',
-                                      'BossCamera', 'BossCamData'})
+                                      'BossCamera', 'BossCamData', 'good_wiz_objgrp'})
     player, control = sym['players'], sym['PlayerControl']
     win, = struct.unpack_from('<I', memory, sym['MboxWinPtr'])
     blocks = {'player0': (player, 0x2b00), 'control': (control, 0xf0), 'win': (win, 0xb0),
@@ -51,7 +55,10 @@ def player_probe(memory):
               # Cam[0]'s matrix rows (Cam +0x10..+0x3c) and eye (+0x40..+0x4c).
               'cam0': (sym['Cam'] + 0x10, 0x40),
               # The boss camera record (0x1b0, the StdCam layout).
-              'bosscam': (sym['BossCamera'], 0x1b0)}
+              'bosscam': (sym['BossCamera'], 0x1b0),
+              # good_wiz_objgrp: +0x00 the wizard node's matrix, +0x40 and
+              # +0x50 the attention point, +0x60 the node.
+              'good_wiz_objgrp': (sym['good_wiz_objgrp'], 0x70)}
     # The level's BCAM record (BossCamData, 0x54 bytes) when one is bound.
     bcam, = struct.unpack_from('<I', memory, sym['BossCamData'])
     if bcam and bcam % 4 == 0 and 0x100000 <= bcam < 0x2000000 - 0x54:

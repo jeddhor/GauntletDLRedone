@@ -116,6 +116,9 @@ def main():
         cmd += [f"critter={c['wad']}" + (f":{c['anim']}" if 'anim' in c else '')]
     if len(item_pkgs) > 1:
         cmd += [f'items2={resolve([item_pkgs[1]])[0]}']
+    # The first package's role (InitEffects' item_anim = the realm's,
+    # item_anim2 = the level's own).
+    cmd += [f"items_role={'realm' if item_pkgs[0] == f'ITEMS/LEVEL{a.world}/ANIM.PS2' else 'level'}"]
     if a.world != 'G':
         cmd += [f'world={number}']
     print('monsters', monsters, 'missing', sorted(set(prefixes.values()) - {p for _, p in monsters}))

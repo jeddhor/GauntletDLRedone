@@ -2965,6 +2965,8 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
     let mut effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &weapons, &powerups)?;
     for (n, a) in item_pkgs.iter().enumerate().take(2) {
         effect_tables.add_item_package(n as u8, a);
+        // InitEffects' item_anim (the realm's) or item_anim2 (the level's).
+        effect_tables.set_item_role(usize::from(lv.items.get(n) != Some(&realm)), n as u8);
     }
     let mut game = Game::new_level(setup::LevelInputs {
         world: &session.world,

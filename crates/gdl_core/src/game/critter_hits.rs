@@ -350,8 +350,25 @@ impl Game {
         let off = v3(&srec, 0x30);
         let mut out = -1;
         let mut attach = attach;
-        if flags & 0x0f00_0000 != 0 || flags & 0x100 != 0 {
-            // CritterDoParticle / CritterDoTexmodNode: presentation.
+        if flags & 0x0f00_0000 != 0 {
+            // CritterDoParticle: presentation.
+        } else if flags & 0x100 != 0 {
+            // CritterDoTexmodNode 0x193f88: SetSkinFX(SFXX +0x40 rate, +0xec,
+            // SFXX +8 texture, (int)(SFXX +0x3c × 30), SFXX +0x44 repeats)
+            // — the skin CritterUpdateSkinfx then runs (trace-B6-bosskill-v1
+            // step 409, the dragon's death). Without a texture: TextureDeath
+            // of the damage type for 10 frames at 0.5 (a FindTexMod handle;
+            // native writes its SkinTex code, HYPOTHESIS for the word).
+            let tex = CritterFile::i32_pub(&srec, 8);
+            let r = &mut self.crit_mut(i).rec;
+            if 0 <= tex {
+                let end = mul(CritterFile::f32_pub(&srec, 0x3c), 30.0)? as i32;
+                let rep = CritterFile::i16_pub(&srec, 0x44) as i32;
+                super::skin::set_skin_fx_raw(r, 0xec, CritterFile::f32_pub(&srec, 0x40), tex, end, rep);
+            } else {
+                let k = r.u32_(0x4fc) & 0xf;
+                super::skin::set_skin_fx_raw(r, 0xec, 0.5, super::skin::SkinTex::death(k) as i32, 10, 0);
+            }
         } else if flags & 0x200 != 0 {
             let first = self.critter_type_i16(i, 0x11a) as usize;
             for k in 0..self.crit(i).colnode_nodes.len() {

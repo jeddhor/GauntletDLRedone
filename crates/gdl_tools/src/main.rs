@@ -194,6 +194,12 @@ impl ReferenceItems {
     /// +0x84 AnimInfo. `visible` supplies the +0xd8 0x4000 bit do_items
     /// writes before do_enemies.
     fn seed(&self, game: &mut gdl_core::game::Game, worldinfo: &[u8], items_base: u32, visible: Option<&ReferenceItems>) -> Result<(), Box<dyn Error>> {
+        // Items a previous attempt at this update appended (the alt-seed
+        // retries) are dropped; the slot side tables are restored by the
+        // caller.
+        if self.0.len() < game.items.records.len() {
+            game.items.records.truncate(self.0.len());
+        }
         if self.0.len() != game.items.records.len() {
             return Err(format!("reference NumItems {} differs from native {}", self.0.len(), game.items.records.len()).into());
         }
@@ -548,8 +554,10 @@ impl ReferenceCritters {
     /// the 0x15c loads in CritterDamage/CritterDamagePlayer/CritterGolemAI
     /// are the global 0x22015c).
     /// +0x6c: the w of MulVec4Mat3's VU0 result (vmaddz with dest xyz, then
-    /// sqc2 of the whole register) — register residue.
-    const RESIDUE: [usize; 5] = [0x154, 0x158, 0x15c, 0x16c, 0x6c];
+    /// sqc2 of the whole register) — register residue. +0xf8: the skin's
+    /// texture word, an MBOX texture handle when CritterInitSfx's FindTexMod
+    /// fails (trace-B6-bosskill-v1: LAVA00 0x000b0007).
+    const RESIDUE: [usize; 6] = [0x154, 0x158, 0x15c, 0x16c, 0x6c, 0xf8];
 
     fn live(&self, k: usize) -> bool {
         k < self.num && self.slots.get(k).is_some_and(|r| Self::word(r, 4) != 0)
@@ -1533,7 +1541,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             let path = opts.get(k).ok_or_else(|| format!("{k}=PATH required"))?;
             Ok(gdl_formats::animation::Animations::parse(&bounded_read(Path::new(path), 64 * 1024 * 1024)?)?)
         };
-        let effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &anim_of("weapons")?, &anim_of("powerups")?)?;
+        let mut effect_tables = gdl_core::game::effects::EffectTables::from_elf(&elf, &anim_of("weapons")?, &anim_of("powerups")?)?;
+        // InitEffects' item_anim / item_anim2 (items_role: the first
+        // package's; items2 is the level's).
+        effect_tables.add_item_package(0, &ianim);
+        effect_tables.set_item_role(if opts.get("items_role").map(String::as_str) == Some("level") { 1 } else { 0 }, 0);
+        if let Some(extra) = opts.get("items2") {
+            let more = gdl_formats::animation::Animations::parse(&bounded_read(Path::new(extra), 64 * 1024 * 1024)?)?;
+            effect_tables.add_item_package(1, &more);
+            effect_tables.set_item_role(1, 1);
+        }
         let start_rune_disp = start.globals.rune_disp_timer;
         let mut game = gdl_core::game::Game::new_level(gdl_core::game::setup::LevelInputs {
             world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, item_anim_nodes, effect_tables,
@@ -2206,7 +2223,22 @@ fn run() -> Result<(), Box<dyn Error>> {
                     game.item_trees.clone(),
                     game.item_anims.clone(),
                     game.items.geo.clone(),
+                    // SpewItems (ProcessSpewItems' list; a retry must not
+                    // keep the previous attempt's spews).
+                    game.spew_items.clone(),
+                    game.items.statue_tree.clone(),
                 );
+                // An item count that differs from the reference's (the native
+                // created or deleted items at another update) ends the replay
+                // with that update's error recorded.
+                if have_items && ref_b.0.len() != game.items.records.len() {
+                    updates.push(serde_json::json!({"step": a["step"], "seed_solved": false, "alt_seed": false,
+                        "error": format!("reference NumItems {} differs from native {}", ref_b.0.len(), game.items.records.len()),
+                        "diffs": [], "item_diffs": [], "player_diffs": [], "effect_diffs": [], "critter_diffs": [], "camera_diffs": [],
+                        "words_differing": 0, "item_words_differing": 0, "player_words_differing": 0, "effect_words_differing": 0,
+                        "critter_words_differing": 0, "camera_words_differing": 0}));
+                    break;
+                }
                 let attempt = |game: &mut gdl_core::game::Game, seed: u32| -> Result<Result<(), gdl_core::game::Unsupported>, Box<dyn Error>> {
                     if b["enemies"].get("help_flag").is_none() {
                         game.hud.help = help_before.clone();
@@ -2219,6 +2251,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                         game.item_trees,
                         game.item_anims,
                         game.items.geo,
+                        game.spew_items,
+                        game.items.statue_tree,
                     ) = item_side.clone();
                     seed_all(game)?;
                     game.rng.state = seed;
@@ -2226,11 +2260,20 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // seconds after WorldStartTime; traces from
                     // trace-g1-newgame-v4).
                     let mut res = Ok(());
+                    // world_update's boss part (DoGoodWizard, ProcessSpewItems
+                    // 0x163540..; trace-B6-bosskill-v1's coins) before the
+                    // stage-start block, its QuestItemState machine after.
+                    if frame_mode && game.globals.paused == 0 && game.globals.help == 0 {
+                        res = game.boss_world_update_pub();
+                    }
                     if let Some(w) = b["player"].get("WorldStartTime") {
                         game.world_start_time = f32::from_le_bytes(hexb(w)?[..4].try_into()?);
-                        if game.globals.paused == 0 && game.globals.help == 0 {
+                        if res.is_ok() && game.globals.paused == 0 && game.globals.help == 0 {
                             res = game.world_update_stage_start_pub();
                         }
+                    }
+                    if res.is_ok() && frame_mode && game.globals.paused == 0 && game.globals.help == 0 {
+                        res = game.quest_item_update_pub();
                     }
                     if res.is_ok() {
                         res = if items_mode { game.process_items() } else { Ok(()) };

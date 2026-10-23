@@ -122,7 +122,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    and GMETER, do_ai's real jump table (0x11 → move_logic23, 0x1a →
    move_logic16), init_enemy's AnimateATree, the generator stage change's
    DeleteItem, critter files in EnemyType slot order, the replay's frame
-   matrices. Next: golem/general/Death statues, a boss fight to its death.
+   matrices. A1's golem statue 240/240; B6's dragon killed (warped health)
+   through the coin spew 250/250 (InitEffects' per-level headers,
+   CritterDoTexmodNode's skin, world_update's boss part in the replay);
+   PlayerGetTarget's gate residue modelled. Next: the good wizard and auto
+   exit after the boss death, general/Death statues.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

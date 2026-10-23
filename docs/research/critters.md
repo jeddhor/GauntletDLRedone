@@ -207,12 +207,18 @@ Found by the comparison:
   local rows hold the critter's facing; a moved node is written back by
   CopyMat4(world, node) + UnparentMatrix(node, node +0x74), outermost
   ancestor first (trace-H4-boss-v1 step 484: the local translation advances
-  along z and the rows carry InvertMat4's rounding, row 1 1.0000148). Visual-only SFXX (particles, texture mods) are not simulated;
+  along z and the rows carry InvertMat4's rounding, row 1 1.0000148). Particle SFXX are not simulated; texture-mod SFXX
+  (flag 0x100) run CritterDoTexmodNode 0x193f88, a tail jump to SetSkinFX
+  (SFXX +0x40 rate, +0xec, SFXX +8 texture, (int)(+0x3c × 30), +0x44
+  repeats), whose skin CritterUpdateSkinfx then steps (trace-B6-bosskill-v1
+  step 409: the dragon's LAVA00 death skin). CritterInitSfx resolves +8 of
+  such SFXX by FindTexMod (the texmod record's +0x48) or MBOX_FindTexture
+  (a texture handle: native stand-in, the replay skips critter +0xf8);
   every SFXX with a custom effect header gets a real effect slot as in the
   original (owner = critter ID | 0x1000).
 - Custom effects (InitCustomEffectSub 0x179aa8) take EffectHeaders 0x61 + n,
-  matched in the critter model, then weapon_anim, powerup_anim (item anims
-  are not searched yet).
+  matched in the critter model, then weapon_anim, powerup_anim and the item
+  packages.
 - CritterDamagedPlayer from ProcessEffects receives whatever f12 holds after
   damage_player (no reload in the instructions); the effect damage is used.
 - CritterNewID starts at 1 (its initial data value is not read).

@@ -391,6 +391,19 @@ node +0x64 with flag 0x100; the client modulates by the colour
 (HYPOTHESIS, unknowns.md). StartGenFX 0x17f580: EffectHeaders 0x50 + level
 for generator spawns of levels 1..3 at the enemy's position.
 
+InitEffects 0x179e20 binds EffectHeaders 0x50.. per level (ported
+2026-10-22; InitEffect always writes the AtreeMatch result, none when absent):
+per loaded enemy type SUICIDEEXP (0x50, types not loaded as aux),
+GENFX1..3 (0x51..0x53 while unset; enemy_genfx = 1 for each type that tries),
+TREEHIT/TREEDIE (types 0xb, 0x15 → 0x54/0x55), ATK1FX/ATK2FX/DEATHFX1/
+DEATHFX2 (0x1b → 0x56..0x59), DEATH_ARC/DEATH_EXP (0x1e → 0x5f/0x60); boss
+levels LEGENDFX/LEGENDFX2/LEGENDHLD/LEGENDPRJ (0x5a/0x5b/0x5c/0x5d) from
+item_anim2; 0x52/0x53 fall back to 0x51; InLevel B6 or I5 rebinds 0x1e (GENDEST
+elsewhere) to item_anim2's SAFEREXP (trace-B6-bosskill-v1: the spew blast's
+bursts last 1.53 s); WORLD_EXP (0x5e) from item_anim, else item_anim2. The
+tools now register the item packages as effect sources with their role
+(item_anim = the realm's, item_anim2 = the level's).
+
 AddSpecialTexmod 0x111180 / DoSpecialTexmods: load_player gives a player
 of class & 7 == 7 (Jester, Hyena) a special texmod on the held weapon — the
 model's BOMB texture shows the SFX package's BOMB00 + k, k stepping 0..4
