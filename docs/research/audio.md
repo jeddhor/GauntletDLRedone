@@ -164,8 +164,29 @@ DCS.IRX: ghidra-dcs1/dcs2):
   pans); no SPU capture compares the mixed output.
 - Approximate: movie soundtrack level (audioDec* reads volMusic; 0.5).
 
+## SPU voice setup (2026-10-23)
+
+DCS.IRX (ghidra-dcs2/dcs4, instructions read): samplePlayOnVoice 0x3c7c
+sets every voice to ADSR1 0x000f (linear attack rate 0, decay rate 0,
+sustain level 0xf = maximum) and ADSR2 0x1fc0 (linear sustain rate 0x7f —
+no change — and linear release rate 0): an on/off rectangle, which the
+native mixer's plain sample playback equals. Pitch: VagParseHeader 0x3410
+converts the VAG rate to rate × 4096 / 48000 (the SPU's 0x1000 = 48 kHz)
+and samplePlayOnVoice shifts it by pitchSkew. Reverb: InitSpuParams 0x88a4
+sets only the cores' master volumes (params 0x980/0xa80 = 0x3fff); no DCS
+code sets effect volumes or voice effect switches, so nothing is mixed into
+reverb. pitchSkew (0xb13c, 0 in the data) is toggled only by skew_correct
+0x605c — a hidden 16-step button-sequence check on the levels the EE sends
+with RPC 0x55af — but aud_poll 0x1238a8 sends them only while SIF register
+0x1e is positive (blez on the sign-extended word) and every write of that
+register is ≤ 0 (EE aud_init 0, aud_reset −2; DCS's file open −1): the
+toggle is dormant in this build and not ported. Remaining SPU differences
+not modelled: the SPU's 4-point Gaussian resampling and its 16-bit mix
+saturation.
+
 ## Not yet
 
-Tower coin sounds, an SPU-level output comparison, the
+Tower coin sounds, an SPU-level output comparison (resampling filter and
+mix saturation only; envelope, reverb and pitch skew settled above), the
 +0xf8 world-node motion of moving sound items (the position stays the
 placement), AudioLoadStage bank residency (the host loads banks on demand).

@@ -10,8 +10,9 @@
 //! voiceSetVolPan's SPU volumes with the pan table read from IRX/DCS.IRX);
 //! each voice's output is its VOLL/VOLR word / 0x4000. Music: the decoded
 //! ADS stream, AdsSetVolume's per-channel word ((v × 0x1fff) >> 8) / 0x4000
-//! for AudioStreamSetVolume(v). Not modelled (presentation): the SPU
-//! envelope, pitch skew, reverb, the hardware mix's saturation.
+//! for AudioStreamSetVolume(v). Not modelled (presentation): the SPU's
+//! Gaussian resampling and its mix saturation (DCS sets an on/off envelope,
+//! no reverb, and its pitch skew is dormant: research/audio.md).
 use gdl_core::dcs::{Dcs, PanTable};
 use gdl_formats::audio::{Ads, AudioRom, Vbk};
 use std::collections::HashMap;
