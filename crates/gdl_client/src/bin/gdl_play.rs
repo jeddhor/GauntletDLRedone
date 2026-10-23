@@ -1910,6 +1910,62 @@ struct Presentation {
     attention: Vec3,
 }
 
+/// TEST harness (render-FPS independence, research/loop-input.md):
+/// GDL_INPUT_SCRIPT is a JSON list of [first update, last update, [entries]]
+/// pressing those joyGetStatus entries on port 0 for every stepped update in
+/// the range (the keyboard is ignored); GDL_EXIT_AFTER=N writes the
+/// simulation state's SHA-256 to GDL_STATE_OUT after N stepped updates and
+/// exits; GDL_RENDER_FPS caps the render loop. Not a game feature.
+#[derive(Resource, Default)]
+struct TestHarness {
+    script: Option<Vec<(u64, u64, Vec<usize>)>>,
+    exit_after: Option<u64>,
+    state_out: Option<std::path::PathBuf>,
+    hashes: Vec<String>,
+}
+
+impl TestHarness {
+    fn from_env() -> Self {
+        let script = std::env::var("GDL_INPUT_SCRIPT").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok());
+        let exit_after = std::env::var("GDL_EXIT_AFTER").ok().and_then(|v| v.parse().ok());
+        let state_out = std::env::var_os("GDL_STATE_OUT").map(std::path::PathBuf::from);
+        Self { script, exit_after, state_out, hashes: Vec::new() }
+    }
+}
+
+/// SHA-256 of the simulation records (players, enemies, items, effects,
+/// rand state, Time).
+fn sim_state_hash(g: &Game) -> String {
+    let mut b = Vec::new();
+    for r in &g.players {
+        b.extend_from_slice(&r.0);
+    }
+    for r in &g.enemies {
+        b.extend_from_slice(&r.0);
+    }
+    for r in &g.items.records {
+        b.extend_from_slice(&r.0);
+    }
+    for r in &g.effects.slots {
+        b.extend_from_slice(&r.0);
+    }
+    b.extend_from_slice(&g.rng.state.to_le_bytes());
+    b.extend_from_slice(&g.globals.time.to_bits().to_le_bytes());
+    gdl_core::save::sha256(&b)
+}
+
+/// GDL_RENDER_FPS: sleep to the next frame deadline (TEST harness).
+fn frame_limiter(mut next: Local<Option<std::time::Instant>>) {
+    let Some(fps) = std::env::var("GDL_RENDER_FPS").ok().and_then(|v| v.parse::<f64>().ok()).filter(|f| *f > 0.0) else { return };
+    let period = std::time::Duration::from_secs_f64(1.0 / fps);
+    let now = std::time::Instant::now();
+    let due = next.map_or(now + period, |d| d);
+    if now < due {
+        std::thread::sleep(due - now);
+    }
+    *next = Some(due.max(now) + period);
+}
+
 #[derive(Component)]
 struct MirrorRoot;
 #[derive(Component)]
@@ -3230,6 +3286,7 @@ fn simulate(
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
     front: Res<Front>,
     time: Res<Time>,
+    (mut harness, mut exit): (ResMut<TestHarness>, MessageWriter<AppExit>),
 ) {
     if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started {
         return;
@@ -3242,6 +3299,22 @@ fn simulate(
         *port = player_input(k, &keys, &pads);
         // Only ports with a device are connected (keyboard: ports 0 and 1).
         port.connected = k < 2 || pads.get(k).is_some();
+    }
+    // Only while the level plays: the select screen, shop, map and movies
+    // keep the keyboard (they read the same PlayerControl ports).
+    let in_play = sim.select.is_none() && sim.shop.is_none() && sim.map.is_none() && sim.movie.is_none();
+    if let Some(script) = harness.script.as_ref().filter(|_| in_play) {
+        let n = sim.updates;
+        let mut p = PadStatus { connected: true, ..Default::default() };
+        for (first, last, entries) in script {
+            if (*first..=*last).contains(&n) {
+                for &i in entries.iter().filter(|&&i| i < 0x16) {
+                    p.press(i);
+                }
+            }
+        }
+        ports[0] = p;
+        ports[1] = PadStatus::default();
     }
     if ui.paused || sim.message_box.is_some() {
         // main keeps running AudioQueUpdate / AudioPoll (DoOptions,
@@ -3387,6 +3460,16 @@ fn simulate(
         g.do_players().map(|_| ())
     });
     sim.updates += 1;
+    if harness.exit_after.is_some() {
+        let h = sim_state_hash(&sim.game);
+        harness.hashes.push(h);
+        if harness.exit_after == Some(sim.updates) {
+            if let Some(out) = harness.state_out.as_ref() {
+                let _ = std::fs::write(out, harness.hashes.join("\n") + "\n");
+            }
+            exit.write(AppExit::Success);
+        }
+    }
     // game mode 0x4014: do_over after the world, items, enemies, players.
     if let Some(mut over) = sim.over.take() {
         if sim.game.do_over(&mut over) {
@@ -6136,6 +6219,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<HudSets>()
         .init_resource::<MenuIcon>()
         .add_systems(Startup, (setup_static, setup_menu_icon).chain())
+        .insert_resource(TestHarness::from_env())
+        .add_systems(Last, frame_limiter)
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
             Update,
