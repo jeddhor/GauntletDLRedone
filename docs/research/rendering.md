@@ -585,3 +585,19 @@ Gouraud interpolation of integer vertex colours, additive glow passes).
   and the player's area: the simulation itself differs there between runs
   (the simulate system and the message box run on the 30 Hz fixed clock;
   the source is not found).
+
+## Weapon trails and the held weapon's flags (2026-10-23)
+
+PlayerDoWeapTrail 0x14f428 (do_players, after each PlayerProcessSkinFX) is
+ported from instructions (game::weaptrail): while +0x7dc is held (DoPlayer-
+Action cases 0x21, 0x25, 0x3c) each update copies the held weapon at its
+world matrix into one of eight slots; copies fade by weaptrail_dalpha (32
+in the ELF data) × vb_elapsed and go at 0xff; +0x7d8 tracks the top slot.
+gdl_play draws the copies (the WEAP_HOLD parts at the copy's matrix, alpha
+× (255 − fade) / 255) and hides the held weapon while DoPlayerAction holds
+MBTreeSetFlags(+0x6b8, 2). Native records carry load_player's node
+markers (+0x80 and +0x6b8 = 1; weapon_anim reads 0xf90000 at runtime, so
+the reference always has the weapon node). Evidence: the reference's first
+update after a reload sets +0x7d8 −1 in every record (trace-tower-4p-v2,
+matched natively); no reference trace yet shows a trail (the Sorceress
+traces never enter 0x21/0x25/0x3c), so the copies' drawing is not compared.

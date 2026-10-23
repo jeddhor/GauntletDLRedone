@@ -42,7 +42,12 @@ Evidence:
 Nine of eleven bosses are defeated by native play from the level start
 (E2 in a 60,000-update run); C5's djinn was defeated in one bot build (b7)
 but stalls near 1,556 health in the current one, and the bot does not reach
-I5's yeti (its arena is a separate floor region; the reference capture of
+I5's yeti. 2026-10-23 batch t17 (60,000 updates, --pexp 30, legend item
+held): all ten reachable bosses end through the auto exit — K5 5113, B6
+3411, C5 8316 (the djinn floats over a pit 17.4 units from the nearest
+floor; the bot's boss range now extends to that distance + 4), D5 6352, F2
+12250, J5 11803, E2 47389, G5 5422, H4 35892, A5 19121 (level end
+updates). I5's yeti still not reached (its arena is a separate floor region; the reference capture of
 I5 also needed a warp). Co-op: B6 with 2–4 players (playtest.md
 "Co-op matrix"). Not done: a campaign that earns the legend items in play
 and chains realm → boss (the full critical path, M15).

@@ -23,6 +23,11 @@ from virtual_display import environment
 # Pad 2 (private ini [Pad2], 2026-10-23): Y/B/V/N up/down/left/right, M cross,
 # U square, O triangle, P circle, Z start, X select, R L1, C R1.
 KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L', 'Q', 'E', '1', '3', '2', '4', 'BackSpace', 'Y', 'B', 'V', 'N', 'M', 'U', 'O', 'P', 'Z', 'X', 'R', 'C']
+# Multitap slots D and C (launch_reference.py --multitap: [Pad5] joy 3, [Pad4] joy 2;
+# xdotool names of MULTITAP_PADS):
+# up, down, left, right, cross, square, triangle, circle, start, select.
+KEYS += ['5', '6', '7', '8', '9', '0', 'minus', 'equal', 'bracketleft', 'bracketright']
+KEYS += ['Home', 'End', 'Delete', 'Next', 'comma', 'slash', 'backslash', 'Prior', 'semicolon', 'apostrophe']
 # Preserved savestates by PCSX2 slot (reference_slots.py; 3.. are
 # reference_warp.py captures) and the staging slot 9 for other captures.
 from reference_slots import SLOTS, resolve  # noqa: E402

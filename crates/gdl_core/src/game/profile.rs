@@ -318,8 +318,14 @@ pub fn save_region(r: &Record, controls: &ControlOptions) -> Vec<u8> {
 pub fn level_start(r: &mut Record, pdats: &Pdats, action_map: &[[i64; 2]], game_wave: i32, heart_rate: u8) -> R<()> {
     let class = class_of(r);
     r.set_i32(0x808, game_wave);
-    r.set_u32(0x80, 0);
+    // NATIVE markers for load_player's node pointers (presentation): +0x80
+    // the player's node and +0x6b8 the held weapon (MBNewObject while
+    // weapon_anim is set — 0xf90000 at runtime in the reference); code
+    // tests them against 0 (PlayerDoWeapTrail, DoPlayerAction's weapon
+    // tree flags).
+    r.set_u32(0x80, 1);
     r.set_u32(0x90, 0);
+    r.set_u32(0x6b8, 1);
     r.set_u32(0xfc, 1);
     r.set_u32(0x10, class);
     // load_player.

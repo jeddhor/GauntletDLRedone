@@ -2046,7 +2046,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             // the model package for "<prefix>DUMMY"; not loaded here).
             let clip_bytes = bounded_read(Path::new(opts.get("clips").ok_or("clips=PATH required")?), 64 * 1024 * 1024)?;
             let dummy = clips.trees.first().and_then(|t| t.nodes.iter().position(|n| n.label == "DUMMY"));
-            game.player_rigs[0] = Some(std::sync::Arc::new(gdl_core::game::teammove::PlayerRig { anim: gdl_formats::animation::Animations::parse(&clip_bytes)?, bytes: clip_bytes, dummy }));
+            let label = gdl_core::game::teammove::player_rhand_label(&elf, game.players[0].u32_(0xc).min(16));
+            let rhand = gdl_core::game::teammove::tree_node_by_label(&clips, label.as_deref());
+            game.player_rigs[0] = Some(std::sync::Arc::new(gdl_core::game::teammove::PlayerRig { anim: gdl_formats::animation::Animations::parse(&clip_bytes)?, bytes: clip_bytes, dummy, rhand }));
             game.players[0].set_u32(0x6b4, dummy.map_or(0, |n| n as u32 + 1));
             game.controls.assign(0, 0);
             if 0 < level || opts.contains_key("world") {
@@ -2149,14 +2151,23 @@ fn run() -> Result<(), Box<dyn Error>> {
             // A co-op trace (player1 recorded): player 1 in play with player 0's
             // class tables, clips and rig (the trace's second Sorceress; other
             // classes would need their packages).
-            if samples.first().is_some_and(|s| s["player"].get("player1").is_some()) {
-                game.classes[1] = game.classes[0].clone();
-                game.init_player_missiles(1);
-                game.resolve_plyr_data(1);
-                game.player_clips[1] = game.player_clips[0].clone();
-                game.player_rigs[1] = game.player_rigs[0].clone();
-                game.controls.assign(1, 1);
-                game.globals.active_players |= 2;
+            // Players 2..4 (player1..player3 records) take part when their
+            // state (+0xfc) is set in the first sample (multitap traces).
+            let coop: Vec<usize> = (1..4)
+                .filter(|&k| {
+                    samples.first().and_then(|s| s["player"].get(format!("player{k}"))).and_then(|v| v.as_str()).is_some_and(|h| {
+                        h.get(0x1f8..0x200).is_some_and(|w| w != "00000000")
+                    })
+                })
+                .collect();
+            for &k in &coop {
+                game.classes[k] = game.classes[0].clone();
+                game.init_player_missiles(k);
+                game.resolve_plyr_data(k);
+                game.player_clips[k] = game.player_clips[0].clone();
+                game.player_rigs[k] = game.player_rigs[0].clone();
+                game.controls.assign(k, k);
+                game.globals.active_players |= 1 << k;
             }
             let hexb = |v: &serde_json::Value| -> Result<Vec<u8>, Box<dyn Error>> {
                 let s = v.as_str().ok_or("hex field")?;
@@ -2309,9 +2320,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let seed_all = |game: &mut gdl_core::game::Game| -> Result<(), Box<dyn Error>> {
                     let (bp, ap) = (&b["player"], &a["player"]);
                     game.players[0] = gdl_core::game::record::Record(hexb(&bp["player0"])?);
-                    // Co-op traces carry the second record too.
-                    if let Some(p1) = bp.get("player1") {
-                        game.players[1] = gdl_core::game::record::Record(hexb(p1)?);
+                    // Co-op traces carry the other records too.
+                    for &k in &coop {
+                        if let Some(pk) = bp.get(format!("player{k}")) {
+                            game.players[k] = gdl_core::game::record::Record(hexb(pk)?);
+                        }
                     }
                     // The boss completion state before the update (traces from
                     // trace-B6-goodwiz-v1): DoGoodWizard's globals, the
@@ -2524,10 +2537,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                         // from WorldBase) as index + 1.
                         // Co-op traces: player 1's links are mapped the same way
                         // (its node is not traced: the record's matrix stands in).
-                        if bp.get("player1").is_some() {
-                            let v = game.players[1].u32_(0x89c);
+                        for &k in coop.iter().filter(|&&k| bp.get(format!("player{k}")).is_some()) {
+                            let v = game.players[k].u32_(0x89c);
                             let fo = (v != 0 && world_base <= v && (v - world_base).is_multiple_of(0x3c)).then(|| ((v - world_base) / 0x3c) as usize);
-                            let r = &mut game.players[1];
+                            let r = &mut game.players[k];
                             let links = [0x880, 0x884, 0x888].map(|o| (o, r.u32_(o)));
                             r.set_u32(0x89c, fo.map_or(0, |o| o as u32 + 1));
                             for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
@@ -2539,8 +2552,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                                 }
                             }
                             r.set_u16(0x93e, 0);
-                            game.player_floor_parent[1] = fo.filter(|&o| game.collision.runtime_flags.get(o).is_some_and(|f| f & 0x1000 != 0));
-                            game.player_node[1] = None;
+                            game.player_floor_parent[k] = fo.filter(|&o| game.collision.runtime_flags.get(o).is_some_and(|f| f & 0x1000 != 0));
+                            // The node's local matrix when traced (node1..node3),
+                            // else the record's matrix stands in.
+                            game.player_node[k] = match bp.get(format!("node{k}")) {
+                                Some(v) => {
+                                    let n = hexb(v)?;
+                                    Some(std::array::from_fn(|i| std::array::from_fn(|j| fl(&n[0x10 * i + 4 * j..]))))
+                                }
+                                None => None,
+                            };
                         }
                         let floor_obj = {
                             let v = game.players[0].u32_(0x89c);
@@ -2887,15 +2908,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                             player_diffs.push(serde_json::json!({"offset":format!("{o:#x}"),"native":format!("{n:08x}"),"reference":format!("{r:08x}")}));
                         }
                     }
-                    if let Some(after1) = a["player"].get("player1") {
-                        let after1 = hexb(after1)?;
+                    for &k in &coop {
+                        let Some(afterk) = a["player"].get(format!("player{k}")) else { continue };
+                        let afterk = hexb(afterk)?;
                         for o in (0..0x2b00).step_by(4) {
                             if player_pointer_words.contains(&o) || player_hud_words.contains(&o) {
                                 continue;
                             }
-                            let (n, r) = (game.players[1].u32_(o), word(&after1[o..]));
+                            let (n, r) = (game.players[k].u32_(o), word(&afterk[o..]));
                             if n != r {
-                                player_diffs.push(serde_json::json!({"player":1,"offset":format!("{o:#x}"),"native":format!("{n:08x}"),"reference":format!("{r:08x}")}));
+                                player_diffs.push(serde_json::json!({"player":k,"offset":format!("{o:#x}"),"native":format!("{n:08x}"),"reference":format!("{r:08x}")}));
                             }
                         }
                     }
@@ -3413,7 +3435,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let itemw: Vec<_> = opts.get("itemw").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.items.records.len()).map(|o| { let ir = &game.items.records[o]; serde_json::json!([o, format!("{:#x}", ir.u16_(0xd8)), ir.i8_(0xde), ir.u8_(0xe1), ir.u8_(0xe2), ir.f32_(0xfc), ir.f32_(0xe8), ir.v3(0x60)]) }).collect()).unwrap_or_default();
                     samples.push(serde_json::json!({"frame":f,"watch":watch,"probe":probe,"itemw":itemw,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
                         "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),"floor_y":r.f32_(0x88c),"water_y":r.f32_(0x8a4),
-                        "turbo":r.f32_(0x800),"weapon_flags":r.u32_(0x130),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
+                        "turbo":r.f32_(0x800),"weapon_flags":r.u32_(0x130),"trail":[r.i32_(0x7d8), r.i32_(0x7dc), game.weap_trail[0].iter().filter(|c| c.is_some()).count() as i32],"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
                         "legend":r.i32_(0x80c),"quest":game.globals.quest_item_state,"boss_dead":game.globals.boss_is_dead,
                         "good_wizard":game.globals.good_wizard,"wiz":[game.good_wiz.alpha,game.good_wiz.speech_idx,game.good_wiz.speech_frame],"wiz_pos":game.good_wiz.matrix.map(|m| m[3]),
                         "auto_exit":[game.auto_exit_timer,game.globals.auto_exit_flag],"que":[game.audio_que.entries[0].len(),game.audio_que.entries[1].len()],

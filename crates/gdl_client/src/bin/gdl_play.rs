@@ -1445,6 +1445,8 @@ struct Sim {
     /// GDL_FREEZE_AT given: those clocks advance with stepped updates
     /// (÷ 59.94) instead of render time, so frozen frames repeat.
     sim_clock: bool,
+    /// The held weapon's tree flag 2 (hidden) per player (Event::PlayerTreeFlags).
+    weapon_hidden: [bool; 4],
     exp: i64,
     sparks: Vec<(Vec3, f32)>,
     last_event: String,
@@ -2068,6 +2070,29 @@ struct CharacterRoot(usize);
 /// A rig node (tree index) of player slot `.1`.
 #[derive(Component)]
 struct RigNode(usize, usize);
+
+/// A part of player slot `.0`'s held weapon (load_player's +0x6b8 WEAP_HOLD):
+/// DoPlayerAction's MBTreeSetFlags/ClearFlags(+0x6b8, 2) hide and show it.
+#[derive(Component)]
+struct HeldWeapon(usize);
+
+/// Player slot `.0`'s weapon-trail copies (PlayerDoWeapTrail), under the
+/// mirror root in PS2 world space.
+#[derive(Component)]
+struct WeaponTrail(usize);
+
+/// Trail copy slot (player, slot) at its world matrix.
+#[derive(Component)]
+struct TrailCopyNode(usize, usize);
+
+/// One weapon part of a trail copy: its own material (alpha × (255 −
+/// fade) / 255, the MBTreeSetAlpha reading of rendering.md).
+#[derive(Component)]
+struct TrailPart {
+    slot: usize,
+    copy: usize,
+    base_alpha: f32,
+}
 #[derive(Component)]
 struct FollowCamera;
 #[derive(Component)]
@@ -2403,7 +2428,7 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
             let hold = commands.spawn((HoldFx { slot, key: None }, RigNode(pose, slot), Transform::default(), Visibility::Hidden)).id();
             commands.entity(body).add_child(hold);
             for (mesh, material) in &weapon {
-                let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot))).id();
+                let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot), HeldWeapon(slot))).id();
                 // load_player: the Jester's (class & 7 == 7) held bomb gets
                 // AddSpecialTexmod(model, "BOMB", SFX model, "BOMB00", 5, 1).
                 if pc.key.class & 7 == 7 {
@@ -2411,6 +2436,23 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
                 }
                 commands.entity(body).add_child(child);
             }
+        }
+    }
+    // PlayerDoWeapTrail's eight copies of the held weapon (MBNewObject of
+    // the weapon object at its world matrix, fading out).
+    let trail = commands.spawn((WeaponTrail(slot), Transform::default(), Visibility::Inherited)).id();
+    commands.entity(root).add_child(trail);
+    for i in 0..8 {
+        let copy = commands.spawn((TrailCopyNode(slot, i), Transform::default(), Visibility::Hidden)).id();
+        commands.entity(trail).add_child(copy);
+        for (mesh, material) in &weapon {
+            let Some(mut m) = materials.get(material).cloned() else { continue };
+            if matches!(m.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_)) {
+                m.alpha_mode = AlphaMode::Blend;
+            }
+            let base_alpha = m.params.tint.w;
+            let part = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(materials.add(m)), Transform::default(), TrailPart { slot, copy: i, base_alpha })).id();
+            commands.entity(copy).add_child(part);
         }
     }
     let shadow_root = commands.spawn((PlayerShadow(slot), Transform::default(), Visibility::Hidden)).id();
@@ -2434,7 +2476,7 @@ fn refresh_characters(
     session: Res<Session>,
     mut libraries: ResMut<Libraries>,
     (mut meshes, mut images, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<gdl_client::GsMaterial>>),
-    (root, bodies, shadows): (Query<Entity, With<MirrorRoot>>, Query<(Entity, &CharacterRoot)>, Query<(Entity, &PlayerShadow)>),
+    (root, bodies, shadows, trails): (Query<Entity, With<MirrorRoot>>, Query<(Entity, &CharacterRoot)>, Query<(Entity, &PlayerShadow)>, Query<(Entity, &WeaponTrail)>),
     mut failed: Local<Vec<(usize, CharKey)>>,
 ) {
     if sim.select.is_none() {
@@ -2466,6 +2508,11 @@ fn refresh_characters(
         }
         for (e, sh) in &shadows {
             if sh.0 == k {
+                commands.entity(e).despawn();
+            }
+        }
+        for (e, t) in &trails {
+            if t.0 == k {
                 commands.entity(e).despawn();
             }
         }
@@ -2833,6 +2880,47 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut seen: Local<u64>, mut q: 
                     }
                 }
             }
+        }
+    }
+}
+
+/// PlayerDoWeapTrail's copies (Game::weap_trail) at their world matrices,
+/// faded by MBTreeSetAlpha's (255 − fade) / 255; the held weapon hidden while
+/// DoPlayerAction holds its tree flag 2.
+type TrailCopyQuery<'w, 's> = Query<'w, 's, (&'static TrailCopyNode, &'static mut Transform, &'static mut Visibility), (Without<HeldWeapon>, Without<TrailPart>)>;
+
+fn present_weapon_trails(
+    sim: Res<Sim>,
+    mut copies: TrailCopyQuery,
+    parts: Query<(&TrailPart, &MeshMaterial3d<gdl_client::GsMaterial>)>,
+    mut held: Query<(&HeldWeapon, &mut Visibility), Without<TrailCopyNode>>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+) {
+    for (node, mut t, mut vis) in &mut copies {
+        match sim.game.weap_trail.get(node.0).and_then(|s| s[node.1]) {
+            Some(c) => {
+                let m = c.matrix;
+                *t = Transform::from_matrix(Mat4::from_cols_array(&std::array::from_fn(|i| m[i / 4][i % 4])));
+                *vis = Visibility::Inherited;
+            }
+            None => *vis = Visibility::Hidden,
+        }
+    }
+    for (part, handle) in &parts {
+        let Some(c) = sim.game.weap_trail.get(part.slot).and_then(|s| s[part.copy]) else { continue };
+        let a = part.base_alpha * (255 - c.fade.clamp(0, 255)) as f32 / 255.0;
+        if let Some(m) = materials.get(&handle.0)
+            && m.params.tint.w != a
+            && let Some(m) = materials.get_mut(&handle.0)
+        {
+            m.params.tint.w = a;
+        }
+    }
+    for (h, mut vis) in &mut held {
+        let hide = sim.weapon_hidden.get(h.0).copied().unwrap_or(false);
+        let want = if hide { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != want {
+            *vis = want;
         }
     }
 }
@@ -3337,7 +3425,10 @@ fn slot_starts(front: &Front, sources: &Sources, records: &[Record; 4], controls
         let object = format!("{tag}_{}DUMMY", ["YEL", "BLU", "RED", "GRE"].get(r.u32_(4) as usize).copied().unwrap_or("YEL"));
         let has_object = sources.packages.get(&pc.model_name).is_some_and(|m| m.objects.definitions.iter().any(|d| d.label == object));
         let dummy = has_object.then(|| pc.clips.trees.first().and_then(|t| t.nodes.iter().position(|n| n.label == "DUMMY"))).flatten();
-        let rig = std::sync::Arc::new(gdl_core::game::teammove::PlayerRig { anim: Animations::parse(&pc.clip_bytes)?, bytes: pc.clip_bytes.clone(), dummy });
+        let elf = gdl_formats::elf::Elf::parse(&front.elf_bytes)?;
+        let label = gdl_core::game::teammove::player_rhand_label(&elf, r.u32_(0xc).min(16));
+        let rhand = gdl_core::game::teammove::tree_node_by_label(&pc.clips, label.as_deref());
+        let rig = std::sync::Arc::new(gdl_core::game::teammove::PlayerRig { anim: Animations::parse(&pc.clip_bytes)?, bytes: pc.clip_bytes.clone(), dummy, rhand });
         out[k] = Some(SlotStart {
             record: records[k].clone(),
             rig,
@@ -3807,6 +3898,7 @@ fn simulate(
             Event::GeneratorHit { destroyed: true, .. } => sim.last_event = "generator destroyed".into(),
             Event::GotIt { kind, amount, .. } => sim.last_event = format!("picked up (kind {kind}, amount {amount})"),
             Event::PlayerDied { .. } => sim.last_event = "YOU DIED".into(),
+            Event::PlayerTreeFlags { player, flags, set } if flags & 2 != 0 && player < 4 => sim.weapon_hidden[player] = set,
             Event::PlayerInactivated { player } => {
                 // inactivate_player's clear_player(k, 1) with every PDAT.
                 let demo = sim.game.globals.demo_mode != 0;
@@ -5477,7 +5569,7 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         let pdats = world.resource::<Session>().pdats.clone();
         select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
     }
-    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, weapon_hidden: [false; 4], exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -5514,7 +5606,7 @@ fn start_flyby(world: &mut EcsWorld, idx: usize) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, weapon_hidden: [false; 4], exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -6502,7 +6594,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 front_system,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

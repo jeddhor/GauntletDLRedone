@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fixture-qualified record-based player observations for reference_trace.py --player.
 
-Retains, per vblank step, player slot 0's complete record (0x2b00), the four
+Retains, per vblank step, player slot 0's complete record (0x2b00; the other
+three records as player1..player3), the four
 PlayerControl records, the MboxWinPtr window block (+0x90/+0x98 camera
 forward), the StdCamera record (CameraLimitPlayerDpos), the player node's local
 matrix and parent link (+0x80 → node +0x00/+0x74) and the globals the
@@ -50,8 +51,10 @@ def player_probe(memory):
                                       'BossCamera', 'BossCamData', 'good_wiz_objgrp'})
     player, control = sym['players'], sym['PlayerControl']
     win, = struct.unpack_from('<I', memory, sym['MboxWinPtr'])
-    # player1: the second record (players stride 0x2b00), for co-op traces.
-    blocks = {'player0': (player, 0x2b00), 'player1': (player + 0x2b00, 0x2b00), 'control': (control, 0xf0), 'win': (win, 0xb0),
+    # player1..player3: the other records (players stride 0x2b00), for co-op
+    # traces (players 3 and 4 through the multitap reference).
+    blocks = {'player0': (player, 0x2b00), 'player1': (player + 0x2b00, 0x2b00), 'player2': (player + 0x5600, 0x2b00),
+              'player3': (player + 0x8100, 0x2b00), 'control': (control, 0xf0), 'win': (win, 0xb0),
               'stdcam': (sym['StdCamera'], 0x1b0), 'options': (sym['Options'], 0x30),
               # Cam[0]'s matrix rows (Cam +0x10..+0x3c) and eye (+0x40..+0x4c).
               'cam0': (sym['Cam'] + 0x10, 0x40),
@@ -84,6 +87,13 @@ def player_probe(memory):
             out['node'] = raw[:0x40].hex()
             out['node_parent'] = raw[0x74:0x78].hex()
             out['player_root_node'] = read(sym['PlayerRootNode'], 4).hex()
+        # The other players' nodes the same way (node1..node3), for co-op traces.
+        for k in range(1, 4):
+            node, = struct.unpack('<I', read(player + 0x2b00 * k + 0x80, 4))
+            if node and node % 16 == 0 and node + 0x80 <= 32 * 1024 * 1024:
+                raw = read(node, 0x80)
+                out[f'node{k}'] = raw[:0x40].hex()
+                out[f'node{k}_parent'] = raw[0x74:0x78].hex()
         return out
 
     regions = []

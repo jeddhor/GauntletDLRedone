@@ -40,6 +40,24 @@ pub struct PlayerRig {
     pub anim: Animations,
     pub bytes: Vec<u8>,
     pub dummy: Option<usize>,
+    /// The right-hand node (player_rhand[class]'s label in tree 0), the
+    /// held weapon's parent (load_player's +0x6a8).
+    pub rhand: Option<usize>,
+}
+
+/// player_rhand[class] (ELF table of label pointers): the right-hand
+/// node's label (load_player's +0x6a8, the held weapon's parent).
+pub fn player_rhand_label(elf: &gdl_formats::elf::Elf, class: u32) -> Option<String> {
+    let table = elf.object("player_rhand").ok()?;
+    let p = u32::from_le_bytes(table.get(class as usize * 4..class as usize * 4 + 4)?.try_into().ok()?);
+    let s = elf.read(p, 16).ok()?;
+    Some(s.iter().take_while(|b| **b != 0).map(|b| char::from(*b)).collect())
+}
+
+/// The index of tree 0's node labelled `label` (the rig's right hand).
+pub fn tree_node_by_label(anim: &Animations, label: Option<&str>) -> Option<usize> {
+    let label = label?;
+    anim.trees.first()?.nodes.iter().position(|n| n.label == label)
 }
 
 fn wrap(v: f32) -> R<f32> {

@@ -258,8 +258,18 @@ words):
 - Bosses: inside 8 units the bot steps back with attack released (held
   attack kept the player in its attack actions; from b12 the denser floor
   sampling let it reach H4's node nearest Garm, 5.8 units away, where Garm
-  took no damage for 48,000 updates). H4 ends again (t15: update 35,892);
-  C5 and E2 are unchanged.
+  took no damage for 48,000 updates). H4 ends again (t15: update 35,892).
+  The attack range is 18, or the foe goal node's distance + 4 when no
+  reachable node is closer (C5's ring around the djinn's pit): batch t17
+  ends all ten reachable boss levels (bosses.md).
+- Idle rebuilds: with nothing to do the graph is regrown every 900 updates
+  even without moved objects (K4's ferry left the player where the last
+  build had not reached).
+- Lifts: a ride holds input only once the floor has moved 1.5 units from
+  where the ride began (K4's raft bobs 0.63 units every ~90 updates and had
+  held the bot for 21,000 updates); the report's `holds` counts the updates
+  held per reason (stage/camera wait, exit portal, riding). K4 then reaches
+  22 goals and 12,375 graph nodes (t20); E1 ends at update 24,471 in 30,000.
 - Labelled preconditions: `--pexp N` gives player 0 the experience of level
   N through ModifyExp (PlayerUpdateAtts raises the attributes); route hints
   (tools/bot-routes/<W><L>.json: items, points, waits; GDL_BOT_HINTS=0
@@ -358,6 +368,43 @@ active count) was never assigned natively, so multiplayer-only items
 divergence (kept as the reproducer): step 201, player 2's position by
 0.003 units while both players attack touching each other (PlayerCollide-
 Players itself matches the instructions; the input differs upstream).
+
+Multitap reference, players 3 and 4 (2026-10-23): launch_reference.py
+--multitap puts a multitap in port 1 ([Pad] MultitapPort1) with DualShock 2s
+in its slots C and D ([Pad4] Home/End/Delete/PageDown, comma cross, slash
+square, backslash triangle, PageUp circle, semicolon start; [Pad5] 5/6/7/8,
+9 cross, 0 square, minus triangle, equal circle, bracketleft start); pad 2
+stays in port 2. The game's own multitap layer (mtap_open 0x103888,
+MtapOpenPort 0x103940, serve_mtap 0x103d90: both ports polled, joy index =
+port × 4 + slot) configures the pads (PCSX2 log "DS2 Config Finished -
+P1/S2, P1/S3"; mtap_status[0] = 2). Slot B (joy 1) cannot join while pad 2
+plays: ReadControls reads joy_remap[k] or port k for k = 0..3 — ports 0, 4,
+2, 3 — so joy 1's Start never makes an edge (probed: plr_levels/plr_edges
+stay 0 for it; joy 2's Start shows 0x40000). A join needs the stage start
+to have ended (start_of_stage 0 near vblank 200 after the reload; game_main
+tests it before check_active_players). From tower-2p-v2: slot C's Start at
+vblank 260 → select column 3 → New, name "A", Sorceress, confirm →
+tower-3p-v1; then slot D → tower-4p-v1 (captures tower-3p-select-v1..v3,
+tower-4p-select-v1; reports join-pad3-v1, join-pad4-v1..v3,
+join-pad5-v1/v2). Placement: players 3 and 4 at (−0.825737476, −0.2734375,
+−27.794530869) and (−0.812478065, −0.2734375, −31.794507980), yaw
+−3.1031971 — native load_player_geo → get_player_pos (game_run --players 4
+in the Tower) bit-exact for all four. trace-tower-4p-v2 (292 vblanks from
+tower-4p-v1's first update: the stage start, all four walking, attacks;
+reference_player now records player1..player3 and their nodes node1..node3)
+replayed update by update (replay-frame-tower4p-v3): every player record
+146/146, enemies, effects, world animation and critters 146/146, camera
+145/146 (a 2-ulp step at 179), items 144/146 (the first update replaces 60
+items' load-time +0x4c pointer by 1.0, which native sets at load; item 161's
+audio track word +0xfc). Found on the way: PlayerDoWeapTrail 0x14f428 was
+not ported (the first update sets +0x7d8 −1; weapon trails were never
+drawn), now in game::weaptrail with the client drawing the copies; native
+records now carry load_player's node markers (+0x80, +0x6b8 = 1), so
+DoPlayerAction's held-weapon hide/show (MBTreeSetFlags(+0x6b8, 2)) reaches
+the client. The original's assign_controller only maps port & 3 == 0 to
+player port / 4 when neither port has a multitap (mtap_status ≠ 2); the
+native port omits that condition (no native multitap; recorded in
+unknowns.md).
 
 Device loss (GUI, scenarios-m16-v2 controller-reconnect): port 1 reports
 no device in G1; after joyGetStatus's 60 polls player 1 is lost, the game

@@ -27,7 +27,21 @@ def settings(path):
 USER_CARD_SLOT1 = 'Mcd001.ps2'
 
 
-def configure(root, slot, start_paused, diagnostic_hotkeys=False, card1=None):
+# Pads behind a multitap in port 1 (PCSX2 [Pad3]/[Pad4]/[Pad5] = port 0
+# slots B/C/D, sioConvertPortAndSlotToPad; the game's joy index port × 4 +
+# slot, serve_mtap 0x103d90), on keys no other pad or hotkey uses. Slot B
+# (joy 1) stays empty: with pad 2 (joy 4) as player 2, ReadControls 0x104b60
+# reads joy_remap[k] or port k for k = 0..3, i.e. ports 0, 4, 2, 3 — joy 1
+# is never read and cannot join (multitap reference, 2026-10-23).
+MULTITAP_PADS = {
+    'Pad5': {'Up': '5', 'Down': '6', 'Left': '7', 'Right': '8', 'Cross': '9', 'Square': '0',
+             'Triangle': 'Minus', 'Circle': 'Equal', 'Start': 'BracketLeft', 'Select': 'BracketRight'},
+    'Pad4': {'Up': 'Home', 'Down': 'End', 'Left': 'Delete', 'Right': 'PageDown', 'Cross': 'Comma', 'Square': 'Slash',
+             'Triangle': 'Backslash', 'Circle': 'PageUp', 'Start': 'Semicolon', 'Select': 'Apostrophe'},
+}
+
+
+def configure(root, slot, start_paused, diagnostic_hotkeys=False, card1=None, multitap=False):
     path = root / 'private/reference/config/PCSX2/inis/PCSX2.ini'
     if not path.is_file():
         raise ValueError('missing established private reference configuration')
@@ -51,6 +65,21 @@ def configure(root, slot, start_paused, diagnostic_hotkeys=False, card1=None):
         config['Hotkeys']['FrameAdvance'] = 'Keyboard/F10'
         config['Hotkeys']['LoadStateFromSlot1'] = 'Keyboard/F7'
         config['Hotkeys']['SaveStateToSlot2'] = 'Keyboard/F11'
+    if not config.has_section('Pad'):
+        config.add_section('Pad')
+    config['Pad']['MultitapPort1'] = 'true' if multitap else 'false'
+    if not config.has_section('Pad3'):
+        config.add_section('Pad3')
+    config['Pad3']['Type'] = 'None'
+    for name, keys in MULTITAP_PADS.items():
+        if not config.has_section(name):
+            config.add_section(name)
+        if multitap:
+            config[name]['Type'] = 'DualShock2'
+            for button, key in keys.items():
+                config[name][button] = f'Keyboard/{key}'
+        else:
+            config[name]['Type'] = 'None'
     backup = path.with_name('PCSX2.before-pine.ini')
     if not backup.exists():
         shutil.copy2(path, backup)
@@ -85,6 +114,8 @@ def main():
     p.add_argument('--state', type=pathlib.Path)
     p.add_argument('--slot', type=int, default=28011)
     p.add_argument('--diagnostic-hotkeys', action='store_true', help='private F10 advance, F7 load slot 1, F11 save slot 2')
+    p.add_argument('--multitap', action='store_true',
+                   help='a multitap in port 1 with pads 3 and 4 on keys (MULTITAP_PADS); pad 2 stays in port 2')
     p.add_argument('--scratch-card1', help='a NEW card file name (scratch-*.ps2) for slot 1 instead of the user\'s card; '
                    'PCSX2 creates it unformatted; it must not exist yet')
     args = p.parse_args()
@@ -117,7 +148,7 @@ def main():
         if (root / 'private/reference/config/PCSX2/memcards' / name).exists():
             raise ValueError('scratch card exists: choose a new name (cards are never reused or overwritten)')
         card1 = name
-    ini = configure(root, args.slot, state is not None, args.diagnostic_hotkeys, card1)
+    ini = configure(root, args.slot, state is not None, args.diagnostic_hotkeys, card1, args.multitap)
     env = virtual_environment()
     env.update(QT_QPA_PLATFORM='xcb', XDG_CONFIG_HOME=str(root / 'private/reference/config'),
                XDG_CACHE_HOME=str(root / 'private/reference/cache'),
@@ -131,6 +162,7 @@ def main():
                    state=str(state.relative_to(root)) if state else None,
                    state_sha256=hashlib.sha256(state.read_bytes()).hexdigest() if state else None,
                    start_paused=state is not None, diagnostic_hotkeys=args.diagnostic_hotkeys, card1=card1 or USER_CARD_SLOT1,
+                   multitap=args.multitap,
                    display=env['DISPLAY'], presentation_driver='Mesa software / lavapipe for Xvfb', command=command)
     (root / 'private/reports/reference-launch.json').write_text(json.dumps(context, indent=2) + '\n')
     with (root / 'private/reports/reference-stdout.log').open('w') as output:

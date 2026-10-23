@@ -454,9 +454,18 @@ pub struct Bot {
     trail: Vec<V3>,
     backoff: Option<(usize, V3)>,
     attack_at: Option<V3>,
+    /// Updates held without input: stage start/camera wait, exit portal,
+    /// riding (reported as `holds`).
+    holds: [usize; 3],
+    /// The boss attack range: 18, or the foe goal node's distance to the
+    /// foe + 4 when no reachable node is closer (C5's ring around the
+    /// djinn's pit, 17.4 units at the nearest).
+    boss_range: f32,
     bad_nodes: HashSet<Place>,
     last_floor: Option<usize>,
     riding: usize,
+    still: usize,
+    ride_from: f32,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -510,9 +519,13 @@ impl Bot {
             trail: Vec::new(),
             backoff: None,
             attack_at: None,
+            holds: [0; 3],
+            boss_range: 18.0,
             bad_nodes: HashSet::new(),
             last_floor: None,
             riding: 0,
+            still: 0,
+            ride_from: 0.0,
         };
         b.rebuild(g);
         let exits: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9).collect();
@@ -624,7 +637,12 @@ impl Bot {
         if self.plan(f, g) {
             return;
         }
-        if Self::collision_state(g) != self.collision_at_build && (self.idle_rebuild_at == 0 || 300 <= f - self.idle_rebuild_at) {
+        // Nothing to do: regrow from here after objects moved (300 updates
+        // apart), and every 900 updates regardless — the player may stand
+        // where the last build could not reach (K4: the island its ferry
+        // reached after the graph was built, b12).
+        let since = if self.idle_rebuild_at == 0 { usize::MAX } else { f - self.idle_rebuild_at };
+        if (Self::collision_state(g) != self.collision_at_build && 300 <= since) || 900 <= since {
             self.idle_rebuild_at = f.max(1);
             self.rebuild(g);
             if self.plan(f, g) {
@@ -799,6 +817,8 @@ impl Bot {
                 self.goal = Some(Goal::Explore(n));
                 self.path = path;
                 self.at = 0;
+                let d = foes.iter().map(|q| dist_xz(self.nav.pts[n], *q)).fold(f32::MAX, f32::min);
+                self.boss_range = (d + 4.0).max(18.0);
                 self.log.push(serde_json::json!({"update": f, "foe": self.nav.pts[n], "nodes": self.path.len()}));
                 return true;
             }
@@ -844,6 +864,7 @@ impl Bot {
         // input and no stuck test until they end.
         if g.globals.start_of_stage != 0 || g.globals.cam_wait != 0 {
             self.progress = (f, g.players[0].v3(0x50));
+            self.holds[0] += 1;
             return pad;
         }
         // On an exit portal (contact item +0x884, kind 9): DoExit counts only
@@ -853,6 +874,7 @@ impl Bot {
             && item_kind(g, it).0 == 9
         {
             self.progress = (f, g.players[0].v3(0x50));
+            self.holds[1] += 1;
             return pad;
         }
         // Goal bookkeeping.
@@ -1009,10 +1031,23 @@ impl Bot {
         let riding = floor == self.last_floor && 0.01 < (fy - self.last_y).abs();
         self.last_y = fy;
         self.last_floor = floor;
-        self.riding = if riding { self.riding + 1 } else { 0 };
-        if riding && self.riding < 300 {
+        // A ride holds input once the floor has moved 1.5 units from where
+        // it began (lifts), at most 300 updates; it restarts after 8 still
+        // updates. K4's raft (object 647) bobs 0.63 units every ~90 updates
+        // and never holds the bot.
+        self.still = if riding { 0 } else { self.still + 1 };
+        if riding {
+            if self.riding == 0 {
+                self.ride_from = fy;
+            }
+            self.riding += 1;
+        } else if 8 <= self.still {
+            self.riding = 0;
+        }
+        if riding && 1.5 < (fy - self.ride_from).abs() && self.riding < 300 {
             self.progress = (f, p);
             self.dwell = (f, p);
+            self.holds[2] += 1;
             return pad;
         }
         if let Some((until, away)) = self.backoff {
@@ -1047,7 +1082,7 @@ impl Bot {
         // walked away; H4's Garm took no damage from 5.8 units for 48,000
         // updates in b12).
         let boss = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|b| g.critters.get(b)).and_then(Option::as_ref).filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40));
-        if let Some(bp) = boss.filter(|bp| dist_xz(*bp, p) < 18.0) {
+        if let Some(bp) = boss.filter(|bp| dist_xz(*bp, p) < self.boss_range) {
             if dist_xz(bp, p) < 8.0 && (f / 20).is_multiple_of(2) {
                 return Self::steer(pad, g, p, [2.0 * p[0] - bp[0], p[1], 2.0 * p[2] - bp[2]]);
             }
@@ -1200,7 +1235,7 @@ impl Bot {
             "scope": "TRAVERSAL BOT (gdl_tools bot.rs): port 0 driven through the ordinary pad path; health assist is a DEBUG shortcut",
             "start": self.start, "start_level": self.start_level, "player_radius": g.players[0].f32_(0x828), "collision_offset": g.players[0].f32_(0x820), "collision_height": g.players[0].f32_(0x82c), "nav_nodes": self.nav.pts.len(), "reachable_nodes": self.nav.reached,
             "static_exit_reachable": self.static_exit_reachable, "exit_update": self.exit_update, "exit_wave": self.exit_wave.map(|w| format!("{w:#x}")),
-            "health_assists": self.assists, "hints": self.hints.len(), "hints_done": self.hint_at, "replans": self.replans, "rebuilds": self.rebuilds, "given_up": self.given_up.iter().collect::<Vec<_>>(),
+            "health_assists": self.assists, "hints": self.hints.len(), "hints_done": self.hint_at, "replans": self.replans, "rebuilds": self.rebuilds, "holds": {"stage_or_camera": self.holds[0], "exit_portal": self.holds[1], "riding": self.holds[2], "cam_wait_now": g.globals.cam_wait, "start_of_stage_now": g.globals.start_of_stage}, "given_up": self.given_up.iter().collect::<Vec<_>>(),
             "log": self.log,
         })
     }
