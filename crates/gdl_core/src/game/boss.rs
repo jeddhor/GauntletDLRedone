@@ -114,8 +114,8 @@ impl Game {
                         self.quest_weapon_sfx = -1;
                         // AudioLegendItem(3/4, BossCritInst +0x50).
                         let at = usize::try_from(self.boss_crit_inst - 1).ok().and_then(|b| self.critters.get(b)).and_then(Option::as_ref).map(|c| c.rec.v3(0x50));
-                        self.audio_legend_item(3, at);
-                        self.audio_legend_item(4, at);
+                        self.audio_legend_item(3, at)?;
+                        self.audio_legend_item(4, at)?;
                     }
                     self.globals.quest_item_state = 6;
                 }

@@ -1162,7 +1162,7 @@ impl Game {
                 if sound != 0 {
                     {
                         let pos = self.enemies[i].v3(e::POSITION);
-                        self.sfx(0x67, Some(pos), 0xe0, 0xd);
+                        self.sfx(0x67, Some(pos), 0xe0, 0xd)?;
                     }
                 }
                 // SetEnemyObj(…, 1) swaps the statue model; matrix preserved
@@ -1194,7 +1194,7 @@ impl Game {
             if sound != 0 {
                 {
                     let pos = self.enemies[i].v3(e::POSITION);
-                    self.sfx(0x65, Some(pos), 0x7f, 0x16);
+                    self.sfx(0x65, Some(pos), 0x7f, 0x16)?;
                 }
             }
             self.enemy_dies(i, player as i16)?;

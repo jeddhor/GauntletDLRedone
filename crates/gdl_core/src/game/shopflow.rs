@@ -230,7 +230,7 @@ impl Game {
             // DoAudioTallySFX: the world's tally loop while a pile grows.
             // PrevGameWorld: the realm level just left (still loaded here).
             let pw = self.globals.cur_world;
-            self.do_audio_tally_sfx(tally, pw);
+            self.do_audio_tally_sfx(tally, pw)?;
         }
         // AudioStillPlaying(1) every frame: the shop waits for its lines.
         if self.audio_still_playing() || !done {

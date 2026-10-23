@@ -1751,7 +1751,7 @@ impl Game {
                 self.sfx_set_light(k, mul(power, 1.5)?, light);
                 self.parent_fx_to_player(k, p, [0.0; 3]);
             }
-            self.audio_potion(c, position, 1);
+            self.audio_potion(c, position, 1)?;
             return Ok(());
         }
         if 2 <= mode {
@@ -1805,7 +1805,7 @@ impl Game {
             self.sfx_set_light(i, mul(power, 1.5)?, light);
             self.place_effect_on_floor(i)?;
             if 0 <= player {
-                self.audio_potion(c, position, 0);
+                self.audio_potion(c, position, 0)?;
             }
         }
         // StartMagicHealFX(power, 0): StartFXSub(0, 0x33, …) scaled by

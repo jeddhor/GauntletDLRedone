@@ -12,7 +12,7 @@ use super::enemies::e;
 use super::audio_queue::QueEntry;
 use super::sound_cues::CueTables;
 use super::{Event, Game, R};
-use crate::numeric::{div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
+use crate::numeric::{add_rz as add, div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
 use gdl_formats::audio::AudioRom;
 use gdl_formats::elf::Elf;
 
@@ -295,11 +295,36 @@ impl Game {
         self.sounds.rom.is_some()
     }
 
-    /// AudioSFX(id, position, volume, priority): pan from AudioAng.
-    pub fn sfx(&mut self, id: i32, pos: Option<V3>, volume: i32, priority: i32) {
-        if self.sound_on() && 0 <= id {
-            self.events.push(Event::Sound { id, position: pos, volume, priority, pan: None });
+    /// AudioAng 0x1218a0: a position's pan from Cam[0] — its attention
+    /// point (+0x140) and its matrix's first row (+0x10): the unit x/z
+    /// direction · row × 127.5 + 127.5, truncated, negated when
+    /// row.x · dir.z < row.z · dir.x (DCS's sign mode 3 for the result),
+    /// clamped to −0x100..0xff; 0x7f without a position. mono_flag (0x7f)
+    /// is applied by the host (AudioSetStereo). HYPOTHESIS: before this
+    /// level's first CamUpdate (no Cam[0] matrix yet; the guest still holds
+    /// the previous camera) the pan is centred.
+    pub(crate) fn audio_ang(&self, pos: Option<V3>) -> R<i32> {
+        let Some(p) = pos else { return Ok(0x7f) };
+        let Some((m, a)) = self.std_camera.as_ref().and_then(|c| c.cam0_mat.map(|m| (m[0], c.cam0_attention))) else { return Ok(0x7f) };
+        let mut v = [sub(p[0], a[0])?, 0.0, sub(p[2], a[2])?];
+        crate::collision::normal_vector_pub(&mut v)?;
+        let d = add(add(mul(v[0], m[0])?, mul(v[1], m[1])?)?, mul(v[2], m[2])?)?;
+        let k = add(mul(d, 127.5)?, 127.5)?;
+        // cvt.w.S truncates toward zero.
+        let mut pan = k as i32;
+        if mul(m[0], v[2])? < mul(m[2], v[0])? {
+            pan = -pan;
         }
+        Ok(pan.clamp(-0x100, 0xff))
+    }
+
+    /// AudioSFX(id, position, volume, priority): pan from AudioAng.
+    pub fn sfx(&mut self, id: i32, pos: Option<V3>, volume: i32, priority: i32) -> R<()> {
+        if self.sound_on() && 0 <= id {
+            let pan = self.audio_ang(pos)?;
+            self.events.push(Event::Sound { id, position: pos, volume, priority, pan });
+        }
+        Ok(())
     }
 
     /// AudioEnemyWalk 0x15fa48: types 0x1d (golem) and 0x20 stomp —
@@ -314,8 +339,9 @@ impl Game {
     }
 
     /// AudioGolemBorn 0x15fc68: AudioSFX(golborn, position, 0xe0, 0xd).
-    pub(crate) fn audio_golem_born(&mut self, pos: V3) {
-        self.sfx(self.sounds.golem[1], Some(pos), 0xe0, 0xd);
+    pub(crate) fn audio_golem_born(&mut self, pos: V3) -> R<()> {
+        self.sfx(self.sounds.golem[1], Some(pos), 0xe0, 0xd)?;
+        Ok(())
     }
 
     /// AudioGolemSwing 0x15fc80: AudioSFX3(golswing, position, 0xe0, 0xc).
@@ -323,10 +349,17 @@ impl Game {
         self.sfx3(self.sounds.golem[2], pos, 0xe0, 0xc)
     }
 
+    /// AudioSFX(id, NULL, volume, priority): no position, AudioAng's 0x7f.
+    pub fn sfx_flat(&mut self, id: i32, volume: i32, priority: i32) {
+        if self.sound_on() && 0 <= id {
+            self.events.push(Event::Sound { id, position: None, volume, priority, pan: 0x7f });
+        }
+    }
+
     /// AudioSFX2(id, pan, volume, priority): fixed pan (pantab), no position.
     pub fn sfx2(&mut self, id: i32, pan: i32, volume: i32, priority: i32) {
         if self.sound_on() && 0 <= id {
-            self.events.push(Event::Sound { id, position: None, volume, priority, pan: Some(pan) });
+            self.events.push(Event::Sound { id, position: None, volume, priority, pan });
         }
     }
 
@@ -340,16 +373,20 @@ impl Game {
         let k = k.clamp(0.0, 1.0);
         if 0.0 < k {
             let v = mul(volume as f32, k)? as i32;
-            self.events.push(Event::Sound { id, position: Some(pos), volume: v, priority, pan: None });
+            let pan = self.audio_ang(Some(pos))?;
+            self.events.push(Event::Sound { id, position: Some(pos), volume: v, priority, pan });
         }
         Ok(())
     }
 
-    /// AudioLOOP(id, position, volume, priority) once (AudioSoundExists).
-    pub(crate) fn loop_sound(&mut self, id: i32, pos: Option<V3>, volume: i32, priority: i32) {
+    /// AudioLOOP(id, position, volume, priority) once (AudioSoundExists);
+    /// pan from AudioAng.
+    pub(crate) fn loop_sound(&mut self, id: i32, pos: Option<V3>, volume: i32, priority: i32) -> R<()> {
         if self.sound_on() && 0 <= id && self.sounds.loops.insert(id) {
-            self.events.push(Event::LoopSound { id, position: pos, volume, priority });
+            let pan = self.audio_ang(pos)?;
+            self.events.push(Event::LoopSound { id, position: pos, volume, priority, pan });
         }
+        Ok(())
     }
 
     /// AudioSoundKill(id).
@@ -405,15 +442,16 @@ impl Game {
         }
     }
 
-    pub fn audio_player_dies(&mut self, p: usize) {
+    pub fn audio_player_dies(&mut self, p: usize) -> R<()> {
         if self.players[p].i32_(0xfc) != 1 {
-            return;
+            return Ok(());
         }
         let pos = self.players[p].v3(0x50);
-        self.sfx(1, Some(pos), 0x7f, 8);
+        self.sfx(1, Some(pos), 0x7f, 8)?;
         let v = Self::tab(&self.sounds.dievox, self.class_of(p));
         let id = if self.chicken(p) { 0x62 } else { v };
-        self.sfx(id, Some(pos), 0xe0, 7);
+        self.sfx(id, Some(pos), 0xe0, 7)?;
+        Ok(())
     }
 
     /// AudioPlayerPain: RandInt(4) chooses the line (consumes the game RNG).
@@ -428,13 +466,14 @@ impl Game {
         Ok(())
     }
 
-    pub fn audio_player_severe_pain(&mut self, p: usize) {
+    pub fn audio_player_severe_pain(&mut self, p: usize) -> R<()> {
         let v = Self::tab(&self.sounds.severe, self.class_of(p));
         if self.players[p].i32_(0xfc) == 1 && self.players[p].u32_(0x134) & 0x1_0000 == 0 && 0 <= v {
             let id = if self.chicken(p) { 0x60 } else { v };
             let pos = self.players[p].v3(0x50);
-            self.sfx(id, Some(pos), 0xe0, 0x3e);
+            self.sfx(id, Some(pos), 0xe0, 0x3e)?;
         }
+        Ok(())
     }
 
     /// AudioNeedFood 0x15dd80(kind, player).
@@ -448,12 +487,13 @@ impl Game {
         self.audio_with_name(delay, -1, p, m, -1);
     }
 
-    pub fn audio_player_hit(&mut self, p: usize, kind: i32) {
+    pub fn audio_player_hit(&mut self, p: usize, kind: i32) -> R<()> {
         if self.players[p].i32_(0xfc) == 1 {
             let id = Self::tab(&self.sounds.dmg, p + 4 * kind.max(0) as usize);
             let pos = self.players[p].v3(0x50);
-            self.sfx(id, Some(pos), 0x7f, 0x4a);
+            self.sfx(id, Some(pos), 0x7f, 0x4a)?;
         }
+        Ok(())
     }
 
     pub fn audio_player_poison(&mut self, p: usize) {
@@ -565,9 +605,10 @@ impl Game {
         self.sfx3(id, pos, 0x7f, prio)
     }
 
-    pub fn audio_potion(&mut self, colour: usize, pos: V3, mode: usize) {
+    pub fn audio_potion(&mut self, colour: usize, pos: V3, mode: usize) -> R<()> {
         let id = Self::tab(&self.sounds.potion, colour + 5 * mode);
-        self.sfx(id, Some(pos), 0x7f, 0xf);
+        self.sfx(id, Some(pos), 0x7f, 0xf)?;
+        Ok(())
     }
 
     fn mon_slot(&self, i: usize) -> Option<usize> {
@@ -631,7 +672,8 @@ impl Game {
         let mode = if self.globals.start_of_stage != 0 || self.globals.end_of_stage != 0 { 0 } else { mode };
         if mode == 0 {
             if self.sound_on() && 0 <= lp && self.sounds.loops.insert(lp) {
-                self.events.push(Event::LoopSound { id: lp, position: Some(pos), volume: 0xe0, priority: 0x72 });
+                let pan = self.audio_ang(Some(pos))?;
+                self.events.push(Event::LoopSound { id: lp, position: Some(pos), volume: 0xe0, priority: 0x72, pan });
             }
             return Ok(());
         }
@@ -639,7 +681,7 @@ impl Game {
             self.events.push(Event::StopSound { id: lp });
         }
         if 1 < mode {
-            self.sfx(stop, Some(pos), 0xe0, 0);
+            self.sfx(stop, Some(pos), 0xe0, 0)?;
         }
         Ok(())
     }
@@ -688,16 +730,17 @@ impl Game {
         let id = self.world_tab(&self.sounds.door, 4, kind.max(0) as usize);
         self.sfx3(id, pos, 0x7f, 0x40)
     }
-    pub fn audio_damage_tile(&mut self, pos: V3, kind: i32) {
+    pub fn audio_damage_tile(&mut self, pos: V3, kind: i32) -> R<()> {
         if !(0..7).contains(&kind) {
-            return;
+            return Ok(());
         }
         let mut id = self.world_tab(&self.sounds.tile, 7, kind as usize);
         if id == 0x26_0027 && self.globals.boss_type == 0x22 {
             id = 0x2e_0009;
         }
         let vol = if id == 0x25_0002 || id == 0x28_002e { 0xb4 } else { 0x7f };
-        self.sfx(id, Some(pos), vol, 0x32);
+        self.sfx(id, Some(pos), vol, 0x32)?;
+        Ok(())
     }
     pub fn audio_generator_dies(&mut self, pos: V3, ty: i32) -> R<()> {
         // CurWorld 10 type-0x18 generators use sound 0x2c0025 (lui/ori literal).

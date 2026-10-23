@@ -1922,7 +1922,6 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> 
 #[derive(Resource)]
 struct Presentation {
     fov: f32,
-    basis: [Vec3; 3],
     attention: Vec3,
 }
 
@@ -3181,6 +3180,8 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
             .collect::<Result<Vec<_>, _>>()?,
         load_in_game_players,
     })?;
+    // OptionsSetup's AudioSetVolMusic (GamePrefs word 1).
+    game.audio_set_vol_music(session.prefs[1]);
     {
         // EnterTower: SetPlayerStartPos(GetWorldOrder(LastWorldPlayed)) puts
         // a returning player at that realm's wing (WorldOrder 0x23f4c8);
@@ -3324,34 +3325,20 @@ fn slot_starts(front: &Front, sources: &Sources, records: &[Record; 4], controls
 #[allow(clippy::too_many_arguments)]
 /// The simulation's audio requests: sounds, loops, kills and the stage
 /// music stream (BGPlayStream / AudioStreamSetVolume / AudioStreamStop).
-fn play_audio(audio: &mut Option<NonSendMut<gdl_client::audio::AudioOut>>, events: &[Event], me: Vec3, right: Vec3) {
+fn play_audio(audio: &mut Option<NonSendMut<gdl_client::audio::AudioOut>>, events: &[Event]) {
     let Some(a) = audio.as_mut() else { return };
     for e in events {
         match e {
-            Event::Sound { id, position, volume, priority, pan } => {
-                // Presentation pan: offset along the camera's right axis, or
-                // the fixed pan (0..0xfe, 0x7f centre).
-                let pan = match (position, pan) {
-                    (Some(p), _) => ((Vec3::from_array(*p) - me).dot(right) / 20.0).clamp(-1.0, 1.0),
-                    (None, Some(v)) => ((*v - 0x7f) as f32 / 127.0).clamp(-1.0, 1.0),
-                    (None, None) => 0.0,
-                };
-                a.play(*id, *volume, pan, *priority);
-            }
-            Event::LoopSound { id, position, volume, priority } => {
-                let pan = position.map_or(0.0, |p| ((Vec3::from_array(p) - me).dot(right) / 20.0).clamp(-1.0, 1.0));
-                a.play_loop(*id, *volume, pan, *priority);
-            }
+            // The simulation's pan words (AudioAng or fixed pans).
+            Event::Sound { id, volume, priority, pan, .. } => a.play(*id, *volume, *pan, *priority),
+            Event::LoopSound { id, volume, priority, pan, .. } => a.play_loop(*id, *volume, *pan, *priority),
             Event::StopSound { id } => a.stop(*id),
             Event::Music { name, volume, looping } => {
                 // A missing part counts as playing (BGPlayStream's error
                 // path keeps the loop flag set).
                 a.stream(name, *looping, *volume);
             }
-            Event::ItemSound { slot, id, volume, position, priority } => {
-                let pan = ((Vec3::from_array(*position) - me).dot(right) / 20.0).clamp(-1.0, 1.0);
-                a.play_tagged(*slot as u32, *id, *volume, pan, *priority);
-            }
+            Event::ItemSound { slot, id, volume, priority, pan, .. } => a.play_tagged(*slot as u32, *id, *volume, *pan, *priority),
             Event::ItemSoundStop { slot } => a.stop_tagged(*slot as u32),
             Event::MusicVolume { volume } => a.stream_volume(*volume),
             Event::MusicStop => a.stream_stop(),
@@ -3366,7 +3353,6 @@ fn simulate(
     gamepads: Query<(Entity, &Gamepad)>,
     mut sim: ResMut<Sim>,
     session: Res<Session>,
-    presentation: Res<Presentation>,
     ui: Res<Ui>,
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
     front: Res<Front>,
@@ -3541,16 +3527,13 @@ fn simulate(
             sim.error = Some(format!("controls: {}", e.0));
         }
         let new: Vec<Event> = sim.game.events.drain(..).collect();
-        let me = Vec3::from_array(sim.game.players[0].v3(0x50));
-        play_audio(&mut audio, &new, me, presentation.basis[0]);
+        play_audio(&mut audio, &new);
         return;
     }
     // PlayStreamComplete: a stage music part played once has ended.
     if sim.game.bg_music.stream_playing && audio.as_ref().is_some_and(|a| !a.stream_playing()) {
         sim.game.bg_stream_complete();
     }
-    let me = Vec3::from_array(sim.game.players[0].v3(0x50));
-    let right = sim.game.std_camera.as_ref().map_or(presentation.basis[0], |c| Vec3::from_array(c.pb.cam_rows[0]));
     // game mode 0x8008: the attract flyby (game_main's flyby case, do_camera).
     if let Some(mut f) = sim.flyby.take() {
         if let Err(e) = sim.game.update_controls(&ports) {
@@ -3562,7 +3545,7 @@ fn simulate(
         }
         sim.flyby = Some(f);
         let new: Vec<Event> = sim.game.events.drain(..).collect();
-        play_audio(&mut audio, &new, me, right);
+        play_audio(&mut audio, &new);
         return;
     }
     // game mode 0x400e: do_gamemovie (controls polled; the game waits).
@@ -3597,7 +3580,7 @@ fn simulate(
             sim.map = Some((m, next));
         }
         let new: Vec<Event> = sim.game.events.drain(..).collect();
-        play_audio(&mut audio, &new, me, right);
+        play_audio(&mut audio, &new);
         return;
     }
     // game mode 0x4012: game_main's SetPlayerVars (the panels' written
@@ -3615,7 +3598,7 @@ fn simulate(
             Err(e) => sim.error = Some(format!("do_shop: {}", e.0)),
         }
         let new: Vec<Event> = sim.game.events.drain(..).collect();
-        play_audio(&mut audio, &new, me, right);
+        play_audio(&mut audio, &new);
         return;
     }
     // game mode 0x400b: the player-select screen (do_player_select).
@@ -3644,7 +3627,7 @@ fn simulate(
             Err(e) => sim.error = Some(format!("do_player_select: {}", e.0)),
         }
         let new: Vec<Event> = sim.game.events.drain(..).collect();
-        play_audio(&mut audio, &new, me, right);
+        play_audio(&mut audio, &new);
         return;
     }
     // game_main in the Tower: a controller pressing Start joins through
@@ -3782,7 +3765,7 @@ fn simulate(
     // Every request since the last frame (level setup's BGMusicStart, the
     // shop and map screens' leftovers included).
     let new: Vec<Event> = sim.game.events.drain(..).collect();
-    play_audio(&mut audio, &new, me, right);
+    play_audio(&mut audio, &new);
     for e in new {
         match e {
             Event::Exp { amount, .. } => sim.exp += i64::from(amount),
@@ -5873,14 +5856,26 @@ fn act(world: &mut EcsWorld, action: Action) {
                 }
             }
             Action::Volumes { music, sfx } => {
+                // OptionsSetup: AudioSetVolSfx / AudioSetStereo (host) and
+                // AudioSetVolMusic (the simulation's volMusic).
+                let stereo = world.resource::<Front>().menu.prefs[2];
                 if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
-                    a.set_volumes(music, sfx);
+                    a.set_options(i32::from(sfx), stereo);
+                }
+                if let Some(mut sim) = world.get_resource_mut::<Sim>() {
+                    sim.game.audio_set_vol_music(i32::from(music));
                 }
                 let mut front = world.resource_mut::<Front>();
                 front.game_opts[0..4].copy_from_slice(&i32::from(sfx).to_le_bytes());
                 front.game_opts[4..8].copy_from_slice(&i32::from(music).to_le_bytes());
+                front.menu.prefs[0] = i32::from(sfx);
+                front.menu.prefs[1] = i32::from(music);
                 let opts = front.game_opts.clone();
                 front.store.store_options(&opts)?;
+                let prefs = front.menu.prefs;
+                if let Some(mut session) = world.get_resource_mut::<Session>() {
+                    session.prefs = prefs;
+                }
             }
         }
         Ok(())
@@ -6152,7 +6147,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     let pr = &sim_start["presentation"];
     let vec3 = |r: &Value| -> Result<Vec3, Box<dyn Error>> { Ok(Vec3::from_array(serde_json::from_value::<[f32; 3]>(r.clone())?)) };
     let presentation = Presentation {
-        basis: [vec3(&pr["camera_basis"][0])?, vec3(&pr["camera_basis"][1])?, vec3(&pr["camera_basis"][2])?],
         fov: serde_json::from_value(pr["camera_fov"].clone())?,
         attention: vec3(&pr["attention_offset_810"])?,
     };
@@ -6218,7 +6212,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let paths = |k: &str| -> HashMap<String, std::path::PathBuf> {
         audio_cfg[k].as_object().map_or(HashMap::new(), |m| m.iter().filter_map(|(n, v)| Some((n.to_uppercase(), v.as_str()?.into()))).collect())
     };
-    let mut audio = audio_rom.clone().map(|rom| gdl_client::audio::AudioOut::new(rom, paths("banks"), paths("streams")));
+    // IRX/DCS.IRX (the IOP sound driver): its pan table.
+    let dcs = match audio_cfg["dcs"].as_str() {
+        Some(p) => Some(gdl_client::bounded_read(Path::new(p))?),
+        None => None,
+    };
+    let mut audio = audio_rom.clone().map(|rom| gdl_client::audio::AudioOut::new(rom, paths("banks"), paths("streams"), dcs.as_deref()));
     let elf_bytes = gdl_client::bounded_read(&p("elf")?)?;
     let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
     let tables = ClassTables::from_elf(&elf)?;
@@ -6265,10 +6264,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         o
     });
-    let word = |k: usize| i32::from_le_bytes(game_opts[4 * k..4 * k + 4].try_into().unwrap()).clamp(0, 255) as u8;
+    let raw = |k: usize| i32::from_le_bytes(game_opts[4 * k..4 * k + 4].try_into().unwrap());
+    let word = |k: usize| raw(k).clamp(0, 255) as u8;
     let (sfx_v, music_v) = (word(0), word(1));
+    // OptionsSetup at boot: AudioSetVolSfx(word 0), AudioSetStereo(word 2);
+    // AudioSetVolMusic(word 1) goes to each level's simulation (build_game).
     if let Some(a) = audio.as_mut() {
-        a.set_volumes(music_v, sfx_v);
+        a.set_options(raw(0), raw(2));
     }
     let shared_labels = std::collections::HashSet::new();
     let static_pkg = load_package(&package_entry(&catalog, "STATIC", true)?)?;

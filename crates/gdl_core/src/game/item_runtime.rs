@@ -837,7 +837,8 @@ impl Game {
         }
         let priority = if flags & 2 != 0 { 3 } else { 0x70 };
         if self.sound_on() {
-            self.events.push(Event::ItemSound { slot, id, volume: vol, position: pos, priority });
+            let pan = self.audio_ang(Some(pos))?;
+            self.events.push(Event::ItemSound { slot, id, volume: vol, position: pos, priority, pan });
         }
         if flags & 1 != 0 {
             let amount = sub(1.0, mul(k, 0.5)?)?;

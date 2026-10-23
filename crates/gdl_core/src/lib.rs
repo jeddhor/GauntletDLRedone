@@ -3,6 +3,7 @@ pub mod animation;
 pub mod animation_clock;
 pub mod collision;
 pub mod controls;
+pub mod dcs;
 pub mod game;
 pub mod item_collision;
 pub mod items;

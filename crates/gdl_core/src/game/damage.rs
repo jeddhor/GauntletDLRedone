@@ -93,8 +93,8 @@ impl Game {
     }
 
     /// player_dies.
-    pub fn player_dies(&mut self, player: usize) {
-        self.audio_player_dies(player);
+    pub fn player_dies(&mut self, player: usize) -> R<()> {
+        self.audio_player_dies(player)?;
         let pl = &mut self.players[player];
         pl.set_i32(pd::STATE, 8);
         pl.set_i32(pd::DEATH_COUNTER, 4);
@@ -104,6 +104,7 @@ impl Game {
             self.globals.it = -1;
         }
         self.events.push(Event::PlayerDied { player });
+        Ok(())
     }
 
     /// damage_player(damage, player, pain sound kind, flags, direction).
@@ -240,7 +241,7 @@ impl Game {
             self.players[player].f32_(p::HEALTH)
         };
         if after < 1.0 {
-            self.player_dies(player);
+            self.player_dies(player)?;
             return Ok(1);
         }
         let was = add(before, 0.5)? as i32;
@@ -267,7 +268,7 @@ impl Game {
                     self.players[player].set_f32(pd::PAIN_ACC, 0.0);
                 }
                 3 => {
-                    self.audio_player_severe_pain(player);
+                    self.audio_player_severe_pain(player)?;
                     self.players[player].set_f32(pd::PAIN_ACC, 0.0);
                 }
                 0 => {}
@@ -305,7 +306,7 @@ impl Game {
                         0
                     };
                     if 0.0 < d {
-                        self.audio_player_hit(player, kind);
+                        self.audio_player_hit(player, kind)?;
                     }
                     self.players[player].set_i16(pd::HIT_SOUND_TIMER, 0x1e);
                 }

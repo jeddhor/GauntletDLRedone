@@ -67,13 +67,13 @@ impl Game {
         if self.globals.wave_complete == 0 && before != now {
             // AudioSecretTimer(n): 0x19 at 0, else 0x17 / 0x18 alternating.
             let tick = if now == 0 { 0x19 } else if now & 1 != 0 { 0x18 } else { 0x17 };
-            self.sfx(tick, None, 0x7f, 4);
+            self.sfx_flat(tick, 0x7f, 4);
             if now == 8 {
                 // AudioTimeRunsOut: AudioFX(0xc0085, 0xe0, 0x14).
-                self.sfx(0xc_0085, None, 0xe0, 0x14);
+                self.sfx_flat(0xc_0085, 0xe0, 0x14);
             } else if now < 6 && self.globals.skip_wave == 0 {
                 // AudioCountDown(n): snd.157[n] = 0x2000b − n, priority n + 0x15.
-                self.sfx(0x2_000b - now, None, 0xe0, now + 0x15);
+                self.sfx_flat(0x2_000b - now, 0xe0, now + 0x15);
             }
         }
         // modify_sandglass(max × 60, timer × 60).

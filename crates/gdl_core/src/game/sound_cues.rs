@@ -46,23 +46,23 @@ impl Game {
 
     /// AudioCursorSelect 0x1606c8: AudioFX(0x11, 0x7f, 3).
     pub fn audio_cursor_select(&mut self) {
-        self.sfx(0x11, None, 0x7f, 3);
+        self.sfx_flat(0x11, 0x7f, 3);
     }
 
     /// AudioCursorV 0x160698 / AudioCursorH 0x1606a8 / AudioCursorChar
     /// 0x1606b8 / AudioMenuExit 0x1606d8: AudioFX(0xd / 0xe / 0xf / 0x10,
     /// 0x7f, 3).
     pub fn audio_cursor_v(&mut self) {
-        self.sfx(0xd, None, 0x7f, 3);
+        self.sfx_flat(0xd, 0x7f, 3);
     }
     pub fn audio_cursor_h(&mut self) {
-        self.sfx(0xe, None, 0x7f, 3);
+        self.sfx_flat(0xe, 0x7f, 3);
     }
     pub fn audio_cursor_char(&mut self) {
-        self.sfx(0xf, None, 0x7f, 3);
+        self.sfx_flat(0xf, 0x7f, 3);
     }
     pub fn audio_menu_exit(&mut self) {
-        self.sfx(0x10, None, 0x7f, 3);
+        self.sfx_flat(0x10, 0x7f, 3);
     }
 
     /// AudioClick 0x15f008(player, k): AudioSFX2(snd.277[k], pan, 0x7f, 0x7d).
@@ -78,7 +78,7 @@ impl Game {
     pub fn audio_select(&mut self, k: i32) {
         if self.sounds.audio_select_state != k {
             if k == 1 {
-                self.sfx(0xc_0000, None, 100, 1);
+                self.sfx_flat(0xc_0000, 100, 1);
             } else {
                 self.kill_sound(0xc_0000);
             }
@@ -88,7 +88,7 @@ impl Game {
 
     /// AudioBuzzer 0x160688: AudioFX(10, 0x7f, 0x30).
     pub fn audio_buzzer(&mut self) {
-        self.sfx(10, None, 0x7f, 0x30);
+        self.sfx_flat(10, 0x7f, 0x30);
     }
 
     /// AudioClick2 0x15f040(player, k): AudioSFX2(snd.281[k], pan, 0x7f, 0x7d).
@@ -108,22 +108,23 @@ impl Game {
             0x15 => 0xe_00a9,
             _ => -1,
         };
-        self.sfx(id, None, 0xff, 10);
+        self.sfx_flat(id, 0xff, 10);
     }
 
     /// DoAudioTallySFX 0x15e058(on): the world's tally loop snd.149[PrevGameWorld]
     /// started (AudioLOOP, 0xe0, 0x7b) or killed.
-    pub fn do_audio_tally_sfx(&mut self, on: bool, prev_world: i32) {
+    pub fn do_audio_tally_sfx(&mut self, on: bool, prev_world: i32) -> R<()> {
         let id = at(&self.sounds.cues.tally, i64::from(prev_world));
         if id < 0 {
-            return;
+            return Ok(());
         }
         let playing = self.sounds.loops.contains(&id);
         if on && !playing {
-            self.loop_sound(id, None, 0xe0, 0x7b);
+            self.loop_sound(id, None, 0xe0, 0x7b)?;
         } else if !on && playing {
             self.kill_sound(id);
         }
+        Ok(())
     }
 
     /// AudioPickupRune 0x160af8(player): AudioSFX2(0x28, pan, 0x7f, 0x28);
@@ -162,20 +163,22 @@ impl Game {
     /// AudioMapDot 0x15e020: AudioFX(snd.145[CurWorld], 0xe0, 0x1e).
     pub fn audio_map_dot(&mut self) {
         let id = at(&self.sounds.cues.map_dot, i64::from(self.globals.cur_world));
-        self.sfx(id, None, 0xe0, 0x1e);
+        self.sfx_flat(id, 0xe0, 0x1e);
     }
 
     /// AudioDeathHurt 0x15d268(position): 0x65 unless playing (0x7f, 0x16).
-    pub fn audio_death_hurt(&mut self, pos: V3) {
-        self.sfx(0x65, Some(pos), 0x7f, 0x16);
+    pub fn audio_death_hurt(&mut self, pos: V3) -> R<()> {
+        self.sfx(0x65, Some(pos), 0x7f, 0x16)?;
+        Ok(())
     }
 
     /// do_death_sound 0x15d198(position): the 0x66 loop (0x7f, 0x6f) at
     /// Death; its pan follows Death (presentation).
-    pub fn do_death_sound(&mut self, pos: V3) {
+    pub fn do_death_sound(&mut self, pos: V3) -> R<()> {
         if !self.sounds.loops.contains(&0x66) {
-            self.loop_sound(0x66, Some(pos), 0x7f, 0x6f);
+            self.loop_sound(0x66, Some(pos), 0x7f, 0x6f)?;
         }
+        Ok(())
     }
 
     /// AudioHeartBeat 0x15ed78(player): sound 0 by health (≤ 10: 0xca,
@@ -209,21 +212,23 @@ impl Game {
     }
 
     /// AudioItSwap 0x15fd08(position): AudioSFX(0x3a, position, 0xb4, 0x14).
-    pub fn audio_it_swap(&mut self, pos: V3) {
-        self.sfx(0x3a, Some(pos), 0xb4, 0x14);
+    pub fn audio_it_swap(&mut self, pos: V3) -> R<()> {
+        self.sfx(0x3a, Some(pos), 0xb4, 0x14)?;
+        Ok(())
     }
 
     /// AudioSFX(id, player +0x60, 0xe0, 0x28): AudioHorn 0x5a, AudioMask
     /// 0x5b, AudioGauntletL 0x5c, AudioGauntletR 0x5d, AudioThunderHammer
     /// 0x50; AudioPlayerHalo 0x52 (priority 0x3c).
-    pub fn audio_player_sfx(&mut self, p: usize, id: i32, priority: i32) {
+    pub fn audio_player_sfx(&mut self, p: usize, id: i32, priority: i32) -> R<()> {
         let pos = self.players[p].v3(0x60);
-        self.sfx(id, Some(pos), 0xe0, priority);
+        self.sfx(id, Some(pos), 0xe0, priority)?;
+        Ok(())
     }
 
     /// AudioPlayerBreath 0x15eaf0(player): +0x138 bit 0x10 → 0x47, 0x20 →
     /// 0x48, 0x40 → 0x49 at +0x60 (0xe0, 0x28).
-    pub fn audio_player_breath(&mut self, p: usize) {
+    pub fn audio_player_breath(&mut self, p: usize) -> R<()> {
         let f = self.players[p].u32_(0x138);
         let id = if f & 0x10 != 0 {
             0x47
@@ -232,34 +237,37 @@ impl Game {
         } else if f & 0x40 != 0 {
             0x49
         } else {
-            return;
+            return Ok(());
         };
-        self.audio_player_sfx(p, id, 0x28);
+        self.audio_player_sfx(p, id, 0x28)?;
+        Ok(())
     }
 
     /// AudioTurboDefense 0x15ec00(player): AudioSFX(5, +0x70, 0x7f, 0x13).
-    pub fn audio_turbo_defense(&mut self, p: usize) {
+    pub fn audio_turbo_defense(&mut self, p: usize) -> R<()> {
         let pos = self.players[p].v3(0x70);
-        self.sfx(5, Some(pos), 0x7f, 0x13);
+        self.sfx(5, Some(pos), 0x7f, 0x13)?;
+        Ok(())
     }
 
     /// AudioPlayerTurbo 0x15e980(player, kind, k): the chicken 0x5f; kind 0
     /// snd_turboA[class × 4 + k] (0x13), 1 snd_turboB[class] (0x11), 2
     /// snd_turboC[class] (0x10); at +0x50, volume 0xe0.
-    pub fn audio_player_turbo(&mut self, p: usize, kind: i32, k: i32) {
+    pub fn audio_player_turbo(&mut self, p: usize, kind: i32, k: i32) -> R<()> {
         let pos = self.players[p].v3(0x50);
         let class = i64::from(self.players[p].u32_(8));
         if self.players[p].u32_(0x138) & 0x400 != 0 {
-            self.sfx(0x5f, Some(pos), 0xe0, 0x10);
-            return;
+            self.sfx(0x5f, Some(pos), 0xe0, 0x10)?;
+            return Ok(());
         }
         let (id, pri) = match kind {
             0 => (at(&self.sounds.cues.turbo_a, i64::from(k) + class * 4), 0x13),
             1 => (at(&self.sounds.cues.turbo_b, class), 0x11),
             2 => (at(&self.sounds.cues.turbo_c, class), 0x10),
-            _ => return,
+            _ => return Ok(()),
         };
-        self.sfx(id, Some(pos), 0xe0, pri);
+        self.sfx(id, Some(pos), 0xe0, pri)?;
+        Ok(())
     }
 
     /// AudioWalk 0x15ef40(player, side, surface): AudioSFX3(snd_walk[surface
@@ -319,7 +327,7 @@ impl Game {
     /// AudioLegendItem 0x160ed0(n, position) (jump table 0x2a90c0): 0 →
     /// 100; 1..4 → snd1–4[CurWorld − 1] (3 first kills snd2's); AudioSFX(…,
     /// 0xe0, 10).
-    pub fn audio_legend_item(&mut self, n: i32, pos: Option<V3>) {
+    pub fn audio_legend_item(&mut self, n: i32, pos: Option<V3>) -> R<()> {
         let w = i64::from(self.globals.cur_world - 1);
         let id = match n {
             0 => 100,
@@ -331,9 +339,10 @@ impl Game {
                 at(&self.sounds.cues.legend[2], w)
             }
             4 => at(&self.sounds.cues.legend[3], w),
-            _ => return,
+            _ => return Ok(()),
         };
-        self.sfx(id, pos, 0xe0, 10);
+        self.sfx(id, pos, 0xe0, 10)?;
+        Ok(())
     }
 
     /// AudioTransport 0x161030 / AudioWorldExplosion 0x1610a0 /

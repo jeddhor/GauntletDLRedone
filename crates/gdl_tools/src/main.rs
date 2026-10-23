@@ -1594,6 +1594,26 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "dcs-pan" {
+        // dcs-pan DCS.IRX NEW_REPORT.json: the disc's DCS.IRX pan table
+        // (identity-checked) and voiceSetVolPan's SPU words for a voice at
+        // volume 0x70/0xff across pans and sign modes (gdl_core::dcs).
+        let b = bounded_read(Path::new(&args[1]), 1 << 20)?;
+        let tab = gdl_core::dcs::PanTable::from_irx(&b)?;
+        let mut rows = Vec::new();
+        for vol in [0x70i16, 0xff] {
+            for pan in [0i32, 0x40, 0x7f, 0xc0, 0xff, -1, -0x40, -0x7f, -0xff, -0x100, 0x100, 0x1ff, -0x200] {
+                let mut d = gdl_core::dcs::Dcs::default();
+                d.voices[0].vol = vol;
+                d.voices[0].pan = pan as u16;
+                rows.push(serde_json::json!({"vol": vol, "pan": pan, "pan_word": format!("{:#06x}", pan as u16), "volume_words": d.vol_pan(0, &tab)}));
+            }
+        }
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &serde_json::json!({"source_sha256": hash(&b), "pan_table_sha256": gdl_core::dcs::PAN_TABLE_SHA256, "pan_table": tab.0.to_vec(), "voice_set_vol_pan": rows,
+            "scope": "actual disc: DCS.IRX's table at 0xb188 read by identity; words are the native port of voiceSetVolPan 0x39d4 (instructions), not an SPU capture"}))?;
+        return Ok(());
+    }
     if args.len() == 6 && args[0] == "av-catalog" {
         // av-catalog AUDATPS2.ROM SLUS_200.47 play-config.json wad-independent.json NEW_REPORT.json
         // M17 audiovisual event catalog: the ELF cue tables resolved against

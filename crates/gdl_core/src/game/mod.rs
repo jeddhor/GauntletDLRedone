@@ -225,14 +225,15 @@ pub enum Event {
     /// add_got_it(player, kind, amount): HUD pickup notice.
     GotIt { player: usize, kind: i32, amount: i32 },
     /// A sound request (AudioSFX/SFX2/SFX3/queue): ID = bank << 16 | call.
-    /// `pan`: a fixed pan (0..0xfe, 0x7f centre; AudioSFX2 / the queue)
-    /// when there is no position.
-    Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, pan: Option<i32> },
+    /// `pan`: AudioTrack4's pan word — AudioAng of the position (−0x100..
+    /// 0xff, 0x7f centre) or the fixed pan (AudioSFX2, the queue).
+    Sound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, pan: i32 },
     /// change_player: player `player`'s class, colour or descriptor
     /// changed (the host swaps the model; replace_player_geo).
     PlayerModel { player: usize },
-    /// AudioLOOP(id, position, volume, priority): a looping sound.
-    LoopSound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32 },
+    /// AudioLOOP(id, position, volume, priority): a looping sound (pan
+    /// from AudioAng).
+    LoopSound { id: i32, position: Option<[f32; 3]>, volume: i32, priority: i32, pan: i32 },
     /// BossDeath's boss key effect (BossKeySfx) at a position.
     BossKey { position: [f32; 3] },
     /// AudioSuicideYellKill-style stop of every playing instance of an ID.
@@ -241,7 +242,8 @@ pub enum Event {
     Music { name: String, volume: i32, looping: bool },
     /// DoItemSound: item `slot`'s looping sound (started or its volume and
     /// pan updated; one voice per item).
-    ItemSound { slot: usize, id: i32, volume: i32, position: [f32; 3], priority: i32 },
+    /// `pan`: AudioAng(position), sent each update (AudioTrackPan).
+    ItemSound { slot: usize, id: i32, volume: i32, position: [f32; 3], priority: i32, pan: i32 },
     /// KillItemSound for item `slot`.
     ItemSoundStop { slot: usize },
     /// AudioStreamSetVolume (0..0x7f × LEVL +0x94).
@@ -491,6 +493,10 @@ pub struct Game {
     pub bg_duck: sound_cues::BgDuck,
     /// BGMusic* state (bgmusic.rs).
     pub bg_music: bgmusic::BgMusic,
+    /// volMusic 0x21f6c8: the ELF's data holds 100; OptionsSetup's
+    /// AudioSetVolMusic sets GamePrefs word 1 (clamped 0..255), which the
+    /// host applies (Game::audio_set_vol_music).
+    pub vol_music: i32,
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).

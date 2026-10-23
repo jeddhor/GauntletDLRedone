@@ -52,6 +52,10 @@ are timing (animation phase, enemy positions), not content.
   every ELF cue ID, music stream, world sound and level movie resolves to
   disc assets. Event selection and timing come from the ported Audio*
   functions, checked by the whole-update replays.
-- Approximate: SPU volume/pan curves and mixing (audio.md "Not yet").
+- SPU volume/pan: ported from instructions (audio.md "DCS voices"):
+  AudioAng's pans from Cam[0], volSFX/volMusic/mono from the options,
+  DCS voice allocation, ducking and voiceSetVolPan with the disc's pan
+  table. Approximate: the SPU envelope, reverb, the hardware mix and the
+  movie soundtrack level.
 - Movies: PSS video through the system ffmpeg, audio decoded natively
   (decisions/0003-movies.md).

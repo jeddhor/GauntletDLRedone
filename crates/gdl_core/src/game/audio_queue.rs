@@ -162,8 +162,7 @@ impl Game {
         }
         let (busy, started) = self.audio_que.update(self.vb_counter as f32);
         for h in started {
-            let pan = h.at.is_none().then_some(h.pan);
-            self.events.push(Event::Sound { id: h.id, position: h.at, volume: h.volume, priority: h.priority, pan });
+            self.events.push(Event::Sound { id: h.id, position: h.at, volume: h.volume, priority: h.priority, pan: h.pan });
         }
         busy
     }

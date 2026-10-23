@@ -519,7 +519,7 @@ impl Game {
             self.players[p].set_i16(0x1ca, if self.globals.skip_wave == 0 { 0x32 } else { 0 });
             if self.globals.end_of_stage == 0 {
                 let pos = self.players[p].v3(0x50);
-                self.sfx(4, Some(pos), 0x7f, 9);
+                self.sfx(4, Some(pos), 0x7f, 9)?;
                 self.globals.end_of_stage = 1;
             }
             let v = self.players[p].u32_(0x88c);

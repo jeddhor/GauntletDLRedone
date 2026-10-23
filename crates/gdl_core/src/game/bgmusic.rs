@@ -5,11 +5,9 @@
 //! ShopMusicStart 0x15cfd0, their ends). The stream itself plays in the
 //! host: `Event::Music` starts a stage stream part (looping or once), the
 //! host reports `stream_playing`, `Event::MusicVolume` sets its volume.
-//! volMusic is 100 in the data (AudioSetVolMusic follows the options; the
-//! host applies its own music setting on top).
+//! volMusic (Game::vol_music) is 100 in the data until OptionsSetup's
+//! AudioSetVolMusic applies GamePrefs word 1.
 use super::{Event, Game};
-
-const VOL_MUSIC: i32 = 100;
 
 #[derive(Debug, Clone, Default)]
 pub struct BgMusic {
@@ -40,6 +38,11 @@ pub(crate) fn level_letter(cur_world: i32) -> char {
 }
 
 impl Game {
+    /// AudioSetVolMusic 0x120590: volMusic = v clamped to 0..255.
+    pub fn audio_set_vol_music(&mut self, v: i32) {
+        self.vol_music = v.clamp(0, 0xff);
+    }
+
     fn level_letter(&self) -> char {
         level_letter(self.globals.cur_world)
     }
@@ -47,7 +50,7 @@ impl Game {
     /// BGMusicStart: area 0, part 0, the volume at volMusic, then the first
     /// part (BGPlayStream).
     pub fn bg_music_start(&mut self) {
-        self.bg_music = BgMusic { running: true, cur_vol: VOL_MUSIC, ..Default::default() };
+        self.bg_music = BgMusic { running: true, cur_vol: self.vol_music, ..Default::default() };
         self.sounds.cues.ricochet_time = 0.0;
         self.bg_play_stream();
     }
@@ -133,9 +136,9 @@ impl Game {
         let target = if m.attn_change_now == 1 && m.attn_area != m.area && 1 < areas {
             if 3 < m.cur_vol { m.cur_vol - 3 } else { m.cur_vol }
         } else if self.globals.time < self.bg_duck.until {
-            (VOL_MUSIC as f32 * self.bg_duck.amount) as i32
+            (self.vol_music as f32 * self.bg_duck.amount) as i32
         } else {
-            VOL_MUSIC
+            self.vol_music
         };
         let cur = m.cur_vol;
         if target != cur {
@@ -155,7 +158,7 @@ impl Game {
         let _ = bank; // AudioLoadStage(bank): the host loads banks on demand.
         let id = self.sounds.rom.as_ref().and_then(|r| r.find(sound));
         if let Some(id) = id {
-            self.sfx(id, None, VOL_MUSIC, 1);
+            self.sfx_flat(id, self.vol_music, 1);
             self.bg_music.bank_music = Some(id);
         }
     }

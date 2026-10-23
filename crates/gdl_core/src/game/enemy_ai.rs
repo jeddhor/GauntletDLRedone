@@ -1063,7 +1063,7 @@ impl Game {
             if 0 <= self.enemies[i].i16_(0x288) && self.ef(i, 0x290) < self.ef(i, 0x314) && self.enemies[i].i16_(0x2f0) != 0 {
                 self.enemies[i].set_i32(0x330, 1);
                 let pos = self.enemies[i].v3(e::POSITION);
-                self.audio_golem_born(pos);
+                self.audio_golem_born(pos)?;
             }
             if self.enemies[i].i32_(0x330) == 0 {
                 self.set_enemy_anim_enabled(i, 0);
@@ -1723,7 +1723,7 @@ impl Game {
                     pain = 0;
                 } else if (t as u32).wrapping_sub(4) < 2 || t == 10 {
                     let level = self.enemies[i].i16_(0x21a);
-                    self.audio_player_hit(p, if level < 2 { 4 } else { 3 });
+                    self.audio_player_hit(p, if level < 2 { 4 } else { 3 })?;
                     pain = 0;
                 }
                 if flags & 0x130 == 0 {
@@ -2194,11 +2194,11 @@ impl Game {
         let at = self.enemies[i].v3(0x40);
         if 0.0 <= left {
             // do_death_sound(Death +0x40): the 0x66 loop panned at Death.
-            self.do_death_sound(at);
+            self.do_death_sound(at)?;
             self.death_touch = true;
         } else {
             self.enemies[i].set_i32(0x334, 1);
-            self.sfx(0x68, Some(at), 0xe0, 0xc);
+            self.sfx(0x68, Some(at), 0xe0, 0xc)?;
             self.enemy_dies(i, target as i16)?;
         }
         Ok(())

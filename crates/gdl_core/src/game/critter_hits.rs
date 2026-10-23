@@ -416,7 +416,7 @@ impl Game {
         if 0 <= sound {
             let pos = self.crit(i).rec.v3(c::POS);
             // AudioPlaySound(id, 0xe0, position, 3D flag): positional sound.
-            self.sfx(sound, Some(pos), 0xe0, 0x50);
+            self.sfx(sound, Some(pos), 0xe0, 0x50)?;
         }
         if flags & 2 != 0 {
             // ShakeCamera(0.1, 0, 0, 0x5a, 0x64).
@@ -1109,7 +1109,7 @@ impl Game {
                     }
                     _ => {}
                 }
-                self.audio_legend_item(3, Some(p));
+                self.audio_legend_item(3, Some(p))?;
                 if result < 2 {
                     result = 2;
                 }

@@ -4,16 +4,20 @@
 //! Sound IDs (bank << 16 | call) resolve through AUDATPS2.ROM to a VBK bank;
 //! a call plays its sample chain in order (0x4000/0x2000 loop markers loop
 //! the chain) at the VAG sample rate, as DCS.IRX voicePlayNextSample does.
-//! Volume = request volume × call volume / 0x7f (DCS BankPlay), scaled by
-//! 1/256; pan, ducking, priority-based voice stealing and the SPU envelope
-//! are approximations (labelled presentation). Music: a decoded ADS stream
-//! looping at its own rate.
+//! Requests pass AudioTrack4's EE step (volume × volSFX >> 8, the pan word,
+//! mono_flag's 0x7f) into the ported DCS voice model (gdl_core::dcs:
+//! BankPlay, voiceFind's 12 voices, ducking, VoiceVolume/VoicePan ramps,
+//! voiceSetVolPan's SPU volumes with the pan table read from IRX/DCS.IRX);
+//! each voice's output is its VOLL/VOLR word / 0x4000. Music: the decoded
+//! ADS stream, AdsSetVolume's per-channel word ((v × 0x1fff) >> 8) / 0x4000
+//! for AudioStreamSetVolume(v). Not modelled (presentation): the SPU
+//! envelope, pitch skew, reverb, the hardware mix's saturation.
+use gdl_core::dcs::{Dcs, PanTable};
 use gdl_formats::audio::{Ads, AudioRom, Vbk};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-const MAX_VOICES: usize = 24;
 const OUT_RATE: u32 = 48_000;
 
 /// A parsed bank with its decoded samples.
@@ -27,59 +31,89 @@ struct Voice {
     loops: bool,
     part: usize,
     pos: f64,
-    gain: [f32; 2],
-    priority: i32,
+    /// The DCS voice (0..11) it plays on.
+    slot: usize,
     /// An owner's voice (DoItemSound's per-item track): updated in place.
     tag: Option<u32>,
 }
 
-#[derive(Default)]
+/// The music channel: a stage stream (AudioStreamSetVolume word) or a
+/// movie's soundtrack.
+struct Music {
+    pcm: Arc<Vec<i16>>,
+    rate: u32,
+    channels: u32,
+    pos: f64,
+    /// The stage music loops (its last part) or plays once.
+    loops: bool,
+    /// Per-channel amplitude.
+    gain: f32,
+}
+
 struct Mixer {
     voices: Vec<Voice>,
-    music: Option<(Arc<Vec<i16>>, u32, u32, f64)>,
-    music_gain: f32,
-    /// The stage music loops (its last part) or plays once.
-    music_loops: bool,
-    /// AudioStreamSetVolume relative to volMusic (1.0 = 100).
-    music_level: f32,
-    /// Settings → Audio sound volume (GamePrefs word 0) / 128.
-    sfx_gain: f32,
+    dcs: Dcs,
+    pan_table: PanTable,
+    music: Option<Music>,
+    /// AudioStreamSetVolume's last value.
+    music_vol: i32,
+    /// volSFX 0x21f6c4 (AudioSetVolSfx: GamePrefs word 0, 0..255; the
+    /// ELF's data holds 128).
+    vol_sfx: i32,
+    /// mono_flag 0x21f6f4 (AudioSetStereo: GamePrefs word 2 == 0).
+    mono: bool,
     out_rate: u32,
 }
 
+/// AdsSetVolume's SPU word for AudioStreamSetVolume(v) (the RPC's
+/// (v & 0xffff) × 0x1fff >> 8) as an amplitude.
+fn stream_gain(v: i32) -> f32 {
+    (((v & 0xffff) * 0x1fff) >> 8) as f32 / 16384.0
+}
+
 impl Mixer {
+    fn new(pan_table: PanTable) -> Self {
+        Self { voices: Vec::new(), dcs: Dcs::default(), pan_table, music: None, music_vol: 0, vol_sfx: 128, mono: false, out_rate: OUT_RATE }
+    }
+
     fn render(&mut self, out: &mut [f32], channels: usize) {
         out.fill(0.0);
         let frames = out.len() / channels.max(1);
         let out_rate = f64::from(self.out_rate.max(1));
-        if let Some((pcm, rate, ch, pos)) = self.music.as_mut() {
-            let ch = (*ch).max(1) as usize;
-            let n = pcm.len() / ch;
-            let step = f64::from(*rate) / out_rate;
+        if let Some(m) = self.music.as_mut() {
+            let ch = m.channels.max(1) as usize;
+            let n = m.pcm.len() / ch;
+            let step = f64::from(m.rate) / out_rate;
+            // AdsSetVolume: stereo — each channel on its own side; mono
+            // output mode — both sides, each channel × 181/256.
+            let (g, cross) = if self.mono { (m.gain * 181.0 / 256.0, true) } else { (m.gain, false) };
             for f in 0..frames {
-                let i = (*pos as usize) % n.max(1);
-                let l = f32::from(pcm[i * ch]) / 32768.0;
-                let r = f32::from(pcm[i * ch + ch - 1]) / 32768.0;
-                let g = self.music_gain * self.music_level;
-                out[f * channels] += l * g;
+                let i = (m.pos as usize) % n.max(1);
+                let l = f32::from(m.pcm[i * ch]) / 32768.0;
+                let r = f32::from(m.pcm[i * ch + ch - 1]) / 32768.0;
+                let (ol, or) = if cross { ((l + r) * g, (l + r) * g) } else { (l * g, r * g) };
+                out[f * channels] += ol;
                 if 1 < channels {
-                    out[f * channels + 1] += r * g;
+                    out[f * channels + 1] += or;
                 }
-                *pos += step;
-                if n as f64 <= *pos {
-                    if !self.music_loops {
+                m.pos += step;
+                if n as f64 <= m.pos {
+                    if !m.loops {
                         // PlayStreamComplete: the part ended.
-                        *pos = n as f64;
+                        m.pos = n as f64;
                         break;
                     }
-                    *pos -= n as f64;
+                    m.pos -= n as f64;
                 }
             }
-            if !self.music_loops && n as f64 <= *pos {
+            if !m.loops && n as f64 <= m.pos {
                 self.music = None;
             }
         }
-        for v in &mut self.voices {
+        let mut ended = Vec::new();
+        for (k, v) in self.voices.iter_mut().enumerate() {
+            let [l, r] = self.dcs.vol_pan(v.slot, &self.pan_table);
+            let gain = [f32::from(l) / 16384.0, f32::from(r) / 16384.0];
             let mut f = 0;
             while f < frames && v.part < v.chain.len() {
                 let pcm = &v.chain[v.part];
@@ -96,17 +130,41 @@ impl Mixer {
                     continue;
                 }
                 let s = f32::from(pcm[i]) / 32768.0;
-                out[f * channels] += s * v.gain[0] * self.sfx_gain;
+                out[f * channels] += s * gain[0];
                 if 1 < channels {
-                    out[f * channels + 1] += s * v.gain[1] * self.sfx_gain;
+                    out[f * channels + 1] += s * gain[1];
                 }
                 v.pos += step;
                 f += 1;
             }
+            if v.chain.len() <= v.part {
+                ended.push(k);
+            }
         }
-        self.voices.retain(|v| v.part < v.chain.len());
+        for &k in ended.iter().rev() {
+            // voicePlayNextSample with no next sample: the duck undone; the
+            // envelope then reaches zero.
+            let slot = self.voices.remove(k).slot;
+            self.dcs.chain_end(slot);
+            self.dcs.silent(slot);
+        }
         for s in out.iter_mut() {
             *s = s.clamp(-1.0, 1.0);
+        }
+    }
+
+    /// VoiceStop for the voices `keep` rejects.
+    fn stop_where(&mut self, stop: impl Fn(&Voice) -> bool) {
+        let mut mask = 0u32;
+        self.voices.retain(|v| {
+            let s = stop(v);
+            if s {
+                mask |= 1 << v.slot;
+            }
+            !s
+        });
+        if mask != 0 {
+            self.dcs.stop(mask);
         }
     }
 }
@@ -123,8 +181,20 @@ pub struct AudioOut {
 }
 
 impl AudioOut {
-    pub fn new(rom: AudioRom, bank_paths: HashMap<String, PathBuf>, stream_paths: HashMap<String, PathBuf>) -> Self {
-        let mixer = Arc::new(Mutex::new(Mixer { music_gain: 0.5, music_level: 1.0, music_loops: true, sfx_gain: 1.0, out_rate: OUT_RATE, ..Default::default() }));
+    /// `dcs`: IRX/DCS.IRX's bytes (its pan table); without them the pan
+    /// curve is a computed quarter sine (labelled in `status`).
+    pub fn new(rom: AudioRom, bank_paths: HashMap<String, PathBuf>, stream_paths: HashMap<String, PathBuf>, dcs: Option<&[u8]>) -> Self {
+        let (table, note) = match dcs.map(PanTable::from_irx) {
+            Some(Ok(t)) => (t, ""),
+            Some(Err(_)) | None => {
+                let mut t = [0u16; 256];
+                for (k, v) in t.iter_mut().enumerate() {
+                    *v = (16384.0 * (std::f64::consts::FRAC_PI_2 * k as f64 / 256.0).sin()) as u16;
+                }
+                (PanTable(t), "; DCS pan table unavailable: APPROXIMATE pan curve")
+            }
+        };
+        let mixer = Arc::new(Mutex::new(Mixer::new(table)));
         let mut status = String::from("audio: no output device");
         let silent = std::env::var_os("GDL_NO_AUDIO").is_some();
         if silent {
@@ -134,6 +204,7 @@ impl AudioOut {
         if stream.is_some() {
             status = "audio: on (ALSA)".into();
         }
+        status.push_str(note);
         Self { mixer, rom, bank_paths, stream_paths, banks: HashMap::new(), _stream: stream, status }
     }
 
@@ -152,36 +223,33 @@ impl AudioOut {
         self.banks.get(&b).and_then(Option::as_ref)
     }
 
-    /// Start sound `id` with request volume, pan (−1..1) and priority (the
-    /// simulation's audio queue already serialises voice lines).
-    pub fn play(&mut self, id: i32, volume: i32, pan: f32, priority: i32) {
+    /// AudioTrack4 (AudioSFX/SFX2/SFX3, the queue): sound `id` with the
+    /// request volume, pan word (AudioAng or a fixed pan) and priority.
+    pub fn play(&mut self, id: i32, volume: i32, pan: i32, priority: i32) {
         self.play_ex(id, volume, pan, priority, false);
     }
 
     /// AudioLOOP: the call's chain repeats until stopped.
-    pub fn play_loop(&mut self, id: i32, volume: i32, pan: f32, priority: i32) {
+    pub fn play_loop(&mut self, id: i32, volume: i32, pan: i32, priority: i32) {
         self.play_ex(id, volume, pan, priority, true);
     }
 
-    /// DoItemSound: the owner's looping voice started, or its volume and
-    /// pan set (AudioTrackVol / AudioTrackPan).
-    pub fn play_tagged(&mut self, tag: u32, id: i32, volume: i32, pan: f32, priority: i32) {
-        let gain = |c_vol: f32| {
-            let g = (volume.max(0) as f32 / 256.0) * c_vol;
-            let pan = pan.clamp(-1.0, 1.0);
-            [g * (1.0 - pan.max(0.0)), g * (1.0 + pan.min(0.0))]
-        };
+    /// DoItemSound: the owner's looping voice started (AudioLOOP), else
+    /// AudioTrackVol (volume × volSFX >> 8 → VoiceVolume's ramp) and
+    /// AudioTrackPan (→ VoicePan's ramp; 0x7f when mono).
+    pub fn play_tagged(&mut self, tag: u32, id: i32, volume: i32, pan: i32, priority: i32) {
         if let Ok(mut m) = self.mixer.lock()
-            && let Some(v) = m.voices.iter_mut().find(|v| v.tag == Some(tag) && v.id == id)
+            && let Some(slot) = m.voices.iter().find(|v| v.tag == Some(tag) && v.id == id).map(|v| v.slot)
         {
-            let (b, call) = AudioRom::split(id);
-            let c_vol = self.banks.get(&b).and_then(Option::as_ref).and_then(|(vbk, _)| vbk.calls.get(call)).map_or(1.0, |c| f32::from(c.volume) / 127.0);
-            v.gain = gain(c_vol);
+            let vol = volume.wrapping_mul(m.vol_sfx) >> 8;
+            let pan = if m.mono { 0x7f } else { pan };
+            m.dcs.voice_volume(1 << slot, vol & 0xffff);
+            m.dcs.voice_pan(1 << slot, pan);
             return;
         }
-        self.play_ex(id, volume, pan, priority, true);
-        if let Ok(mut m) = self.mixer.lock()
-            && let Some(v) = m.voices.iter_mut().rev().find(|v| v.id == id && v.tag.is_none())
+        if let Some(k) = self.play_ex(id, volume, pan, priority, true)
+            && let Ok(mut m) = self.mixer.lock()
+            && let Some(v) = m.voices.iter_mut().find(|v| v.slot == k)
         {
             v.tag = Some(tag);
         }
@@ -190,14 +258,16 @@ impl AudioOut {
     /// KillItemSound for an owner.
     pub fn stop_tagged(&mut self, tag: u32) {
         if let Ok(mut m) = self.mixer.lock() {
-            m.voices.retain(|v| v.tag != Some(tag));
+            m.stop_where(|v| v.tag == Some(tag));
         }
     }
 
-    fn play_ex(&mut self, id: i32, volume: i32, pan: f32, priority: i32, force_loop: bool) {
+    /// AudioTrack4's request (volume × volSFX >> 8 << 16 | pan, 0x7f when
+    /// mono) into BankPlay; the DCS voice, or None when voiceFind drops it.
+    fn play_ex(&mut self, id: i32, volume: i32, pan: i32, priority: i32, force_loop: bool) -> Option<usize> {
         let (b, call) = AudioRom::split(id);
-        let Some((vbk, pcm)) = self.bank(b) else { return };
-        let Some(c) = vbk.calls.get(call) else { return };
+        let (vbk, pcm) = self.bank(b)?;
+        let c = vbk.calls.get(call)?;
         let mut chain = Vec::new();
         let mut rates = Vec::new();
         let mut loop_from = None;
@@ -216,70 +286,64 @@ impl AudioOut {
             }
         }
         if chain.is_empty() {
-            return;
+            return None;
         }
-        loops |= force_loop;
-        let g = (volume.max(0) as f32 / 256.0) * (f32::from(c.volume) / 127.0);
-        let pan = pan.clamp(-1.0, 1.0);
-        let gain = [g * (1.0 - pan.max(0.0)), g * (1.0 + pan.min(0.0))];
-        let v = Voice { id, chain, rates, loop_from: loop_from.or(Some(0)), loops, part: 0, pos: 0.0, gain, priority, tag: None };
-        if let Ok(mut m) = self.mixer.lock() {
-            if MAX_VOICES <= m.voices.len() {
-                // Steal the lowest-priority voice (approximation of DCS voiceFind).
-                if let Some((k, _)) = m.voices.iter().enumerate().min_by_key(|(_, x)| x.priority) {
-                    m.voices.remove(k);
-                } else {
-                    return;
-                }
-            }
-            m.voices.push(v);
-        }
+        let (cv, cd, cp) = (c.volume, c.duck, c.priority);
+        let mut m = self.mixer.lock().ok()?;
+        let vol = volume.wrapping_mul(m.vol_sfx) >> 8;
+        let pan = if m.mono { 0x7f } else { pan };
+        let request = ((vol as u32) << 16) | (pan as u32 & 0xffff);
+        let slot = m.dcs.bank_play(request, priority as u32, cv, cd, cp)?;
+        // A stomped voice's sound ends here.
+        m.voices.retain(|v| v.slot != slot);
+        m.voices.push(Voice { id, chain, rates, loop_from: loop_from.or(Some(0)), loops: loops | force_loop, part: 0, pos: 0.0, slot, tag: None });
+        Some(slot)
     }
 
+    /// AudioSoundKill / StopSound: VoiceStop on the ID's voices.
     pub fn stop(&mut self, id: i32) {
         if let Ok(mut m) = self.mixer.lock() {
-            m.voices.retain(|v| v.id != id);
+            m.stop_where(|v| v.id == id);
         }
     }
 
     pub fn stop_all(&mut self) {
         if let Ok(mut m) = self.mixer.lock() {
-            m.voices.clear();
+            m.stop_where(|_| true);
             m.music = None;
         }
     }
 
-    /// Settings → Audio: GamePrefs music (+4) and sound (+0) volumes, 128 =
-    /// the captured session's value (presentation scaling: gain × v / 128).
-    pub fn set_volumes(&mut self, music: u8, sfx: u8) {
+    /// AudioSetVolSfx (GamePrefs word 0, clamped 0..255) and AudioSetStereo
+    /// (word 2; mono when 0). volMusic belongs to the simulation
+    /// (Game::audio_set_vol_music).
+    pub fn set_options(&mut self, sfx: i32, stereo: i32) {
         if let Ok(mut m) = self.mixer.lock() {
-            m.music_gain = 0.5 * f32::from(music) / 128.0;
-            m.sfx_gain = f32::from(sfx) / 128.0;
+            m.vol_sfx = sfx.clamp(0, 0xff);
+            m.mono = stereo == 0;
         }
     }
 
-    /// AudioStreamPlay: a STREAMS/<name> part, looping or once, at volume
-    /// (0..0x7f; 100 = volMusic). False when the file is missing.
+    /// AudioStreamPlay: a STREAMS/<name> part, looping or once, at
+    /// AudioStreamSetVolume(volume). False when the file is missing.
     pub fn stream(&mut self, name: &str, looping: bool, volume: i32) -> bool {
         let Some(path) = self.stream_paths.get(&name.to_uppercase()) else { return false };
         let Ok(bytes) = std::fs::read(path) else { return false };
         let Ok(ads) = Ads::parse(&bytes) else { return false };
         let pcm = Arc::new(ads.decode(&bytes));
         if let Ok(mut m) = self.mixer.lock() {
-            m.music = Some((pcm, ads.rate, ads.channels, 0.0));
-            m.music_loops = looping;
-            m.music_level = volume.max(0) as f32 / 100.0;
+            m.music_vol = volume;
+            m.music = Some(Music { pcm, rate: ads.rate, channels: ads.channels, pos: 0.0, loops: looping, gain: stream_gain(volume) });
         }
         true
     }
 
     /// A movie's soundtrack (the PSS private stream) on the music channel,
-    /// once, at full stream level.
+    /// once. Its level (audioDec* reads volMusic) is not ported: 0.5,
+    /// APPROXIMATE.
     pub fn play_pcm(&mut self, pcm: Vec<i16>, rate: u32, channels: u32) {
         if let Ok(mut m) = self.mixer.lock() {
-            m.music = Some((Arc::new(pcm), rate, channels, 0.0));
-            m.music_loops = false;
-            m.music_level = 1.0;
+            m.music = Some(Music { pcm: Arc::new(pcm), rate, channels, pos: 0.0, loops: false, gain: 0.5 });
         }
     }
 
@@ -291,7 +355,10 @@ impl AudioOut {
     /// AudioStreamSetVolume.
     pub fn stream_volume(&mut self, volume: i32) {
         if let Ok(mut m) = self.mixer.lock() {
-            m.music_level = volume.max(0) as f32 / 100.0;
+            m.music_vol = volume;
+            if let Some(music) = m.music.as_mut() {
+                music.gain = stream_gain(volume);
+            }
         }
     }
 
@@ -346,42 +413,50 @@ fn start_alsa(mixer: Arc<Mutex<Mixer>>) -> Option<std::thread::JoinHandle<()>> {
 mod tests {
     use super::*;
 
-    fn voice(pcm: Vec<i16>, rate: u32, loops: bool) -> Voice {
-        Voice {
-            id: 1,
-            chain: vec![Arc::new(pcm)],
-            rates: vec![rate],
-            loop_from: Some(0),
-            loops,
-            part: 0,
-            pos: 0.0,
-            gain: [1.0, 0.5],
-            priority: 0,
-            tag: None,
+    fn table() -> PanTable {
+        let mut t = [0u16; 256];
+        for (k, v) in t.iter_mut().enumerate() {
+            *v = (16384.0 * (std::f64::consts::FRAC_PI_2 * k as f64 / 256.0).sin()) as u16;
         }
+        PanTable(t)
+    }
+
+    /// A voice on DCS slot `slot` at full volume, pan 0 (left only).
+    fn voice(m: &mut Mixer, pcm: Vec<i16>, rate: u32, loops: bool) -> usize {
+        let slot = m.dcs.bank_play(0xff << 16, 1, 0x7f, 0, 0).unwrap();
+        m.voices.push(Voice { id: 1, chain: vec![Arc::new(pcm)], rates: vec![rate], loop_from: Some(0), loops, part: 0, pos: 0.0, slot, tag: None });
+        slot
     }
 
     #[test]
     fn mixer_plays_a_chain_once_and_resamples() {
         // Synthetic: 4 samples at 24 kHz into a 48 kHz output → 8 frames.
-        let mut m = Mixer { out_rate: 48_000, sfx_gain: 1.0, ..Default::default() };
-        m.voices.push(voice(vec![16384; 4], 24_000, false));
+        let mut m = Mixer::new(table());
+        let slot = voice(&mut m, vec![16384; 4], 24_000, false);
+        let [l, r] = m.dcs.vol_pan(slot, &m.pan_table);
         let mut out = vec![0f32; 2 * 10];
         m.render(&mut out, 2);
-        assert_eq!(out[0], 0.5);
-        assert_eq!(out[1], 0.25);
-        assert_eq!(out[14], 0.5);
+        assert_eq!(out[0], 0.5 * f32::from(l) / 16384.0);
+        assert_eq!((r, out[1]), (0, 0.0));
+        assert_eq!(out[14], out[0]);
         assert_eq!(out[16], 0.0);
         assert!(m.voices.is_empty());
+        assert!(!m.dcs.in_use(slot), "the DCS voice is free again");
     }
 
     #[test]
     fn loops_persist_after_a_one_shot_ends() {
-        let mut m = Mixer { out_rate: 48_000, sfx_gain: 1.0, ..Default::default() };
-        m.voices.push(voice(vec![100; 2], 48_000, false));
-        m.voices.push(voice(vec![1; 2], 48_000, true));
+        let mut m = Mixer::new(table());
+        voice(&mut m, vec![100; 2], 48_000, false);
+        voice(&mut m, vec![1; 2], 48_000, true);
         let mut out = vec![0f32; 2 * 4];
         m.render(&mut out, 2);
         assert_eq!(m.voices.len(), 1); // the one-shot finished; the loop persists
+    }
+
+    #[test]
+    fn stream_gain_follows_ads_set_volume() {
+        // (100 × 0x1fff) >> 8 = 3199.
+        assert_eq!(stream_gain(100), 3199.0 / 16384.0);
     }
 }

@@ -64,7 +64,10 @@ def audio_config():
     banks = [n for n in names if n.startswith('AUDIO/') and n.endswith('.VBK')]
     streams = [n for n in names if n.startswith('STREAMS/') and n.endswith('.ADS')]
     rom, = resolve(['AUDIO/AUDATPS2.ROM'])
-    return dict(rom=str(rom),
+    # IRX/DCS.IRX (the IOP sound driver, read in place from the extracted
+    # disc filesystem): voiceSetVolPan's pan table (identity checked by the client).
+    dcs = pathlib.Path('private/disc/IRX/DCS.IRX')
+    return dict(rom=str(rom), **({'dcs': str(dcs)} if dcs.exists() else {}),
                 banks={n[6:-4]: str(p) for n, p in zip(banks, resolve(banks))},
                 streams={n[8:]: str(p) for n, p in zip(streams, resolve(streams))})
 

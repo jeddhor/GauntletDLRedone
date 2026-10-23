@@ -34,8 +34,9 @@
   AudioSFX3 volume × AudioVolMul. AudioPlayerPain and AudioPlayerEatSFX consume
   RandInt(4) as the original does.
 - `gdl_client::audio`: ALSA mixer thread (presentation): sample chains at VAG rates,
-  loops, queued voice lines, music loop. Pan, ducking, voice stealing and the
-  SPU envelope/pitch are approximations.
+  loops, queued voice lines, music loop; voice volumes, pans, ducking and
+  voice allocation from the DCS voice model below. The SPU envelope, pitch
+  skew, reverb and the hardware mix's saturation are not modelled.
 
 - `gdl_core::game::bgmusic` (2026-10-21): BGMusicStart 0x15cc50 / BGMusicUpdate
   0x15cd40 / BGPlayStream 0x15c7a0 / BGMusicStop 0x15cd00 as a state machine
@@ -120,8 +121,51 @@ bindings; event selection and timing are checked by the whole-update
 replays (gameplay.md: sound events are Game::events from the ported Audio*
 functions).
 
+## DCS voices and the volume/pan chain (2026-10-23)
+
+Ported from instructions (EE: private/reports/ghidra-audio2/3/5/8; IOP
+DCS.IRX: ghidra-dcs1/dcs2):
+
+- EE. AudioSFX 0x1227f0 / AudioLOOP 0x1229e0 take the pan from AudioAng
+  0x1218a0: the x/z direction from Cam[0]'s attention point (+0x140) to the
+  source, normalised (NormalVector), dotted with Cam[0]'s first matrix row
+  (+0x10) × 127.5 + 127.5, truncated, negated when row.x · dir.z <
+  row.z · dir.x, clamped to −0x100..0xff; 0x7f without a position or with
+  mono_flag. AudioSFX2 and the queue carry fixed pans. AudioTrack4 sends
+  (volume × volSFX >> 8) << 16 | pan (0x7f when mono) and the priority.
+  DoItemSound updates its loop each frame with AudioTrackVol (volume ×
+  volSFX >> 8) and AudioTrackPan(AudioAng). volSFX 0x21f6c4 (data 128),
+  volMusic 0x21f6c8 (data 100) and mono_flag 0x21f6f4 (data 0) are set by
+  OptionsSetup 0x10a5c0 from GamePrefs words 0, 1 and 2 (AudioSetVolSfx /
+  AudioSetVolMusic clamp to 0..255; AudioSetStereo: mono = word 2 == 0).
+- IOP (gdl_core::dcs). BankPlay 0x5b10: voiceFind 0x4864 over 12 voices
+  from a round-robin start (a free voice — no next sample, no duck held,
+  envelope off — else a voice whose priority word, request priority << 16 |
+  call priority, is a new running maximum not above the raw request
+  priority, i.e. in practice the request is dropped); volume = (request
+  volume × call volume) / 0x7f − gVolDuck, pan word kept; a call with a duck
+  word runs voiceDuck 0x43f4 (gVolDuck += duck × gVolDuckScale >> 8 —
+  0x100 from aud_init's RPC 0x13 block — and every voice in use loses it),
+  undone at the chain's end, a stomp or VoiceStop. VoiceVolume / VoicePan
+  move a voice by at most 8 per call (pans the short way within
+  −0x200..0x1ff). voiceSetVolPan 0x39d4: L = R = 0x3fff × max(vol, 0) / 255
+  (VagParseHeader's base 0x3fff; overflow folding above 0x3fff), then L ×
+  f_L >> 14 and R × f_R >> 14 into 15-bit VOLL/VOLR, the factors from the
+  quarter-sine table at DCS.IRX 0xb188 (u16[256], SHA-256 ac069de9…, read
+  from the user's IRX by identity) by the pan word's mode (bits 8..9): 0 →
+  (sin[255−p], sin[p]); 1 → (−sin[p], sin[255−p]); 2 → (−sin[255−p],
+  −sin[p]); 3 → (sin[p], −sin[255−p]) — AudioAng's negated pans (sources
+  behind the camera) phase-invert the right channel.
+- Music: aud_stream_volume 0x123fb0 sends 0x55ab, v | 0xffff0000; DCS sets
+  AdsSetVolume((v & 0xffff) × 0x1fff >> 8) per channel (stereo: each ADS
+  channel on its side; mono output mode: both sides × 181/256).
+- Evidence: synthetic tests (gdl_core dcs, gdl_client audio) and the
+  actual-disc table (dcs-pan-v1: identity and the words for representative
+  pans); no SPU capture compares the mixed output.
+- Approximate: movie soundtrack level (audioDec* reads volMusic; 0.5).
+
 ## Not yet
 
-Tower coin sounds, exact SPU volume/pan curves, the
+Tower coin sounds, an SPU-level output comparison, the
 +0xf8 world-node motion of moving sound items (the position stays the
 placement), AudioLoadStage bank residency (the host loads banks on demand).

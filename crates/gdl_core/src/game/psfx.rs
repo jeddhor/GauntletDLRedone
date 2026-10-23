@@ -469,7 +469,7 @@ impl Game {
             let sound = u32_at(&srec, 0xc) as i32;
             if 0 <= sound && flags & 0xf00_0000 == 0 {
                 let at = self.players[p].v3(0x50);
-                self.sfx(sound, Some(at), 0xe0, 1);
+                self.sfx(sound, Some(at), 0xe0, 1)?;
             }
             if flags & 2 != 0 {
                 self.shake_camera(f32::from_bits(0x3dcc_cccd), 0, 0, 0x5a, 100);

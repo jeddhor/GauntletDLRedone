@@ -110,7 +110,7 @@ impl Game {
         over.timer2 += vb;
         if before < 0x3c && 0x3b < over.timer2 {
             // AudioGameOver 0x15e228: AudioFX(0x1005a, 0xe0, 0x14).
-            self.sfx(0x1_005a, None, 0xe0, 0x14);
+            self.sfx_flat(0x1_005a, 0xe0, 0x14);
         }
         let n = ((over.timer2 - 0x3c) >> 3).clamp(0, 9) as usize;
         let blits = self.hud.string_text_prefix_blits(-0x100, 0x78, 6, 0xffffff, 0xa9, 0, 2.0, n);

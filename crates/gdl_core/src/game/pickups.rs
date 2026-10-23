@@ -372,7 +372,7 @@ impl Game {
                         sound = 6;
                     }
                     let at = self.players[player].v3(0x50);
-                    self.audio_damage_tile(at, sound);
+                    self.audio_damage_tile(at, sound)?;
                     let t = add(mul((i32::from(r.i16_(0xda)) + 1) as f32, f32::from_bits(0x3d08_8889))?, self.globals.time)?;
                     self.players[player].set_f32(p::HAZARD_TIME, t);
                     self.help(0x15, idx);
@@ -484,7 +484,7 @@ impl Game {
             let rr = &mut self.items.records[chest];
             rr.set_u16(0xd8, rr.u16_(0xd8) | 0x40);
             if self.sounds.rom.is_some() {
-                self.events.push(Event::Sound { id: 0x2d, position: None, volume: 0xe0, priority: 0x14, pan: None });
+                self.events.push(Event::Sound { id: 0x2d, position: None, volume: 0xe0, priority: 0x14, pan: 0x7f });
             }
             return Ok(());
         }
