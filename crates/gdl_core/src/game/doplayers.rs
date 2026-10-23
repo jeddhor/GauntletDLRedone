@@ -112,14 +112,18 @@ impl Game {
         // HYPOTHESIS: SetPlayerStartPos leaves PlayerStartPos/Yaw at the
         // chosen start locator (the placement inputs).
         self.player_start = (start, yaw);
-        let (y, hit) = self.collision.floor_pos(start[1], 0.5, start, 1).map_err(|e| Unsupported(e.0.to_string()))?;
+        let (y, _) = self.collision.floor_pos(start[1], 0.5, start, 1).map_err(|e| Unsupported(e.0.to_string()))?;
         let r = &mut self.players[p];
         r.set_v3(0x50, [start[0], y, start[2]]);
         r.set_v3(0xd8, [0.0, yaw, 0.0]);
         r.set_f32(0x86c, yaw);
         r.set_f32(0x88c, y);
         r.set_f32(0x8a4, y);
-        r.set_u32(0x89c, hit.map_or(0, |h| h.object as u32 + 1));
+        // get_player_pos clears the floor object and its start path does not
+        // set it (reference J4 start: +0x89c 0, trace-J4-start-v2); the
+        // first PlayerMotion registers the floor (PlayerNewFloor), parenting
+        // the player to a moving start platform.
+        r.set_u32(0x89c, 0);
         r.set_i32(0xfc, 1);
         r.set_i16(0x928, 0);
         r.set_i16(0x1ca, 0);

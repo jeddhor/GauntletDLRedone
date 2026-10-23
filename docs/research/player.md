@@ -428,6 +428,19 @@ player is a level-start one. get_player_pos(p, mode):
 - No other player: PlayerStartPos (test_location: FloorPos within 3), the
   16 probes, then PlayerInitStartPos[0]; FloorPos y, the start yaw.
 
+Level start on a moving floor (2026-10-23, J4): the reference capture
+w10l4-start-v1 (warped from slot 3 through do_exit's wave skip, labelled)
+starts the player on platform object 43 with +0x89c = 0 and +0x100 = 5 (do_players'
+previous state, left by the exit), and trace-J4-start-v1 shows the platform
+carrying the player (x −20.5 → −69.4, then down). With +0x100 ≠ 1 the first
+PlayerMotion takes PlayerCollideFloor's moving path, so PlayerNewFloor
+registers the floor and PlayerCheckMovingFloor parents the player to it.
+Native: place_player clears +0x89c as get_player_pos does (it had stored
+the floor object, so the first motion never ran PlayerNewFloor), and
+game_run's fixture-based level starts set +0x100 = 5 (the fixture is
+mid-play, +0x100 = 1); the client's records keep the previous level's value.
+Native now rides the platform as the reference does.
+
 try_location 0x14cbd8(other, p, pos, out, blocker, 1): FloorPos(WldBtm,
 r/2) must hit — the same object when other stands on a 0x1000 (moving)
 object — within 6 of other's +0x88c, and within 3 unless other's +0x898
