@@ -57,6 +57,39 @@ Adjust; Escape on the "Press Start" screen exits. The HUD shows colour/class, le
 save slot, health, gold, keys, potions, kills, active enemies and standing
 generators; F1 adds the interim labels and any unported path hit.
 
+M12 walkthrough (2026-10-22, gdl_play on the private Xvfb through
+tools/python/client_driver.py; frames in private/runs/client-m12a,
+client-m12b, client-ex1..4, client-die4):
+1. Start: title → Start → select: New, the default name, Sorceress → the
+   Tower's WelcomeMessage (triangle turns the pages) and the crystal camera.
+2. Play: all fifteen Tower crystals (counter, got-it panels, gem effects),
+   UnlockLevel ("You now have enough Crystals to enter the Forsaken
+   Province"), Sumner's hint pad, the gargoyle door's NeedGargItems message
+   (repeats every 10 s of game time while the player stays on it, as
+   TowerNeedGargItemsMsg arms its timer after the box), the realm door, the
+   level circle (portal I open), the realm map, the level movie, G1: combat
+   (kills, experience, a generator destroyed, "Collect potion before using
+   magic"), a key pickup.
+3. Finish: G1's exit portal (also reached by the warped reference capture
+   ref-g1-exit-stand-v1: the same tally) → the tally (Stats), the shop, the
+   level panel, the inventory, the select column; G2 entered by the debug
+   F9 and left by Shift+F9 to the Tower.
+4. Save: the select column → Save → slot 1 → "No Gauntlet save data ...
+   Create 285KB Save File?" → Yes → the first file → Done → the Tower with
+   portals I–III open.
+5. Restart and recover: a new client on a copy of the save directory →
+   Start → Load → slot 1 → JUSTIN (health 296 as saved) → Done → the
+   Tower: the crystal set delivered, the floor crystals gone, portals I–III
+   open.
+6. Failure: dying in G1 (no input among the enemies) → the "In Tower"
+   panel → TowerWave's skipped shop → init_next_level → the Tower at the
+   realm's level circle with the level-start state restored (health 500,
+   the level's experience gone).
+Fixed on the way: triangle closes scrolls (measured buttons), the shop's
+player panels (SetPlayerVars per mode), the all-dead loop between the
+skipped shop and the select screen. Not compared with the reference beyond
+the frames named here.
+
 GUI checks: tools/python/client_driver.py drives gdl_play on the private
 Xvfb (serve/send of key-hold steps, frames of the client's own window,
 private/runs/client-TAG/); F2 (DEBUG) logs player 0's position and crystal

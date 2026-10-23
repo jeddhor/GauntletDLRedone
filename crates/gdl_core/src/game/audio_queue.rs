@@ -173,6 +173,11 @@ impl Game {
         self.que_update()
     }
 
+    /// DEBUG: the voice queue's end times and entry count with vb_counter.
+    pub fn audio_que_debug(&self) -> (u32, [f32; 2], usize) {
+        (self.vb_counter, self.audio_que.endtime, self.audio_que.entries.iter().map(Vec::len).sum())
+    }
+
     /// AudioSoundPlaying(id): a track of `id` not yet at its end.
     pub fn audio_sound_playing(&self, id: i32) -> bool {
         self.audio_que.playing(self.vb_counter as f32, id)

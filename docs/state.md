@@ -217,6 +217,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (player.md "Pad buttons") — gamepad/keyboard triangle and square were
    swapped and the shoulder buttons wrong; Enable/DisablePlayerControls
    ported in full (lockout 4); the pause menu keeps PlayerControls running.
+   Then the M12 walkthrough (research/playtest.md): start, play, finish,
+   save, restart and recover, and a death, all in the GUI through
+   tools/python/client_driver.py; fixed the shop/map/select panels
+   (SetPlayerVars in every mode) and the all-dead loop (a skipped shop goes
+   to init_next_level).
 
 ---
 

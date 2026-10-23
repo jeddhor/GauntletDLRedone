@@ -1421,7 +1421,9 @@ struct Sim {
     /// The level init_next_level enters after the select screen.
     select_next: Option<usize>,
     /// The level to load once the shop finished (after the select screen).
-    shop_done: Option<usize>,
+    /// do_shop's end: the Tower's level index and whether the shop was
+    /// skipped (init_shop's skip_shop).
+    shop_done: Option<(usize, bool)>,
     /// The level the map screen leads to (init_gamemovie, init_next_level).
     map_done: Option<usize>,
     /// game mode 0x400e: an in-game movie and where play goes on after it.
@@ -3286,7 +3288,7 @@ fn simulate(
         let r = g.update_controls(&ports).and_then(|_| g.do_shop(&mut flow, &front.shop)).and_then(|r| if r == 0 { g.do_players().map(|_| 0) } else { Ok(r) });
         match r {
             Ok(0) => sim.shop = Some((flow, tower)),
-            Ok(_) => sim.shop_done = Some(tower),
+            Ok(_) => sim.shop_done = Some((tower, flow.skip)),
             Err(e) => sim.error = Some(format!("do_shop: {}", e.0)),
         }
         let new: Vec<Event> = sim.game.events.drain(..).collect();
@@ -5575,7 +5577,37 @@ fn front_system(world: &mut EcsWorld) {
                 let at = g.players[0].v3(0x50);
                 let cls = 0xb4 * g.players[0].u32_(0xc) as usize;
                 let counts: Vec<i16> = (0..9).map(|n| g.players[0].i16_(0xd0a + cls + 2 * n)).collect();
-                eprintln!("DEBUG F2 player {at:?} crystals {counts:?} max {:?}", g.items.tables.max_crystals);
+                eprintln!("DEBUG F2 player {at:?} crystals {counts:?} max {:?} time {} garg_mtime {:?} door_mtime {:?}", g.items.tables.max_crystals, g.globals.time, g.tower.garg_mtime, g.tower.door_mtime);
+                eprintln!(
+                    "DEBUG F2 state game_mode {:#x} active_players {:#x} mask {:#x} states {:?} continue {:?} level_done {:?} exit_ready {} updates {} error {:?} unsupported {:?}",
+                    g.globals.game_mode,
+                    g.globals.active_players,
+                    g.active_player_mask,
+                    (0..4).map(|k| g.players[k].i32_(0xfc)).collect::<Vec<_>>(),
+                    (0..4).map(|k| g.players[k].i32_(0x2ad4)).collect::<Vec<_>>(),
+                    g.level_done,
+                    g.exit_ready,
+                    sim.updates,
+                    sim.error,
+                    g.log.unsupported.iter().filter(|(_, n)| 0 < **n).map(|(k, n)| format!("{k} x{n}")).collect::<Vec<_>>()
+                );
+                eprintln!(
+                    "DEBUG F2 flow shop {:?} select {:?} map {} movie {} over {} shop_done {:?} select_next {:?} que {:?} box {} help {} paused {}",
+                    sim.shop.as_ref().map(|(f, k)| (f.skip, f.from_menu, *k)),
+                    sim.select.as_ref().map(|ps| (ps.mode, ps.load_audio, ps.abort_req)),
+                    sim.map.is_some(),
+                    sim.movie.is_some(),
+                    sim.over.is_some(),
+                    sim.shop_done,
+                    sim.select_next,
+                    g.audio_que_debug(),
+                    sim.message_box.is_some(),
+                    g.globals.help,
+                    g.globals.paused
+                );
+                if let Some(s) = world.get_resource::<Session>() {
+                    eprintln!("DEBUG F2 session banner {:?} finished {:?} next {:?} ui_paused {}", s.banner, s.finished, s.next, world.resource::<Ui>().paused);
+                }
                 for (s, r) in g.items.records.iter().enumerate() {
                     let p = r.position();
                     let d = ((p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2) + (p[2] - at[2]).powi(2)).sqrt();
@@ -6031,6 +6063,8 @@ fn advance_level(
     // TowerWave → init_shop(0), which skips without a player in state 1/5.
     if !ui.paused
         && session.banner.is_none()
+        && session.next.is_none()
+        && sim.game.globals.game_mode == 0x4010
         && sim.shop.is_none()
         && sim.shop_done.is_none()
         && sim.game.players[0].i32_(0xfc) == 0xb
@@ -6039,15 +6073,21 @@ fn advance_level(
     {
         start_shop(&mut sim, &front, k);
     }
-    // do_shop finished: init_player_select(2) (game_main: unless the shop
-    // was skipped), then init_next_level into the Tower.
-    if let Some(k) = sim.shop_done.take() {
-        match sim.game.init_player_select(2, &session.pdats) {
-            Ok(ps) => {
-                sim.select = Some(ps);
-                sim.select_next = Some(k);
+    // do_shop finished: init_player_select(2), then init_next_level into the
+    // Tower; game_main goes to init_next_level at once when the shop was
+    // skipped (skip_shop: nobody in state 1/5, e.g. every player dead).
+    if let Some((k, skipped)) = sim.shop_done.take() {
+        if skipped {
+            session.next = Some(k);
+            session.banner = Some((0.0, String::new()));
+        } else {
+            match sim.game.init_player_select(2, &session.pdats) {
+                Ok(ps) => {
+                    sim.select = Some(ps);
+                    sim.select_next = Some(k);
+                }
+                Err(e) => sim.error = Some(format!("init_player_select: {}", e.0)),
             }
-            Err(e) => sim.error = Some(format!("init_player_select: {}", e.0)),
         }
     }
     // do_mapscreen finished: LoadWorldData, init_gamemovie (the level's

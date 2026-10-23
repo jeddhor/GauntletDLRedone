@@ -5,7 +5,6 @@ bounded number of vblanks (F10, optional held keys) and save a screenshot of
 the virtual display. Research only; no guest writes; outputs stay private.
 """
 import argparse
-import hashlib
 import json
 import pathlib
 import socket
@@ -16,14 +15,13 @@ from pine_probe import Pine, configured_socket
 from reference_trace import KEYS, schedule_segments
 from virtual_display import environment
 
-SLOTS = {1: 'poison-fields-original.p2s', 2: 'tower-newgame-v1.p2s', 3: 'w2l1-newgame-v1.p2s',
-         4: 'w1l1-newgame-v1.p2s', 5: 'w11l1-newgame-v1.p2s', 6: 'w7l1-newgame-v1.p2s', 7: 'w11l1-newgame-v2.p2s',
-         8: 'w2l6-boss-v1.p2s'}
+from reference_slots import SLOTS, resolve  # noqa: E402
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--slot', type=int, choices=sorted(SLOTS), default=1)
+    parser.add_argument('--stage', help='a preserved capture name to load through the staging slot 9 instead of --slot')
     parser.add_argument('--steps', type=int, default=2)
     parser.add_argument('--keys', nargs='*', choices=KEYS, default=[])
     parser.add_argument('--schedule', type=pathlib.Path,
@@ -42,10 +40,7 @@ def main():
     env = environment()
     if launch.get('display') != env['DISPLAY'] or not launch.get('diagnostic_hotkeys'):
         raise ValueError('reference was not launched with virtual-display stepping bindings')
-    fixture = pathlib.Path(f'private/reference/config/PCSX2/sstates/SLUS-20047 (15030637).{args.slot:02d}.p2s')
-    frozen = pathlib.Path('private/reference/captures') / SLOTS[args.slot]
-    if hashlib.sha256(fixture.read_bytes()).digest() != hashlib.sha256(frozen.read_bytes()).digest():
-        raise ValueError(f'private slot {args.slot} differs from its preserved capture')
+    args.slot, frozen = resolve(args.slot, args.stage)
     profile = json.loads(pathlib.Path('profiles/ps2/slus-20047-reference.json').read_text())
     vb_counter = profile['symbols']['vb_counter']['guest_address']
 
@@ -108,7 +103,7 @@ def main():
                 xdo('keyup', key)
     time.sleep(0.3)
     subprocess.run(['import', '-window', 'root', str(args.out)], env=env, check=True)
-    print(f'{sum(s["steps"] for s in segments)} vblanks from slot {args.slot} ({SLOTS[args.slot]}); schedule {segments}; {args.out}')
+    print(f'{sum(s["steps"] for s in segments)} vblanks from slot {args.slot} ({frozen.name}); schedule {segments}; {args.out}')
 
 
 if __name__ == '__main__':
