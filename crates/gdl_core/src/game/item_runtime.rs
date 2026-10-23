@@ -128,10 +128,15 @@ impl Game {
 
     /// AnimateATree on an item; returns the original mask.
     fn animate_item(&mut self, slot: usize, clip: u16, mode: i32) -> R<u32> {
-        let Some(anim) = self.item_anims.get(slot).cloned().flatten() else { return Ok(0) };
+        let Some(mut anim) = self.item_anims.get(slot).cloned().flatten() else { return Ok(0) };
         let (Some(&current), Some(&requested)) = (anim.clips.get(anim.current as usize), anim.clips.get(clip as usize)) else {
             return Ok(0);
         };
+        // The AnimInfo is the record's (+0x84): ProcessItems' writes to the
+        // loop word (+0xb8, e.g. the exit's stage rule) are what AnimateATree
+        // reads, and InitAnim's replacement on a sequence change is what the
+        // record then holds.
+        anim.clock.loop_word = self.items.records[slot].u16_(0xb8);
         let out = select(
             anim.clock,
             current,
@@ -159,7 +164,9 @@ impl Game {
         // AnimInfo mirrors read by ProcessItems: +0x90 count, +0x94 frames, +0x92 sequence.
         let frames = a.clips[a.current as usize].frames;
         let count = a.clips.len() as i16;
+        let loop_word = a.clock.loop_word;
         let r = &mut self.items.records[slot];
+        r.set_u16(0xb8, loop_word);
         r.set_i16(0x90, count);
         r.set_i16(0x92, a.current as i16);
         r.set_i16(0x94, frames);
@@ -187,9 +194,12 @@ impl Game {
             // AtreeInit: InitAnimInfo (+0x28/+0x2c 1.0 = record +0xac/+0xb0;
             // +0x38 = record +0xbc the node count) and InitAnim(0).
             a.clock = super::setup::atree_init_clock(&a.clips, self.globals.atime, self.globals.anim_time_scale)?;
+            let loop_word = a.clock.loop_word;
             let r = &mut self.items.records[slot];
             r.set_f32(0xac, 1.0);
             r.set_i32(0xbc, nodes);
+            // The AnimInfo's loop word lives in the record (+0x84 + 0x34).
+            r.set_u16(0xb8, loop_word);
         }
         Ok(())
     }
@@ -1140,9 +1150,18 @@ impl Game {
             rr.or_u16(0xd8, 0x400);
         }
         let de = rr.i8_(0xde);
-        rr.set_i16(0xb8, i16::from(de == 3 || de < 2));
         rr.set_u8(0xdd, rr.u8_(0xdc));
+        self.set_item_loop_word(slot, u16::from(de == 3 || de < 2));
         Ok(())
+    }
+
+    /// A ProcessItems write to the AnimInfo loop word (+0x84 + 0x34): the
+    /// record's and the native clock's (one word in the original).
+    fn set_item_loop_word(&mut self, slot: usize, v: u16) {
+        self.items.records[slot].set_u16(0xb8, v);
+        if let Some(Some(a)) = self.item_anims.get_mut(slot) {
+            a.clock.loop_word = v;
+        }
     }
 
     /// Type 10 case (G1: subtypes 0x2a..0x2d and 0).
@@ -1430,7 +1449,7 @@ impl Game {
                 }
             }
         }
-        self.items.records[slot].set_i16(0xb8, 0);
+        self.set_item_loop_word(slot, 0);
         if self.globals.trig_cam_active != 0 || self.items.records[slot].u16_(0xf4) & 0xc0 != 0 {
             return Ok(());
         }

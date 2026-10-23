@@ -12,8 +12,11 @@
 //!
 //! Exit flow (transcribed): DoExit 0x146610 (PlayerMotion), player_collis_exit
 //! 0x15b5a8, all_players_go_to_same_level 0x132930, anybody_playing 0x1328d8
-//! and do_exit 0x132b58 for player state 4. FireScrollActive, skins, audio
-//! and the help text are presentation. Level start placement follows
+//! and do_exit 0x132b58 for player state 4 (the destination, the exit glow
+//! skin, the sinking spin; compared in replay-frame-G1exit). FireScrollActive
+//! is false whenever the simulation steps (the client's scroll box is modal);
+//! del_target 0x168f78 (the 15-entry target list at 0x23eec0) is not
+//! modelled; the help text is presentation. Level start placement follows
 //! get_player_pos 0x14cef8's single-player path (PlayerStartPos, FloorPos);
 //! test_location/new_offset spreading is not ported.
 use super::{Game, Unsupported, R};
@@ -559,10 +562,26 @@ impl Game {
             let r = &self.players[p];
             let limit = add(add(add(r.f32_(0x82c), r.f32_(0x82c))?, r.f32_(0x54))?, 1.0)?;
             if r.f32_(0x890) < limit {
-                let y = add(r.f32_(0x54), crate::numeric::mul_rz(vb as f32, f32::from_bits(0xbdf5_c28f))?)?;
-                self.players[p].set_f32(0x54, y);
-                let s = self.players[p].u16_(0x93c) | 1;
-                self.players[p].set_u16(0x93c, s);
+                // 0x132d70..0x132eb0: (0, −0.12, 0) × vb_elapsed added to
+                // +0x50/+0x54/+0x58 (the zero adds turn −0.0 into +0.0), then
+                // the sinking player spins: YawMat3(SPF × 3π, +0x20).
+                let mul = crate::numeric::mul_rz;
+                let v = vb as u32 as f32;
+                let d = [mul(v, 0.0)?, mul(v, f32::from_bits(0xbdf5_c28f))?, mul(v, 0.0)?];
+                let r = &mut self.players[p];
+                for (i, dv) in d.into_iter().enumerate() {
+                    let o = 0x50 + 4 * i;
+                    r.set_f32(o, add(r.f32_(o), dv)?);
+                }
+                let mut rows = [r.v3(0x20), r.v3(0x30), r.v3(0x40)];
+                let spin = mul(self.globals.spf, f32::from_bits(0x4116_cbe5))?;
+                crate::collision::yaw_mat3(&mut rows, spin).map_err(|e| Unsupported(e.0.to_string()))?;
+                let r = &mut self.players[p];
+                r.set_v3(0x20, rows[0]);
+                r.set_v3(0x30, rows[1]);
+                r.set_v3(0x40, rows[2]);
+                let s = r.u16_(0x93c) | 1;
+                r.set_u16(0x93c, s);
             }
         }
         Ok(())
