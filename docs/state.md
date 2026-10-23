@@ -222,6 +222,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    tools/python/client_driver.py; fixed the shop/map/select panels
    (SetPlayerVars in every mode) and the all-dead loop (a skipped shop goes
    to init_next_level).
+   Scene comparisons (2026-10-22): every captured level (A1, B1, G1, K2,
+   the eleven boss arenas, A1's statues) at the reference's camera
+   (reference_screenshot.py --stage, reference_camera.py, GDL_DEBUG_CAMERA;
+   private/reports/scene-<tag>-ref.png / -native.png). Found and fixed in
+   gdl_play: multiplayer-only items drawn in single player (+0xe1), statues,
+   rocks (SAFEROCK<stage>), switches (kind 5), GRU-style generators
+   (ItemFindMBObjectL1's +L1), Skorne's OANIM lower body, E2's falling
+   floor slabs (level-table models). Remaining differences seen are timing
+   (animation phase, enemies' positions).
 
 ---
 

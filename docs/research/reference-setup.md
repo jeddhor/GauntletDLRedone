@@ -93,6 +93,7 @@ warp-*.json and screenshots in private/reports):
 | 9 (staging) | w2l6-bosskill-v1.p2s (sha256 7deb9cd5…) | slot 8 with CritterInsts[0] (the dragon) +0x4f4 written to 10, 1 vblank | B6, WARPED health (guest write); for the boss death |
 | 9 (staging) | w2l6-bosskill-v2/v3/v4.p2s | the previous capture after trace-B6-bosskill-v1's schedule / 600 idle vblanks / 600 idle vblanks | B6 after the death: the good wizard's start, speech, exit timer |
 | 9 (staging) | w9l5-boss-v2.p2s (sha256 793dedef…) | from w9l5-boss-v1: player 0 written to (9.6, −4.047, −5.2), 62 units from the yeti (a floor point by collision-query), 4 vblanks | I5, WARPED position (guest write); for the yeti's activation |
+| 9 (staging) | w<world>l1-newgame-v1.p2s (C1 w3l1 2f900463…, D1 w4l1 66612cc8…, E1 w5l1 004c564e…, F1 w6l1 e55998c1…, H1 w8l1 ccd78cd3…, I1 w9l1 8ed67c0d…, J1 w10l1 b9fce914…) | from slot 3: player 0 onto B1's exit, skip_wave 0x10000 + the realm's first wave, `--until-wave` (1000..1100 vblanks; reports warp-<level>-start-v1.json) | the realm's first level in play — WARPED route (guest writes), for scene comparisons |
 
 Slot 9 is a staging slot (tools/python/reference_slots.py): `--stage NAME`
 copies a preserved capture into it for reference_trace.py / reference_warp.py,
