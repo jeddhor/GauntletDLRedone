@@ -231,6 +231,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (ItemFindMBObjectL1's +L1), Skorne's OANIM lower body, E2's falling
    floor slabs (level-table models). Remaining differences seen are timing
    (animation phase, enemies' positions).
+   Checks after the session's changes: r39 equal to r35 (r35 itself equal
+   to r34 apart from the added good-wizard traces), sweep sw60 51/51 and
+   identical to sw59, client smoke test (Tower new game, B6, E2, K5, I5,
+   A1: no panic, no simulation error, no unported path). Boss deaths re-run
+   for all eleven bosses (critters.md); fixed ExtractPYR's zero divisor and
+   the client's level end after the auto exit.
 
 ---
 

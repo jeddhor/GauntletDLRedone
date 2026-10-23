@@ -122,7 +122,9 @@ pub fn extract_pyr(m: &[f32; 16]) -> R<[f32; 3]> {
     if c == 0.0 {
         return Ok(if 0.0 < p { [p, atan2(-m[2], -m[6])?, atan2(-m[8], -m[9])?] } else { [p, atan2(-m[2], m[6])?, atan2(m[8], m[9])?] });
     }
-    let div = |a: f32, b: f32| crate::numeric::div_rn(a, b).map_err(|_| Unsupported("div".into()));
+    // div.S (EE FPU, 0x1d68c8/0x1d68f0/0x1d68fc): a zero divisor (m[10] = 0
+    // makes k zero) gives ±FLT_MAX (div_rn_ee; D5's look-at nodes reach it).
+    let div = |a: f32, b: f32| crate::numeric::div_rn_ee(a, b).map_err(|_| Unsupported("ExtractPYR div".into()));
     let k = div(m[10], c)?;
     let y = atan2(-m[2], k)?;
     let r = atan2(div(-m[1], k)?, div(m[0], k)?)?;

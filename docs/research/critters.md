@@ -264,7 +264,20 @@ exit (do_players done and the voice queue empty) to TowerWave 0xd00.
 Headless (actual disc data, GDL_DEBUG boss-kill): A5, B6, C5, D5, E2, F2,
 G5, H4, J5, K5 run the sequence to level_done 0xd00
 (private/reports/game-run-<level>-goodwiz-v1.json); I5's boss does not
-activate on the scripted walk. Native GUI A5: the wizard and the captions
+activate on the scripted walk. Re-run 2026-10-22 on the current engine
+(record-based players): bosses now activate as in the reference, so an
+idle player leaves A5, C5, D5, G5, I5 and J5 without a boss instance; with
+the reference traces' routes (the boss schedule; D5 Up+Right; I5 from the
+warped capture's spot, game-run --teleport now moves record-based players)
+all eleven die, run the good wizard to state 11 and the auto exit to
+game_main's level end (Game::exit_ready; goodwiz-v2/v3/v4/v5 reports), with
+no unported path. Found on the way: ExtractPYR's three div.S
+(0x1d68c8..0x1d68fc) take the EE's zero-divisor result (div_rn_ee: ±FLT_MAX,
+an upstream PCSX2 claim) — D5's look-at nodes reach m[10] = 0, which the
+port had refused; gdl_play's level end waited for a level_done value that
+only portal exits set, so a boss level never ended after the auto exit (now
+triggered by exit_ready, as game_main; checked in the GUI: K5's kill →
+wizard → tally). Native GUI A5: the wizard and the captions
 "You have defeated the fearsome Chimera…", "You have not found any
 runestones from this realm." shown.
 

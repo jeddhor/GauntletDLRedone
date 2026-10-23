@@ -2909,6 +2909,17 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "pos":e.v3(0x40),"heading":e.f32_(0x260),"target":e.i16_(0x288),"dist":e.f32_(0x290),"health":e.f32_(0x214),"anim_enabled":e.u16_(0xa2)}));
             }
             if opts.contains_key("pads") {
+                if f == 0
+                    && let Some(t) = opts.get("teleport")
+                {
+                    // DEBUG: the record-based player 0 at x,y,z (place_player:
+                    // FloorPos below the point, as gdl_play's GDL_DEBUG_TELEPORT;
+                    // not a fidelity input, recorded in the report).
+                    let v: Vec<f32> = t.split(',').map(str::parse).collect::<Result<_, _>>()?;
+                    let at = [*v.first().ok_or("teleport x")?, *v.get(1).ok_or("teleport y")?, *v.get(2).ok_or("teleport z")?];
+                    let yaw = game.players[0].f32_(0x86c);
+                    game.place_player(0, at, yaw).map_err(|e| e.0)?;
+                }
                 let mut pads = [gdl_core::game::pad::PadStatus::default(); 8];
                 pads[0].connected = true;
                 let m = pad_script.get(f).copied().unwrap_or(0);

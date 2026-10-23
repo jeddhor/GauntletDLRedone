@@ -6263,12 +6263,21 @@ fn advance_level(
         sim.game.exit_ready = true;
         sim.debug_skip = true;
     }
+    // game_main's level end: do_players reported done and the voice queue
+    // is quiet (Game::exit_ready, once per level) — a portal exit (do_exit's
+    // countdown), the auto exit after a boss's good wizard, or everyone
+    // dead; game_main_level_end picks the destination. level_done carries
+    // only the F9 (DEBUG) destination.
     if session.banner.is_none()
         && session.finished.is_none()
-        // game_main: the exit waits for do_players and the voice queue.
-        && sim.game.exit_ready
-        && let Some(wave) = sim.game.level_done.take()
+        && sim.game.globals.game_mode == 0x4010
+        && sim.shop.is_none()
+        && sim.map.is_none()
+        && sim.movie.is_none()
+        && sim.over.is_none()
+        && std::mem::take(&mut sim.game.exit_ready)
     {
+        let wave = sim.game.level_done.take().unwrap_or(gdl_core::game::boss::TOWER_WAVE);
         let name = session.levels[session.current].name.clone();
         let tower = session.levels.iter().position(|l| l.world == 0xd);
         // game_main's level end (game::exitflow); F9 (DEBUG) goes straight
