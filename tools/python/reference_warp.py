@@ -56,6 +56,9 @@ def main():
     parser.add_argument('--pos3', type=float, nargs=3, help='player 3 (third record) position written after the reload (guest write)')
     parser.add_argument('--pos4', type=float, nargs=3, help='player 4 (fourth record) position written after the reload (guest write)')
     parser.add_argument('--skip-wave', type=lambda v: int(v, 0), help="skip_wave written after the reload: 0x10000 + world << 8 | record (do_exit's wave skip; guest write)")
+    parser.add_argument('--poke', action='append', default=[], metavar='SYMBOL+OFF=WORD',
+                        help='a 32-bit guest write after the reload: an executable symbol plus a hex offset, '
+                             'the word hex (0x…) or a float (f:1.5); labelled warped, e.g. players+0x154=f:60')
     parser.add_argument('--critter-health', nargs=2, metavar=('INDEX', 'VALUE'),
                         help='CritterInsts[INDEX] +0x4f4 health written after the reload (a live instance; guest write)')
     parser.add_argument('--until-wave', type=lambda v: int(v, 0),
@@ -169,6 +172,13 @@ def main():
         if args.skip_wave is not None:
             write32(sym['skip_wave'], args.skip_wave)
             log.append(dict(write=dict(skip_wave=f'{args.skip_wave:#x}')))
+        for poke in args.poke:
+            target, value = poke.split('=', 1)
+            name, _, off = target.partition('+')
+            addr = elf_symbols({name})[name] + (int(off, 16) if off else 0)
+            word_v = struct.unpack('<I', struct.pack('<f', float(value[2:])))[0] if value.startswith('f:') else int(value, 16)
+            write32(addr, word_v)
+            log.append(dict(write=dict(poke=poke, address=f'{addr:08x}', word=f'{word_v:08x}')))
         if args.critter_health:
             k, v = int(args.critter_health[0]), float(args.critter_health[1])
             inst = sym['CritterInsts'] + 0xb70 * k
@@ -276,7 +286,7 @@ def main():
         time.sleep(0.3)
         subprocess.run(['import', '-window', 'root', str(args.shot)], env=env, check=True)
     with args.report.open('x') as f:
-        json.dump(dict(source_slot=args.slot, source_capture=frozen.name, warped=bool(args.pos) or bool(args.pos2) or bool(args.pos3) or bool(args.pos4) or args.skip_wave is not None,
+        json.dump(dict(source_slot=args.slot, source_capture=frozen.name, warped=bool(args.pos) or bool(args.pos2) or bool(args.pos3) or bool(args.pos4) or bool(args.poke) or args.skip_wave is not None,
                        schedule=segments, log=log), f, indent=1)
     for entry in log:
         print(entry)

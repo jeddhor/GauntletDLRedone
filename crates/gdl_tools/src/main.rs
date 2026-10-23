@@ -3381,6 +3381,19 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let yaw = game.players[0].f32_(0x86c);
                     game.place_player(0, at, yaw).map_err(|e| e.0)?;
                 }
+                // DEBUG powerup=KIND:FLAGS_HEX:SECONDS at update 0 in player
+                // 0's second powerup slot (+0x154), e.g. 9:2:60 (X-ray).
+                if f == 0
+                    && let Some(v) = opts.get("powerup")
+                {
+                    let parts: Vec<&str> = v.split(':').collect();
+                    let (k, fl, t) = (parts.first().ok_or("powerup kind")?.parse::<i32>()?, u32::from_str_radix(parts.get(1).ok_or("powerup flags")?, 16)?, parts.get(2).ok_or("powerup time")?.parse::<f32>()?);
+                    let r = &mut game.players[0];
+                    r.set_f32(0x154, t);
+                    r.set_i32(0x158, k);
+                    r.set_f32(0x15c, 0.0);
+                    r.set_u32(0x160, fl);
+                }
                 let mut pads = [gdl_core::game::pad::PadStatus::default(); 8];
                 pads[0].connected = true;
                 // players=N: the other players' pads are present (idle), so
@@ -3442,6 +3455,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         .map(|q| { let mut c = game.collision.clone(); let (top, len, rad) = if q.len() == 5 { (q[2], q[3], q[4]) } else { (r.v3(0x50)[1] + 60.0, 120.0, 0.0) }; let h = c.floor_collide(rad, 0.0, -len, [q[0], top, q[1]], true, 0).ok().and_then(|(c, _)| c.solid); serde_json::json!([q, h.map(|h| (h.object, h.position[1]))]) }).collect()).unwrap_or_default();
                     // itemw=SLOT,...: those item records' +0xd8, +0xde, +0xe1, +0xe2.
                     let itemw: Vec<_> = opts.get("itemw").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.items.records.len()).map(|o| { let ir = &game.items.records[o]; serde_json::json!([o, format!("{:#x}", ir.u16_(0xd8)), ir.i8_(0xde), ir.u8_(0xe1), ir.u8_(0xe2), ir.f32_(0xfc), ir.f32_(0xe8), ir.v3(0x60)]) }).collect()).unwrap_or_default();
+                    let see_thru = serde_json::json!([game.see_thru[0].chest, game.see_thru[0].contents, format!("{:?}", game.see_thru[0].icon), r.u32_(0x138)]);
                     samples.push(serde_json::json!({"frame":f,"watch":watch,"probe":probe,"itemw":itemw,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
                         "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),"floor_y":r.f32_(0x88c),"water_y":r.f32_(0x8a4),
                         "turbo":r.f32_(0x800),"weapon_flags":r.u32_(0x130),"trail":[r.i32_(0x7d8), r.i32_(0x7dc), game.weap_trail[0].iter().filter(|c| c.is_some()).count() as i32],"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
@@ -3452,6 +3466,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "boss_health":usize::try_from(game.boss_crit_inst - 1).ok().and_then(|b| game.critters.get(b)).and_then(|c| c.as_ref()).map(|c| c.rec.f32_(0x4f4)),
                         "effects":(0..game.effects.num).filter(|&k| 0.0 < game.effects.slots[k].f32_(0x68)).map(|k| serde_json::json!({"slot":k,"kind":game.effects.slots[k].u32_(0x60),"link":game.effects.slots[k].i16_(0xe8),"visual":game.effects.nodes[k].map(|n| format!("{:?}", n.visual)),"follow":game.effects.nodes[k].and_then(|n| n.follow)})).collect::<Vec<_>>(),
                         "others":(1..4).filter(|&k| game.globals.active_players >> k & 1 != 0).map(|k| serde_json::json!({"player":k,"pos":game.players[k].v3(0x50),"state":game.players[k].i32_(0xfc),"health":game.players[k].f32_(0x1a10)})).collect::<Vec<_>>()}));
+                    if let Some(last) = samples.last_mut() {
+                        last["see_thru"] = see_thru;
+                    }
                 }
                 continue;
             }

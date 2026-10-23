@@ -14,7 +14,7 @@ use bevy::{
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     render::render_resource::{
-        AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, CompareFunction, Extent3d,
+        AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, ColorWrites, CompareFunction, Extent3d,
         PrimitiveTopology, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDimension,
         TextureFormat,
     },
@@ -306,6 +306,16 @@ pub struct GsDraw {
     /// opaque — the GS multiplies the frame under the whole polygon,
     /// including below the base pass's rejected or translucent texels.
     pub lightmap_pass: bool,
+    /// Depth only (no colour writes, depth always written; the texture's
+    /// alpha test shapes it), sorted first among translucent draws: the
+    /// X-ray view's "SEETHRU" window (do_see_thru).
+    pub depth_only: bool,
+    /// Sorted after other translucent draws at its depth: a chest seen
+    /// through an X-ray window.
+    pub sort_late: bool,
+    /// Sorted before every translucent draw, the depth-only window
+    /// included: the contents' icon of an X-ray view.
+    pub sort_first: bool,
 }
 
 impl From<&GsMaterial> for GsDraw {
@@ -327,6 +337,9 @@ impl GsDraw {
             multiply: false,
             fixed_alpha: false,
             lightmap_pass: false,
+            depth_only: false,
+            sort_late: false,
+            sort_first: false,
         }
     }
 }
@@ -393,7 +406,17 @@ impl Material for GsMaterial {
     /// The lightmap pass sorts just after its base draw (same mesh centre;
     /// Transparent3d sorts by view distance + bias, stable).
     fn depth_bias(&self) -> f32 {
-        if self.draw.lightmap_pass { 0.001 } else { 0.0 }
+        if self.draw.sort_first {
+            -2000.0
+        } else if self.draw.depth_only {
+            -1000.0
+        } else if self.draw.sort_late {
+            1.0
+        } else if self.draw.lightmap_pass {
+            0.001
+        } else {
+            0.0
+        }
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -416,6 +439,17 @@ impl Material for GsMaterial {
     ) -> Result<(), SpecializedMeshPipelineError> {
         let draw = key.bind_group_data;
         descriptor.primitive.cull_mode = None;
+        if draw.depth_only {
+            if let Some(depth) = descriptor.depth_stencil.as_mut() {
+                depth.depth_write_enabled = true;
+                depth.depth_compare = CompareFunction::Always;
+            }
+            if let Some(Some(target)) = descriptor.fragment.as_mut().map(|f| f.targets.get_mut(0)).flatten() {
+                target.write_mask = ColorWrites::empty();
+                target.blend = None;
+            }
+            return Ok(());
+        }
         if draw.lightmap_pass {
             if let Some(depth) = descriptor.depth_stencil.as_mut() {
                 depth.depth_write_enabled = false;

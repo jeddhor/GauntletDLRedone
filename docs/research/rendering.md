@@ -627,3 +627,23 @@ reference camera (client-towercmp-h): the emblem's outlines and the floor
 decals' edges as in the reference; emblem region (rows 200..384, x
 150..500) 18.8/15.1/8.7 → 18.1/14.7/8.4 against 16.6/13.3/7.4. G1, A1 and C1
 at their reference cameras (client-lmpass-*): no visible change otherwise.
+
+## The X-ray chest view (2026-10-23)
+
+do_see_thru / end_see_thru / ClosestChest are ported (game::seethru; see
+its module note for the rules). Reference: a labelled powerup write (kind
+9, flags 2, reference_warp --poke) with the player beside G1's chest 43
+(private/reports/xray-ref-v1.png): a rounded window (POWERUPS "SEETHRU",
+texture XRAY_A) is cut through the chest's front, the ground behind and
+the contents' icon visible inside. gdl_play draws the icon at the chest's
+matrix × 0.65 sorted before all translucent draws, the window as a
+depth-only, alpha-tested draw (no colour writes, depth always written)
+sorted first among the rest and moved towards the camera by the chest
+definition's radius (scaled to keep its screen size), and the chest's parts
+sorted after it — so the chest fails the depth test inside the window.
+HYPOTHESIS: the node Z modifier −800 (MBTreeSetZMod; VU1's use of it is not
+read) is approximated by that offset; the icon tree's MB flag 8 is not
+modelled. Native capture: private/runs/client-xray-g1f (GDL_DEBUG_POWERUP=
+9:2:120 with GDL_DEBUG_TELEPORT next to chest 43). The contents differ by
+moment: random contents resolve through RandItemIdx without advancing, so
+they follow the item random state, in both.

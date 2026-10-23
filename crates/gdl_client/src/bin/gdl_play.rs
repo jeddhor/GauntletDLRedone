@@ -3150,6 +3150,9 @@ fn present_particles(
                     no_depth_write,
                     depth_always,
                     lightmap_pass: false,
+                    depth_only: false,
+                    sort_late: false,
+                    sort_first: false,
                 },
             };
             let handle = materials.add(m);
@@ -3864,6 +3867,20 @@ fn simulate(
         r.set_f32(0x14c, 0.0);
         r.set_u32(0x150, f);
     }
+    // DEBUG: GDL_DEBUG_POWERUP=<kind>:<flags hex>:<seconds> puts that powerup
+    // in player 1's second slot (+0x154) once at update 600, e.g. 9:2:60 for
+    // the X-ray view (+0x138 2). Not a game feature.
+    if sim.updates == 600
+        && let Some(v) = std::env::var("GDL_DEBUG_POWERUP").ok()
+        && let [k, f, t] = v.split(':').collect::<Vec<_>>()[..]
+        && let (Ok(k), Ok(f), Ok(t)) = (k.parse::<i32>(), u32::from_str_radix(f, 16), t.parse::<f32>())
+    {
+        let r = &mut sim.game.players[0];
+        r.set_f32(0x154, t);
+        r.set_i32(0x158, k);
+        r.set_f32(0x15c, 0.0);
+        r.set_u32(0x160, f);
+    }
     // DEBUG: GDL_DEBUG_FX=1 logs the live effect slots every 10 updates.
     if std::env::var("GDL_DEBUG_FX").is_ok() && sim.updates.is_multiple_of(10) {
         let g = &sim.game;
@@ -4348,6 +4365,178 @@ fn present_world(
             }
             slot.key = key;
         }
+    }
+}
+
+/// Player `.0`'s X-ray chest view (Game::see_thru): the contents' icon tree
+/// at 0.65 on a node at the chest's matrix (do_see_thru's AtreeInit under
+/// seethru_node).
+#[derive(Component)]
+struct SeeThruView(usize, Option<String>);
+
+/// InitItemInfoData's "SEETHRU" object (POWERUPS, texture XRAY_A, MB flags
+/// 0x4200000: camera-facing; node Z modifier −800) for player `.0`. The
+/// reference (xray-ref-v1, a labelled powerup write beside G1's chest 43)
+/// shows its rounded window cut through the chest's front, the contents'
+/// icon and the ground behind visible: drawn after the icon and before the
+/// chest, it writes only depth, nearer than the chest. Here: depth only,
+/// sorted first among translucent draws, offset towards the camera by the
+/// chest definition's radius (+0xc; HYPOTHESIS for the Z modifier, whose
+/// VU1 use is not read), with the chest's parts sorted after it.
+#[derive(Component)]
+struct SeeThruFrame(usize);
+
+/// A chest part drawn through an X-ray window: its own material.
+#[derive(Component)]
+struct ThroughChest(Handle<gdl_client::GsMaterial>);
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn present_see_thru(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    session: Res<Session>,
+    libs: Res<Libraries>,
+    root: Query<Entity, With<MirrorRoot>>,
+    mut views: Query<(Entity, &mut SeeThruView, &mut Transform, &mut Visibility), Without<SeeThruFrame>>,
+    mut frames: Query<(&SeeThruFrame, &mut CameraFace, &mut Transform, &mut Visibility), Without<SeeThruView>>,
+    (slots, children, mut parts, through): (
+        Query<(Entity, &Slot)>,
+        Query<&Children>,
+        Query<&mut MeshMaterial3d<gdl_client::GsMaterial>>,
+        Query<(Entity, &ThroughChest)>,
+    ),
+    (mut materials, mut variants, mut pending): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<PartVariants>, ResMut<PendingTreePsys>),
+) {
+    let Ok(root) = root.single() else { return };
+    let g = &sim.game;
+    if views.is_empty() {
+        let frame_parts = libs.0.get("POWERUPS").and_then(|lib| lib.by_label.get("SEETHRU")).cloned().unwrap_or_default();
+        for p in 0..4 {
+            let v = commands.spawn((SeeThruView(p, None), Transform::default(), Visibility::Hidden, LevelEntity)).id();
+            commands.entity(root).add_child(v);
+            let f = commands.spawn((SeeThruFrame(p), CameraFace { mode: 0x400_0000, anchor: Vec3::ZERO, offset: Vec3::ZERO }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
+            commands.entity(root).add_child(f);
+            for (mesh, material) in &frame_parts {
+                let Some(mut m) = materials.get(material).cloned() else { continue };
+                m.draw.depth_only = true;
+                m.alpha_mode = AlphaMode::Blend;
+                let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(materials.add(m)), Transform::default())).id();
+                commands.entity(f).add_child(child);
+            }
+        }
+        return;
+    }
+    let items = &session.levels[session.current].items;
+    let shown = |p: usize| -> Option<(usize, String)> {
+        let s = g.see_thru.get(p)?;
+        let c = s.chest?;
+        let name = match s.icon.as_ref()? {
+            gdl_core::game::seethru::SeeThruIcon::Death => "DEATH_ICON".to_string(),
+            gdl_core::game::seethru::SeeThruIcon::Keys => "KEYRING".to_string(),
+            gdl_core::game::seethru::SeeThruIcon::Tree(d) => String::from_utf8_lossy(g.items.definitions.get(*d)?.name()).into_owned(),
+        };
+        Some((c, name))
+    };
+    let mut chests = std::collections::HashSet::new();
+    for (entity, mut view, mut tf, mut vis) in &mut views {
+        let Some((c, name)) = shown(view.0) else {
+            *vis = Visibility::Hidden;
+            continue;
+        };
+        let Some(r) = g.items.records.get(c) else { continue };
+        chests.insert(c);
+        let m = r.matrix();
+        let mut t = record_transform([Vec3::from_array(m[0]), Vec3::from_array(m[1]), Vec3::from_array(m[2])], Vec3::from_array(r.position()));
+        t.scale *= 0.65;
+        *tf = t;
+        *vis = Visibility::Inherited;
+        if view.1.as_deref() != Some(name.as_str()) {
+            spawn_parts(&mut commands, entity, item_parts(&sources, &libs, items, &name), &mut materials, &mut variants, &mut pending);
+            view.1 = Some(name);
+        }
+    }
+    for (frame, mut face, mut ftf, mut vis) in &mut frames {
+        match shown(frame.0).and_then(|(c, _)| g.items.records.get(c)) {
+            Some(r) => {
+                // seethru_node takes the chest node's 3×3 (its scale too).
+                let m = r.matrix();
+                let scale = Vec3::from_array(m[0]).length();
+                face.anchor = Vec3::from_array(r.position());
+                let radius = g.items.definitions[r.definition()].f32_(0xc);
+                face.offset = Vec3::new(0.0, 0.0, radius);
+                // Moved towards the camera only for depth: keep the size it
+                // has on screen at the chest's centre.
+                let eye = g.std_camera.as_ref().map(|c| Vec3::from_array(c.pb.eye));
+                let d = eye.map_or(0.0, |e| e.distance(face.anchor));
+                let k = if radius < d { (d - radius) / d } else { 1.0 };
+                ftf.scale = Vec3::splat(scale * k);
+                *vis = Visibility::Inherited;
+            }
+            None => *vis = Visibility::Hidden,
+        }
+    }
+    // The shown chests' parts sorted after the window, the views' icon parts
+    // before it; others restored.
+    let mut under = Vec::new();
+    let mut icons = Vec::new();
+    for (e, ..) in &views {
+        let mut stack: Vec<Entity> = children.get(e).map(|c| c.iter().collect()).unwrap_or_default();
+        while let Some(x) = stack.pop() {
+            icons.push(x);
+            if let Ok(c) = children.get(x) {
+                stack.extend(c.iter());
+            }
+        }
+    }
+    for (e, slot) in &slots {
+        if slot.kind == SlotKind::Item && chests.contains(&slot.index) {
+            let mut stack = vec![e];
+            while let Some(x) = stack.pop() {
+                under.push(x);
+                if let Ok(c) = children.get(x) {
+                    stack.extend(c.iter());
+                }
+            }
+        }
+    }
+    let icon_set: std::collections::HashSet<Entity> = icons.iter().copied().collect();
+    for e in icons {
+        if through.contains(e) {
+            continue;
+        }
+        let Ok(mut m) = parts.get_mut(e) else { continue };
+        let Some(mut own) = materials.get(&m.0).cloned() else { continue };
+        own.draw.sort_first = true;
+        if matches!(own.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_)) {
+            own.alpha_mode = AlphaMode::Blend;
+        }
+        let orig = m.0.clone();
+        m.0 = materials.add(own);
+        commands.entity(e).insert(ThroughChest(orig));
+    }
+    let under_set: std::collections::HashSet<Entity> = under.iter().copied().chain(icon_set.iter().copied()).collect();
+    for (e, orig) in &through {
+        if !under_set.contains(&e) {
+            if let Ok(mut m) = parts.get_mut(e) {
+                m.0 = orig.0.clone();
+            }
+            commands.entity(e).remove::<ThroughChest>();
+        }
+    }
+    for e in under {
+        if through.contains(e) {
+            continue;
+        }
+        let Ok(mut m) = parts.get_mut(e) else { continue };
+        let Some(mut own) = materials.get(&m.0).cloned() else { continue };
+        own.draw.sort_late = true;
+        if matches!(own.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_)) {
+            own.alpha_mode = AlphaMode::Blend;
+        }
+        let orig = m.0.clone();
+        m.0 = materials.add(own);
+        commands.entity(e).insert(ThroughChest(orig));
     }
 }
 
@@ -6624,7 +6813,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 front_system,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, present_world, present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

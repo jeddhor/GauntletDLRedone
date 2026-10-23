@@ -13,6 +13,11 @@
 //! (presentation or separate systems): see-through, skin effects, attached
 //! models and trees, PlayerProcessFamiliar, PlayerProcessScale, death effects.
 use super::{Game, R};
+
+/// The X-ray powerup's flag in +0x138.
+fn new138_xray(flags: u32) -> bool {
+    flags & 2 != 0
+}
 use crate::numeric::{add_guarded_rz as add, mul_rz as mul, sub_guarded_rz as sub};
 
 /// One shop item (SHPDATA/SHOP.WAD ITEM record).
@@ -180,6 +185,13 @@ impl Game {
         }
         let stop = u16::from(r.u32_(0x138) & 8 != 0);
         r.set_u16(0x938, stop);
+        // The X-ray view (+0x138 2): do_see_thru while held, end_see_thru
+        // when it went.
+        if new138_xray(self.players[p].u32_(0x138)) {
+            self.do_see_thru(p)?;
+        } else if new138_xray(old138) {
+            self.end_see_thru(p);
+        }
         // The pojo (0x400) and levitation (1) wearing off: AudioUnpojo
         // 0x160580 (AudioSFX(99, player +0x60, 0xe0, 0x28)) and
         // AudioLevitatedown 0x1605e8 (AudioSFX(0x59, …)).

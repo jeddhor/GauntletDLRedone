@@ -55,6 +55,7 @@ pub mod sound_cues;
 pub mod stage;
 pub mod teammove;
 pub mod weaptrail;
+pub mod seethru;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
 use crate::item_collision::DynGrid;
@@ -502,6 +503,8 @@ pub struct Game {
     /// and weaptrail_dalpha 0x234298 (32 in the ELF data).
     pub weap_trail: [[Option<weaptrail::TrailCopy>; 8]; 4],
     pub weaptrail_dalpha: i32,
+    /// The X-ray view per player (seethru.rs).
+    pub see_thru: [seethru::SeeThru; 4],
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).

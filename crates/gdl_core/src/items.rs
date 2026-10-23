@@ -465,6 +465,12 @@ impl ItemWorld {
             .position(|d| d.name() == name && d.kind() == kind && (subtype == 0 || subtype == d.subtype()))
     }
 
+    /// RandItemIdx 0x14fa10 with advance = 0 (do_see_thru): the same pick,
+    /// random_item_num unchanged.
+    pub(crate) fn rand_item_idx_peek(&self, index: usize, count: u32) -> u32 {
+        if count == 0 { 0 } else { ((self.session.random_item_num >> 5).wrapping_add(index as u32)) % count }
+    }
+
     /// RandItemIdx 0x14fa10 with advance = 1.
     pub(crate) fn rand_item_idx(&mut self, index: usize, count: u32) -> u32 {
         let r = if count == 0 { 0 } else { ((self.session.random_item_num >> 5).wrapping_add(index as u32)) % count };
