@@ -122,11 +122,15 @@ pub struct Listed {
     pub problem: Option<String>,
 }
 
+/// Recoveries waiting for the client (slot, file, how) and the slots
+/// already reported.
+type Recoveries = (Vec<(u32, PathBuf, String)>, std::collections::HashSet<u32>);
+
 pub struct SaveStore {
     pub dir: PathBuf,
     /// Slots loaded from a backup or a leftover `.tmp` this session (each
     /// reported once), for the client's recovery notice.
-    recoveries: std::sync::Mutex<(Vec<(u32, PathBuf, String)>, std::collections::HashSet<u32>)>,
+    recoveries: std::sync::Mutex<Recoveries>,
 }
 
 fn read_envelope(path: &Path) -> Result<SaveEnvelope, String> {

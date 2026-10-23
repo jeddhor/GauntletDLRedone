@@ -6,7 +6,8 @@
 //! Navigation: a graph sampled from a copy of the level's collision as the
 //! game holds it (runtime flags and dynamic matrices included) — columns of
 //! CELL × CELL, floors found by FloorCollide sweeps from the top of the world
-//! down, neighbours joined when the step up is at most STEP_UP, the drop at
+//! down, neighbours joined when the step up is at most STEP_UP (steeper only
+//! on a ramp: a floor under the midpoint near the mean height), the drop at
 //! most DROP, a floor lies under the midpoint and an EnemyWallCollide-style
 //! sweep (wall normals, object mask 0x13a) at a metre above the higher floor
 //! hits nothing. The graph is grown breadth-first from the player, so it is
@@ -15,8 +16,11 @@
 //! Goals, re-chosen whenever a goal is reached or the bot is stuck: the
 //! nearest reachable key (kind 1 subtype 2), then the nearest exit (kind 9),
 //! then unvisited triggers (kind 5); a gate (kind 7) opens when touched with
-//! a key. Stuck (less than half a unit in STUCK updates): the edge in use is
-//! blocked and the bot throws for a while (barrels, enemies). Enemies within
+//! a key, so its nodes are closed while no key is held. Optional route hints
+//! (tools/bot-routes/<W><L>.json: items, points, waits) come first. On an
+//! exit portal the stick is released (DoExit counts only then). Stuck (less
+//! than half a unit in STUCK updates): the edge in use is blocked (not at a
+//! gate) and the bot throws for a while (barrels, enemies). Enemies within
 //! ATTACK_RANGE are attacked with throws (cross) on alternate updates.
 //! Health assist (labelled DEBUG in the report): health is restored to its
 //! start value when it falls below 40 % of it.
@@ -186,8 +190,18 @@ impl Nav {
     /// player walks); edges the bot cannot walk are blocked when stuck.
     fn edge_class(c: &mut CollisionWorld, a: V3, b: V3, radius: f32) -> Option<bool> {
         let dy = b[1] - a[1];
-        if STEP_UP < dy || dy < -DROP {
+        // Steeper than STEP_UP only on a ramp: floors (normal y ≥ 0.5, at
+        // most 60°) and a floor under the midpoint near the mean height.
+        let ramp = STEP_UP < dy && dy <= dist_xz(a, b) * 1.7;
+        if (STEP_UP < dy && !ramp) || dy < -DROP {
             return None;
+        }
+        if ramp {
+            let mid = [(a[0] + b[0]) * 0.5, b[1] + 1.0, (a[2] + b[2]) * 0.5];
+            let mean = (a[1] + b[1]) * 0.5;
+            if !matches!(c.floor_collide(0.3, 0.0, -(dy + 2.0), mid, true, 0), Ok((f, _)) if f.solid.is_some_and(|h| (h.position[1] - mean).abs() < 0.4 * dy)) {
+                return None;
+            }
         }
         let top = a[1].max(b[1]) + 1.5;
         let loose = c.world_collide(Query {
@@ -288,7 +302,7 @@ impl Nav {
     }
 
     /// Dijkstra from `from` to the first node `goal` accepts, avoiding `blocked` edges.
-    pub fn path(&self, from: usize, goal: &dyn Fn(usize) -> bool, blocked: &HashSet<(Place, Place)>, avoid: &HashSet<usize>) -> Option<Vec<usize>> {
+    pub fn path(&self, from: usize, goal: &dyn Fn(usize) -> bool, blocked: &HashSet<(Place, Place)>, avoid: &Avoid) -> Option<Vec<usize>> {
         #[derive(PartialEq)]
         struct S(f32, usize);
         impl Eq for S {}
@@ -323,10 +337,13 @@ impl Nav {
                 if !blocked.is_empty() && blocked.contains(&(self.place(n), self.place(m))) {
                     continue;
                 }
+                if avoid.closed.contains(&m) && !avoid.closed.contains(&n) && !goal(m) {
+                    continue;
+                }
                 let k = if self.hard.contains(&(n, m)) { 4.0 } else { 1.0 };
                 // Drops lose height that may have taken lifts to gain.
                 let drop = if self.pts[m][1] < self.pts[n][1] - 2.0 { 15.0 } else { 0.0 };
-                let drop = drop + if avoid.contains(&m) { 25.0 } else { 0.0 };
+                let drop = drop + if avoid.soft.contains(&m) { 25.0 } else { 0.0 };
                 // Clearance: a node missing neighbours lies by a wall or a
                 // ledge; the player (radius 1.5) slides there.
                 let drop = drop + (8usize.saturating_sub(self.adj[m].len())) as f32 * 0.6;
@@ -342,11 +359,33 @@ impl Nav {
     }
 }
 
+/// Nodes routes go around: `soft` ones cost extra (containers, obstacles),
+/// `closed` ones are not entered (gates while no key is held).
+#[derive(Default)]
+pub struct Avoid {
+    pub soft: HashSet<usize>,
+    pub closed: HashSet<usize>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Goal {
     Item(usize),
+    /// A route hint's point (within its radius).
+    Point(usize),
     /// A reachable graph node in a column the player has not stood in.
     Explore(usize),
+}
+
+/// One route hint (bot=1 hints=FILE): steps taken in order before the
+/// ordinary goals — an item to collect or a trigger to touch (by slot), a
+/// point to reach, or a pause. Hints are authored from map analysis; they
+/// choose what to do next, the movement stays the player's own.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Hint {
+    pub item: Option<usize>,
+    pub goto: Option<[f32; 3]>,
+    pub radius: Option<f32>,
+    pub wait: Option<usize>,
 }
 
 pub struct Bot {
@@ -377,6 +416,10 @@ pub struct Bot {
     rebuilds: usize,
     force_rebuild: bool,
     last_y: f32,
+    hints: Vec<Hint>,
+    hint_at: usize,
+    hint_stuck: usize,
+    hint_wait: Option<usize>,
     /// Followers' (waypoint index, path) by player.
     followers: [(usize, Vec<usize>); 4],
     /// The leader's positions every 10 updates (walkable by construction):
@@ -392,10 +435,16 @@ pub struct Bot {
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
     let r = &g.items.records[slot];
     let d = &g.items.definitions[r.definition()];
-    (i32::from(d.kind()), i32::from(d.subtype()))
+    (d.kind(), d.subtype())
 }
 
 impl Bot {
+    /// Route hints to follow first (hints=FILE).
+    pub fn with_hints(mut self, hints: Vec<Hint>) -> Bot {
+        self.hints = hints;
+        self
+    }
+
     pub fn new(g: &Game) -> Bot {
         let start = g.players[0].v3(0x50);
         let mut b = Bot {
@@ -423,6 +472,10 @@ impl Bot {
             rebuilds: 0,
             force_rebuild: false,
             last_y: f32::NAN,
+            hints: Vec::new(),
+            hint_at: 0,
+            hint_stuck: 0,
+            hint_wait: None,
             followers: Default::default(),
             trail: Vec::new(),
             backoff: None,
@@ -521,11 +574,12 @@ impl Bot {
         self.path.clear();
     }
 
-    /// Graph nodes beside items that block the way (chests, barrels and
-    /// obstacles; gates while no key is held): routes avoid them when they can.
-    fn obstacle_nodes(&self, g: &Game) -> HashSet<usize> {
+    /// Graph nodes beside items that block the way: chests, barrels and
+    /// obstacles (routes avoid them when they can); closed gates while no key
+    /// is held (not entered: use_key opens a gate on contact).
+    fn obstacle_nodes(&self, g: &Game) -> Avoid {
         let keys = g.players[0].i32_(KEYS);
-        let mut out = HashSet::new();
+        let mut out = Avoid::default();
         for s in 0..g.items.records.len() {
             let r = &g.items.records[s];
             let (k, _) = item_kind(g, s);
@@ -541,7 +595,7 @@ impl Bot {
                     for &n in self.nav.cols.get(&(c.0 + dx, c.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
                         let pn = self.nav.pts[n];
                         if dist_xz(pn, q) < reach && (pn[1] - q[1]).abs() < 3.0 {
-                            out.insert(n);
+                            if k == 7 { out.closed.insert(n) } else { out.soft.insert(n) };
                         }
                     }
                 }
@@ -557,6 +611,58 @@ impl Bot {
         let Some(here) = self.nav.locate_cached(p, &self.bad_nodes).or_else(|| self.nav.locate_cached(p, &HashSet::new())) else {
             return false;
         };
+        // Route hints first, in order.
+        while let Some(h) = self.hints.get(self.hint_at).cloned() {
+            if let Some(s) = h.item {
+                let done = !g.items.records.get(s).is_some_and(|r| r.active())
+                    || (item_kind(g, s).0 == 5 && (g.items.records[s].i8_(0xde) != 0 || g.items.records[s].u8_(0xe2) != 0));
+                if done {
+                    self.log.push(serde_json::json!({"update": f, "hint_done": self.hint_at}));
+                    self.hint_at += 1;
+                    continue;
+                }
+                let targets = self.item_nodes(g, &[s]);
+                let path = targets.first().and_then(|&(_, n)| self.nav.path(here, &|m| m == n, &self.blocked, &avoid));
+                // Not reachable yet: the ordinary goals (keys open gates,
+                // triggers move floors) until the next re-plan.
+                let Some(path) = path else { break };
+                self.goal = Some(Goal::Item(s));
+                self.path = path;
+                self.at = 0;
+                self.log.push(serde_json::json!({"update": f, "hint": self.hint_at, "item": s, "nodes": self.path.len()}));
+                return true;
+            }
+            if let Some(q) = h.goto {
+                let r = h.radius.unwrap_or(1.5);
+                if dist_xz(p, q) < r && (p[1] - q[1]).abs() < 3.0 {
+                    self.log.push(serde_json::json!({"update": f, "hint_done": self.hint_at}));
+                    self.hint_at += 1;
+                    continue;
+                }
+                let goal = self.nav.locate_cached(q, &HashSet::new());
+                let path = goal.and_then(|n| self.nav.path(here, &|m| m == n, &self.blocked, &avoid));
+                let Some(path) = path else { break };
+                self.goal = Some(Goal::Point(self.hint_at));
+                self.path = path;
+                self.at = 0;
+                self.log.push(serde_json::json!({"update": f, "hint": self.hint_at, "goto": q, "nodes": self.path.len()}));
+                return true;
+            }
+            if let Some(w) = h.wait {
+                if self.hint_wait.is_none() {
+                    self.hint_wait = Some(f + w);
+                }
+                if self.hint_wait.is_some_and(|until| until <= f) {
+                    self.hint_wait = None;
+                    self.hint_at += 1;
+                    continue;
+                }
+                self.goal = None;
+                self.path.clear();
+                return true;
+            }
+            self.hint_at += 1;
+        }
         let active = |g: &Game, want: &dyn Fn(i32, i32) -> bool| -> Vec<usize> {
             // +0xe1: items for more players than are in the game (ProcessItems skips them).
             (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && g.items.records[s].u8_(0xe1) == 0 && { let (k, t) = item_kind(g, s); want(k, t) }).collect()
@@ -665,6 +771,15 @@ impl Bot {
             self.progress = (f, g.players[0].v3(0x50));
             return pad;
         }
+        // On an exit portal (contact item +0x884, kind 9): DoExit counts only
+        // while the stick is released, so stand still.
+        if let Some(it) = g.players[0].u32_(0x884).checked_sub(1).map(|i| i as usize)
+            && it < g.items.records.len()
+            && item_kind(g, it).0 == 9
+        {
+            self.progress = (f, g.players[0].v3(0x50));
+            return pad;
+        }
         // Goal bookkeeping.
         match self.goal {
             Some(Goal::Item(s)) => {
@@ -690,6 +805,14 @@ impl Bot {
                     } else {
                         self.choose(f, g);
                     }
+                }
+            }
+            Some(Goal::Point(h)) => {
+                let q = self.hints.get(h).and_then(|x| x.goto).unwrap_or(self.start);
+                let r = self.hints.get(h).and_then(|x| x.radius).unwrap_or(1.5);
+                let pp = g.players[0].v3(0x50);
+                if dist_xz(pp, q) < r && (pp[1] - q[1]).abs() < 3.0 {
+                    self.choose(f, g);
                 }
             }
             Some(Goal::Explore(n)) => {
@@ -730,7 +853,13 @@ impl Bot {
         // Stuck detection.
         if STUCK <= f - self.progress.0 {
             if dist_xz(p, self.progress.1) < 0.5 {
-                if let (Some(&a), Some(&b)) = (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at)) {
+                // At a closed gate the key count decides (obstacle_nodes), not
+                // a blocked edge that would outlast the next key.
+                let at_gate = (0..g.items.records.len())
+                    .any(|s| g.items.records[s].active() && item_kind(g, s).0 == 7 && dist_xz(g.items.records[s].v3(0x40), p) < 4.0 && (g.items.records[s].v3(0x40)[1] - p[1]).abs() < 3.0);
+                if !at_gate
+                    && let (Some(&a), Some(&b)) = (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at))
+                {
                     let (pa, pb) = (self.nav.place(a), self.nav.place(b));
                     self.blocked.insert((pa, pb));
                     self.blocked.insert((pb, pa));
@@ -775,6 +904,14 @@ impl Bot {
                 let items: Vec<_> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && dist_xz(g.items.records[s].v3(0x40), p) < 4.0).map(|s| serde_json::json!([s, item_kind(g, s), String::from_utf8_lossy(g.items.definitions[g.items.records[s].definition()].name())])).collect();
                 let next = self.path.get(self.at).map(|&n| self.nav.pts[n]);
                 self.log.push(serde_json::json!({"update": f, "stuck": p, "next": next, "enemies": enemies, "items": items, "stuck_goal": match self.goal { Some(Goal::Item(s)) => s, _ => usize::MAX }}));
+                if self.hint_at < self.hints.len() {
+                    self.hint_stuck += 1;
+                    if 20 <= self.hint_stuck {
+                        self.log.push(serde_json::json!({"update": f, "hint_skipped": self.hint_at}));
+                        self.hint_at += 1;
+                        self.hint_stuck = 0;
+                    }
+                }
                 self.choose(f, g);
             }
             self.progress = (f, p);
@@ -810,6 +947,7 @@ impl Bot {
             (Some(&n), _) => Some(self.nav.pts[n]),
             (None, Some(Goal::Item(s))) => Some(g.items.records[s].v3(0x40)),
             (None, Some(Goal::Explore(n))) => self.nav.pts.get(n).copied(),
+            (None, Some(Goal::Point(h))) => self.hints.get(h).and_then(|x| x.goto),
             _ => None,
         };
         // The nearest live enemy in range: face it and hold attack (cross,
@@ -945,6 +1083,9 @@ impl Bot {
             .filter(|&s| matches!(item_kind(g, s).0, 1 | 5 | 7 | 9 | 10) && (item_kind(g, s).0 != 1 || item_kind(g, s).1 == 2))
             .map(|s| serde_json::json!([s, item_kind(g, s), g.items.records[s].v3(0x40), g.items.records[s].active()]))
             .collect();
+        let all_items: Vec<_> = (0..g.items.records.len())
+            .map(|s| serde_json::json!([s, item_kind(g, s), String::from_utf8_lossy(g.items.definitions[g.items.records[s].definition()].name()), g.items.records[s].v3(0x40), g.items.records[s].active()]))
+            .collect();
         let edges: usize = self.nav.adj.iter().map(Vec::len).sum();
         let triggers: Vec<_> = (0..g.items.records.len())
             .filter(|&s| item_kind(g, s).0 == 5)
@@ -962,12 +1103,12 @@ impl Bot {
         serde_json::json!({
             "explain": explain,
             "nav": self.nav.pts.iter().zip(&self.nav.adj).filter(|(_, a)| !a.is_empty()).map(|(p, _)| [(p[0] * 10.0).round() / 10.0, (p[1] * 10.0).round() / 10.0, (p[2] * 10.0).round() / 10.0]).collect::<Vec<_>>(),
-            "nav_edges": edges, "items": marks, "triggers": triggers,
+            "nav_edges": edges, "items": marks, "all_items": all_items, "triggers": triggers,
             "critters": g.critters.iter().flatten().map(|c| serde_json::json!({"pos": c.rec.v3(0x40), "state": c.rec.i32_(8), "health": c.rec.f32_(0x4f4)})).collect::<Vec<_>>(),
             "scope": "TRAVERSAL BOT (gdl_tools bot.rs): port 0 driven through the ordinary pad path; health assist is a DEBUG shortcut",
-            "start": self.start, "player_radius": g.players[0].f32_(0x828), "nav_nodes": self.nav.pts.len(), "reachable_nodes": self.nav.reached,
+            "start": self.start, "player_radius": g.players[0].f32_(0x828), "collision_offset": g.players[0].f32_(0x820), "collision_height": g.players[0].f32_(0x82c), "nav_nodes": self.nav.pts.len(), "reachable_nodes": self.nav.reached,
             "static_exit_reachable": self.static_exit_reachable, "exit_update": self.exit_update, "exit_wave": self.exit_wave.map(|w| format!("{w:#x}")),
-            "health_assists": self.assists, "replans": self.replans, "rebuilds": self.rebuilds, "given_up": self.given_up.iter().collect::<Vec<_>>(),
+            "health_assists": self.assists, "hints": self.hints.len(), "hints_done": self.hint_at, "replans": self.replans, "rebuilds": self.rebuilds, "given_up": self.given_up.iter().collect::<Vec<_>>(),
             "log": self.log,
         })
     }

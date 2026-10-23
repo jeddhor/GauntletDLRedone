@@ -57,6 +57,8 @@ def main():
     ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
     ap.add_argument('--boss-health', help='DEBUG: set the boss critter health')
     ap.add_argument('--teleport', help='DEBUG: start player 0 at x,y,z')
+    ap.add_argument('--watch', help='collision objects OBJ,... whose matrix translations are sampled')
+    ap.add_argument('--probe', help='X:Z;... points whose highest floor (object, y) is sampled')
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
     ap.add_argument('--fall', help='DEBUG: player 0 drops below the world bottom at this update')
     ap.add_argument('--players', help='players in play (copies of player 0 without input, placed by load_player_geo)')
@@ -124,6 +126,10 @@ def main():
         cmd += [f'clips={clips}', f'pads={a.pads}', f'sfx={sfx}']
         if a.bot:
             cmd += [f"bot={os.environ.get('GDL_BOT', '1')}"]
+            # Route hints (tools/bot-routes/<W><L>.json); GDL_BOT_HINTS=0 runs without.
+            hints = pathlib.Path('tools/bot-routes') / f'{a.world}{a.level}.json'
+            if hints.exists() and os.environ.get('GDL_BOT_HINTS') != '0':
+                cmd += [f'hints={hints}']
     if a.replay or a.enemy_replay:
         # The traced player's class SFX package (the fixture's sorceress,
         # yellow): InitPlayerMissiles' custom effects.
@@ -147,6 +153,10 @@ def main():
         cmd += [f'crystals={a.crystals}']
     if a.teleport:
         cmd += [f'teleport={a.teleport}']
+    if a.watch:
+        cmd += [f'watch={a.watch}']
+    if a.probe:
+        cmd += [f'probe={a.probe}']
     if a.players:
         cmd += [f'players={a.players}']
     if a.spawn:

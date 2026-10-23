@@ -3188,7 +3188,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         for f in 0..frames {
             if opts.contains_key("bot") && opts.contains_key("pads") {
                 if traversal.is_none() {
-                    traversal = Some(bot::Bot::new(&game));
+                    let mut b = bot::Bot::new(&game);
+                    if let Some(h) = opts.get("hints") {
+                        let hints: Vec<bot::Hint> = serde_json::from_slice(&bounded_read(Path::new(h), 1024 * 1024)?)?;
+                        b = b.with_hints(hints);
+                    }
+                    traversal = Some(b);
                 }
                 if traversal.as_ref().and_then(|b| b.exit_update).is_some_and(|u| u + 30 < f) {
                     break;
@@ -3246,9 +3251,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 if let Some(b) = traversal.as_mut() {
                     pads[0] = b.step(f, &mut game);
-                    for k in 1..4 {
+                    for (k, pad) in pads.iter_mut().enumerate().take(4).skip(1) {
                         if game.globals.active_players >> k & 1 != 0 {
-                            pads[k] = b.follower_step(f, k, &mut game);
+                            *pad = b.follower_step(f, k, &mut game);
                         }
                     }
                 }
@@ -3284,7 +3289,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 });
                 if f % 15 == 0 || f + 1 == frames || (opts.contains_key("weapon") && f % 3 == 0) {
                     let r = &game.players[0];
-                    samples.push(serde_json::json!({"frame":f,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
+                    // watch=OBJ,...: those collision objects' matrix translations.
+                    let watch: Vec<_> = opts.get("watch").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).map(|o| serde_json::json!([o, game.collision.object_matrix(o).ok().map(|m| m[3])])).collect()).unwrap_or_default();
+                    // probe=X:Z;...: the highest floor there (object, y), probed from 60 above the player.
+                    let probe: Vec<_> = opts.get("probe").map(|w| w.split(';').filter_map(|q| { let v: Vec<f32> = q.split(':').filter_map(|t| t.parse().ok()).collect(); (v.len() == 2).then(|| [v[0], v[1]]) })
+                        .map(|q| { let mut c = game.collision.clone(); let top = r.v3(0x50)[1] + 60.0; let h = c.floor_collide(0.0, 0.0, -120.0, [q[0], top, q[1]], true, 0).ok().and_then(|(c, _)| c.solid); serde_json::json!([q, h.map(|h| (h.object, h.position[1]))]) }).collect()).unwrap_or_default();
+                    samples.push(serde_json::json!({"frame":f,"watch":watch,"probe":probe,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
                         "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),"floor_y":r.f32_(0x88c),"water_y":r.f32_(0x8a4),
                         "turbo":r.f32_(0x800),"weapon_flags":r.u32_(0x130),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
                         "legend":r.i32_(0x80c),"quest":game.globals.quest_item_state,"boss_dead":game.globals.boss_is_dead,
