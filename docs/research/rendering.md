@@ -289,7 +289,14 @@ they keep their vertex colours. The VU1 microcode was not read.
   (+0.5 for 0.1 s; GauntWorldInit hides A5XPXLNC_LNING1..4 /
   F2XPNC_LNING1..4, each flashing for 0.2 s every 5 + Random(10) s).
   world_update's end of stage: GlobalInten 1 − t, then −1 and
-  end_of_stage 2 after 2 s. gdl_core::game::lighting holds the state.
+  end_of_stage 2 after 2 s. gdl_core::game::lighting holds the state. The
+  same block shows the TransitionBlit (TransitionBlitShow(0) 0x126780 unless
+  BossType 0x2c: STATIC's TRANSITION_SCREEN at (0, 0), 0x200 × 0x140, z
+  64100; alpha 0xff, then (1 − t/2) × 255, then 0 — it fades in over two
+  seconds); init_shop shows it again after ResetModels, do_shop hides it
+  once loaded unless the shop is skipped (TransitionBlitHide 0x126848);
+  FogOff is MBFogInit (empty). Native: Hud::transition_show/hide
+  (2026-10-23; GUI flow menu-flows-m17-v12 level-end-fade).
 - setPrimColor 0x1beca8 puts a scale (+0x10..+0x18 = scale × 128) and an
   ambient term (+0x48 = node +0x6a ambient add + the mod's add + 1 for
   lightmapped/no-shade draws, + 0 for directionally lit ones) into the

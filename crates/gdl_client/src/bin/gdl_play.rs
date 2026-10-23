@@ -6388,14 +6388,13 @@ fn act(world: &mut EcsWorld, action: Action) {
                     front.menu.page = gdl_client::menu::Page::HintText { list, at: 0 };
                 }
             }
+            // DoOptions 0x14: quit_level = 1; game_main aborts every player
+            // once the menu and its fire scroll are done (Game::
+            // quit_level_check), and the level ends as if all had died.
             Action::QuitLevel => {
                 world.resource_mut::<Ui>().paused = false;
-                let mut session = world.resource_mut::<Session>();
-                if session.world_number != 0xd
-                    && let Some(k) = session.levels.iter().position(|l| l.world == 0xd)
-                {
-                    session.next = Some(k);
-                    session.banner = Some((1.5, "Returning to the Tower".into()));
+                if let Some(mut sim) = world.get_resource_mut::<Sim>() {
+                    sim.game.globals.quit_level = 1;
                 }
             }
             // quit_game → OptionsDone → init_over (the game-over sequence).

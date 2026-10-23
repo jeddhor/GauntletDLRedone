@@ -20,8 +20,14 @@ ghidra-fe2, ghidra-save2, ghidra-plmodel, ghidra-plmodel2, ghidra-atts.
 - "Quit Game" (0x25) sets `quit_game`; game_main → `init_over` 0x127e70:
   game mode 0x4014, every player `inactivate_player` → `clear_player(k, 1)`.
   Nothing is written: progress since the last save is lost.
-- "Quit Level" (0x26, not in world 0xc) sets `quit_level`; game_main calls
-  `abort_player` for all four players (`player_set_intower`).
+- "Quit Level" (0x26, not in world 0xc) asks quitlevel_question, then sets
+  `quit_level`; once OptionsDone (no menu, no fire scroll) game_main calls
+  `abort_player` 0x131b88 for all four players: end_see_thru, kill_got_it,
+  drop_keys, remove_player_geo, kill_death_sound, init_player_powerups,
+  health 0 and `player_set_intower` (+0xfc 0xb, +0x2ad4 1) — the level ends
+  as if everyone had died (the level-start backup comes back in the Tower).
+  Native: Game::quit_level_check / abort_player (2026-10-23; GUI flow
+  menu-flows-m17-v11 pause-realm).
 - `PlayerLoadSaveFile` 0x130b88: `saveLoad` into +0x99c, `OptionsSetup` when
   the prefs were just loaded, `player_get_from_save(−1)`, +0x9a7 = 1, the
   region copied to the backup +0x1a28, +0x1910..+0x1a10 &= 0xf0, then

@@ -1211,7 +1211,7 @@ impl Camera {
                 if 2 < *cam_wait {
                     *cam_wait = 2;
                 }
-                // write_stage_info: stage name text and its sounds (presentation).
+                // write_stage_info runs in Game::camera_step (stageinfo.rs).
                 if *cam_wait == 1 && self.start_update(ctx)? {
                     *start_of_stage = 0;
                     *cam_wait = 0;
@@ -2239,9 +2239,9 @@ impl super::Game {
         let Some(mut cam) = self.std_camera.take() else { return Ok(()) };
         let mode = self.globals.game_mode;
         if mode != 0x8006 && mode != 0x8003 && cam.start_transmitter.is_some() {
-            // init_stage_info: stage-name text (presentation).
             self.globals.cam_wait = 0x5b;
             self.globals.start_of_stage = 1;
+            self.init_stage_info();
         }
         let r = (|| -> R<()> {
             cam.std_init(&self.cam_ctx(), false)?;
@@ -2296,6 +2296,15 @@ impl super::Game {
             self.newcam_mode = 0;
         } else if !boss_path {
             self.newcam_mode = 2;
+        }
+        // StdCamUpdate → StdCamStartStage: write_stage_info(cam_wait) every
+        // update (paused 0, vb_elapsed ≠ 0, mode 0x4010; cam_wait clamped
+        // to 2 as std_update does).
+        if !boss_path && mode == 0x4010 && self.globals.paused == 0 && self.globals.vb_elapsed != 0 {
+            wait = wait.min(2);
+            if let Err(e) = self.write_stage_info(wait) {
+                self.log.note("write_stage_info", &e);
+            }
         }
         let r = (|| -> R<()> {
             if matches!(mode, 0x8009 | 0x400b | 0x4012) {

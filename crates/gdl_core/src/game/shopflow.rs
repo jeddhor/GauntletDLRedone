@@ -84,9 +84,11 @@ impl Game {
         if !flow.skip {
             self.shop_music_start();
         }
-        // ResetModels and setup_player_display for every box.
+        // ResetModels, TransitionBlitShow(0) and setup_player_display for
+        // every box.
         self.hud.reset_models();
         self.hud_reset_players();
+        self.hud.transition_show(false);
         for k in 0..4 {
             self.setup_player_display(k);
         }
@@ -125,6 +127,11 @@ impl Game {
         let _ = self.write_player_info(-1);
         let mut done = true;
         let mut tally = false;
+        // SelectLoadDone (loads are synchronous here): TransitionBlitHide
+        // unless the shop is skipped.
+        if !flow.skip {
+            self.hud.transition_hide();
+        }
         if !flow.skip {
             if flow.from_menu != 2 {
                 let panels = self.hud.shop_panel_blits(&self.players);

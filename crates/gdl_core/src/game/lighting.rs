@@ -152,21 +152,36 @@ impl Game {
     }
 
     /// world_update's end-of-stage block (game mode 0x4010): GlobalInten
-    /// falls 1 → 0 over the first second after WorldEndTime (the
-    /// TransitionBlit fades out over two), then −1 and end_of_stage 2 once
-    /// AudioQueUpdate reports an empty queue.
+    /// falls 1 → 0 over the first second after WorldEndTime while the
+    /// TransitionBlit (TRANSITION_SCREEN) fades in over two, then −1 and
+    /// end_of_stage 2 once AudioQueUpdate reports an empty queue. FogOff is
+    /// MBFogInit, empty in this build.
     pub(crate) fn world_update_end_of_stage(&mut self) -> R<()> {
         if self.globals.game_mode != 0x4010 || self.globals.end_of_stage == 0 {
             return Ok(());
         }
         if self.lighting.world_end_time == 0.0 {
             self.lighting.world_end_time = self.globals.time;
+            // TransitionBlitShow(0) (not after Garm, BossType 0x2c), then
+            // alpha 0xff: the TRANSITION_SCREEN fades in over two seconds.
+            if self.globals.boss_type != 0x2c {
+                self.hud.transition_show(false);
+            }
+            if let Some(id) = self.hud.transition {
+                self.hud.set_alpha(id, 0xff);
+            }
             return Ok(());
         }
         let t = sub(self.globals.time, self.lighting.world_end_time)?;
         if t < 2.0 {
+            if let Some(id) = self.hud.transition {
+                self.hud.set_alpha(id, ((1.0 - t * 0.5) * 255.0) as i32 as u32);
+            }
             self.lighting.global_inten = sub(1.0, t)?;
         } else {
+            if let Some(id) = self.hud.transition {
+                self.hud.set_alpha(id, 0);
+            }
             self.lighting.global_inten = -1.0;
             if !self.que_update() {
                 self.globals.end_of_stage = 2;

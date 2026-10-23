@@ -539,6 +539,8 @@ impl Game {
             suicide_bomber_index: -1,
             enemy_wall_hit: None,
             did_action: false,
+            stage_playtime: 0,
+            show_path: Default::default(),
             death_touch: false,
             fwrdval: vec![0.0; 34],
             angoff07: floats("angoff07")?,
@@ -662,6 +664,7 @@ impl Game {
             weap_trail: Default::default(),
             see_thru: Default::default(),
             saver: Default::default(),
+            stage_info: Default::default(),
             weaptrail_dalpha: ints("weaptrail_dalpha")?.first().copied().ok_or("weaptrail_dalpha")?,
             secret_char: inp.elf.object("secret_char")?.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect(),
             boss1_items: {
@@ -907,6 +910,9 @@ impl Game {
         // MBResetBlits after the previous frame's render: temp blits and
         // font messages are per frame.
         self.hud.begin_frame();
+        if let Err(e) = self.quit_level_check() {
+            self.log.note("quit_level", &e);
+        }
         // game_main: SetPlayerVars every frame (StopTime, EnemyShrink,
         // ActivePlayerMask, the +0x93e panel-written bits, player counts)
         // after the quit/restart checks, before the mode dispatch.
@@ -920,7 +926,11 @@ impl Game {
         self.globals.time += spf;
         self.globals.atime += spf;
         self.globals.itime = (self.globals.time * 1000.0) as i32;
-        // game_main: do_auto_exit before world_update.
+        // game_main's play branch: did_action = 0, then do_auto_exit before
+        // world_update.
+        if self.globals.game_mode == 0x4010 {
+            self.did_action = false;
+        }
         self.do_auto_exit();
         // world_update 0x163480: start_enemyinfo = start_of_stage == 0 or
         // level_data +0x48; then it returns at once while paused or in help;
@@ -979,8 +989,19 @@ impl Game {
         // level's end (the host's transition); ProcessEffects is skipped.
         if self.players_done && !self.audio_still_playing() {
             self.exit_ready = true;
-        } else if let Err(e) = self.process_effects() {
-            self.log.note("ProcessEffects", &e);
+        } else {
+            if let Err(e) = self.process_effects() {
+                self.log.note("ProcessEffects", &e);
+            }
+            // game_main: stage_playtime (paused 0, not world 0xc; counted
+            // before do_players there, only read here and by the tally),
+            // then do_show_path after ProcessEffects.
+            if self.globals.game_mode == 0x4010 {
+                if self.globals.paused == 0 && self.globals.cur_world != 0xc {
+                    self.stage_playtime += self.globals.vb_elapsed;
+                }
+                self.do_show_path();
+            }
         }
         // main's camera dispatch (StdCamUpdate) and MBEndFrame.
         if let Err(e) = self.camera_step() {

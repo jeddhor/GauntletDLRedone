@@ -361,6 +361,8 @@ pub struct Hud {
     /// got_it 0x22c500: 0x18 pickup notices (state, player, kind, amount,
     /// timer, bar blit, picture blit).
     got_it: Vec<GotIt>,
+    /// TransitionBlit 0x220210 (TRANSITION_SCREEN).
+    pub transition: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -549,6 +551,11 @@ impl Hud {
         if let Some(b) = self.blits.get_mut(id) {
             *b = None;
         }
+    }
+
+    /// MBRemoveBlit.
+    pub fn remove_blit(&mut self, id: usize) {
+        self.remove(id);
     }
 
     /// MBBlitSetTex(b, tex, n): tex None keeps the current texture; sizes
@@ -1097,6 +1104,21 @@ impl Hud {
         out.push(f);
         out
     }
+    /// kill_got_it 0x12b0e0(player): that player's notices (+4) cleared
+    /// with their bar and picture blits (player_dies, kill_player,
+    /// inactivate_player, abort_player).
+    pub fn kill_got_it(&mut self, p: usize) {
+        for i in 0..self.got_it.len() {
+            if self.got_it[i].player != p {
+                continue;
+            }
+            self.got_it[i].state = 0;
+            for b in [self.got_it[i].bar.take(), self.got_it[i].picture.take()].into_iter().flatten() {
+                self.remove(b);
+            }
+        }
+    }
+
     /// init_got_it 0x12afe8: every pickup notice cleared (blits removed).
     pub fn init_got_it(&mut self) {
         for g in &mut self.got_it {
@@ -1123,6 +1145,35 @@ impl Hud {
         self.help = HelpState::default();
         self.got_it.clear();
         self.blits.clear();
+        self.transition = None;
+    }
+
+    /// TransitionBlitShow 0x126780(shop): the TRANSITION_SCREEN blit
+    /// (MBNewBlit at (0, 0), 0x200 wide, on first use) 0x140 high at z
+    /// 64100 for play's level end (0), 0x180 high at z 100 otherwise;
+    /// opaque (alpha 0) and shown.
+    pub fn transition_show(&mut self, shop: bool) {
+        let (h, z) = if shop { (0x180, 100.0) } else { (0x140, 64100.0) };
+        let id = match self.transition {
+            Some(id) => id,
+            None => {
+                let tex = self.lookup("TRANSITION_SCREEN");
+                let id = self.new_blit(tex, 0, 0, 0x200, h);
+                self.transition = Some(id);
+                id
+            }
+        };
+        self.set_size(id, 0, h);
+        self.set_z(id, z);
+        self.set_alpha(id, 0);
+        self.set_hide(id, false);
+    }
+
+    /// TransitionBlitHide 0x126848.
+    pub fn transition_hide(&mut self) {
+        if let Some(id) = self.transition {
+            self.set_hide(id, true);
+        }
     }
 
     /// Blits drawn this frame only (appended to the temp list).
@@ -1266,6 +1317,7 @@ impl Game {
         self.hud.it_blit = None;
         self.hud.players.clear();
         self.hud.blits.clear();
+        self.hud.transition = None;
         for p in 0..4 {
             self.reset_players_sub(p, &t);
         }

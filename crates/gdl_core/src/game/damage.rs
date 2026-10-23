@@ -95,6 +95,7 @@ impl Game {
     /// player_dies.
     pub fn player_dies(&mut self, player: usize) -> R<()> {
         self.audio_player_dies(player)?;
+        self.hud.kill_got_it(player);
         let pl = &mut self.players[player];
         pl.set_i32(pd::STATE, 8);
         pl.set_i32(pd::DEATH_COUNTER, 4);

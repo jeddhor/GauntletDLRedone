@@ -57,6 +57,23 @@ FLOWS = {
         env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1', GDL_DEBUG_SAVER='300'),
         steps=[["wait", 60], ["shot", "saver1"], ["wait", 10], ["shot", "saver2"], ["wait", 10], ["shot", "saver3"]] + k('Down') + [["wait", 3], ["shot", "after"]],
         expect=[r'playing .*\| saver world 7', r'playing .*\|  world 7']),
+    # The stage title (write_stage_info) during the start camera: G1's name;
+    # S1 (LEVL +0 flag 4) adds GRAB COINS BEFORE TIME RUNS OUT on its box.
+    'stage-title': dict(
+        env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1'),
+        steps=[["wait", 1], ["shot", "t1"], ["wait", 0.5], ["shot", "t2"], ["wait", 0.5], ["shot", "t3"], ["wait", 0.5], ["shot", "t4"], ["wait", 4], ["shot", "t5"]],
+        expect=[r'playing .*world 7 level 0']),
+    'stage-title-s1': dict(
+        env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='S1'),
+        steps=[["wait", 1], ["shot", "t1"], ["wait", 0.5], ["shot", "t2"], ["wait", 0.5], ["shot", "t3"], ["wait", 0.5], ["shot", "t4"], ["wait", 4], ["shot", "t5"]],
+        expect=[r'playing .*world']),
+    # The level end's fade (world_update: GlobalInten and the
+    # TRANSITION_SCREEN blit over two seconds): G1 with player 1 placed on
+    # its exit (GDL_DEBUG_TELEPORT at update 600).
+    'level-end-fade': dict(
+        env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1', GDL_DEBUG_TELEPORT='118.28,86.30,-472.5'),
+        steps=[["wait", 20], ["shot", "f1"], ["wait", 0.5], ["shot", "f2"], ["wait", 0.5], ["shot", "f3"], ["wait", 0.5], ["shot", "f4"], ["wait", 0.5], ["shot", "f5"], ["wait", 6], ["shot", "f6"]],
+        expect=[r'playing .*world 7 level 0']),
     # Start → the select screen: a new character (default name) → the Tower.
     'new-character': dict(
         steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Return') + [["wait", 3], ["shot", "select"]] + k('space', 8, gap=1.5)

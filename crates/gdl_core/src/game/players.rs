@@ -655,6 +655,7 @@ impl Game {
         r.set_u32(0x2ad4, 0);
         r.set_u32(0x2ad8, 0);
         self.controls.remove_active_player(k);
+        self.hud.kill_got_it(k);
         self.players[k].set_i16(0x1cc, 0xb4);
         self.players[k].set_i32(0x1a14, 0);
         super::profile::init_player_powerups(&mut self.players[k]);
@@ -698,8 +699,16 @@ impl Game {
         self.players[p].set_i32(0xfc, 0xb);
         self.players[p].set_i32(0x2ad4, 1);
         self.players[p].set_f32(0x1a10, 0.0);
-        // drop_keys: a KEY (one) or KEYRING item with +0xf4 = count at the
-        // player's position; boss levels just lose them.
+        self.hud.kill_got_it(p);
+        self.drop_keys(p)?;
+        super::profile::init_player_powerups(&mut self.players[p]);
+        Ok(())
+    }
+
+    /// drop_keys 0x1318d0 (kill_player, abort_player): a KEY (one) or
+    /// KEYRING item with +0xf4 = count at the player's position; boss
+    /// levels just lose them.
+    fn drop_keys(&mut self, p: usize) -> R<()> {
         let keys = self.players[p].i32_(0x1a14);
         if 0 < keys && self.globals.boss_type < 0 {
             let name: &[u8] = if keys == 1 { b"KEY" } else { b"KEYRING" };
@@ -711,7 +720,53 @@ impl Game {
             }
         }
         self.players[p].set_i32(0x1a14, 0);
-        super::profile::init_player_powerups(&mut self.players[p]);
+        Ok(())
+    }
+
+    /// abort_player 0x131b88 (game_main's quit_level, every player once
+    /// OptionsDone): for a player in play (+0xfc ≠ 0) with its model
+    /// (+0x80): del_target (not modelled), end_see_thru, kill_got_it,
+    /// drop_keys, remove_player_geo (the node markers +0x80 / +0x6b8
+    /// cleared; SfxDeleteParented of the player's effects not ported),
+    /// kill_death_sound (sound 0x66 stopped), init_player_powerups; then
+    /// +0x80c = 0, health +0x1a10 = 0 and player_set_intower (+0xfc = 0xb,
+    /// +0x2ad4 = 1, setup_player_display).
+    pub fn abort_player(&mut self, k: usize) -> R<()> {
+        if self.players[k].i32_(0xfc) == 0 {
+            return Ok(());
+        }
+        if self.players[k].u32_(0x80) != 0 {
+            self.end_see_thru(k);
+            self.hud.kill_got_it(k);
+            self.drop_keys(k)?;
+            self.players[k].set_u32(0x80, 0);
+            self.players[k].set_u32(0x6b8, 0);
+            self.events.push(super::Event::StopSound { id: 0x66 });
+            super::profile::init_player_powerups(&mut self.players[k]);
+        }
+        self.players[k].set_u32(0x80c, 0);
+        self.players[k].set_f32(0x1a10, 0.0);
+        self.players[k].set_i32(0xfc, 0xb);
+        self.players[k].set_i32(0x2ad4, 1);
+        self.setup_player_display(k);
+        Ok(())
+    }
+
+    /// game_main's quit_level check (before SetPlayerVars; OptionsDone holds
+    /// whenever the game steps): in play outside the Tower every player is
+    /// aborted, so the level ends as if all had died; elsewhere quit_level
+    /// is cleared.
+    pub(crate) fn quit_level_check(&mut self) -> R<()> {
+        if self.globals.quit_level == 0 {
+            return Ok(());
+        }
+        if self.globals.game_mode == 0x4010 && self.globals.cur_world != 0xd {
+            for k in 0..4 {
+                self.abort_player(k)?;
+            }
+        } else {
+            self.globals.quit_level = 0;
+        }
         Ok(())
     }
 }

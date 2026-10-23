@@ -57,6 +57,7 @@ pub mod teammove;
 pub mod weaptrail;
 pub mod seethru;
 pub mod saver;
+pub mod stageinfo;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
 use crate::item_collision::DynGrid;
@@ -322,6 +323,10 @@ pub struct Game {
     pub enemy_wall_hit: Option<usize>,
     /// did_action (set when a player damages an enemy).
     pub did_action: bool,
+    /// stage_playtime 0x2201a8 (vblanks of play; the tally's time) and
+    /// do_show_path's state.
+    pub stage_playtime: i32,
+    pub show_path: stageinfo::ShowPath,
     /// death_touch: set while Death drains a player (do_enemy_attack).
     pub death_touch: bool,
     /// FWRDVAL 0x2c15b8: per-type step this update (do_enemies).
@@ -505,6 +510,8 @@ pub struct Game {
     pub see_thru: [seethru::SeeThru; 4],
     /// ScreenSaver 0x12acf8's timer, levels and weapons.
     pub saver: saver::ScreenSaver,
+    /// init_stage_info / write_stage_info's title state.
+    pub stage_info: stageinfo::StageInfo,
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
     /// LockCamReq 0x23f2c4: camera-lock request. Only LockCamera (from the

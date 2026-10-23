@@ -3468,6 +3468,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "others":(1..4).filter(|&k| game.globals.active_players >> k & 1 != 0).map(|k| serde_json::json!({"player":k,"pos":game.players[k].v3(0x50),"state":game.players[k].i32_(0xfc),"health":game.players[k].f32_(0x1a10)})).collect::<Vec<_>>()}));
                     if let Some(last) = samples.last_mut() {
                         last["see_thru"] = see_thru;
+                        // do_show_path: stage_playtime, count, lost_timer1, flag, help shown.
+                        last["show_path"] = serde_json::json!([game.stage_playtime, game.show_path.count, game.show_path.lost_timer, game.show_path.flag, game.hud.help.num, game.milestones.len(), game.hud.help.flag]);
                     }
                 }
                 continue;

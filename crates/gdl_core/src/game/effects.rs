@@ -787,7 +787,7 @@ impl Game {
             let (hit, _) = self.weapon_wall_collide(radius, back, start)?;
             if let Some(h) = hit {
                 if flags & 0x20_0000 == 0 {
-                    self.start_hit_fx(self.wall_hit_effect(flags), h)?;
+                    self.add_wall_hit_col(h, flags)?;
                     return Ok(-1);
                 }
                 start = back;
@@ -797,9 +797,9 @@ impl Game {
             let d = self.damage_item(damage, it, flags, player as i32)?;
             if 0.0 <= d {
                 self.player_damaged_item(player, it, d == 0.0)?;
-                self.start_hit_fx(2, h)?;
+                self.add_item_hit_col(h, flags, d == 0.0)?;
             } else {
-                self.start_hit_fx(self.wall_hit_effect(flags), h)?;
+                self.add_wall_hit_col(h, flags)?;
             }
             if flags & 0x10_0000 == 0 {
                 return Ok(-1);
@@ -1677,16 +1677,29 @@ impl Game {
             _ => {}
         }
         if shown {
-            // AddItemHitCol 0x17dcf8(position, flags, killed): StartFXSub(0,
-            // table[flags & 0xf], position, 0, 0x880) from 0x240728 when
-            // killed, else 0x240710 (an Effects slot; trace-G1-potion-v2).
-            // NATIVE: damage colours past the six entries are clamped.
-            const DAMAGE_HIT: [usize; 6] = [2, 11, 14, 17, 20, 0];
-            const KILL_HIT: [usize; 6] = [3, 12, 15, 18, 21, 0];
-            let k = ((flags & 0xf) as usize).min(5);
-            self.start_hit_fx(if killed { KILL_HIT[k] } else { DAMAGE_HIT[k] }, at)?;
+            self.add_item_hit_col(at, flags, killed)?;
         }
         Ok(result as f32)
+    }
+
+    /// AddItemHitCol 0x17dcf8(position, flags, killed): StartFXSub(0,
+    /// table[flags & 0xf], position, 0, 0x880) from 0x240728 when killed,
+    /// else 0x240710 (an Effects slot; trace-G1-potion-v2). NATIVE: damage
+    /// colours past the six entries are clamped.
+    fn add_item_hit_col(&mut self, at: V3, flags: u32, killed: bool) -> R<i32> {
+        const DAMAGE_HIT: [usize; 6] = [2, 11, 14, 17, 20, 0];
+        const KILL_HIT: [usize; 6] = [3, 12, 15, 18, 21, 0];
+        let k = ((flags & 0xf) as usize).min(5);
+        self.start_hit_fx(if killed { KILL_HIT[k] } else { DAMAGE_HIT[k] }, at)
+    }
+
+    /// AddWallHitCol 0x17de10(position, flags): StartFXSub(0,
+    /// WallHitEffects[flags & 0xf], position, 0, 0x880), then
+    /// AudioEffect(5, position).
+    fn add_wall_hit_col(&mut self, at: V3, flags: u32) -> R<i32> {
+        let r = self.start_hit_fx(self.wall_hit_effect(flags), at)?;
+        self.audio_effect(5, at)?;
+        Ok(r)
     }
 
     /// start_magic 0x134408(power, player, position, potion flags, mode).

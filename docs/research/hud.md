@@ -230,6 +230,45 @@ AudioCursorH, +0x20 ^= 1 (GamePrefs word 2), AudioSetStereo. Native:
 Menu::hold each frame with the held d-pad; GamePrefs are stored when the
 menu ends.
 
+## Stage title (init_stage_info / write_stage_info)
+
+Read from the instructions (2026-10-23; ghidra-stage, refs-stageinfo-v1).
+init_game_cam, when it starts the stage camera (cam_wait 0x5b,
+start_of_stage 1), runs init_stage_info: stage_info_timer 0x5b,
+stage_scale 0.05, and for LEVL +0 flag 1 (SHOTS_STUN, ENGLISH.ROM 0xaf) or
+flag 4 (GRAB_COINS 0xb0, the timed secret levels) a SCROLL_A blit around
+the entry's text (StringTextWidth/Height at 1.0 + 0x3c / 0x10, centred on
+(256, 0x6c)); with neither and CurLevel 0, disp_find_exit = 0.
+StdCamStartStage calls write_stage_info(cam_wait) every update of play
+(paused 0, vb_elapsed ≠ 0, cam_wait clamped to 2): stage_scale += 0.05 ×
+vb_elapsed (2.0 once cam_wait < 2 or above 2); cam_wait < 1 →
+del_msgs_at_start (the blit removed). Otherwise DrawTextScaled(stage_scale,
+centred, y 0x30 − (int)(scale × 16), font 6, white, LEVL +0x14 — the level
+name), then the flagged line (DrawStringText(centred, 0x106c, entry font,
+0x160c03, 0xaf / 0xb0)) and, when the scale has just reached 2.0,
+AudioStunPlayers (AudioVQueAdd4(−1, 10, 0x10006, 0xe0, 0x7f, 2)) or
+AudioGrabGold (AudioVQueAdd4(−1, 1, 0x10029, …)). FIND_EXIT (0xb1,
+AudioFindExit) needs disp_find_exit ≠ 0, which nothing writes: never shown.
+Native: game::stageinfo (NATIVE: the box is a per-frame blit because the
+client loads the HUD after init_game_cam). GUI: menu-flows-m17-v9/v10
+(G1 "Fields", S1 "Lab" with the GRAB COINS box).
+
+## Lost players (do_show_path 0x124220)
+
+Read from the instructions (2026-10-23; ghidra-showpath1/2,
+refs-showpath-v1). game_main's play branch clears did_action each frame
+(damage_enemy, do_enemy_attack, enemy_attack_control and PlayerDamageItem
+set it), counts stage_playtime (vb_elapsed while unpaused, not in world
+0xc; reset by init_next_level outside world 0xc) and ends with
+do_show_path: past stage_playtime 0x4af, a combat-free interval (600
+vblanks, 0x1a4 after the first showing) alternately hides and shows the
+milestones' nodes (+0x60) and, on the first showing after a hidden one,
+NewHelp(0x1d). Milestone nodes exist only after the debug ShowMilestones
+(add_arrow's node flag; AddLocatorInstList passes 0), and no level on this
+disc has a milestone locator (kind 5; every level's count is 0 natively),
+so nothing is drawn and help 0x1d never appears. Native:
+Game::do_show_path (stageinfo.rs).
+
 ## Screen saver (ScreenSaver 0x12acf8)
 
 Read from the instructions (2026-10-23; ghidra-saver1..3). main calls
