@@ -1677,8 +1677,14 @@ impl Game {
             _ => {}
         }
         if shown {
-            // AddItemHitCol: hit spark (presentation).
-            self.start_hit_fx(if killed { 3 } else { 2 }, at)?;
+            // AddItemHitCol 0x17dcf8(position, flags, killed): StartFXSub(0,
+            // table[flags & 0xf], position, 0, 0x880) from 0x240728 when
+            // killed, else 0x240710 (an Effects slot; trace-G1-potion-v2).
+            // NATIVE: damage colours past the six entries are clamped.
+            const DAMAGE_HIT: [usize; 6] = [2, 11, 14, 17, 20, 0];
+            const KILL_HIT: [usize; 6] = [3, 12, 15, 18, 21, 0];
+            let k = ((flags & 0xf) as usize).min(5);
+            self.start_hit_fx(if killed { KILL_HIT[k] } else { DAMAGE_HIT[k] }, at)?;
         }
         Ok(result as f32)
     }
@@ -1789,13 +1795,15 @@ impl Game {
             r.set_u32(fx::HIT_SOUND, 0);
             r.set_u32(fx::WALL_SOUND, 0);
             self.sfx_set_damage(i, mul(kf, 40.0)?, power, 0.0, flags, owner);
-            // ScaleFX(min(power / 32, 1)), SfxSetLight(1.5 power); the floor
-            // placement (y only) is presentation.
+            // ScaleFX(min(power / 32, 1)), SfxSetLight(1.5 power), then
+            // start_magic's PlaceEffectOnFloor(effect, 0) (0x13468c): the
+            // node lands on the floor + 0.1 (trace-G1-potion-v2).
             let f = size(power)?;
             if let Some(n) = self.effects.nodes[i].as_mut() {
                 n.scale = f;
             }
             self.sfx_set_light(i, mul(power, 1.5)?, light);
+            self.place_effect_on_floor(i)?;
             if 0 <= player {
                 self.audio_potion(c, position, 0);
             }

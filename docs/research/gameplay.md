@@ -805,3 +805,34 @@ attach_item_anim). Not modelled: do_exit's del_target 0x168f78 on state 5.
 Two repeats of the same warped exit through the tally to the Tower
 (baseline-transition-a/b-v1, equal logs)
 are in reference-baseline.md.
+
+### Magic, powerups and transporters (2026-10-23)
+
+WARPED captures from the fixture and A1's new game (reference_warp.py
+--pos; warp-*-v1 reports), traced with reference_trace.py and replayed
+update by update:
+
+- Potion and magic (w7l1-potion-v2 / trace-G1-potion-v2: onto POT_YEL 367,
+  pick it up, Circle): PICK, the cast (action 0x73 → 0x74), the potion
+  spent, the blast and its hits — 80/80 for player, effects, enemies,
+  world animation (items 79/80: sound item 391's audio handle +0xfe, the
+  known residue). w7l1-potion-v1 (POT_YEL 368) shows a multiplayer-only
+  potion (+0xe1 = 1) is not collected in single player. Fixed on the way:
+  event 0x10000's StartMagicPlayerFX 0x17ee18 (StartFXSub(0, 0x22, zero
+  vector, 0, 0x880), parented to the player's +0x6a4 node) is a real
+  Effects slot, not presentation; start_magic's PlaceEffectOnFloor after
+  StartMagicFX; AddItemHitCol 0x17dcf8 takes its header from the damage
+  colour (0x240710 / 0x240728 by flags & 0xf) instead of fixed 2/3.
+- Weapon powerup (w7l1-xbow-v1 / trace-G1-xbow-v1: onto XBOWICON 398, then
+  two throws): the pickup and the powered throws 90/90 in every part
+  (items 89/90: sound item 375's handle).
+- Transporter (w1l1-trans-v1 / trace-A1-trans-v1: onto A1's TRANS pad at
+  (−70.8, 0.2, 94.8)): DoTransporter carries the player to the linked pad
+  (−64.2, 0, 94.7), and the arrival kills the enemy in the way. 180 updates:
+  player, items, effects, world animation, critters and camera 180/180,
+  enemies 179/180. Fixed: the arrival kill's damage is 9999.0 (0x461c3c00 at
+  0x149314), not 10000. Left (first divergence, unknowns.md "Spawn
+  direction wall test"): step 304, a generator spawn in slot 23 takes
+  direction 1 natively where the original takes 7 — the native
+  EnemyWallCollide hits A1FENCE#60 (triangle 789; the end point lies
+  0.94 from the plane, inside the triangle) where the original's does not.

@@ -451,7 +451,8 @@ impl Game {
                                 d[2] = mul(d[2], 0.75)?;
                             }
                         } else {
-                            self.player_damage_target(10000.0, 0.0, p, e, 0, None, false)?;
+                            // 0x149314: 0x461c3c00 = 9999.0 (trace-A1-trans-v1).
+                            self.player_damage_target(9999.0, 0.0, p, e, 0, None, false)?;
                         }
                     }
                 } else {
@@ -1563,7 +1564,16 @@ impl Game {
             self.players[p].set_u32(0x8d8, v);
         }
         if self.players[p].u32_(0x8d8) & 0x10000 != 0 {
-            // StartMagicPlayerFX (the potion glow, a presentation effect).
+            // StartMagicPlayerFX 0x17ee18 (0x14bfc8): StartFXSub(0, 0x22,
+            // the zero vector at 0x2a1e40, 0, node flags 0x880) — an Effects
+            // slot like any other (trace-G1-potion-v2) — then MBNodeSetParent
+            // to the player's +0x6a4 node when set (local origin) and
+            // MBTreeSetFlags(0x4000000) (presentation). The native player
+            // always has that node.
+            let k = self.start_fx_sub(0.0, 0x22, Some([0.0; 3]), 0)?;
+            if let Ok(k) = usize::try_from(k) {
+                self.parent_fx_to_player(k, p, [0.0; 3]);
+            }
             self.players[p].and_u32(0x8d8, 0xfffe_ffff);
         }
         let ev = self.players[p].u32_(0x8d8);
