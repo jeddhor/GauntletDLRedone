@@ -125,8 +125,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    matrices. A1's golem statue 240/240; B6's dragon killed (warped health)
    through the coin spew 250/250 (InitEffects' per-level headers,
    CritterDoTexmodNode's skin, world_update's boss part in the replay);
-   PlayerGetTarget's gate residue modelled. Next: the good wizard and auto
-   exit after the boss death, general/Death statues.
+   PlayerGetTarget's gate residue modelled. The good wizard and the auto
+   exit after B6's death compared in three chained traces, every part equal
+   until game_main's level end (BossDeath's BOSSKEY effect; the replay now
+   runs main's audio queue and do_auto_exit). Next: the game_main level end
+   and tally against a reference, general/Death statues.
 5. Front end and HUD (IN PROGRESS; research/hud.md): DONE 2026-10-20/21 —
    FNT fonts, MB blit/font layer, original player panels (portrait, LV,
    name, gold, health, keys/potions, turbo meter, runes, crystal display,

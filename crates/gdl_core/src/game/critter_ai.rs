@@ -2124,6 +2124,18 @@ impl Game {
             add(CritterFile::f32_pub(&ty, 0xd8), home[2])?,
         ];
         if self.globals.boss_type < 0x2a {
+            // InitCustomEffect(item_anim2, "BOSSKEY") and "BOSSKEY2",
+            // StartFXSub(0, key, position, 0x80000040, 0x880) as BossKeySfx and
+            // SfxSetMorph(30, key, key2, 0): the key morphs after 30 s
+            // (trace-B6-goodwiz-v2 step 43); AudioBossKey is the event.
+            let h1 = self.register_custom_effect(self.effects.tables.item_header(1, "BOSSKEY"), "BOSSKEY");
+            let h2 = self.register_custom_effect(self.effects.tables.item_header(1, "BOSSKEY2"), "BOSSKEY2");
+            if let Ok(h) = usize::try_from(h1) {
+                let k = self.start_fx_sub(0.0, h, Some(at), 0x8000_0040)?;
+                if let Ok(k) = usize::try_from(k) {
+                    self.sfx_set_morph(k, 30.0, h2 as i16, 0);
+                }
+            }
             self.events.push(super::Event::BossKey { position: at });
             self.boss_key_position = Some(at);
         }

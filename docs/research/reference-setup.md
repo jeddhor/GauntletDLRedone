@@ -91,6 +91,7 @@ warp-*.json and screenshots in private/reports):
 | 9 (staging) | w1l1-golem-v1.p2s / w1l1-golem-v2.p2s | slot 4 with player 0 written beside golem statues 67 (multiplayer-only) and 71 (−106.8, 26.09, −17.2 / 121.29, 25.86, 98.69), 250 vblanks | A1, WARPED |
 | 9 (staging) | w1l1-death-v1.p2s / w1l1-death-v2.p2s | slot 4 with player 0 written near Death statue 50 (−77, 0, 84.1 / −70.6, 0.04, 71.7), 250 vblanks | A1, WARPED (the statue is fenced off) |
 | 9 (staging) | w2l6-bosskill-v1.p2s (sha256 7deb9cd5…) | slot 8 with CritterInsts[0] (the dragon) +0x4f4 written to 10, 1 vblank | B6, WARPED health (guest write); for the boss death |
+| 9 (staging) | w2l6-bosskill-v2/v3/v4.p2s | the previous capture after trace-B6-bosskill-v1's schedule / 600 idle vblanks / 600 idle vblanks | B6 after the death: the good wizard's start, speech, exit timer |
 | 9 (staging) | w9l5-boss-v2.p2s (sha256 793dedef…) | from w9l5-boss-v1: player 0 written to (9.6, −4.047, −5.2), 62 units from the yeti (a floor point by collision-query), 4 vblanks | I5, WARPED position (guest write); for the yeti's activation |
 
 Slot 9 is a staging slot (tools/python/reference_slots.py): `--stage NAME`

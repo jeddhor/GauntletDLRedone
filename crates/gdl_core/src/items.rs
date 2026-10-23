@@ -365,6 +365,14 @@ impl ItemWorld {
         })
     }
 
+    /// Replay seeding: empty records up to `n` slots (items the reference
+    /// created before the traced update).
+    pub fn grow_records(&mut self, n: usize) {
+        while self.records.len() < n {
+            self.records.push(ItemRecord([0; RECORD]));
+        }
+    }
+
     /// NewItemPtr: first slot with +0xd8 == -1 or a new one; keeps +0xe6.
     pub fn new_item_ptr(&mut self, max_items: usize) -> R<usize> {
         let mut i = self.first_empty;

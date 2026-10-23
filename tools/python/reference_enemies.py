@@ -24,7 +24,9 @@ ENEMY_GLOBALS = ['BossIndex', 'SuicideBomberIndex', 'CurWorld', 'level_data', 'I
 # and frame counters, the target bookkeeping and the boss state.
 CRITTER_GLOBALS = {'CritterETypes': 9 * 6 * 4, 'CritterNewID': 4, 'CritterCounter': 4, 'CritterNActivePlayers': 4,
                    'CritterPlayerNTargets': 16, 'BossStartPos': 12, 'BossActivateTime': 4, 'BossCamMode': 4,
-                   'EnemyRootNode': 4}
+                   'EnemyRootNode': 4,
+                   # ProcessSpewItems' list: 0x20 × {item pointer, velocity}.
+                   'NumSpewItems': 4, 'SpewItems': 0x20 * 0x10}
 ENEMY_SIZE = 0x3b0
 ENEMY_COUNT = 25
 

@@ -200,6 +200,9 @@ impl ReferenceItems {
         if self.0.len() < game.items.records.len() {
             game.items.records.truncate(self.0.len());
         }
+        // Items the reference created before the traced update (a trace
+        // started after a spawn: trace-B6-goodwiz-v1's coins).
+        game.items.grow_records(self.0.len());
         if self.0.len() != game.items.records.len() {
             return Err(format!("reference NumItems {} differs from native {}", self.0.len(), game.items.records.len()).into());
         }
@@ -708,8 +711,38 @@ impl ReferenceCritters {
         let bp = self.global("BossStartPos")?;
         game.boss_start_pos = std::array::from_fn(|j| f32::from_bits(Self::word(&bp, 4 * j)));
         game.boss_activate_time = f32::from_bits(g("BossActivateTime")?);
+        // ProcessSpewItems' list (traces from trace-B6-goodwiz-v2): the item
+        // as native slot, the velocity.
+        if let (Ok(n), Ok(list)) = (self.global("NumSpewItems"), self.global("SpewItems")) {
+            let n = (Self::word(&n, 0) as usize).min(0x20);
+            let f = |o: usize| f32::from_le_bytes(list[o..o + 4].try_into().unwrap());
+            game.spew_items = (0..n)
+                .map(|k| {
+                    let p = Self::word(&list, 0x10 * k);
+                    let slot = (p != 0 && items_base <= p && (p - items_base).is_multiple_of(0x110)).then(|| ((p - items_base) / 0x110) as usize);
+                    (slot, [f(0x10 * k + 4), f(0x10 * k + 8), f(0x10 * k + 0xc)])
+                })
+                .collect();
+        }
         game.boss_cam_mode = g("BossCamMode")? as i32;
         game.boss_crit_inst = if self.boss == 0 { 0 } else { ((self.boss - Self::BASE) / 0xb70 + 1) as i32 };
+        // BossCritInst left pointing at the freed instance after BossDeath
+        // (traces starting after the death: trace-B6-goodwiz-v3): its bytes
+        // stand in, as CritterDelInst's boss_stale keeps them natively, with
+        // the boss TYPE's +0x78 radius (CritterETypes[4][0]).
+        game.boss_stale = None;
+        if self.boss != 0 && (self.boss - Self::BASE).is_multiple_of(0xb70) {
+            let k = ((self.boss - Self::BASE) / 0xb70) as usize;
+            if k < 16
+                && !self.live(k)
+                && let Some(t) = game.critter_data.etypes.get(4).and_then(|e| e.first()).copied().flatten()
+            {
+                let ty = &game.critter_data.files[t.0].wad.types[t.1];
+                let radius = f32::from_le_bytes(ty[0x78..0x7c].try_into().unwrap());
+                let ncol = Self::ncol(game, t);
+                game.boss_stale = Some((gdl_core::game::record::Record(Self::native(&self.slots[k], ncol, items_base)?), radius));
+            }
+        }
         Ok(())
     }
 
@@ -1894,6 +1927,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             let have_crit = frame_mode && crit_before.apply(s0)? && !crit_before.globals.is_empty();
             let mut critter_updates_equal = 0;
             let mut camera_updates_equal = 0;
+            let mut wizard_updates_equal = 0;
+            let mut mode_exit: Option<serde_json::Value> = None;
             let mut world_anim_updates_equal = 0;
             let mut player_updates_equal = 0;
             let mut effect_updates_equal = 0;
@@ -1922,12 +1957,44 @@ fn run() -> Result<(), Box<dyn Error>> {
                 if b["observation"]["scalars"]["AFrame"]["raw_u32"] == a["observation"]["scalars"]["AFrame"]["raw_u32"] {
                     continue;
                 }
+                // game_main leaving gameplay (0x4010 → a level end such as
+                // 0x4012 after the auto exit) is outside the frame replay:
+                // it ends there.
+                let mode_of = |s: &serde_json::Value| -> Option<u32> { s["player"].get("game_mode").and_then(|v| hexb(v).ok()).map(|b| word(&b)) };
+                if frame_mode && mode_of(b) == Some(0x4010) && mode_of(a).is_some_and(|m| m != 0x4010) {
+                    mode_exit = Some(serde_json::json!({"step": a["step"], "game_mode": format!("{:#x}", mode_of(a).unwrap_or(0))}));
+                    break;
+                }
                 let eb = native_words(&hexb(&b["enemies"]["enemies"])?);
                 let ea = native_words(&hexb(&a["enemies"]["enemies"])?);
                 let rand_after = word(&hexb(&a["enemies"]["rand_next"])?);
                 let seed_all = |game: &mut gdl_core::game::Game| -> Result<(), Box<dyn Error>> {
                     let (bp, ap) = (&b["player"], &a["player"]);
                     game.players[0] = gdl_core::game::record::Record(hexb(&bp["player0"])?);
+                    // The boss completion state before the update (traces from
+                    // trace-B6-goodwiz-v1): DoGoodWizard's globals, the
+                    // wizard node (good_wiz_objgrp +0x60), the auto exit.
+                    if let Some(gw) = bp.get("GoodWizard") {
+                        let w = |n: &str| -> Result<u32, Box<dyn Error>> { Ok(word(&hexb(&bp[n])?)) };
+                        game.globals.good_wizard = word(&hexb(gw)?) as i32;
+                        game.globals.boss_is_dead = w("BossIsDead")? as i32;
+                        game.boss_is_dying = w("BossIsDying")? as i32;
+                        game.auto_exit_timer = w("auto_exit_timer")? as i32;
+                        let gz = &mut game.good_wiz;
+                        gz.timer = f32::from_bits(w("good_wiz_timer")?);
+                        gz.alpha = w("good_wiz_alpha")? as i32;
+                        gz.speech_idx = w("good_wiz_speech_idx")? as i32;
+                        gz.speech_frame = w("good_wiz_speech_frame")? as i32;
+                        gz.speech_pause = w("good_wiz_speech_pause")? as i32;
+                        gz.yaw = f32::from_bits(w("good_wiz_yaw")?);
+                        gz.plyr_attn = w("good_wiz_plyr_attn")? as i32;
+                        gz.all_rune_stones = w("all_rune_stones")? != 0;
+                        gz.optmenu_disable = w("optmenu_disable")? != 0;
+                        let og = hexb(&bp["good_wiz_objgrp"])?;
+                        let f = |o: usize| f32::from_le_bytes(og[o..o + 4].try_into().unwrap());
+                        gz.matrix = (word(&og[0x60..]) != 0).then(|| std::array::from_fn(|r| std::array::from_fn(|c| f(0x10 * r + 4 * c))));
+                        gz.attn = [f(0x40), f(0x44), f(0x48)];
+                    }
                     let ctl = hexb(&ap["control"])?;
                     for k in 0..4 {
                         game.controls.control[k] = gdl_core::game::record::Record(ctl[k * 0x3c..(k + 1) * 0x3c].to_vec());
@@ -2227,18 +2294,13 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // keep the previous attempt's spews).
                     game.spew_items.clone(),
                     game.items.statue_tree.clone(),
+                    // InitCustomEffect's registrations (BossDeath's BOSSKEY on
+                    // a retry must not take the next headers).
+                    game.effects.custom_effects,
+                    game.effects.tables.headers.clone(),
+                    // The EE voice queue (AudioQueUpdate's state).
+                    game.audio_que.clone(),
                 );
-                // An item count that differs from the reference's (the native
-                // created or deleted items at another update) ends the replay
-                // with that update's error recorded.
-                if have_items && ref_b.0.len() != game.items.records.len() {
-                    updates.push(serde_json::json!({"step": a["step"], "seed_solved": false, "alt_seed": false,
-                        "error": format!("reference NumItems {} differs from native {}", ref_b.0.len(), game.items.records.len()),
-                        "diffs": [], "item_diffs": [], "player_diffs": [], "effect_diffs": [], "critter_diffs": [], "camera_diffs": [],
-                        "words_differing": 0, "item_words_differing": 0, "player_words_differing": 0, "effect_words_differing": 0,
-                        "critter_words_differing": 0, "camera_words_differing": 0}));
-                    break;
-                }
                 let attempt = |game: &mut gdl_core::game::Game, seed: u32| -> Result<Result<(), gdl_core::game::Unsupported>, Box<dyn Error>> {
                     if b["enemies"].get("help_flag").is_none() {
                         game.hud.help = help_before.clone();
@@ -2253,6 +2315,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                         game.items.geo,
                         game.spew_items,
                         game.items.statue_tree,
+                        game.effects.custom_effects,
+                        game.effects.tables.headers,
+                        game.audio_que,
                     ) = item_side.clone();
                     seed_all(game)?;
                     game.rng.state = seed;
@@ -2260,6 +2325,17 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // seconds after WorldStartTime; traces from
                     // trace-g1-newgame-v4).
                     let mut res = Ok(());
+                    // main's AudioQueUpdate/AudioPoll on the reference's
+                    // vb_counter, then game_main's do_auto_exit (traces with
+                    // the boss completion state: trace-B6-goodwiz-v3's
+                    // speech and exit timer).
+                    if frame_mode && b["player"].get("GoodWizard").is_some() {
+                        if let Some(v) = b["observation"]["scalars"]["vb_counter"]["raw_u32"].as_u64() {
+                            game.vb_counter = v as u32;
+                        }
+                        game.main_audio(game.globals.vb_elapsed);
+                        game.do_auto_exit_pub();
+                    }
                     // world_update's boss part (DoGoodWizard, ProcessSpewItems
                     // 0x163540..; trace-B6-bosskill-v1's coins) before the
                     // stage-start block, its QuestItemState machine after.
@@ -2398,6 +2474,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let (mut player_diffs, effect_diffs) = (Vec::new(), if frame_mode { fx_before.compare(&game, items_base) } else { Vec::new() });
                 let mut critter_diffs = Vec::new();
                 let mut camera_diffs: Vec<serde_json::Value> = Vec::new();
+                let mut wizard_diffs: Vec<serde_json::Value> = Vec::new();
                 if frame_mode {
                     let after = hexb(&a["player"]["player0"])?;
                     for o in (0..0x2b00).step_by(4) {
@@ -2464,6 +2541,49 @@ fn run() -> Result<(), Box<dyn Error>> {
                         }
                         camera_diffs = d;
                     }
+                    // The boss completion after the update.
+                    if let Some(gw) = a["player"].get("GoodWizard") {
+                        let ap = &a["player"];
+                        let w = |n: &str| -> Result<u32, Box<dyn Error>> { Ok(word(&hexb(&ap[n])?)) };
+                        let gz = &game.good_wiz;
+                        let mut d = Vec::new();
+                        let mut cmp = |name: &str, n: u32, r: u32| {
+                            if n != r {
+                                d.push(serde_json::json!({"field":name,"native":format!("{n:08x}"),"reference":format!("{r:08x}")}));
+                            }
+                        };
+                        cmp("GoodWizard", game.globals.good_wizard as u32, word(&hexb(gw)?));
+                        cmp("BossIsDead", game.globals.boss_is_dead as u32, w("BossIsDead")?);
+                        cmp("BossIsDying", game.boss_is_dying as u32, w("BossIsDying")?);
+                        cmp("auto_exit_timer", game.auto_exit_timer as u32, w("auto_exit_timer")?);
+                        cmp("auto_exit_flag", game.globals.auto_exit_flag as u32, w("auto_exit_flag")?);
+                        cmp("good_wiz_timer", gz.timer.to_bits(), w("good_wiz_timer")?);
+                        cmp("good_wiz_alpha", gz.alpha as u32, w("good_wiz_alpha")?);
+                        cmp("good_wiz_speech_idx", gz.speech_idx as u32, w("good_wiz_speech_idx")?);
+                        cmp("good_wiz_speech_frame", gz.speech_frame as u32, w("good_wiz_speech_frame")?);
+                        cmp("good_wiz_speech_pause", gz.speech_pause as u32, w("good_wiz_speech_pause")?);
+                        cmp("good_wiz_yaw", gz.yaw.to_bits(), w("good_wiz_yaw")?);
+                        cmp("good_wiz_plyr_attn", gz.plyr_attn as u32, w("good_wiz_plyr_attn")?);
+                        cmp("all_rune_stones", u32::from(gz.all_rune_stones), w("all_rune_stones")?);
+                        cmp("optmenu_disable", u32::from(gz.optmenu_disable), w("optmenu_disable")?);
+                        let og = hexb(&ap["good_wiz_objgrp"])?;
+                        let present = word(&og[0x60..]) != 0;
+                        cmp("good_wiz_objgrp node", u32::from(gz.matrix.is_some()), u32::from(present));
+                        if let (Some(m), true) = (gz.matrix, present) {
+                            for r in 0..4 {
+                                for c in 0..4 {
+                                    cmp(&format!("good_wiz_objgrp +{:#x}", 0x10 * r + 4 * c), m[r][c].to_bits(), word(&og[0x10 * r + 4 * c..]));
+                                }
+                            }
+                            for (k, v) in gz.attn.iter().enumerate() {
+                                cmp(&format!("good_wiz_objgrp +{:#x}", 0x40 + 4 * k), v.to_bits(), word(&og[0x40 + 4 * k..]));
+                            }
+                        }
+                        if d.is_empty() && res.is_ok() {
+                            wizard_updates_equal += 1;
+                        }
+                        wizard_diffs = d;
+                    }
                     if have_crit {
                         critter_diffs = crit_before.compare(&game, items_base)?;
                         if critter_diffs.is_empty() && res.is_ok() {
@@ -2493,7 +2613,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "player_words_differing":player_diffs.len(),"player_diffs":player_diffs.iter().take(40).collect::<Vec<_>>(),
                     "effect_words_differing":effect_diffs.len(),"effect_diffs":effect_diffs.iter().take(40).collect::<Vec<_>>(),
                     "critter_words_differing":critter_diffs.len(),"critter_diffs":critter_diffs.iter().take(60).collect::<Vec<_>>(),
-                    "camera_words_differing":camera_diffs.len(),"camera_diffs":camera_diffs.iter().take(40).collect::<Vec<_>>()}));
+                    "camera_words_differing":camera_diffs.len(),"camera_diffs":camera_diffs.iter().take(40).collect::<Vec<_>>(),
+                    "wizard_diffs":wizard_diffs}));
             }
             let report = serde_json::json!({"scope":"per-update replay of a reference enemies trace through the native do_enemies (all 25 records, every u32 except presentation pointers 0x70 0x80 0x84 0x88 0x8c 0xc0 0xc4 0x1f0; generator/floor links mapped)",
                 "items_mode":items_mode,"item_scope":"items_replay: ProcessItems then do_enemies; Items array words except +0x70..+0xc7 and the +0xe6 link, export_live_items convention",
@@ -2503,6 +2624,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "world_anim_updates_equal":world_anim_updates_equal,
                 "critter_updates_equal":have_crit.then_some(critter_updates_equal),
                 "camera_updates_equal":camera_updates_equal,
+                "wizard_updates_equal":wizard_updates_equal,
+                "ended_at_mode_change":mode_exit,
                 "item_floor_parents":game.items.floor_parent.iter().enumerate().filter_map(|(k, p)| p.map(|(o, l)| serde_json::json!({"item":k,"object":o,"local":l}))).collect::<Vec<_>>(),
                 "items_without_native_clock":(0..game.items.records.len()).filter(|&k| game.items.records[k].active() && game.item_anims.get(k).is_none_or(|a| a.is_none()))
                     .map(|k| String::from_utf8_lossy(game.items.definitions[game.items.records[k].definition()].name()).into_owned())

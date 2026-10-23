@@ -752,5 +752,20 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   (rendering.md), CritterDoTexmodNode's skin, CritterInitSfx's texture
   words; the replay now runs world_update's DoGoodWizard / ProcessSpewItems
   and QuestItemState parts, restores the spew list per retry and drops items
-  a retry appended. Not yet traced: the good wizard and the auto exit after
-  it (the trace ends 100 updates after the spew).
+  a retry appended. The rest of the completion in chained captures
+  (w2l6-bosskill-v2/v3/v4, each the previous capture after the same
+  inputs; the state at each link equals the trace's last sample):
+  trace-B6-goodwiz-v2 (BossDeath's StartGoodWizard at step 43, GoodWizard
+  1 → 2 → 3 (300 vblanks) → 4 → 5), -v3 (the speech: 5 → 6 → 7 → 8, then 10
+  with auto_exit_timer = 600, coins being left), -v4 (the timer to
+  EXIT_SKIN_TIME, state 11 and the players' exit skins at 451, game_main's
+  level end at 485, mode 0x4012): 300/300, 300/300 and 242/242 in every
+  part, the good wizard's state included (the replay ends at the mode
+  change; game_main's level end is outside it). Fixed on the way:
+  BossDeath's BOSSKEY effect (InitCustomEffect from item_anim2,
+  StartFXSub(0, key, position, 0x80000040), SfxSetMorph(30, key, BOSSKEY2));
+  the replay seeds the good wizard, the spew list (SpewItems), items created
+  before the trace, the freed boss instance BossCamBossCalc still reads, and
+  runs main's AudioQueUpdate (vb_counter seeded) and game_main's
+  do_auto_exit per update, restoring the custom effects and the voice queue
+  per retry.

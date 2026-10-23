@@ -37,6 +37,11 @@ impl Game {
         })
     }
 
+    /// Replay hook: game_main's do_auto_exit (before world_update).
+    pub fn do_auto_exit_pub(&mut self) {
+        self.do_auto_exit()
+    }
+
     /// Replay hooks for world_update's boss part and QuestItemState machine.
     pub fn boss_world_update_pub(&mut self) -> R<()> {
         self.boss_world_update()
