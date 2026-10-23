@@ -208,7 +208,13 @@ impl Nav {
         if !matches!(c.floor_collide(0.3, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some()) {
             return None;
         }
-        Some(Self::edge_ok(c, a, b, radius))
+        let strict = Self::edge_ok(c, a, b, radius);
+        // Drops need the player-like test too: a rail or parapet the loose
+        // sweep passes over stops the player at the edge.
+        if dy < -2.5 && !strict {
+            return None;
+        }
+        Some(strict)
     }
 
     fn edge_ok(c: &mut CollisionWorld, a: V3, b: V3, radius: f32) -> bool {
@@ -558,7 +564,10 @@ impl Bot {
             (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && g.items.records[s].u8_(0xe1) == 0 && { let (k, t) = item_kind(g, s); want(k, t) }).collect()
         };
         let keys = active(g, &|k, t| k == 1 && t == 2);
-        let exits = active(g, &|k, _| k == 9);
+        // Regular exits first; secret exits (subtype 0x32, to the treasure
+        // rooms) only when no regular exit is reachable.
+        let exits = active(g, &|k, t| k == 9 && t != 0x32);
+        let secret = active(g, &|k, t| k == 9 && t == 0x32);
         // Triggers that switch their bound object on (+0xf4 bit 0 only
         // switches it off) and were not used yet.
         let triggers: Vec<usize> = active(g, &|k, _| k == 5)
@@ -576,7 +585,7 @@ impl Bot {
             }
         }
         let tower_crystals = g.globals.cur_world == 0xd && !active(g, &|k, t| k == 1 && t == 15).is_empty();
-        let order = if tower_crystals { [near, Vec::new()] } else { [exits, near] };
+        let order = if tower_crystals { [near, Vec::new(), Vec::new()] } else { [exits, near, secret] };
         for list in order {
             let list: Vec<usize> = list.into_iter().filter(|s| !self.given_up.contains(s)).collect();
             let targets = self.item_nodes(g, &list);

@@ -3233,6 +3233,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 let mut pads = [gdl_core::game::pad::PadStatus::default(); 8];
                 pads[0].connected = true;
+                // players=N: the other players' pads are present (idle), so
+                // joyGetStatus does not report them removed.
+                for (k, pd) in pads.iter_mut().enumerate().take(4).skip(1) {
+                    pd.connected = game.globals.active_players >> k & 1 != 0;
+                }
                 let m = pad_script.get(f).copied().unwrap_or(0);
                 for i in 0..0x16 {
                     if m >> i & 1 != 0 {
