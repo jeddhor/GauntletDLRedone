@@ -3682,7 +3682,10 @@ fn present_world(
                 let d = &g.items.definitions[r.definition()];
                 let kind = d.kind();
                 // 0x800: a Tower crystal still hidden (its tree alpha fades in).
-                if !r.active() || r.u16_(0xd8) & 0x8900 != 0 || kind == 4 || kind == 13 || kind == 5 || kind == 7 {
+                // +0xe1 ≠ 0: hidden for this player count (show_item; ProcessItems
+                // sets the tree's hide flag 2 whenever +0xe1 becomes 1 and
+                // clears it when +0xe1 returns to 0).
+                if !r.active() || r.u16_(0xd8) & 0x8900 != 0 || r.u8_(0xe1) != 0 || kind == 4 || kind == 13 || kind == 5 || kind == 7 {
                     *vis = Visibility::Hidden;
                     continue;
                 }
@@ -5578,6 +5581,13 @@ fn front_system(world: &mut EcsWorld) {
                 let cls = 0xb4 * g.players[0].u32_(0xc) as usize;
                 let counts: Vec<i16> = (0..9).map(|n| g.players[0].i16_(0xd0a + cls + 2 * n)).collect();
                 eprintln!("DEBUG F2 player {at:?} crystals {counts:?} max {:?} time {} garg_mtime {:?} door_mtime {:?}", g.items.tables.max_crystals, g.globals.time, g.tower.garg_mtime, g.tower.door_mtime);
+                if world.resource::<ButtonInput<KeyCode>>().pressed(KeyCode::ShiftLeft) {
+                    // Shift+F2: every active item.
+                    for (s, r) in g.items.records.iter().enumerate().filter(|(_, r)| r.active()) {
+                        let def = &g.items.definitions[r.definition()];
+                        eprintln!("DEBUG F2 all {s} {} kind {} sub {} pos {:?} d8 {:#06x}", String::from_utf8_lossy(def.name()), def.kind(), def.subtype(), r.position(), r.u16_(0xd8));
+                    }
+                }
                 eprintln!(
                     "DEBUG F2 state game_mode {:#x} active_players {:#x} mask {:#x} states {:?} continue {:?} level_done {:?} exit_ready {} updates {} error {:?} unsupported {:?}",
                     g.globals.game_mode,

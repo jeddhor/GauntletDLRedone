@@ -73,6 +73,19 @@ without an AnimInfo (+0x80 = 0) are 95 BRIDGEPAD, 41 EXIT_PORTAL (8 more
 have one) and 53 S_CARPETFLY in the reference, the same records native
 leaves without a clock.
 
+## Player-count items (+0xe0, +0xe1)
+
+SetItem stores +0xe0 (the record's player count; 10 + n = exactly n) and
++0xe1 = !show_item 0x151620 (NumVirtualPlayers, or 2 in attract modes,
+against +0xe0). ProcessItems keeps +0xe1 as a state — 0 shown, 1 hidden, 2
+waiting to show until off screen (keys, or with 0x20f954/0x20f958 at once)
+— and sets the item tree's hide flag (MBTreeSetFlags 2) whenever +0xe1
+becomes 1, clearing it when +0xe1 returns to 0; its main body skips records
+with +0xe1 ≠ 0. B1 in single player: 61 of 127 items hidden (+0xe0 2, 3, 4
+and 12: the extra chests, keys and barrels; trace-b1-newgame-v2). gdl_play
+draws an item only while +0xe1 is 0 (it had drawn the multiplayer chests,
+which could not be opened; scene comparison private/reports/scene-b1-v2-*).
+
 ## Per-update matrices (ProcessItems loop 2, PlaceItem)
 
 ProcessItems' second loop calls GetObjWorldMat(+0x10, +0xc8, +0xc8) 0x103450
