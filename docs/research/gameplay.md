@@ -526,9 +526,26 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   items 160/161's +0xfe audio handles. Reference screenshots of the pickup
   (private/reports/ref-tower-crystal-up40/60/120.png: Up held from the
   savestate): the 1/15 counter at once, the "Crystal" got-it panel over
-  player 1's box by 120 vblanks, Sumner on his pedestal. Native's client
-  showed the label twice after three quick pickups (two do_got_it panels;
-  not compared with a reference of several pickups).
+  player 1's box by 120 vblanks, Sumner on his pedestal. Several quick
+  pickups stack do_got_it panels in the reference too (three "Crystal"
+  labels at 300 vblanks, two at 350: ref-tower-crystals-190/250/300/350-v1
+  from slot 2 with Left 60, Up 50, Up+Left 40, Up), as the native client
+  draws them.
+- GUI walkthrough (2026-10-22, gdl_play on the private Xvfb, keys through
+  xdotool on the client's own window): title → select (New, the default
+  name, Sorceress) → the Tower's WelcomeMessage pages (triangle) → the
+  crystal camera → all fifteen crystals (UnlockLevel: "You now have enough
+  Crystals to enter the Forsaken Province", the set marked −1) → the "15"
+  door → the level circle (portal I open) → the realm map → the level movie
+  → G1 combat (kills, experience, "Collect potion before using magic").
+  Reference frames at matching points: the new game's start, the podium
+  (ref-tower-route-podium-v2), Sumner's hint pad (the menu opens after
+  SumnerHintsActivate's 2 s and does not reopen while the player stays on
+  the pad: ref-tower-hint-open-v1, ref-tower-hint-reopen-v2; the native
+  reopens only after the player leaves and returns). Unexplained: in one
+  earlier session one crystal could not be collected (fourteen counted, the
+  glow left in place); a second session collected all fifteen with the F2
+  item dump (DEBUG) and did not reproduce it.
 - trace-combat-g1-v4: trace-combat-g1-v3's schedule re-recorded with the
   current probe (world animations, objects, help globals); all 541 enemy
   and player samples are byte-identical to v3. Whole-update replay

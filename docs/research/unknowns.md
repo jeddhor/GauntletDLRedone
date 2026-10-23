@@ -77,6 +77,7 @@ are in [state.md](../state.md); movement evidence is in [movement.md](movement.m
 | Milestones table | update_player_milestone reads Milestones (0x70 each) / NumMilestones; kind-5 locators are the likely source | Export the Milestones builder and compare with a capture |
 | Panel inputs | button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, menu_on/optmenu/full-screen inventory flags from the front end, MBOX texture search order across packages | Export ResetModels; front-end port |
 | MBTreeSetAlpha draw use | Node +0x53 = ~alpha and flag 0x200; drawn as material alpha × (255 − alpha)/255 (HYPOTHESIS) | Trace the +0x53 byte through the draw path or compare a fading exit/crystal in a capture |
+| Uncollectable Tower crystal (GUI, once) | One GUI session counted 14 of 15 crystals and left one crystal's glow in place while the player stood on it; a second session (F2 dumps) collected all 15 | Reproduce with tools/python/client_driver.py and the F2 dump; then a reference trace of the same route |
 | Sumner's ghost placement | WIZARD tree at the nearest waypoint's matrix; not seen in the native Sumner camera view | Capture a shard/rune speech in the reference |
 | Tree texmod frame | DoTexModNode's frame argument taken as (int)(frame + 0.5) (HYPOTHESIS) | Read AnimateNode's frame argument |
 | setPrimColor +0x48 ambient term | Lightmap/no-shade add and per-tree ambient add (0..999) feed +0x48; drawn as colour × (1 + add) / lit ambient + add/255 (HYPOTHESIS) | Read the VU1 microcode's use of +0x48 or capture a flash (lightning in A5/F2, an enemy death) |

@@ -4146,9 +4146,9 @@ fn present_player(
         let mut t = format!(
             "{} {}   level {}   exp {}   slot {}\n\
              HEALTH {:>5.0}   GOLD {:>5}   KEYS {}   POTIONS {}\n\
-             {} {}   kills {}   enemies {}   generators {}\n\
+             {} {}   kills {}   enemies {}   generators {}   at {:.1} {:.1} {:.1}\n\
              {}\n\
-             P1 move: arrows/WASD  throw: Space/K  potion: E/L | P2 (join: U = Start) TFGH, R, Y | pads: D-pad, South, East | Esc/P/Start: menu  F1",
+             P1 move: arrows/WASD  cross Space/K  circle E/L  triangle Shift/I  square Q/J | P2 (join: U = Start) TFGH, R, Y | Esc/P/Start: menu  F1",
             gdl_client::menu::COLOUR_NAMES.get(p.u32_(4) as usize).copied().unwrap_or("?"),
             gdl_client::menu::CLASS_NAMES.get(p.u32_(0xc) as usize).copied().unwrap_or("SECRET"),
             p.i32_(0x2ac0),
@@ -4167,6 +4167,9 @@ fn present_player(
             },
             live,
             generators,
+            p.f32_(0x50),
+            p.f32_(0x54),
+            p.f32_(0x58),
             sim.last_event,
         );
         if !ui.details {
@@ -5548,6 +5551,36 @@ fn front_system(world: &mut EcsWorld) {
                 world.resource_mut::<Ui>().paused = true;
                 // start_optmenu: ClearAllPlayerControls(2).
                 let _ = world.resource_mut::<Sim>().game.controls.clear_all_player_controls(2);
+            }
+            if world.resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::F2)
+                && let Some(sim) = world.get_resource::<Sim>()
+            {
+                // DEBUG: the items within 6 units of player 0 and its class
+                // record's crystal counts, to the log.
+                let g = &sim.game;
+                let at = g.players[0].v3(0x50);
+                let cls = 0xb4 * g.players[0].u32_(0xc) as usize;
+                let counts: Vec<i16> = (0..9).map(|n| g.players[0].i16_(0xd0a + cls + 2 * n)).collect();
+                eprintln!("DEBUG F2 player {at:?} crystals {counts:?} max {:?}", g.items.tables.max_crystals);
+                for (s, r) in g.items.records.iter().enumerate() {
+                    let p = r.position();
+                    let d = ((p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2) + (p[2] - at[2]).powi(2)).sqrt();
+                    let def = &g.items.definitions[r.definition()];
+                    if r.active() && (d < 6.0 || def.name().starts_with(b"GEM")) {
+                        eprintln!(
+                            "DEBUG F2 item {s} {} kind {} sub {} d {d:.2} pos {p:?} d8 {:#06x} dc {} de {} e2 {:#04x} f4 {:#06x} f6 {:#04x}",
+                            String::from_utf8_lossy(def.name()),
+                            def.kind(),
+                            def.subtype(),
+                            r.u16_(0xd8),
+                            r.u8_(0xdc),
+                            r.i8_(0xde),
+                            r.u8_(0xe2),
+                            r.u16_(0xf4),
+                            r.u8_(0xf6)
+                        );
+                    }
+                }
             }
             if world.resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::F1) {
                 let mut ui = world.resource_mut::<Ui>();

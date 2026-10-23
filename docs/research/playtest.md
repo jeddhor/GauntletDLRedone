@@ -57,6 +57,11 @@ Adjust; Escape on the "Press Start" screen exits. The HUD shows colour/class, le
 save slot, health, gold, keys, potions, kills, active enemies and standing
 generators; F1 adds the interim labels and any unported path hit.
 
+GUI checks: tools/python/client_driver.py drives gdl_play on the private
+Xvfb (serve/send of key-hold steps, frames of the client's own window,
+private/runs/client-TAG/); F2 (DEBUG) logs player 0's position and crystal
+counts and the nearby items; F1 shows the position.
+
 Audio: original sound effects, announcer lines and level music play through
 ALSA (research/audio.md); mixing is approximate. `--virtual` runs are silent.
 
