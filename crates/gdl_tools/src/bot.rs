@@ -452,6 +452,9 @@ pub struct Bot {
     /// Followers' path to the exit portal while the leader waits on one
     /// (path, next waypoint, next plan update).
     follow_nav: [(Vec<usize>, usize, usize); 4],
+    /// Followers' blocked test on the way to the portal (since, position
+    /// then, step aside until).
+    follow_stuck: [(usize, V3, usize); 4],
     /// The leader's positions every 10 updates (walkable by construction):
     /// followers walk this trail.
     trail: Vec<V3>,
@@ -520,6 +523,7 @@ impl Bot {
             hint_wait: None,
             followers: Default::default(),
             follow_nav: Default::default(),
+            follow_stuck: Default::default(),
             trail: Vec::new(),
             backoff: None,
             attack_at: None,
@@ -1181,17 +1185,31 @@ impl Bot {
         // of the leader beside the portal). On an exit portal (+0x884 contact,
         // kind 9) release the stick, as the leader does; else walk the
         // leader's graph to the exit nearest the leader.
-        if g.players[0].i32_(0xfc) != 1 {
-            if let Some(it) = g.players[k].u32_(0x884).checked_sub(1).map(|i| i as usize)
+        // A key held by this follower while the leader, keyless, stands at a
+        // closed gate (a follower walked over the key; use_key opens a gate
+        // only for the player touching it — B2 with three players).
+        let gate = (g.players[0].i32_(KEYS) < 1 && 0 < g.players[k].i32_(KEYS) && g.players[0].i32_(0xfc) == 1)
+            .then(|| {
+                (0..g.items.records.len())
+                    .filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 7 && dist_xz(g.items.records[s].v3(0x40), lead) < 6.0)
+                    .map(|s| g.items.records[s].v3(0x40))
+                    .min_by(|a, b| dist_xz(*a, lead).total_cmp(&dist_xz(*b, lead)))
+            })
+            .flatten();
+        if g.players[0].i32_(0xfc) != 1 || gate.is_some() {
+            if gate.is_none()
+                && let Some(it) = g.players[k].u32_(0x884).checked_sub(1).map(|i| i as usize)
                 && it < g.items.records.len()
                 && item_kind(g, it).0 == 9
             {
                 return pad;
             }
-            let exit = (0..g.items.records.len())
-                .filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9)
-                .map(|s| g.items.records[s].v3(0x40))
-                .min_by(|a, b| dist_xz(*a, lead).total_cmp(&dist_xz(*b, lead)));
+            let exit = gate.or_else(|| {
+                (0..g.items.records.len())
+                    .filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9)
+                    .map(|s| g.items.records[s].v3(0x40))
+                    .min_by(|a, b| dist_xz(*a, lead).total_cmp(&dist_xz(*b, lead)))
+            });
             if let Some(t) = exit {
                 let (path, idx, next) = &mut self.follow_nav[k];
                 if *idx >= path.len() && *next <= f {
@@ -1208,6 +1226,23 @@ impl Bot {
                     *idx += 1;
                 }
                 let goal = path.get(*idx).map_or(t, |&n| self.nav.pts[n]);
+                // Blocked (another player stands in the way: the leader on the
+                // portal's edge): under 0.3 units in 30 updates → step aside
+                // for 20 updates, left or right by player.
+                let (since, at, aside) = &mut self.follow_stuck[k];
+                if 0.3 < dist_xz(p, *at) {
+                    *at = p;
+                    *since = f;
+                }
+                if f < *aside {
+                    let (dx, dz) = (goal[0] - p[0], goal[2] - p[2]);
+                    let side = if k % 2 == 0 { 1.0 } else { -1.0 };
+                    return Self::steer(pad, g, p, [p[0] - dz * side, p[1], p[2] + dx * side]);
+                }
+                if 30 <= f - *since {
+                    *aside = f + 20;
+                    *since = f;
+                }
                 return Self::steer(pad, g, p, goal);
             }
         }

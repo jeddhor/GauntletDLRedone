@@ -326,6 +326,15 @@ join it on triggers (the leader waits until they stand within 3 units:
 pads for every player, lifts). Matrix c4: as above, and B2 with four
 players does not end — one follower stays at a climb the leader made (the
 camera then holds the others): a bot limitation, not a game state.
+Matrix c8 (2026-10-23, current bot): followers now walk the leader's graph
+to the exit portal the leader waits on (state 4) and stand still on it
+(DoExit counts only then), stepping aside when another player blocks the
+way; a follower holding a key heads for a closed gate the keyless leader
+stands at. B2 with four players ends (update 5202, all four exited),
+with two (4601), S1 with four (794), B6 with four (12437, the auto exit,
+all four in state 4). B2 with three players stalls in this build with the
+leader (nine keys) stuck short of gate 77 on a step — the leader's own
+route, a bot limitation; c2's three-player B2 ended (3596).
 
 Two-pad reference (2026-10-23): the private reference ini gives Pad 2 a
 DualShock 2 on free keys (Y/B/V/N directions, M cross, U square, O
