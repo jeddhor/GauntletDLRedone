@@ -53,7 +53,8 @@ def serve(tag, steps):
     def x(*a):
         return subprocess.run(['xdotool', *a], env=xenv, capture_output=True, text=True).stdout.strip()
 
-    shots = 0
+    # Continue an existing run's numbering: frames are never overwritten.
+    shots = max((int(f.name[:3]) for f in d.glob('[0-9][0-9][0-9]-*.png')), default=0)
 
     def run(steps, win, out):
         nonlocal shots

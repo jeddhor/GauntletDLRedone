@@ -22,11 +22,24 @@ def settings(path):
     return parser
 
 
-def configure(root, slot, start_paused, diagnostic_hotkeys=False):
+# The memory cards the reference normally uses (the user's; never written by
+# a scenario). A scratch card replaces slot 1 only for card experiments.
+USER_CARD_SLOT1 = 'Mcd001.ps2'
+
+
+def configure(root, slot, start_paused, diagnostic_hotkeys=False, card1=None):
     path = root / 'private/reference/config/PCSX2/inis/PCSX2.ini'
     if not path.is_file():
         raise ValueError('missing established private reference configuration')
     config = settings(path)
+    # Slot 1: the user's card unless a scratch card is named for this launch
+    # (left untouched when the configuration has no card section).
+    if card1 is not None or config.has_section('MemoryCards'):
+        if not config.has_section('MemoryCards'):
+            config.add_section('MemoryCards')
+        config['MemoryCards']['Slot1_Filename'] = card1 or USER_CARD_SLOT1
+        # With a scratch card, slot 2 (the user's second card) is unplugged.
+        config['MemoryCards']['Slot2_Enable'] = 'false' if card1 else 'true'
     config['EmuCore']['EnablePINE'] = 'true'
     config['EmuCore']['PINESlot'] = str(slot)
     config['UI']['StartPaused'] = 'true' if start_paused else 'false'
@@ -72,6 +85,8 @@ def main():
     p.add_argument('--state', type=pathlib.Path)
     p.add_argument('--slot', type=int, default=28011)
     p.add_argument('--diagnostic-hotkeys', action='store_true', help='private F10 advance, F7 load slot 1, F11 save slot 2')
+    p.add_argument('--scratch-card1', help='a NEW card file name (scratch-*.ps2) for slot 1 instead of the user\'s card; '
+                   'PCSX2 creates it unformatted; it must not exist yet')
     args = p.parse_args()
     if not 0 <= args.slot <= 65535:
         raise ValueError('PINE slot must be 0..65535')
@@ -94,7 +109,15 @@ def main():
     with iso.open('rb') as file:
         if hashlib.file_digest(file, 'sha256').hexdigest() != profile['image']['sha256']:
             raise ValueError('disc differs from the established source profile')
-    ini = configure(root, args.slot, state is not None, args.diagnostic_hotkeys)
+    card1 = None
+    if args.scratch_card1:
+        name = args.scratch_card1
+        if not (name.startswith('scratch-') and name.endswith('.ps2')) or '/' in name:
+            raise ValueError('scratch card must be a bare scratch-*.ps2 name')
+        if (root / 'private/reference/config/PCSX2/memcards' / name).exists():
+            raise ValueError('scratch card exists: choose a new name (cards are never reused or overwritten)')
+        card1 = name
+    ini = configure(root, args.slot, state is not None, args.diagnostic_hotkeys, card1)
     env = virtual_environment()
     env.update(QT_QPA_PLATFORM='xcb', XDG_CONFIG_HOME=str(root / 'private/reference/config'),
                XDG_CACHE_HOME=str(root / 'private/reference/cache'),
@@ -107,7 +130,7 @@ def main():
                    pine_slot=args.slot, ini_sha256=hashlib.sha256(ini.read_bytes()).hexdigest(),
                    state=str(state.relative_to(root)) if state else None,
                    state_sha256=hashlib.sha256(state.read_bytes()).hexdigest() if state else None,
-                   start_paused=state is not None, diagnostic_hotkeys=args.diagnostic_hotkeys,
+                   start_paused=state is not None, diagnostic_hotkeys=args.diagnostic_hotkeys, card1=card1 or USER_CARD_SLOT1,
                    display=env['DISPLAY'], presentation_driver='Mesa software / lavapipe for Xvfb', command=command)
     (root / 'private/reports/reference-launch.json').write_text(json.dumps(context, indent=2) + '\n')
     with (root / 'private/reports/reference-stdout.log').open('w') as output:

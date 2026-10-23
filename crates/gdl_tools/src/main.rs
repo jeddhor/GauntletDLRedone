@@ -1011,6 +1011,36 @@ fn run() -> Result<(), Box<dyn Error>> {
         serde_json::to_writer_pretty(&mut file, &serde_json::json!({"source_sha256":hash(&b),"report":report}))?;
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "memcard-inspect" {
+        // memcard-inspect CARD.ps2 NEW_DIRECTORY: the superblock and every
+        // directory entry (one level: game saves) into NEW_DIRECTORY/card.json,
+        // each file's bytes as NEW_DIRECTORY/<DIR>/<NAME>. Read-only on the card.
+        let b = bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?;
+        let card = gdl_formats::memcard::MemoryCard::parse(&b)?;
+        let out = Path::new(&args[2]);
+        fs::create_dir(out)?;
+        let mut dirs = Vec::new();
+        for d in card.root()? {
+            let mut files = Vec::new();
+            if d.is_dir() {
+                fs::create_dir(out.join(&d.name))?;
+                for f in card.list(&d)? {
+                    if f.is_dir() {
+                        files.push(serde_json::json!({"name":f.name,"dir":true}));
+                        continue;
+                    }
+                    let bytes = card.read(&f)?;
+                    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(out.join(&d.name).join(&f.name))?;
+                    std::io::Write::write_all(&mut file, &bytes)?;
+                    files.push(serde_json::json!({"name":f.name,"mode":format!("{:#06x}", f.mode),"length":f.length,"sha256":hash(&bytes),"raw_entry":f.raw.iter().map(|b| format!("{b:02x}")).collect::<String>()}));
+                }
+            }
+            dirs.push(serde_json::json!({"name":d.name,"mode":format!("{:#06x}", d.mode),"length":d.length,"files":files,"raw_entry":d.raw.iter().map(|b| format!("{b:02x}")).collect::<String>()}));
+        }
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(out.join("card.json"))?;
+        serde_json::to_writer_pretty(&mut file, &serde_json::json!({"source_sha256":hash(&b),"superblock":card.superblock,"root":dirs}))?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "textrom-inspect" {
         // textrom-inspect ROM NEW_REPORT.json: fonts, entries and lists.
         let b = bounded_read(Path::new(&args[1]), 1024 * 1024)?;
@@ -1056,6 +1086,72 @@ fn run() -> Result<(), Box<dyn Error>> {
         for (a, b) in runs {
             let w = |v: &[u8], o: usize| u32::from_le_bytes(v[o..o + 4].try_into().unwrap());
             println!("{a:#06x}..{b:#06x} captured {:#010x} native {:#010x}", w(&captured, a), w(&r.0, a));
+        }
+        return Ok(());
+    }
+    if args.len() == 20 && args[0] == "profile-load-check" {
+        // profile-load-check REGION.bin LIVE_PLAYER.bin SLUS_200.47 PDATA×16:
+        // the native PlayerLoadSaveFile path (load_character) on a card save
+        // region against the original's live player record after the same load
+        // (reference_driver.py dump); the differing word runs (stdout).
+        use gdl_core::game::profile;
+        let region = bounded_read(Path::new(&args[1]), 0x2000)?;
+        let live = bounded_read(Path::new(&args[2]), 0x2b00)?;
+        if region.len() != profile::SAVE_LEN || live.len() != 0x2b00 {
+            return Err("region must be 0x1074 bytes and the player 0x2b00".into());
+        }
+        let elf_bytes = bounded_read(Path::new(&args[3]), 16 * 1024 * 1024)?;
+        let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
+        let tables = gdl_core::player_class::ClassTables::from_elf(&elf)?;
+        let mut pdats = Vec::new();
+        for a in &args[4..20] {
+            pdats.push(gdl_formats::pdata::PlayerData::parse(&bounded_read(Path::new(a), 1024 * 1024)?)?.pdat);
+        }
+        let pdats = profile::Pdats(pdats);
+        println!("summary {:?}", profile::summary(&region));
+        let (r, controls) = profile::load_character(0, &region, &pdats, &tables).map_err(|e| e.to_string())?;
+        println!("controls {controls:?}");
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for o in (0..live.len()).step_by(4) {
+            if live[o..o + 4] != r.0[o..o + 4] {
+                match runs.last_mut() {
+                    Some(l) if l.1 == o => l.1 = o + 4,
+                    _ => runs.push((o, o + 4)),
+                }
+            }
+        }
+        for (a, b) in runs {
+            let w = |v: &[u8], o: usize| u32::from_le_bytes(v[o..o + 4].try_into().unwrap());
+            println!("{a:#06x}..{b:#06x} live {:#010x} native {:#010x}", w(&live, a), w(&r.0, a));
+        }
+        return Ok(());
+    }
+    if args.len() == 22 && args[0] == "profile-new-check" {
+        // profile-new-check NAME CLASS COLOUR CARD_REGION.bin SLUS_200.47 PDATA×16:
+        // a native new character (select screen: new_player, colour, name,
+        // change_player), player_store_in_save with the default options, and
+        // the region bytes that differ from a card save the original wrote for
+        // the same choices (the card copy carries +0x9a7 before PlayerWriteSaveFile
+        // sets it).
+        use gdl_core::game::profile;
+        let class: u32 = args[2].to_str().ok_or("class")?.parse()?;
+        let colour: u8 = args[3].to_str().ok_or("colour")?.parse()?;
+        let name = args[1].to_str().ok_or("name")?.to_string();
+        let card = bounded_read(Path::new(&args[4]), 0x2000)?;
+        let elf_bytes = bounded_read(Path::new(&args[5]), 16 * 1024 * 1024)?;
+        let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
+        let tables = gdl_core::player_class::ClassTables::from_elf(&elf)?;
+        let mut pdats = Vec::new();
+        for a in &args[6..22] {
+            pdats.push(gdl_formats::pdata::PlayerData::parse(&bounded_read(Path::new(a), 1024 * 1024)?)?.pdat);
+        }
+        let pdats = profile::Pdats(pdats);
+        let r = profile::new_character(0, &name, class, colour, &pdats, &tables).map_err(|e| e.to_string())?;
+        let region = profile::save_region(&r, &[0, 2, 1, 1]);
+        let diffs: Vec<usize> = (0..region.len().min(card.len())).filter(|&i| region[i] != card[i]).collect();
+        println!("region {:#x} card {:#x} differing bytes {}", region.len(), card.len(), diffs.len());
+        for i in diffs.iter().take(64) {
+            println!("+{:#06x} card {:#04x} native {:#04x}", profile::SAVE_START + i, card[*i], region[*i]);
         }
         return Ok(());
     }
@@ -1655,7 +1751,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         // init_next_level's StdCamInit: a fresh level start runs the stage-start
         // sequence; fixture starts settle the camera (HYPOTHESIS, camera.md).
-        if 0 < level || opts.contains_key("world") || opts.contains_key("teleport") {
+        // A record-based (--pads) teleport moves the player inside the running
+        // game, as reference_warp.py's position write; the interim driver's
+        // teleport enters through the start-locator path.
+        if 0 < level || opts.contains_key("world") || (opts.contains_key("teleport") && !opts.contains_key("pads")) {
             game.start_camera().map_err(|e| e.0)?;
         } else {
             game.start_camera_settled().map_err(|e| e.0)?;
@@ -2179,13 +2278,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                         {
                             let floor = floor_obj.map_or(0, |o| o as u32 + 1);
                             let r = &mut game.players[0];
-                            let item = r.u32_(0x880);
+                            // The item links (+0x880 the item stood on, +0x884 the
+                            // exit/transporter touched, +0x888 the pickup to grab)
+                            // become the slot + 1.
+                            let links = [0x880, 0x884, 0x888].map(|o| (o, r.u32_(o)));
                             r.set_u32(0x89c, floor);
                             for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
                                 r.set_u32(o, 0);
                             }
-                            if item >= items_base && (item - items_base).is_multiple_of(0x110) {
-                                r.set_u32(0x880, (item - items_base) / 0x110 + 1);
+                            for (o, item) in links {
+                                if item >= items_base && (item - items_base).is_multiple_of(0x110) {
+                                    r.set_u32(o, (item - items_base) / 0x110 + 1);
+                                }
                             }
                             r.set_u16(0x93e, 0);
                         }
@@ -2696,16 +2800,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // + 1 when the trace records the Items base (--enemies).
                     let items_base = samples.first().and_then(|s| s["enemies"].get("Items")).map(&hexb).transpose()?.map(|b| word(&b));
                     let r = &mut game.players[0];
-                    let item = r.u32_(0x880);
+                    let links = [0x880, 0x884, 0x888].map(|o| (o, r.u32_(o)));
                     r.set_u32(0x89c, floor);
                     for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
                         r.set_u32(o, 0);
                     }
-                    if let Some(base) = items_base
-                        && item >= base
-                        && (item - base).is_multiple_of(0x110)
-                    {
-                        r.set_u32(0x880, (item - base) / 0x110 + 1);
+                    for (o, item) in links {
+                        if let Some(base) = items_base
+                            && item >= base
+                            && (item - base).is_multiple_of(0x110)
+                        {
+                            r.set_u32(o, (item - base) / 0x110 + 1);
+                        }
                     }
                 }
                 let ctl = hexb(&ap["control"])?;
