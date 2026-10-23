@@ -58,6 +58,7 @@ def main():
     parser.add_argument('--report', type=pathlib.Path, required=True, help='new private JSON report')
     parser.add_argument('--sample-filename', action='store_true', help='log wad_last_filename changes after every vblank')
     parser.add_argument('--gs-dump', action='store_true', help='save a single-frame GS dump at the end (Tools menu)')
+    parser.add_argument('--sample-clock', action='store_true', help='log game_mode, AFrame, vb_elapsed, SPF and Time after every vblank')
     args = parser.parse_args()
     if args.skip_wave is not None and not 0x10100 <= args.skip_wave <= 0x10dff:
         raise ValueError('skip_wave must be 0x10000 + a wave of worlds 1..13')
@@ -92,6 +93,7 @@ def main():
     profile = json.loads(pathlib.Path('profiles/ps2/slus-20047-reference.json').read_text())
     vb_counter = profile['symbols']['vb_counter']['guest_address']
     last_name = profile['symbols']['wad_last_filename']['guest_address']
+    clock = {k: profile['symbols'][k]['guest_address'] for k in ('game_mode', 'AFrame', 'vb_elapsed', 'SPF', 'Time')}
     sym = elf_symbols({'players', 'CurWorld', 'CurLevel', 'game_mode', 'skip_wave', 'CritterInsts', 'NumCritterInsts'})
 
     def xdo(*a):
@@ -186,6 +188,11 @@ def main():
                 for _ in range(seg['steps']):
                     step += 1
                     advance(step)
+                    if args.sample_clock:
+                        w = dict(zip(clock, pine.read_ee32(list(clock.values()))))
+                        f32 = lambda v: struct.unpack('<f', struct.pack('<I', v))[0]
+                        log.append(dict(step=step, game_mode=hex(w['game_mode']), aframe=w['AFrame'], vb_elapsed=w['vb_elapsed'],
+                                        spf=f32(w['SPF']), time=f32(w['Time'])))
                     if args.sample_filename and (name := filename()) != seen:
                         seen = name
                         log.append(dict(step=step, filename=name, cur_world=word(sym['CurWorld']), game_mode=word(sym['game_mode'])))

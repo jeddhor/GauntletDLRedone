@@ -1,4 +1,7 @@
-# M09 investigation: loop/input/timing, not yet an accepted simulation
+# M09 investigation: loop/input/timing
+
+The accepted contract is docs/research/loop-input.md (2026-10-23); this file
+keeps the investigation history.
 
 Exact ELF identity is in profiles/ps2/slus-20047.json. Original-symbol exports
 and instruction listings are in private/reports/ghidra[-clock]/.
@@ -99,8 +102,9 @@ Movement calls libm sinf0x1e7350/cosf0x1e7160, using range reduction0x1eae30 and
 kernels0x1ebdf0/0x1eb348. These are distinct from animation ffSin/ffCos; native
 movement must not silently reuse animation trigonometry.
 
-M09 remains partial: native pad polling/mapping/edges, requested-action producer,
-actual displacement/collision/camera, complete update order and RNG remain open.
+(2026-10-23: pad polling, mapping and edges, the requested-action producer,
+displacement, collision, camera, update order and the RNG contract are now
+ported and verified by the whole-update replays; see loop-input.md.)
 Work resumed 2026-10-14. The displacement request and facing turn that consume
 this code are now recovered for the ordinary path; see movement.md. Current
 check results and logs are in ../state.md.
