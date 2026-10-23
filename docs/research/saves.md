@@ -227,6 +227,17 @@ save directory is damaged and a new client loads slot 1:
   complete new one) → the new save (G1 completed), notice shown.
 Both pass.
 
+Profile ownership in co-op (2026-10-23, scenarios-m18-v4 coop-ownership,
+GUI, actual disc): card files 0 and 1 hold one character with health 500
+and 123; player 1 starts from file 0 and player 2 joins on the second
+keyboard set (U start, R cross): Load → memory card slot 1 → the file list
+shows file 0 unavailable — verify_vmu_file_ok refuses a file another active
+player owns (+0x2af4) — and selects file 1; player 2 then plays file 1's
+character (health 123, port 2) while player 1 keeps file 0. Fixed for it: a
+native slot load (the TEST autostart, the native save list) now records
+player 1's card file as PlayerLoadSaveFile does; before, the file showed as
+free to player 2.
+
 ## Front end (gdl_client::menu, gdl_play)
 
 Original menu tables (ELF): title "Press Start" (0x2abed0) → title_menu

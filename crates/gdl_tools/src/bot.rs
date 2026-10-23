@@ -944,6 +944,7 @@ impl Bot {
             "explain": explain,
             "nav": self.nav.pts.iter().zip(&self.nav.adj).filter(|(_, a)| !a.is_empty()).map(|(p, _)| [(p[0] * 10.0).round() / 10.0, (p[1] * 10.0).round() / 10.0, (p[2] * 10.0).round() / 10.0]).collect::<Vec<_>>(),
             "nav_edges": edges, "items": marks, "triggers": triggers,
+            "critters": g.critters.iter().flatten().map(|c| serde_json::json!({"pos": c.rec.v3(0x40), "state": c.rec.i32_(8), "health": c.rec.f32_(0x4f4)})).collect::<Vec<_>>(),
             "scope": "TRAVERSAL BOT (gdl_tools bot.rs): port 0 driven through the ordinary pad path; health assist is a DEBUG shortcut",
             "start": self.start, "player_radius": g.players[0].f32_(0x828), "nav_nodes": self.nav.pts.len(), "reachable_nodes": self.nav.reached,
             "static_exit_reachable": self.static_exit_reachable, "exit_update": self.exit_update, "exit_wave": self.exit_wave.map(|w| format!("{w:#x}")),
