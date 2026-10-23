@@ -402,3 +402,37 @@ that still used the renamed flags field. The initial header-change test/Clippy
 logs failed; an earlier combined-shell pass claim was incorrect. Verified logs:
 native-motion-code-tests-v3.log and native-motion-code-clippy-v3.log. Failed
 historical logs remain preserved; see state.md.
+
+## Closing the open paths (2026-10-23)
+
+- Mirror: CalcAnimation 0x10fb80 negates angle Y/Z, position X and scale X
+  when AnimInfo +0x13 bit 0 is set. The executable has three byte stores to
+  offset 0x13: InitAnimInfo 0x110764 (its argument; the only caller,
+  AtreeInitSub 0x111b04, passes 0), DoPlayerAction 0x177c84 (ORs bit 1, not
+  bit 0) and AsciiString2Sjis 0x107c54 (string code). No path sets the
+  mirror bit in this build, and none of the 31,839 traced player samples
+  has it; the native blend keeps the path (synthetic test) and the client
+  does not need it.
+- Reverse: AnimateNode 0x112754 and DoAnimateTree 0x11298c take the object
+  frame as AnimInfo +0x10 (the clip's frame count, stored by InitAnim from
+  the sequence header +0x20) − (int)(frame + 0.5) − 1 when the sequence's
+  +0x2a bit 0 is set; the index drives OANIM objects and texture modifiers,
+  not skeletal channels. Across all 5,614 sequences of the disc's ANIM
+  packages the bit is set on 49, all item clips: TRIGGER2/TRIGGER3 "OFFA",
+  EXIT_PORTAL "ACTIVE3" and FORCEF/FORCEF_S/FORCEF_L "ONB". gdl_play's
+  object_frame applies the rule (items and effect trees).
+- Root transfer: the +0x26 word is 0 in all 5,614 sequences, so AnimFixPos
+  never moves a root and animation applies no root motion; positions come
+  from PlayerMotion / the enemy and critter movers, whose whole-update
+  replays match the reference (gameplay.md) — root motion cannot be applied
+  twice.
+- World composition: gdl_core::tree_pose::node_world (GetWorldMat's MulMat4
+  chain) composes animated trees for the simulation; bone-attached effects
+  and the bosses' grab/fire volumes built from it match the reference
+  update by update (critters.md "Reference comparison"). gdl_play renders
+  critters through node_world and players/items through the same local
+  matrices with host products (presentation).
+- Timing and events: every whole-update replay compares the AnimInfo clocks
+  and action/event words of the player (Sorceress: idle, walking, running,
+  throws, turbo, pickups), the enemies, critters and items with the
+  reference (gameplay.md); the attack-event requests above are part of it.

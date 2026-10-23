@@ -515,7 +515,8 @@ fn present_critters(
         for child in children.iter() {
             if let Ok((part, mut tf, of, mut v)) = parts.get_mut(child) {
                 if let Some(f) = of {
-                    show_oframe(f, cr.clip, cr.clock.frame.max(0.0), &mut v);
+                    // No critter package sequence reverses its frames.
+                    show_oframe(f, cr.clip, object_frame(cr.clock.frame.max(0.0), None), &mut v);
                 }
                 if let Ok(m) = gdl_core::tree_pose::node_world(&cr.parents, &cr.locals, root, part.node, None) {
                     let mat = Mat4::from_cols_array(&m);
@@ -1237,8 +1238,7 @@ fn calc_tex_scroll(t: f32, p2: f32, p3: f32, frame: i32) -> (f32, f32) {
     (add, scale - add)
 }
 
-fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, frame: f32, meshes: &[(Entity, usize)], req: &mut MatRequests) {
-    let f = (frame + 0.5) as i32;
+fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, f: i32, meshes: &[(Entity, usize)], req: &mut MatRequests) {
     for m in mods {
         let d = f - i32::from(m.start);
         match m.frame_base {
@@ -3722,8 +3722,8 @@ fn present_world(
                 let seq = anim.clock.sequence as usize;
                 // DoObjAnimation: frame (int)(f + 0.5) inside [start, start
                 // + count − 1] → base + frame − start; a one-frame entry
-                // always shows its object. (Reverse-order sequences, flag
-                // +0x2a bit 0, are not modelled here.)
+                // always shows its object. (No enemy package sequence sets
+                // the reverse flag +0x2a bit 0; object_frame.)
                 let list = frames.0.get(pkg).and_then(|m| m.get(&tree)).and_then(|s| s.get(seq));
                 let label = list.and_then(|(start, l)| {
                     let f = (anim.clock.frame + 0.5) as i32 - i32::from(*start);
@@ -4013,6 +4013,7 @@ fn present_effect_trees(
         let Some(anim) = pkg.anim.as_ref() else { continue };
         let frame = ((atime - fx.start) * 900.0 / f32::from(fx.timing.max(1))).max(0.0);
         let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, 0, frame, true) else { continue };
+        let index = object_frame(frame, anim.trees.get(fx.tree).and_then(|t| t.sequences.first()));
         let mut meshes = Vec::new();
         for child in children.iter() {
             if let Ok((e, idx, mut tf, of, mut v)) = parts.get_mut(child) {
@@ -4020,7 +4021,7 @@ fn present_effect_trees(
                     *tf = Transform::from_matrix(*m);
                 }
                 if let Some(f) = of {
-                    show_oframe(f, 0, frame, &mut v);
+                    show_oframe(f, 0, index, &mut v);
                 }
                 meshes.push((e, idx.0));
             }
@@ -4044,14 +4045,28 @@ fn present_effect_trees(
         if let Some(lib) = libs.0.get(&fx.pkg)
             && !mods.is_empty()
         {
-            request_tree_texmods(mods, lib, frame, &meshes, &mut req);
+            request_tree_texmods(mods, lib, index, &meshes, &mut req);
         }
     }
 }
 
-/// DoObjAnimation for one OANIM frame object of sequence `seq` at `frame`.
-fn show_oframe(f: &OFrame, seq: u16, frame: f32, v: &mut Visibility) {
-    let at = (frame + 0.5) as i32 - i32::from(f.start);
+/// AnimateNode / DoAnimateTree's object frame (EE 0x112754, 0x11298c):
+/// (int)(frame + 0.5), or AnimInfo +0x10 (the clip's frame count, InitAnim)
+/// − that − 1 when the sequence's +0x2a bit 0 reverses it. Only 49 item
+/// sequences on the disc set the bit (research/animation.md); OANIM frames
+/// and texture modifiers use the index, skeletal channels do not.
+fn object_frame(frame: f32, seq: Option<&gdl_formats::animation::Sequence>) -> i32 {
+    let f = (frame + 0.5) as i32;
+    match seq {
+        Some(s) if s.frame_order_flags & 1 != 0 => i32::from(s.frames) - f - 1,
+        _ => f,
+    }
+}
+
+/// DoObjAnimation for one OANIM frame object of sequence `seq` at object
+/// frame `index` ([`object_frame`]).
+fn show_oframe(f: &OFrame, seq: u16, index: i32, v: &mut Visibility) {
+    let at = index - i32::from(f.start);
     let on = f.seq == seq && (f.single || at == i32::from(f.k));
     let want = if on { Visibility::Inherited } else { Visibility::Hidden };
     if *v != want {
@@ -4092,6 +4107,7 @@ fn present_item_trees(
         let Some(a) = p.anim.as_ref() else { continue };
         let frame = anim.clock.frame.max(0.0);
         let Ok(pose) = gdl_client::tree_pose(a, tree, &p.anim_bytes, anim.current as usize, frame, true) else { continue };
+        let index = object_frame(frame, a.trees.get(tree).and_then(|t| t.sequences.get(anim.current as usize)));
         let mut meshes = Vec::new();
         for child in children.iter() {
             if let Ok((e, idx, mut tf, of, mut v)) = parts.get_mut(child) {
@@ -4099,7 +4115,7 @@ fn present_item_trees(
                     *tf = Transform::from_matrix(*m);
                 }
                 if let Some(f) = of {
-                    show_oframe(f, anim.current, frame, &mut v);
+                    show_oframe(f, anim.current, index, &mut v);
                 }
                 meshes.push((e, idx.0));
             }
@@ -4108,7 +4124,7 @@ fn present_item_trees(
         if let Some(lib) = libs.0.get(&pkg)
             && !mods.is_empty()
         {
-            request_tree_texmods(mods, lib, frame, &meshes, &mut req);
+            request_tree_texmods(mods, lib, index, &meshes, &mut req);
         }
     }
 }
