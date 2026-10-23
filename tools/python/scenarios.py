@@ -20,6 +20,7 @@ the level-start sequence (the player is placed and active from about update
 """
 import json
 import os
+import shutil
 import pathlib
 import subprocess
 import sys
@@ -51,6 +52,17 @@ SCENARIOS = {
         actions=[{"at": 5, "dump": "start"}, {"at": 150, "teleport": [120.7, 86.6, -476.1]}, {"at": 880, "dump": "after"}],
         menu=presses(CROSS, 60, 4, 90) + [[420, 422, [UP]], [480, 482, [CROSS]]] + presses(TRIANGLE, 600, 12, 60),
         checks=[("after", "world", "==", 13), ("after", "waves", "!=", "start.waves"), ("after", "state", "==", 1)]),
+    # The G1 completion saved in the Tower (PlayerWriteSaveFile to card file
+    # 0) is the same after a restart that loads save0001 (phase B).
+    'save-reload': dict(
+        level='G1', updates=900,
+        actions=[{"at": 5, "dump": "start"}, {"at": 150, "teleport": [120.7, 86.6, -476.1]}, {"at": 870, "save": 0},
+                 {"at": 875, "dump": "saved"}],
+        menu=presses(CROSS, 60, 4, 90) + [[420, 422, [UP]], [480, 482, [CROSS]]] + presses(TRIANGLE, 600, 12, 60),
+        then=dict(load_slot=1, updates=300, actions=[{"at": 200, "dump": "loaded"}], menu=presses(TRIANGLE, 30, 12, 60)),
+        checks=[("saved", "world", "==", 13), ("loaded", "waves", "==", "saved.waves"), ("loaded", "exp", "==", "saved.exp"),
+                ("loaded", "gold", "==", "saved.gold"), ("loaded", "keys", "==", "saved.keys"), ("loaded", "world", "==", 13),
+                ("loaded", "waves", "!=", "start.waves")]),
 }
 
 
@@ -61,12 +73,14 @@ def value(dumps, ref):
     return ref
 
 
-def run(tag, name, sc):
+def run(tag, name, sc, saves_from=None):
     run_tag = f'{tag}-{name}'
     d = ROOT / 'private' / 'runs' / f'client-{run_tag}'
     if d.exists():
         raise SystemExit(f'{d} exists')
     d.mkdir(parents=True)
+    if saves_from:
+        shutil.copytree(saves_from, d / 'saves')
     files = {}
     for key in ('actions', 'menu'):
         files[key] = d / f'{key}.json'
@@ -79,22 +93,29 @@ def run(tag, name, sc):
     for k in range(200):
         s += [["wait", 3]] + ([["shot", f"t{k:03d}"]] if k % 5 == 4 else [])
     steps.write_text(json.dumps(s))
-    env = dict(os.environ, GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL=sc['level'], GDL_INPUT_SCRIPT=str(script),
+    env = dict(os.environ, GDL_TEST_AUTOSTART='1', GDL_INPUT_SCRIPT=str(script),
                GDL_MENU_SCRIPT=str(files['menu']), GDL_TEST_ACTIONS=str(files['actions']),
                GDL_EXIT_AFTER=str(sc['updates']), GDL_STATE_OUT=str(out))
+    if sc.get('level'):
+        env['GDL_DEBUG_LEVEL'] = sc['level']
+    if sc.get('load_slot'):
+        env['GDL_TEST_LOAD_SLOT'] = str(sc['load_slot'])
     subprocess.run([sys.executable, str(ROOT / 'tools/python/client_driver.py'), 'serve', run_tag, str(steps)],
                    cwd=ROOT, env=env, timeout=2400)
     dumps = {}
     for f in d.glob('state.*.json'):
         j = json.loads(f.read_text())
         dumps[j['label']] = j
+    if 'then' in sc:
+        b = run(tag, f'{name}-b', dict(sc['then'], checks=[]), saves_from=d / 'saves')
+        dumps.update(b['dumps'])
     results = []
     for label, field, op, ref in sc['checks']:
         got = dumps.get(label, {}).get(field)
         want = value(dumps, ref)
         ok = got is not None and want is not None and ((got == want) if op == '==' else (got != want))
         results.append(dict(dump=label, field=field, op=op, expected=ref, expected_value=want, value=got, ok=ok))
-    return dict(level=sc['level'], updates_run=len(out.read_text().split()) if out.exists() else 0,
+    return dict(level=sc.get('level'), load_slot=sc.get('load_slot'), updates_run=len(out.read_text().split()) if out.exists() else 0,
                 debug_shortcuts=[a for a in sc['actions'] if 'teleport' in a or 'health' in a],
                 dumps=dumps, checks=results, passed=all(r['ok'] for r in results))
 

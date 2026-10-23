@@ -173,3 +173,27 @@ Shop and death smoke test on Xvfb (2026-10-18): Tower → Esc → Shop shows the
 31-entry table with prices; buying a potion took 250 gold and added a potion.
 Castle A1 → killed by the castle's enemies → "YOU DIED - back to the Tower"
 → the Tower with the level-start health and gold.
+
+## Persistent scenario suite (M13, 2026-10-23)
+
+tools/python/scenarios.py runs gdl_play on the private Xvfb with the TEST
+harness (research/loop-input.md): GDL_TEST_AUTOSTART (a new default
+character, or GDL_TEST_LOAD_SLOT for a stored one), GDL_DEBUG_LEVEL, no
+in-level input unless scripted, GDL_MENU_SCRIPT for the tally, shop, select
+column and message boxes (port 0 by ticks outside play), and
+GDL_TEST_ACTIONS: teleports and health writes as labelled DEBUG shortcuts,
+the select screen's PlayerWriteSaveFile as a save action, and progress
+dumps (experience, the class's gold, keys, potions, shards, runes, the
+sixteen classes' completed-level bytes, the save region's SHA-256).
+Report private/reports/scenarios-m13-v2.json and -m13-v3.json; all pass:
+
+- death-g1: the key beside G1's start is picked up (keys 1), then the
+  player dies (health 0.5 → do_players' death); TowerWave restores the
+  level-start state: in the Tower (world 13), alive, keys 0, experience and
+  the completion bytes unchanged — the reward is not kept or duplicated.
+- exit-g1: G1's exit (teleported onto it) → tally, shop, level and
+  inventory panels, Done → the Tower; the Sorceress's completion byte for
+  world 7 gains bit 0 (the level is recorded as finished).
+- save-reload: the same exit, a save to card file 0 in the Tower, then a
+  second client loading save0001: in the Tower with the same completion
+  bytes, experience, gold and keys.

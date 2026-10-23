@@ -1924,7 +1924,8 @@ struct TestHarness {
     hashes: Vec<String>,
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
-    /// {"at": u, "health": h} | {"at": u, "dump": "label"}] for player 1.
+    /// {"at": u, "health": h} | {"at": u, "dump": "label"} |
+    /// {"at": u, "save": card file}] for player 1.
     actions: Vec<serde_json::Value>,
     /// GDL_MENU_SCRIPT: like GDL_INPUT_SCRIPT, indexed by the ticks spent
     /// outside play (tally, shop, select screen, map, message boxes).
@@ -3346,6 +3347,19 @@ fn simulate(
             }
             if let Some(h) = a["health"].as_f64() {
                 sim.game.players[0].set_f32(0x1a10, h as f32);
+            }
+            if let Some(k) = a["save"].as_u64() {
+                // PlayerWriteSaveFile(0, k) as the select screen does it:
+                // player_store_in_save, the region to card file k, saved flag.
+                use gdl_core::game::pselect::SaveCard;
+                let controls = sim.game.control_options[0];
+                profile::player_store_in_save(&mut sim.game.players[0], &controls);
+                let region = sim.game.players[0].0[profile::SAVE_START..profile::SAVE_START + profile::SAVE_LEN].to_vec();
+                if (NativeCard { store: &front.store }).save(k as usize, &region) {
+                    sim.game.players[0].set_u8(0x9a7, 1);
+                } else {
+                    sim.error = Some("TEST save failed".into());
+                }
             }
             if let (Some(label), Some(out)) = (a["dump"].as_str(), harness.state_out.as_ref()) {
                 let d = progress_dump(&sim.game, label, now);
@@ -5745,7 +5759,11 @@ fn front_system(world: &mut EcsWorld) {
     // level, so runs start from the same state.
     if screen == Screen::Front && std::env::var_os("GDL_TEST_AUTOSTART").is_some() && !world.resource::<TestHarness>().autostarted {
         world.resource_mut::<TestHarness>().autostarted = true;
-        act(world, Action::Create { class: 6, colour: 0, name: "TEST".into() });
+        // GDL_TEST_LOAD_SLOT: start with that stored slot instead.
+        match std::env::var("GDL_TEST_LOAD_SLOT").ok().and_then(|v| v.parse::<u32>().ok()) {
+            Some(slot) => act(world, Action::Play { slot }),
+            None => act(world, Action::Create { class: 6, colour: 0, name: "TEST".into() }),
+        }
         return;
     }
     let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
