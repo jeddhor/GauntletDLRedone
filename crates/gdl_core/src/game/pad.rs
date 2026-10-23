@@ -724,6 +724,20 @@ mod tests {
         assert_eq!(c.accum_levels[0], 0x4000_0030);
     }
     #[test]
+    fn analog_pad_at_rest_reads_zero_angle() {
+        // A connected analog pad with both sticks centred: calc_analog_stick
+        // reaches atan2f(0, 0), the wrapper's DOMAIN path (+0.0).
+        let mut c = Controls::default();
+        let mut pads = [PadStatus::default(); 8];
+        pads[0] = PadStatus { connected: true, analog: true, has_stick: true, ..Default::default() };
+        for i in 4..8 {
+            pads[0].entries[i] = [3, 0];
+        }
+        c.controls_update(&pads).unwrap();
+        assert_eq!(c.analog_left[0].map(f32::to_bits), [0, 0]);
+        assert_eq!(c.analog_right[0].map(f32::to_bits), [0, 0]);
+    }
+    #[test]
     fn edges_need_a_released_previous_frame() {
         assert_eq!(dir_edge(3, 0, 3, 0), 3);
         assert_eq!(dir_edge(3, 1, 3, 0), 0);

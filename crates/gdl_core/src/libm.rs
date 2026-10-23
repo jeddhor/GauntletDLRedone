@@ -5,7 +5,7 @@
 //! instructions. Constants are the ELF's literal words and table bytes.
 //!
 //! Every operation uses the reference-qualified scalar FPU subset in `numeric`.
-//! Non-finite inputs, atan2f(0, 0), large-argument reduction (|x| > 0x43490f80,
+//! Non-finite inputs, large-argument reduction (|x| > 0x43490f80,
 //! the unimplemented 0x1eb4a0 path) and subnormal intermediates are rejected.
 //! These routines are distinct from animation ffSin/ffCos.
 use crate::numeric::{
@@ -104,12 +104,14 @@ pub fn atanf(x: f32) -> Result<f32> {
 
 /// atan2f wrapper EE 0x1e7b50 with core EE 0x1e9db0. `_LIB_VERSION` is 1 in
 /// the fixture, so finite non-(0,0) arguments return the core result.
+/// atan2f(±0, ±0) takes the wrapper's DOMAIN path: matherr 0x1ec1e8 returns
+/// 0, errno = EDOM (0x21, not modelled) and the result is the exception's
+/// retval 0.0 converted by 0x1f8e60: +0.0.
 pub fn atan2f(y: f32, x: f32) -> Result<f32> {
     let (hy, hx) = (finite(y)?.to_bits() as i32, finite(x)?.to_bits() as i32);
     let (iy, ix) = (hy & 0x7fff_ffff, hx & 0x7fff_ffff);
     if iy == 0 && ix == 0 {
-        // The wrapper's matherr path; not part of this subset.
-        return Err(UnsupportedNumericDomain);
+        return Ok(0.0);
     }
     if hx == 0x3f80_0000 {
         return atanf(y);
@@ -361,7 +363,7 @@ mod tests {
             }
             for y in [-0.9f32, -0.38, 0.0, 0.25, 1.0, 3.0] {
                 if x == 0.0 && y == 0.0 {
-                    assert!(atan2f(y, x).is_err());
+                    assert_eq!(atan2f(y, x).unwrap().to_bits(), 0);
                     continue;
                 }
                 let expected = (y as f64).atan2(x as f64);
@@ -375,6 +377,10 @@ mod tests {
         assert_eq!(atan2f(-0.0, -1.0).unwrap().to_bits(), 0xc049_0fda);
         assert_eq!(atan2f(1.0, 0.0).unwrap().to_bits(), 0x3fc9_0fdb);
         assert_eq!(atan2f(-1.0, -0.0).unwrap().to_bits(), 0xbfc9_0fdb);
+        // The wrapper's DOMAIN path: +0.0 for every signed zero pair.
+        for (y, x) in [(0.0f32, 0.0f32), (-0.0, 0.0), (0.0, -0.0), (-0.0, -0.0)] {
+            assert_eq!(atan2f(y, x).unwrap().to_bits(), 0);
+        }
         assert_eq!(atanf(1e20).unwrap(), add(w(ATANHI[3]), w(ATANLO[3])).unwrap());
         assert_eq!(sinf(1e-20).unwrap(), 1e-20);
         assert_eq!(cosf(1e-20).unwrap(), 1.0);
