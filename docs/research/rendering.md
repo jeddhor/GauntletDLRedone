@@ -533,3 +533,55 @@ client-towercmp-b / -c). The left wall's bright blocks (rows 64..96, x
 0..128) went from 7..15 above the reference to 21..26 below it: the
 remaining open difference there (not explained yet; candidates: the
 Gouraud interpolation of integer vertex colours, additive glow passes).
+
+## Additive As and no-shade draws (2026-10-23)
+
+- ALPHA_1 0x48 (Cs·As + Cd) takes As = Av·At >> 7 up to 0xff (×2) and
+  COLCLAMP saturates the sum. gs.wgsl now premultiplies (Cs × As) >> 7 in
+  integers for additive draws and blends One/One (the former SrcAlpha blend
+  capped As at 0x80). In the Tower dump every additive draw has vertex alpha
+  128 (psys sprites 127) and textures with alpha ≤ 0x80 (GEM_ORANGE_IN ≤ 90,
+  GLOWRING_ORANGE00..03 ≤ 128), so the Tower frame does not depend on it;
+  it applies to draws whose vertex or texel alpha exceeds 0x80.
+- setPrimColor 0x1beca8, node flags 0x5000 (0x1000 or 0x4000) without a
+  lightmap: MBNoShadeMod's block (pbg+0x1c +0xa8), +0x48 = node +0x6a + add
+  + 1, and object header word 1.y |= 1. VU1 setup (vu1-tower-disasm-v1
+  pairs 201..246): bit 1 → vf12 × vf31.z × 1/248 (pairs 237..246, use not
+  traced); bit 0 → vf12 × vf31.z with the directional rows vf09..vf11
+  zeroed (pairs 227..230), so program A's base min(vf09 · N + vf12, 128) is
+  the constant 128 × scale × (1 + add); neither → vf12 × (mem[37] + vf31.z)
+  with the directional light. The point-light loop (pairs 652..716) runs in
+  every case (mem[1].x lights). Tower dump: the crystals' XSNS_C sheen
+  (GEMSHEEN_ORANGE, PSMT8 at TBP 15072, 165 strips = 15 crystals × 11;
+  ALPHA 0x44, TEST GREATER AREF 1, TEXA TA0 0 / TA1 0x80, so binary alpha),
+  their additive bodies XP_CRY (node flags 0xc01880) and glow rings CFXP_G
+  (0x4c01880) all arrive with vertex colour (128, 128, 128, 128).
+  gdl_play: GsMaterial::with_draw clears `lit` for these flags (the unlit
+  path, colour × (1 + add)); draw-variant keys include 0x1000.
+  Correction: an earlier session note had both crystal body meshes drawn
+  additively; the sheen is alpha-tested and opaque, and the dump draws every
+  sheen first, then each crystal's body and glow ring — the native
+  opaque-then-additive order agrees.
+- Tower at the reference camera (runs client-towercmp-c → -e (additive) →
+  -f (no-shade)): left-wall region (rows 64..96, x 0..128) 112.5/64.5/12.3
+  → 153.1/93.1/18.2 → 162.2/103.0/23.9 against the reference's
+  125.1/72.5/15.0; overall 34.4/25.2/11.3 → 36.9/27.1/11.7 →
+  37.7/28.0/12.1 against 33.5/24.5/10.3. The captures are wall-clock timed:
+  the crystals spin and their glow rings play texmod frames, so differences
+  in this region mix animation phase with the renderer changes (c → e
+  cannot come from the additive change, which leaves this frame's draws
+  unchanged). Open: native crystal bodies are brighter than the
+  reference's (summed RGB p99 547 against 441/448 in rows 40..200, x
+  0..200 of the reference viewport and the dump's own snapshot); not
+  explained. Other levels at their reference cameras (client-addchk-a1,
+  -g1, -e1, -j1, -d1, -c1, -h1; client-noshade-g1, -a1): no visible change
+  besides moment-dependent content.
+- GDL_FREEZE_AT=N (gdl_play TEST switch): no level step after N updates;
+  texmods and particles then advance with stepped updates (÷ 59.94) instead
+  of render time, item and world texmod lists from their first run. Two G1
+  captures (GDL_DEBUG_LEVEL=G1, autostart, the scene-g1-v1 camera, update
+  600; runs client-g1fz-a/-b) are bit-identical. Two Tower captures at
+  update 400 (client-towerfreeze-e/-f) still differ in the crystals' spin
+  and the player's area: the simulation itself differs there between runs
+  (the simulate system and the message box run on the 30 Hz fixed clock;
+  the source is not found).

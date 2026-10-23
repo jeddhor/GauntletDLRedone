@@ -19,7 +19,8 @@
 //! a key, so its nodes are closed while no key is held. Optional route hints
 //! (tools/bot-routes/<W><L>.json: items, points, waits) come first. On an
 //! exit portal the stick is released (DoExit counts only then). Stuck (less
-//! than half a unit in STUCK updates): the edge in use is blocked (not at a
+//! than half a unit in STUCK updates, or within DWELL units for 4 × STUCK
+//! without a new goal): the edge in use is blocked (not at a
 //! gate) and the bot throws for a while (barrels, enemies). Enemies within
 //! ATTACK_RANGE are attacked with throws (cross) on alternate updates.
 //! Health assist (labelled DEBUG in the report): health is restored to its
@@ -36,6 +37,7 @@ const CELL: f32 = 1.5;
 const STEP_UP: f32 = 2.0;
 const DROP: f32 = 12.0;
 const STUCK: usize = 45;
+const DWELL: f32 = 2.0;
 /// Floor probes for columns and edge midpoints.
 const FLOOR_RADIUS: f32 = 0.3;
 /// Column sweeps go down in pieces of this length: a long radius sweep
@@ -422,6 +424,9 @@ pub struct Bot {
     /// Columns the player has stood in (exploration).
     visited_cols: HashSet<(i32, i32)>,
     progress: (usize, V3),
+    /// Where the player has stayed within DWELL units since the last goal
+    /// choice (an oscillation the half-unit test misses).
+    dwell: (usize, V3),
     attack_until: usize,
     start_health: f32,
     /// Player 0's level (+0x2ac0) when the bot started (pexp precondition).
@@ -482,6 +487,7 @@ impl Bot {
             visited_triggers: HashSet::new(),
             visited_cols: HashSet::new(),
             progress: (0, start),
+            dwell: (0, start),
             attack_until: 0,
             start_health: g.players[0].f32_(HEALTH),
             start_level: g.players[0].i32_(0x2ac0),
@@ -603,10 +609,11 @@ impl Bot {
     fn choose(&mut self, f: usize, g: &mut Game) {
         self.replans += 1;
         let p = g.players[0].v3(0x50);
+        self.dwell = (f, p);
         // Objects moved since the graph was built (doors swung open by a
         // trigger the player brushed, platforms): regrow it, at most every
-        // 300 updates.
-        let moved = Self::collision_state(g) != self.collision_at_build && (self.idle_rebuild_at == 0 || 300 <= f - self.idle_rebuild_at);
+        // 900 updates (rebuilds are the slow part in large levels).
+        let moved = Self::collision_state(g) != self.collision_at_build && (self.idle_rebuild_at == 0 || 900 <= f - self.idle_rebuild_at);
         if moved {
             self.idle_rebuild_at = f.max(1);
         }
@@ -918,9 +925,14 @@ impl Bot {
                 return pad;
             }
         }
-        // Stuck detection.
+        // Stuck detection: under half a unit in STUCK updates, or no goal
+        // reached while within DWELL units for 4 × STUCK (an oscillation
+        // between two points, A2 b13).
+        if DWELL < dist_xz(p, self.dwell.1) {
+            self.dwell = (f, p);
+        }
         if STUCK <= f - self.progress.0 {
-            if dist_xz(p, self.progress.1) < 0.5 {
+            if dist_xz(p, self.progress.1) < 0.5 || 4 * STUCK <= f - self.dwell.0 {
                 // At a closed gate the key count decides (obstacle_nodes), not
                 // a blocked edge that would outlast the next key.
                 let at_gate = (0..g.items.records.len())
@@ -1000,6 +1012,7 @@ impl Bot {
         self.riding = if riding { self.riding + 1 } else { 0 };
         if riding && self.riding < 300 {
             self.progress = (f, p);
+            self.dwell = (f, p);
             return pad;
         }
         if let Some((until, away)) = self.backoff {
@@ -1029,13 +1042,16 @@ impl Bot {
         // The nearest live enemy in range: face it and hold attack (cross,
         // DMotion 0xf, acts on the level); stuck: hold attack along the path.
         // A boss (critter kind 4) in range: fight from a distance — hold
-        // attack facing it, step back inside 6 units.
+        // attack facing it; inside 8 units step back with attack released
+        // (held attack keeps the player in its attack actions, so it never
+        // walked away; H4's Garm took no damage from 5.8 units for 48,000
+        // updates in b12).
         let boss = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|b| g.critters.get(b)).and_then(Option::as_ref).filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40));
         if let Some(bp) = boss.filter(|bp| dist_xz(*bp, p) < 18.0) {
-            pad.press(0xd);
-            if dist_xz(bp, p) < 6.0 && (f / 20).is_multiple_of(2) {
+            if dist_xz(bp, p) < 8.0 && (f / 20).is_multiple_of(2) {
                 return Self::steer(pad, g, p, [2.0 * p[0] - bp[0], p[1], 2.0 * p[2] - bp[2]]);
             }
+            pad.press(0xd);
             return Self::steer(pad, g, p, bp);
         }
         let enemy = Self::nearest_foe(g, p, ATTACK_RANGE);

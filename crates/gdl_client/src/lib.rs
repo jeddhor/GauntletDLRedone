@@ -346,6 +346,15 @@ impl GsMaterial {
             m.lightmap = None;
             m.params.options.y = 0.0;
         }
+        // setPrimColor 0x1beca8: flags 0x5000 without a lightmap take
+        // MBNoShadeMod's scale and add + 1 and set object header word 1.y
+        // bit 0; VU1 (vu1-tower-disasm-v1 pairs 213..230) then zeroes the
+        // directional rows, so the colour is 128 × (1 + add) with no ambient
+        // or N·L term (Tower dump: every XSNS_C crystal sheen vertex 128).
+        if flags & 0x5000 != 0 && m.lightmap.is_none() {
+            m.lit = false;
+            m.params.light_dir.w = 0.0;
+        }
         m.draw = GsDraw::from_node_flags(flags, m.lightmap.is_some());
         if m.draw.additive {
             m.alpha_mode = AlphaMode::Add;
@@ -389,8 +398,16 @@ impl Material for GsMaterial {
         }
         // GS blend equations (Cs/Cd colours, As source alpha or FIX 0x80):
         // 0x48 Cs·As + Cd, 0x89 Cd·As, 0x44 (Cs − Cd)·As + Cd.
+        // Additive with As: the shader premultiplies (Cs × As) >> 7 itself,
+        // As reaching 255/128 as on the GS (a clamped SrcAlpha would halve
+        // glows whose texel or vertex alpha exceeds 0x80).
+        if draw.additive && !draw.fixed_alpha
+            && let Some(f) = descriptor.fragment.as_mut()
+        {
+            f.shader_defs.push("ADDITIVE".into());
+        }
         let color = match (draw.additive, draw.multiply, draw.fixed_alpha) {
-            (true, _, false) => Some((BlendFactor::SrcAlpha, BlendFactor::One)),
+            (true, _, false) => Some((BlendFactor::One, BlendFactor::One)),
             (true, _, true) => Some((BlendFactor::One, BlendFactor::One)),
             (false, true, false) => Some((BlendFactor::Zero, BlendFactor::SrcAlpha)),
             (false, true, true) => Some((BlendFactor::Zero, BlendFactor::One)),

@@ -1439,6 +1439,12 @@ struct Sim {
     game: Game,
     error: Option<String>,
     updates: u64,
+    /// GDL_FREEZE_AT reached: no simulation step, and the 30 Hz
+    /// presentation clocks (texmods, particles) hold too.
+    frozen: bool,
+    /// GDL_FREEZE_AT given: those clocks advance with stepped updates
+    /// (÷ 59.94) instead of render time, so frozen frames repeat.
+    sim_clock: bool,
     exp: i64,
     sparks: Vec<(Vec3, f32)>,
     last_event: String,
@@ -1930,11 +1936,14 @@ struct Presentation {
 /// pressing those joyGetStatus entries on port 0 for every stepped update in
 /// the range (the keyboard is ignored); GDL_EXIT_AFTER=N writes the
 /// simulation state's SHA-256 to GDL_STATE_OUT after N stepped updates and
-/// exits; GDL_RENDER_FPS caps the render loop. Not a game feature.
+/// exits; GDL_RENDER_FPS caps the render loop; GDL_FREEZE_AT=N stops
+/// stepping the level after N updates while frames keep rendering (renderer
+/// A/B captures at one simulation moment). Not a game feature.
 #[derive(Resource, Default)]
 struct TestHarness {
     script: Option<Vec<(u64, u64, Vec<usize>)>>,
     exit_after: Option<u64>,
+    freeze_at: Option<u64>,
     state_out: Option<std::path::PathBuf>,
     hashes: Vec<String>,
     autostarted: bool,
@@ -1957,10 +1966,11 @@ impl TestHarness {
     fn from_env() -> Self {
         let script = std::env::var("GDL_INPUT_SCRIPT").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok());
         let exit_after = std::env::var("GDL_EXIT_AFTER").ok().and_then(|v| v.parse().ok());
+        let freeze_at = std::env::var("GDL_FREEZE_AT").ok().and_then(|v| v.parse().ok());
         let state_out = std::env::var_os("GDL_STATE_OUT").map(std::path::PathBuf::from);
         let actions = std::env::var("GDL_TEST_ACTIONS").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         let menu_script = std::env::var("GDL_MENU_SCRIPT").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok());
-        Self { script, exit_after, state_out, hashes: Vec::new(), autostarted: false, actions, menu_script, menu_ticks: 0, disconnect: None, lost_ticks: 0 }
+        Self { script, exit_after, freeze_at, state_out, hashes: Vec::new(), autostarted: false, actions, menu_script, menu_ticks: 0, disconnect: None, lost_ticks: 0 }
     }
 }
 
@@ -2581,7 +2591,7 @@ fn spawn_level(
             let Some(list) = names.get(node.label.as_str()).and_then(|i| parts.get(i)) else { continue };
             let rest = Vec3::from_array(p.summed_position);
             for (mesh, material) in list {
-                let key = (material.id(), flags & (0x800000 | 0x4000 | 0x80 | 0x40));
+                let key = (material.id(), flags & (0x800000 | 0x4000 | 0x1000 | 0x80 | 0x40));
                 let material = variants
                     .entry(key)
                     .or_insert_with(|| {
@@ -2659,6 +2669,8 @@ struct TexMods {
     mods: Vec<TexModState>,
     aframe: u32,
     accumulated: f32,
+    /// The stepped-update count at the first run (GDL_FREEZE_AT clock).
+    born: Option<u64>,
     /// Materials by base image, built on first use (scroll targets).
     by_image: Option<HashMap<AssetId<Image>, Vec<AssetId<gdl_client::GsMaterial>>>>,
 }
@@ -2737,15 +2749,23 @@ fn spawn_texmod_list(
         mods.push(TexModState { kind, count: tm.count, start: tm.start, divisor: tm.divisor, counter: tm.counter });
     }
     if !mods.is_empty() {
-        commands.spawn((TexMods { mods, aframe: 0, accumulated: 0.0, by_image: None }, LevelEntity));
+        commands.spawn((TexMods { mods, aframe: 0, accumulated: 0.0, born: None, by_image: None }, LevelEntity));
     }
+}
+
+/// Seconds for the 30 Hz presentation clocks this frame: render time, or
+/// under GDL_FREEZE_AT the updates stepped since `seen` at 59.94 per second.
+fn presentation_dt(sim: &Sim, time: &Time, seen: u64) -> f32 {
+    if sim.sim_clock { sim.updates.saturating_sub(seen) as f32 / 59.94 } else { time.delta_secs() }
 }
 
 /// DoTexModSub 0x110e10 per AFrame (30 Hz presentation clock): every
 /// `divisor` frames the counter advances modulo |count|; frame modifiers
 /// copy frame `counter` into the target (initially frame 0, InitTexMod),
 /// scrolls set the shift add sign·(counter mod |count|)/|count|.
-fn present_texmods(time: Res<Time>, mut q: Query<&mut TexMods>, mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut seen: Local<u64>, mut q: Query<&mut TexMods>, mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+    let dt = presentation_dt(&sim, &time, *seen);
+    *seen = sim.updates;
     for mut tm in &mut q {
         let tm = &mut *tm;
         let first = tm.by_image.is_none();
@@ -2758,7 +2778,14 @@ fn present_texmods(time: Res<Time>, mut q: Query<&mut TexMods>, mut images: ResM
             }
             tm.by_image = Some(map);
         }
-        tm.accumulated += time.delta_secs();
+        // Under GDL_FREEZE_AT the clock is the updates stepped since this
+        // list's first run, whatever frame its spawn landed in.
+        if sim.sim_clock {
+            let born = *tm.born.get_or_insert(sim.updates);
+            tm.accumulated = (sim.updates - born) as f32 / 59.94 - tm.aframe as f32 / 30.0;
+        } else {
+            tm.accumulated += dt;
+        }
         let mut changed = first;
         let mut steps = 0;
         while tm.accumulated >= 1.0 / 30.0 && steps < 4 {
@@ -2935,6 +2962,7 @@ fn follow_tree_psys(mut commands: Commands, anchors: Query<(&GlobalTransform, &I
 fn present_particles(
     time: Res<Time>,
     sim: Res<Sim>,
+    mut seen: Local<u64>,
     mut clock: ResMut<PsysClock>,
     libraries: Res<Libraries>,
     cams: Query<&bevy::camera::primitives::Frustum, With<FollowCamera>>,
@@ -2946,7 +2974,8 @@ fn present_particles(
     let Some(cam) = &sim.game.std_camera else { return };
     let rows = cam.pb.cam_rows.map(Vec3::from_array);
     let frustum = cams.iter().next();
-    clock.accumulated += time.delta_secs();
+    clock.accumulated += presentation_dt(&sim, &time, *seen);
+    *seen = sim.updates;
     let mut steps = 0;
     while clock.accumulated >= 1.0 / 30.0 && steps < 4 {
         clock.accumulated -= 1.0 / 30.0;
@@ -3648,6 +3677,11 @@ fn simulate(
             Err(e) => sim.error = Some(format!("check_active_players: {}", e.0)),
         }
     }
+    sim.sim_clock = harness.freeze_at.is_some();
+    if harness.freeze_at.is_some_and(|n| n <= sim.updates) {
+        sim.frozen = true;
+        return;
+    }
     let Sim { game, .. } = &mut *sim;
     let before = game.events.len();
     game.step_with(None, &mut |g| {
@@ -3914,7 +3948,7 @@ fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: 
             continue;
         }
         for (mesh, material) in parts {
-            let draw = flags & (0x800000 | 0x4000 | 0x80 | 0x40);
+            let draw = flags & (0x800000 | 0x4000 | 0x1000 | 0x80 | 0x40);
             let material = if draw == 0 {
                 material
             } else {
@@ -5443,7 +5477,7 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         let pdats = world.resource::<Session>().pdats.clone();
         select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
     }
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -5480,7 +5514,7 @@ fn start_flyby(world: &mut EcsWorld, idx: usize) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();

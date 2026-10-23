@@ -164,6 +164,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if floor(alpha * 128.0) <= 1.0 {
         discard;
     }
+#ifdef ADDITIVE
+    // ALPHA 0x48 Cs·As + Cd: (Cs × As) >> 7 in integers with As up to 0xff
+    // (2.0), the sum saturating (COLCLAMP) — premultiplied, blended One/One.
+    let cs = floor(min(rgb, vec3(1.0)) * 255.0 + 0.5);
+    let as_ = min(floor(alpha * 128.0), 255.0);
+    return vec4(min(floor(cs * as_ / 128.0), vec3(255.0)) / 255.0, 1.0);
+#else
     // Display values: the frame is converted once by DisplayToLinear.
     return vec4(min(rgb, vec3(1.0)), min(alpha, 1.0));
+#endif
 }

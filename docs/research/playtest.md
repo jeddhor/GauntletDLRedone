@@ -242,7 +242,8 @@ words):
   doorway, object 825; the player's own floor test is a short sweep, so
   play is unaffected — noted, not investigated further).
 - The graph is regrown when collision objects moved (runtime flags, node
-  heights and matrices; at most every 300 updates): E1's doors open when
+  heights and matrices; at most every 900 updates — rebuilds dominated the
+  large levels' run time, b12 timing out 15 levels at 3,600 s): E1's doors open when
   the player walks within pad 109's reach (+0xfc 10 + radius), as in the
   reference (trace-E1-newgame-v1: the doors' world animation starts at
   vblank 233, item 109 +0xe2 = 1 with the player 11 units away).
@@ -250,6 +251,15 @@ words):
   object (or a child), where the bot then stays.
 - When nothing is reachable, the blocked edges (guesses from stuck events)
   are forgotten and the plan retried.
+- Stuck also covers oscillation: no new goal while the player stays within
+  2 units for 180 updates (b13's A2 alternated between two points 0.9
+  apart every 15 updates from update 5,733 to the end, never 0.5 short of
+  the 45-update check point).
+- Bosses: inside 8 units the bot steps back with attack released (held
+  attack kept the player in its attack actions; from b12 the denser floor
+  sampling let it reach H4's node nearest Garm, 5.8 units away, where Garm
+  took no damage for 48,000 updates). H4 ends again (t15: update 35,892);
+  C5 and E2 are unchanged.
 - Labelled preconditions: `--pexp N` gives player 0 the experience of level
   N through ModifyExp (PlayerUpdateAtts raises the attributes); route hints
   (tools/bot-routes/<W><L>.json: items, points, waits; GDL_BOT_HINTS=0
