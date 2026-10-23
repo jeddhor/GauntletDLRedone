@@ -63,6 +63,7 @@ def main():
     ap.add_argument('--turbo', help='DEBUG: player 0 turbo (+0x800)')
     ap.add_argument('--front', action='store_true', help='DEBUG: player 1 stands 2 ahead of player 0 (with --players 2)')
     ap.add_argument('--flyby', action='store_true', help='the attract flyby on this level (no players; old camera)')
+    ap.add_argument('--bot', action='store_true', help='with --pads: the traversal bot drives port 0 (gdl_tools bot.rs; health assist labelled DEBUG)')
     ap.add_argument('--spawn', help='DEBUG: generate_enemy TYPE:LEVEL:AI:UPDATE[:DX:DZ[:DY]] beside player 0 (DY: floor probe height)')
     a = ap.parse_args()
     letters = {'A': (1, 'CASTLE'), 'B': (2, 'MOUNT'), 'C': (3, 'DESERT'), 'D': (4, 'FOREST'), 'E': (5, 'TEMPLE'),
@@ -121,6 +122,8 @@ def main():
     if a.pads:
         [sfx] = resolve(['PLAYERS/SOR/SFXYEL/ANIM.PS2'])
         cmd += [f'clips={clips}', f'pads={a.pads}', f'sfx={sfx}']
+        if a.bot:
+            cmd += [f"bot={os.environ.get('GDL_BOT', '1')}"]
     if a.replay or a.enemy_replay:
         # The traced player's class SFX package (the fixture's sorceress,
         # yellow): InitPlayerMissiles' custom effects.

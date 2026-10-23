@@ -427,6 +427,8 @@ struct FrontBackdrop;
 struct CritterSlot {
     index: usize,
     shown: Option<(usize, usize)>,
+    /// Broken collision nodes drawn so far (CritterDamage's MBSetObject).
+    damaged: usize,
 }
 
 /// One tree node's meshes of a critter slot.
@@ -469,7 +471,7 @@ fn present_critters(
             continue;
         };
         let t = &model.0.trees[tree];
-        if slot.shown != Some(cr.ty) {
+        if slot.shown != Some(cr.ty) || slot.damaged != cr.damaged_nodes.len() {
             commands.entity(entity).despawn_related::<Children>();
             // The configured model package (golems, gargoyles, generals),
             // else a package named after the tree prefix (bosses).
@@ -499,16 +501,22 @@ fn present_critters(
                         }
                         continue;
                     }
-                    if node.flags & 1 != 0 {
+                    if node.flags & 1 != 0 || cr.removed_nodes.contains(&(node.index as usize)) {
                         continue;
                     }
                     let label: String = (t.prefix.clone() + &node.label).chars().take(15).collect();
+                    // A broken node: CritterDamage's MBSetObject to "%sD%s"
+                    // (HYPOTHESIS: DESC name = tree prefix, the collision
+                    // node's name = the tree node's label).
+                    let damaged: String = (t.prefix.clone() + "D" + &node.label).chars().take(15).collect();
+                    let label = if cr.damaged_nodes.contains(&(node.index as usize)) && lib.by_label.contains_key(&damaged) { damaged } else { label };
                     if let Some(list) = lib.by_label.get(&label) {
                         add(&mut commands, node.index as usize, list, None);
                     }
                 }
             }
             slot.shown = Some(cr.ty);
+            slot.damaged = cr.damaged_nodes.len();
         }
         *vis = Visibility::Visible;
         let r = &cr.rec;
@@ -2572,7 +2580,7 @@ fn spawn_level(
     spawn_world_psys(commands, root, session, &set, meshes);
     spawn_texmods(commands, &level.anim_bytes, &set);
     for index in 0..gdl_core::game::critters::MAX_INSTS {
-        let e = commands.spawn((CritterSlot { index, shown: None }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
+        let e = commands.spawn((CritterSlot { index, shown: None, damaged: 0 }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
         commands.entity(root).add_child(e);
     }
     for (kind, n) in [(SlotKind::Enemy, 25), (SlotKind::Item, item_count), (SlotKind::Effect, 64)] {
@@ -3368,7 +3376,9 @@ fn simulate(
                 }
             }
             if let (Some(label), Some(out)) = (a["dump"].as_str(), harness.state_out.as_ref()) {
-                let d = progress_dump(&sim.game, label, now);
+                let mut d = progress_dump(&sim.game, label, now);
+                // The client's status line (e.g. "save recovered from …").
+                d["last_event"] = serde_json::Value::from(sim.last_event.clone());
                 let path = out.with_extension(format!("{label}.json"));
                 let _ = std::fs::write(path, serde_json::to_vec_pretty(&d).unwrap_or_default());
             }
@@ -3400,6 +3410,27 @@ fn simulate(
         }
         ports[0] = p;
         ports[1] = PadStatus::default();
+    }
+    // NATIVE recovery notice (M18): a slot loaded from its backup or a
+    // leftover .tmp is reported once in a message box (the original has no
+    // such message; its card code never sees a damaged native file).
+    if sim.message_box.is_none() {
+        let notes = front.store.take_recoveries();
+        if !notes.is_empty()
+            && let Some(e) = front.scrolls.entries.first()
+        {
+            let pages: Vec<String> = notes
+                .iter()
+                .map(|(slot, used, _)| {
+                    let what = if used.extension().is_some_and(|x| x == "tmp") { "an interrupted save" } else { "its backup copy" };
+                    format!("NOTICE (native)\nThe saved character in\nslot {slot} was damaged.\nIt was restored from\n{what}.")
+                })
+                .collect();
+            sim.last_event = format!("save recovered: {}", notes.iter().map(|(s, p, why)| format!("slot {s} from {} ({why})", p.display())).collect::<Vec<_>>().join("; "));
+            let sb = scroll_box(&sim.game, &front.scrolls, e, pages, 1);
+            sim.game.scroll_box_open();
+            sim.message_box = Some(sb);
+        }
     }
     if ui.paused || sim.message_box.is_some() {
         // main keeps running AudioQueUpdate / AudioPoll (DoOptions,

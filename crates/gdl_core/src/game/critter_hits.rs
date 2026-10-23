@@ -555,6 +555,66 @@ impl Game {
         Ok(best.1)
     }
 
+    /// CritterDamage's breakable collision node (0x1994ec..0x1995a8): the
+    /// node record's +0x12 damage effect at the node (+0x40), then, when the
+    /// node has a tree node (+4), MBSetObject to "<DESC>D<NODE>"
+    /// (presentation; recorded), CritterColnodeUpdateMoves and, with node
+    /// flag 4, CritterRemoveColnodeChildren; the +0x50 node is removed
+    /// (presentation).
+    fn critter_break_colnode(&mut self, i: usize, n: usize, nrec: &[u8]) -> R<()> {
+        let at = c::COLNODES + 0x60 * n;
+        if let Ok(d) = usize::try_from(CritterFile::i16_pub(nrec, 0x12)) {
+            let base = self.crit(i).rec.v3(at + 0x40);
+            self.critter_do_damage_fx(i, d, false, Some(base))?;
+        }
+        let Some(node) = self.crit(i).colnode_nodes.get(n).and_then(|c| c.0) else { return Ok(()) };
+        self.crit_mut(i).damaged_nodes.push(node);
+        self.critter_colnode_update_moves(i, node);
+        if CritterFile::i16_pub(nrec, 0x10) as u16 & 4 != 0 {
+            // CritterRemoveColnodeChildren 0x192ef8: every descendant of the
+            // node (0x192e18 over the +0x78 child / +0x7c sibling chains):
+            // MBRemoveNode, CritterColnodeUpdateMoves, and collision nodes
+            // on it lose their node (+4 = 0).
+            let parents = self.crit(i).parents.clone();
+            let mut stack: Vec<usize> = (0..parents.len()).filter(|&k| parents[k] == node as i32).collect();
+            let mut guard = 0;
+            while let Some(k) = stack.pop() {
+                guard += 1;
+                if parents.len() < guard {
+                    return unsupported("critter node tree cycle");
+                }
+                stack.extend((0..parents.len()).filter(|&q| parents[q] == k as i32));
+                self.crit_mut(i).removed_nodes.insert(k);
+                self.critter_colnode_update_moves(i, k);
+                for cn in self.crit_mut(i).colnode_nodes.iter_mut() {
+                    if cn.0 == Some(k) {
+                        cn.0 = None;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// CritterColnodeUpdateMoves 0x192d70: the critter's node list entry of
+    /// `node` is cleared and every MOVE of the type aiming at that entry
+    /// (+0xe) gets −1 — in the loaded MOVE records, so the change holds for
+    /// the type until the file is reloaded (the native tree index stands
+    /// for the list entry).
+    fn critter_colnode_update_moves(&mut self, i: usize, node: usize) {
+        let t = self.crit(i).ty;
+        let first = CritterFile::i16_pub(&self.critter_data.files[t.0].wad.types[t.1], 0x112) as usize;
+        let count = CritterFile::i16_pub(&self.critter_data.files[t.0].wad.types[t.1], 0x110).max(0) as usize;
+        for m in first..first + count {
+            if let Some(rec) = self.critter_data.files[t.0].wad.moves.get_mut(m)
+                && rec.len() >= 0x10
+                && i16::from_le_bytes([rec[0xe], rec[0xf]]) == node as i16
+            {
+                rec[0xe..0x10].copy_from_slice(&(-1i16).to_le_bytes());
+            }
+        }
+    }
+
     /// CritterDoDamageFX 0x1946c8 (`local`: offsets in the critter frame).
     fn critter_do_damage_fx(&mut self, i: usize, d: usize, local: bool, base: Option<V3>) -> R<i32> {
         let drec = self.critter_damage_rec(i, d);
@@ -1156,8 +1216,9 @@ impl Game {
                 d = mul(d, CritterFile::f32_pub(&nrec, 0x40))?;
                 if max < add(acc, d)? {
                     d = sub(max, acc)?;
-                    if CritterFile::i16_pub(&nrec, 0x10) as u16 & 2 != 0 {
-                        return unsupported("breakable critter collision node");
+                    let nflags = CritterFile::i16_pub(&nrec, 0x10) as u16;
+                    if nflags & 2 != 0 {
+                        self.critter_break_colnode(i, n, &nrec)?;
                     }
                 }
                 self.crit_mut(i).rec.set_f32(at + 0x5c, add(acc, d)?);

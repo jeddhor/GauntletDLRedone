@@ -66,6 +66,46 @@ SCENARIOS = {
 }
 
 
+# Two saves of card file 0 (save0001.json): before G1's exit (S0) and in the
+# Tower after it (S1, whose .bak is S0). Used by the recovery scenarios.
+TWO_SAVES = dict(
+    level='G1', updates=900,
+    actions=[{"at": 5, "dump": "start"}, {"at": 140, "save": 0}, {"at": 150, "teleport": [120.7, 86.6, -476.1]},
+             {"at": 870, "save": 0}, {"at": 875, "dump": "saved"}],
+    menu=presses(CROSS, 60, 4, 90) + [[420, 422, [UP]], [480, 482, [CROSS]]] + presses(TRIANGLE, 600, 12, 60))
+
+SCENARIOS.update({
+    # M18: a corrupted primary file (one region digit flipped, so the
+    # envelope's SHA-256 fails) loads the previous save from .bak, and the
+    # client says so.
+    'recover-corrupt': dict(TWO_SAVES, mutate=[["corrupt", "save0001.json"]],
+                            then=dict(load_slot=1, updates=300, actions=[{"at": 30, "dump": "loaded"}], menu=presses(TRIANGLE, 30, 12, 60)),
+                            checks=[("saved", "waves", "!=", "start.waves"), ("loaded", "waves", "==", "start.waves"),
+                                    ("loaded", "last_event", "contains", "recovered"), ("loaded", "world", "==", 13)]),
+    # M18: a write interrupted after the old primary became .bak and before
+    # the new .tmp was renamed into place: the complete .tmp (S1) loads.
+    'recover-interrupt': dict(TWO_SAVES, mutate=[["rename", "save0001.json", "save0001.tmp"]],
+                              then=dict(load_slot=1, updates=300, actions=[{"at": 30, "dump": "loaded"}], menu=presses(TRIANGLE, 30, 12, 60)),
+                              checks=[("loaded", "waves", "==", "saved.waves"), ("loaded", "exp", "==", "saved.exp"),
+                                      ("loaded", "last_event", "contains", "recovered"), ("loaded", "world", "==", 13)]),
+})
+
+
+def mutate(saves, ops):
+    """Damage a copied save directory as an interruption or corruption would."""
+    for op in ops:
+        if op[0] == 'corrupt':
+            f = saves / op[1]
+            text = f.read_text()
+            at = text.index('region_hex') + 20
+            text = text[:at] + ('1' if text[at] == '0' else '0') + text[at + 1:]
+            f.write_text(text)
+        elif op[0] == 'rename':
+            (saves / op[1]).rename(saves / op[2])
+        else:
+            raise ValueError(op)
+
+
 def value(dumps, ref):
     if isinstance(ref, str) and '.' in ref:
         label, field = ref.split('.', 1)
@@ -73,7 +113,7 @@ def value(dumps, ref):
     return ref
 
 
-def run(tag, name, sc, saves_from=None):
+def run(tag, name, sc, saves_from=None, mutations=()):
     run_tag = f'{tag}-{name}'
     d = ROOT / 'private' / 'runs' / f'client-{run_tag}'
     if d.exists():
@@ -81,6 +121,7 @@ def run(tag, name, sc, saves_from=None):
     d.mkdir(parents=True)
     if saves_from:
         shutil.copytree(saves_from, d / 'saves')
+        mutate(d / 'saves', mutations)
     files = {}
     for key in ('actions', 'menu'):
         files[key] = d / f'{key}.json'
@@ -107,13 +148,16 @@ def run(tag, name, sc, saves_from=None):
         j = json.loads(f.read_text())
         dumps[j['label']] = j
     if 'then' in sc:
-        b = run(tag, f'{name}-b', dict(sc['then'], checks=[]), saves_from=d / 'saves')
+        b = run(tag, f'{name}-b', dict(sc['then'], checks=[]), saves_from=d / 'saves', mutations=sc.get('mutate', []))
         dumps.update(b['dumps'])
     results = []
     for label, field, op, ref in sc['checks']:
         got = dumps.get(label, {}).get(field)
         want = value(dumps, ref)
-        ok = got is not None and want is not None and ((got == want) if op == '==' else (got != want))
+        if op == 'contains':
+            ok = isinstance(got, str) and want in got
+        else:
+            ok = got is not None and want is not None and ((got == want) if op == '==' else (got != want))
         results.append(dict(dump=label, field=field, op=op, expected=ref, expected_value=want, value=got, ok=ok))
     return dict(level=sc.get('level'), load_slot=sc.get('load_slot'), updates_run=len(out.read_text().split()) if out.exists() else 0,
                 debug_shortcuts=[a for a in sc['actions'] if 'teleport' in a or 'health' in a],

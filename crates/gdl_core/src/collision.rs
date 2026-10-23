@@ -61,6 +61,7 @@ pub struct Triangle {
     pub uv: [f32; 4],
 }
 
+#[derive(Clone)]
 pub struct CollisionWorld {
     pub objects: Vec<CollisionObject>,
     pub triangles: Vec<Triangle>,

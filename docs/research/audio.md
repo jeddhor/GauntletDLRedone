@@ -102,6 +102,24 @@
 - AudioDemonFireBall 0x15fcb8 (enemy type 2 fireballs by CurWorld) and
   AudioSelect 0x15ce80 are ported (effects.rs, sound_cues.rs).
 
+## Audiovisual catalog (M17, 2026-10-23)
+
+`gdl_tools av-catalog AUDATPS2.ROM SLUS_200.47 play-config.json
+wad-independent.json NEW.json` (private/reports/av-catalog-v2.json, actual
+disc): the 37 ELF cue tables the port reads (throw, pain, eat, door, tile,
+barrel, rotator, generator, turbo, walk, menu clicks, map, tally, runes,
+transport, legend items, Sumner's lines, player names …) hold 794 distinct
+sound IDs, all resolving to an AUDATPS2.ROM record (bank, name, duration);
+2,228 ROM sounds in 60 banks, each bank with its AUDIO/<name>.VBK on the
+disc; per level, the AUDS stage bank (a ROM bank name or label — PYRAMID,
+GENIE, SPIDER and CATHEDRAL are labels of DESERT, DJINN, DRIDER and CATH),
+its 106 music streams (BGPlayStream's names by area and part) all present in
+STREAMS/, its 279 named SNDS world sounds all found by AudioFindSound, and
+every LEVL movie (+0x34) present under MPEG/. This catalogues event → asset
+bindings; event selection and timing are checked by the whole-update
+replays (gameplay.md: sound events are Game::events from the ported Audio*
+functions).
+
 ## Not yet
 
 Tower coin sounds, exact SPU volume/pan curves, the

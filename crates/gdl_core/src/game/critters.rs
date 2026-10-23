@@ -211,6 +211,12 @@ pub struct Critter {
     /// GetWorldMat, so critters ride moving floors (trace-k2-newgame-v4).
     pub node: Option<[[f32; 4]; 4]>,
     pub floor: Option<usize>,
+    /// Breakable collision nodes broken by CritterDamage: the tree node whose
+    /// object MBSetObject swapped to the damaged model "<DESC>D<NODE>"
+    /// (presentation), and the tree nodes MBRemoveNode removed
+    /// (CritterRemoveColnodeChildren; not drawn).
+    pub damaged_nodes: Vec<usize>,
+    pub removed_nodes: std::collections::BTreeSet<usize>,
 }
 
 impl Game {
@@ -716,6 +722,8 @@ impl Game {
             node_d8: None,
             node_e8: None,
             colnode_nodes: vec![(None, None); ncol],
+            damaged_nodes: Vec::new(),
+            removed_nodes: Default::default(),
             shadow: None,
             node: None,
             floor: None,

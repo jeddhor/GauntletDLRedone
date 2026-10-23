@@ -124,6 +124,9 @@ pub struct Listed {
 
 pub struct SaveStore {
     pub dir: PathBuf,
+    /// Slots loaded from a backup or a leftover `.tmp` this session (each
+    /// reported once), for the client's recovery notice.
+    recoveries: std::sync::Mutex<(Vec<(u32, PathBuf, String)>, std::collections::HashSet<u32>)>,
 }
 
 fn read_envelope(path: &Path) -> Result<SaveEnvelope, String> {
@@ -161,7 +164,7 @@ impl SaveStore {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, String> {
         let dir = dir.into();
         fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        Ok(Self { dir })
+        Ok(Self { dir, recoveries: Default::default() })
     }
 
     pub fn path(&self, slot: u32) -> PathBuf {
@@ -179,10 +182,20 @@ impl SaveStore {
             if let Ok(save) = read_envelope(&alt)
                 && save.slot == slot
             {
+                if let Ok(mut r) = self.recoveries.lock()
+                    && r.1.insert(slot)
+                {
+                    r.0.push((slot, alt.clone(), first.clone()));
+                }
                 return Ok(Loaded { save, recovered: Some((alt, first)) });
             }
         }
         Err(format!("slot {slot}: {first}"))
+    }
+
+    /// Recoveries not reported yet: (slot, file used, why the primary failed).
+    pub fn take_recoveries(&self) -> Vec<(u32, PathBuf, String)> {
+        self.recoveries.lock().map(|mut r| std::mem::take(&mut r.0)).unwrap_or_default()
     }
 
     /// Write a slot (sequence = previous + 1).
@@ -460,6 +473,12 @@ mod tests {
         let l = s.load(2).unwrap();
         assert_eq!(l.save.summary().unwrap().name, "ONE");
         assert!(l.recovered.as_ref().unwrap().1.contains("checksum"));
+        // Reported once per slot and session.
+        s.load(2).unwrap();
+        let r = s.take_recoveries();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, 2);
+        assert!(s.take_recoveries().is_empty());
         // Interrupted write: primary renamed away, complete .tmp left behind.
         fs::remove_file(&p).unwrap();
         let tmp = SaveEnvelope::new(2, "new", &region(b"THREE", 3)).unwrap();

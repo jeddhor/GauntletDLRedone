@@ -207,6 +207,26 @@ occupied number, a disagreeing DirInfo, refused sizes/classes, a card
 without the game's directory, on memcard::synthetic_image cards); the
 profile round trip new character → play changes → region → reload.
 
+Recovery in the client (2026-10-23): SaveStore records each slot it loaded
+from `.bak` or a leftover `.tmp` once per session (`take_recoveries`); gdl_play
+opens a message box in the original scroll-box style — "NOTICE (native) …
+slot N was damaged. It was restored from its backup copy / an interrupted
+save." — for any load path (the original select screen's Load through
+NativeCard, or a direct start), and the status line names the file and the
+reason. The original has no such message (its text ROM holds only the card
+space/format messages), so the text is labelled native.
+
+Client scenarios (tools/python/scenarios.py, GUI on the private Xvfb, report
+private/reports/scenarios-m18-v2.json; actual disc): two saves of card file 0
+in one session (in G1 before the exit, then in the Tower after it), then the
+save directory is damaged and a new client loads slot 1:
+- recover-corrupt: one hex digit of the primary's region flipped (checksum
+  fails) → the earlier save from `.bak` (G1 not completed), notice shown.
+- recover-interrupt: the primary renamed to `.tmp` — the state a crash leaves
+  between write_atomic's two renames (`.bak` = the old save, `.tmp` = the
+  complete new one) → the new save (G1 completed), notice shown.
+Both pass.
+
 ## Front end (gdl_client::menu, gdl_play)
 
 Original menu tables (ELF): title "Press Start" (0x2abed0) → title_menu

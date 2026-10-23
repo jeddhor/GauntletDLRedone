@@ -197,3 +197,26 @@ Report private/reports/scenarios-m13-v2.json and -m13-v3.json; all pass:
 - save-reload: the same exit, a save to card file 0 in the Tower, then a
   second client loading save0001: in the Tower with the same completion
   bytes, experience, gold and keys.
+
+## Traversal bot (M14/M15/M16 tooling, in development 2026-10-23)
+
+`game_run.py --pads 0:1 --bot` (gdl_tools bot.rs) drives port 0 through the
+ordinary pad path, so every step is the native PlayerMotion's. It samples a
+navigation graph from the level's live collision (FloorCollide columns on a
+1.5-unit grid; edges with a permissive wall sweep, those failing a
+player-like test at a higher cost; blocked edges kept by place), picks goals
+(the exit, else the nearest key or unused switch-on trigger, else a live
+critter, else the nearest unvisited column), waits on triggers while their
+platforms move, idles during the stage start, attacks enemies, critters,
+barrels and chests in 12-update windows, and restores health below 40 %
+(DEBUG assist, counted in the report). Followers (co-op runs, players=N)
+follow player 1 and attack. Reports: the bot section of the game-run JSON
+(goals reached, stuck events, the level end and its wave).
+
+Batch b2 (30,000 updates per level, all 61 levels, scratch reports):
+the level ended for the nine treasure rooms (their timers) and B2 (its exit
+at update 4,873); G1 reached y 37.8 of 86 through two lifts and five
+triggers. The bot found one unported path (CritterDamage's breakable
+collision nodes, now ported: critters.md). Not yet traversal evidence for
+the other levels.
+

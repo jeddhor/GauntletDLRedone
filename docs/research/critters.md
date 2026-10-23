@@ -371,3 +371,22 @@ wizard runs and the level ends with destination 0xd00, with no unsupported
 path. Without the override the chimera (4500 body, 900/1125/900 heads at
 these multipliers) damages the player 483 → 31 in 1400 updates. B6, G5,
 G1, A1, C4, C5, F2 and K5 runs are identical to the previous build.
+
+## Breakable collision nodes (2026-10-23)
+
+CritterDamage 0x199100's collision-node branch: once a node's accumulated
+damage (+0x5c) would pass its maximum (+0x58) and the node record has flag 2
+(found by the traversal bot in B5 and H4, where the port stopped with an
+unported path), the original (0x1994ec..0x1995a8) runs CritterDoDamageFX
+with the node record's +0x12 at the node position (+0x40); with a tree node
+(+4) MBSetObject swaps its object to "%sD%s" (DESC name, node name; the
+damaged model), CritterColnodeUpdateMoves 0x192d70 clears the node's entry
+in the critter's node list and sets +0xe = −1 in every MOVE of the type
+aiming at it — in the loaded MOVE records, so moves using a broken part
+stay disabled for the type — and with node flag 4 CritterRemoveColnodeChildren
+0x192ef8 removes every descendant (MBRemoveNode, the same move update, and
+collision nodes on them lose their node); the +0x50 node is removed.
+Native: critter_break_colnode (critter_hits.rs); the client hides removed
+nodes and draws "<prefix>D<label>" for a broken node when the package has
+it (HYPOTHESIS for the name mapping). Not yet compared with a reference
+trace.

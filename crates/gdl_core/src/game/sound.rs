@@ -97,6 +97,34 @@ pub struct SoundTables {
     pub stage: Option<Stage>,
 }
 
+impl SoundTables {
+    /// The ELF cue tables by name (av-catalog; −1 entries are unused slots).
+    pub fn catalog(&self) -> Vec<(&'static str, Vec<i32>)> {
+        let c = &self.cues;
+        let mut v: Vec<(&'static str, Vec<i32>)> = vec![
+            ("throw 0x23d0c0", self.throw.clone()), ("pain 0x23cf00", self.pain.clone()), ("severe 0x23cf80", self.severe.clone()),
+            ("eat 0x23cfa0", self.eat.clone()), ("eatsfx 0x23d020", self.eatsfx.clone()), ("poison 0x23d040", self.poison.clone()),
+            ("stolen 0x23d060", self.stolen.clone()), ("dievox 0x23d228", self.dievox.clone()), ("dmg 0x23d1d8", self.dmg.clone()),
+            ("potion 0x23d3d0", self.potion.clone()), ("tile 0x23d248", self.tile.clone()), ("barrel 0x23d450", self.barrel.clone()),
+            ("poison_barrel 0x23d488", self.poison_barrel.clone()), ("rotator_loop 0x23d568", self.rotator_loop.clone()),
+            ("rotator_stop 0x23d5a0", self.rotator_stop.clone()), ("barrel_explode 0x23d4c0", self.barrel_explode.clone()),
+            ("rock 0x23d4f8", self.rock.clone()), ("leaf 0x23d530", self.leaf.clone()), ("door 0x23d6b8", self.door.clone()),
+            ("gen_die 0x23db70", self.gen_die.clone()), ("gen_hit 0x23dba8", self.gen_hit.clone()),
+            ("turbo_a 0x23d0e0", c.turbo_a.clone()), ("turbo_b 0x23d160", c.turbo_b.clone()), ("turbo_c 0x23d180", c.turbo_c.clone()),
+            ("walk 0x23d3f8", c.walk.clone()), ("click2 0x23d428", c.click2.clone()), ("click 0x23d420", c.click.clone()),
+            ("map_dot 0x23ce30", c.map_dot.clone()), ("tally 0x23ce68", c.tally.clone()), ("runes 0x23cea0", c.runes.clone()),
+            ("transport 0x23dac8", c.transport.clone()), ("world_explosion 0x23db00", c.world_explosion.clone()),
+            ("world_hit 0x23db38", c.world_hit.clone()), ("lvl_snd 0x23d7c8", c.lvl_snd.clone()), ("gwiz 0x23dbe0", c.gwiz.clone()),
+        ];
+        for (k, l) in c.legend.iter().enumerate() {
+            v.push((["legend0 0x23da08", "legend1 0x23da38", "legend2 0x23da68", "legend3 0x23da98"][k], l.clone()));
+        }
+        v.push(("player names (InitNameAudio S_<COL><CHR>1/2)", self.pname.iter().flatten().flatten().copied().collect()));
+        v.push(("player names short (S_<COL><CHR>1S/2S)", self.pname_s.iter().flatten().flatten().copied().collect()));
+        v
+    }
+}
+
 fn words(b: &[u8]) -> Vec<i32> {
     b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()
 }
