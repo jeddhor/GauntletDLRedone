@@ -3514,8 +3514,20 @@ fn record_transform(rows: [Vec3; 3], pos: Vec3) -> Transform {
 
 /// Item model key and parts: tree rest pose (nodes at summed initial
 /// positions), else "<NAME>L1", else "<NAME>".
+/// The packages searched for an item's tree: the level's item packages and
+/// POWERUPS (AtreeMatchAnyHeader's order), then the other loaded packages in
+/// name order (statue trees are in the critter and monster packages).
+fn item_tree_packages<'a>(sources: &'a Sources, items: &'a [String]) -> Vec<&'a str> {
+    let mut out: Vec<&str> = items.iter().map(String::as_str).chain(["POWERUPS"]).collect();
+    let mut rest: Vec<&str> = sources.packages.keys().map(String::as_str).filter(|k| !out.contains(k)).collect();
+    rest.sort_unstable();
+    out.extend(rest);
+    out
+}
+
 fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str) -> Model {
-    for pkg in items.iter().map(String::as_str).chain(["POWERUPS"]) {
+    let own = items.len() + 1;
+    for (i, pkg) in item_tree_packages(sources, items).into_iter().enumerate() {
         let (Some(p), Some(lib)) = (sources.packages.get(pkg), libs.0.get(pkg)) else { continue };
         if let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == name)) {
             let mut out = Vec::new();
@@ -3530,7 +3542,12 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
                 return out;
             }
         }
-        for label in [format!("{name}L1"), name.to_string()] {
+        // Static models by label only in the item packages and POWERUPS.
+        if own <= i {
+            continue;
+        }
+        // ItemFindMBObjectL1: the name, then +"L1", then +"L1ROOT".
+        for label in [name.to_string(), format!("{name}L1"), format!("{name}L1ROOT")] {
             if let Some(parts) = lib.by_label.get(&label) {
                 return vec![(Vec3::ZERO, parts.clone(), 0, None, None)];
             }
@@ -3685,7 +3702,14 @@ fn present_world(
                 // +0xe1 ≠ 0: hidden for this player count (show_item; ProcessItems
                 // sets the tree's hide flag 2 whenever +0xe1 becomes 1 and
                 // clears it when +0xe1 returns to 0).
-                if !r.active() || r.u16_(0xd8) & 0x8900 != 0 || r.u8_(0xe1) != 0 || kind == 4 || kind == 13 || kind == 5 || kind == 7 {
+                // SetItem's geometry (ItemWorld::geo): not for kinds 4 (statues
+                // aside: GAR_STATUE, GOL_STATUE, DEATHSTATUE1/2) and 13, kind 12
+                // only for subtype 2, never with the instance's flag bit 2.
+                // Triggers (kind 5) draw their tree (realm switches TRIGGER2)
+                // or model (I5's BRIDGEPADL1) when one exists.
+                let geo = g.items.geo.get(slot.index).copied().unwrap_or(false);
+                let statue = (kind == 4 && geo).then(|| g.items.statue_tree.get(slot.index).copied().flatten()).flatten();
+                if !r.active() || r.u16_(0xd8) & 0x8900 != 0 || r.u8_(0xe1) != 0 || !geo {
                     *vis = Visibility::Hidden;
                     continue;
                 }
@@ -3699,12 +3723,34 @@ fn present_world(
                         continue;
                     };
                     let key = format!("GEN_{pkg}{level}");
-                    let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&key)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None, None)]);
+                    // ItemFindMBObjectL1: the name, then +"L1", then +"L1ROOT".
+                    let parts = libs.0.get(pkg).and_then(|lib| [key.clone(), format!("{key}L1"), format!("{key}L1ROOT")].iter().find_map(|l| lib.by_label.get(l)).cloned()).map(|p| vec![(Vec3::ZERO, p, 0, None, None)]);
                     (Some(key), parts, tf)
                 } else {
                     // ReplaceItemAtree (Game::item_trees) overrides the
                     // definition's tree.
-                    let name = g.item_trees.get(&slot.index).cloned().unwrap_or_else(|| String::from_utf8_lossy(d.name()).into_owned());
+                    // Rocks (kind 10 type 0x29): SetItem's "<name><+0xf2>" (the
+                    // damage stage; SetSafeRock restages it, −1 hides the tree).
+                    let rock_stage = (kind == 10 && r.i16_(0xf0) == 0x29).then(|| r.i16_(0xf2));
+                    if rock_stage.is_some_and(|s| s < 0) {
+                        *vis = Visibility::Hidden;
+                        continue;
+                    }
+                    let name = match (statue, rock_stage) {
+                        (Some(s), _) => s.to_string(),
+                        (None, Some(s)) => format!("{}{s}", String::from_utf8_lossy(d.name())),
+                        // ReplaceItemAtree's tree; the definition's tree (the
+                        // slot has a clock); else SetItem's model name, the
+                        // instance's own (+8) or the definition's.
+                        (None, None) => {
+                            let has_tree = g.item_anims.get(slot.index).is_some_and(|a| a.is_some());
+                            g.item_trees
+                                .get(&slot.index)
+                                .cloned()
+                                .or_else(|| if has_tree { None } else { g.items.geo_name.get(slot.index).cloned().flatten() })
+                                .unwrap_or_else(|| String::from_utf8_lossy(d.name()).into_owned())
+                        }
+                    };
                     let key = format!("{name}#{}", r.u16_(0xd8) & 1);
                     if slot.key.as_deref() == Some(key.as_str()) {
                         (Some(key), None, tf)
@@ -3982,7 +4028,7 @@ fn present_item_trees(
         let found = trees
             .entry(name.to_string())
             .or_insert_with(|| {
-                items.iter().map(String::as_str).chain(["POWERUPS"]).find_map(|pkg| {
+                item_tree_packages(&sources, items).into_iter().find_map(|pkg| {
                     let t = sources.packages.get(pkg)?.anim.as_ref()?.trees.iter().position(|t| t.label == name)?;
                     Some((pkg.to_string(), t))
                 })
@@ -5589,7 +5635,11 @@ fn front_system(world: &mut EcsWorld) {
                     }
                 }
                 eprintln!(
-                    "DEBUG F2 state game_mode {:#x} active_players {:#x} mask {:#x} states {:?} continue {:?} level_done {:?} exit_ready {} updates {} error {:?} unsupported {:?}",
+                    "DEBUG F2 state world {:#x} level {} welcome {} new_player {} game_mode {:#x} active_players {:#x} mask {:#x} states {:?} continue {:?} level_done {:?} exit_ready {} updates {} error {:?} unsupported {:?}",
+                    g.globals.cur_world,
+                    g.globals.cur_level,
+                    g.globals.welcome_flag,
+                    g.tower.new_player,
                     g.globals.game_mode,
                     g.globals.active_players,
                     g.active_player_mask,

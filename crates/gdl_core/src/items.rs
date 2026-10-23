@@ -279,6 +279,10 @@ pub struct ItemWorld {
     /// and Death statues), in place of the definition's: GAR_STATUE,
     /// GOL_STATUE, DEATHSTATUE1/2.
     pub statue_tree: Vec<Option<&'static str>>,
+    /// SetItem's geometry name when the instance names one (instance +8,
+    /// strncpy 16; else the definition's +0x28 name is used). The model
+    /// lookup (ItemFindMBObjectL1) uses it when the definition has no tree.
+    pub geo_name: Vec<Option<String>>,
 }
 
 /// WPitchMat3/WYawMat3/WRollMat3 0x1d5228/0x1d5178/0x1d52d8 on rows 0..2.
@@ -362,6 +366,7 @@ impl ItemWorld {
             sound_anchor: Vec::new(),
             geo: Vec::new(),
             statue_tree: Vec::new(),
+            geo_name: Vec::new(),
         })
     }
 
@@ -582,6 +587,13 @@ impl ItemWorld {
             self.statue_tree.resize(slot + 1, None);
         }
         self.statue_tree[slot] = None;
+        if self.geo_name.len() <= slot {
+            self.geo_name.resize(slot + 1, None);
+        }
+        self.geo_name[slot] = inst.filter(|i| i[8] != 0).map(|i| {
+            let n = i[8..0x18].iter().position(|&b| b == 0).unwrap_or(16);
+            String::from_utf8_lossy(&i[8..8 + n]).into_owned()
+        });
         self.geo[slot] = !(matches!(kind, 4 | 13) || kind == 12 && subtype != 2) && iu8(3) & 2 == 0;
         r.set_f32(0xc8, d.f32_(0x1c));
         r.set_f32(0xcc, add(d.f32_(0x20), 1.0)?);

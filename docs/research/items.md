@@ -86,6 +86,24 @@ and 12: the extra chests, keys and barrels; trace-b1-newgame-v2). gdl_play
 draws an item only while +0xe1 is 0 (it had drawn the multiplayer chests,
 which could not be opened; scene comparison private/reports/scene-b1-v2-*).
 
+## Item geometry names (SetItem → SetItemGeo, 2026-10-22)
+
+SetItem 0x151878 picks the geometry name: the instance's own (+8, strncpy
+16) when it has one, else the definition's +0x28; generators take
+ItemGenDesc ("GEN_<prefix><level>", AtreeMatchAnyHeader for a tree); rocks
+(kind 10 type 0x29) "%s%d" of the definition name and +0xf2 (the stage, so
+SAFEROCK3 at full health; SetSafeRock restages, −1 hides). SetItemGeo uses
+the definition's tree (+0x4c) when there is one, else ItemFindMBObjectL1
+0x151238: the name, then +"L1", then +"L1ROOT" (MBOX_FindObject_Sub). Every
+kind gets geometry except 4 (statues aside), 13, 12 other than subtype 2
+and instances with flag bit 2 (ItemWorld::geo); triggers (kind 5) draw
+their tree (TRIGGER2 switches in every realm package) or model (I5's
+BRIDGEPADL1). gdl_play had drawn no triggers, statues or rocks, and only
+generators whose model has no "L1" suffix (GEN_RAT1 but not GEN_GRU1L1);
+scene comparisons at reference cameras (private/reports/scene-*-ref.png /
+-native.png; K5's three SAFEROCK vats, A1's GRU generator arches and
+statues).
+
 ## Per-update matrices (ProcessItems loop 2, PlaceItem)
 
 ProcessItems' second loop calls GetObjWorldMat(+0x10, +0xc8, +0xc8) 0x103450
