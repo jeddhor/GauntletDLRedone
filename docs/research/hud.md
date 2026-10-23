@@ -254,7 +254,14 @@ final stats after Battle 3 (LastWorldPlayed 8 / LastLevelPlayed 3); 100
 done (player state 5). Input: PlayerControl +8 edges (X 0x2000000 = attack
 entry 0xd, back 0x8000000, up 0x30, down 0xc0). gdl_play draws the shop
 over the realm's scene (the panels cover the screen) and adds the SELECT
-package last to the HUD's texture search (SelectLoadStart). Verified
+package last to the HUD's texture search (SelectLoadStart). game_main runs
+SetPlayerVars (which clears the panels' +0x93e written bits) in every mode
+before its dispatch, and do_players after an unfinished do_shop /
+do_mapscreen and before do_player_select (unless paused); gdl_play's shop,
+map, select and movie branches follow it — the shop's player panels had
+lost their level, name, gold and health (written once, then skipped),
+against the reference's tally (private/reports/ref-g1-exit-stand-v1.png:
+warped into G1's exit portal, 600 vblanks; the counting row highlighted). Verified
 natively (Shift+F9 debug exit from G1): piles, Level 10 panel, item scroll,
 inventory, Tower start at the realm's door. NATIVE/HYPOTHESES: the list
 does not scroll, the inventory panel closes as the reverse of its opening,

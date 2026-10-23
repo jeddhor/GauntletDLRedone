@@ -3247,6 +3247,8 @@ fn simulate(
         if let Err(e) = sim.game.update_controls(&ports) {
             sim.error = Some(format!("controls: {}", e.0));
         }
+        // game_main: SetPlayerVars in every mode, before the dispatch.
+        sim.game.set_player_vars();
         let serving = !run.tried || run.player.as_ref().is_some_and(|p| p.playing());
         match sim.game.do_gamemovie(&mut run.game, serving) {
             Some(_) => sim.movie_done = Some(run.then),
@@ -3254,26 +3256,34 @@ fn simulate(
         }
         return;
     }
-    // game mode 0x400f: do_mapscreen until the next level loads.
+    // game mode 0x400f: SetPlayerVars, do_mapscreen (WritePlayerInfo
+    // first) until the next level loads, else do_players.
     if let Some((mut m, next)) = sim.map.take() {
         let g = &mut sim.game;
         g.hud.begin_frame();
         g.main_audio(g.globals.vb_elapsed);
+        g.set_player_vars();
         if g.do_mapscreen(&mut m) {
             sim.map_done = Some(next);
         } else {
+            if let Err(e) = g.do_players() {
+                sim.error = Some(format!("do_players: {}", e.0));
+            }
             sim.map = Some((m, next));
         }
         let new: Vec<Event> = sim.game.events.drain(..).collect();
         play_audio(&mut audio, &new, me, right);
         return;
     }
-    // game mode 0x4012: game_main runs do_shop (and WritePlayerInfo) only.
+    // game mode 0x4012: game_main's SetPlayerVars (the panels' written
+    // bits), do_shop (WritePlayerInfo first), and do_players while the shop
+    // runs.
     if let Some((mut flow, tower)) = sim.shop.take() {
         let g = &mut sim.game;
         g.hud.begin_frame();
         g.main_audio(g.globals.vb_elapsed);
-        let r = g.update_controls(&ports).and_then(|_| g.do_shop(&mut flow, &front.shop));
+        g.set_player_vars();
+        let r = g.update_controls(&ports).and_then(|_| g.do_shop(&mut flow, &front.shop)).and_then(|r| if r == 0 { g.do_players().map(|_| 0) } else { Ok(r) });
         match r {
             Ok(0) => sim.shop = Some((flow, tower)),
             Ok(_) => sim.shop_done = Some(tower),
@@ -3290,7 +3300,11 @@ fn simulate(
         g.hud.begin_frame();
         g.main_audio(g.globals.vb_elapsed);
         let mut card = NativeCard { store: &front.store };
-        let r = g.update_controls(&ports).and_then(|_| {
+        // game_main (0x400b): SetPlayerVars, do_players unless paused, then
+        // do_player_select (its WritePlayerInfo gate, 0x20f974 bit 0, is
+        // unnamed; do_players writes the panels in this mode).
+        g.set_player_vars();
+        let r = g.update_controls(&ports).and_then(|_| if g.globals.paused == 0 { g.do_players().map(|_| ()) } else { Ok(()) }).and_then(|_| {
             let mut cx = gdl_core::game::pselect::SelectCtx { pdats: &session.pdats, card: &mut card, typed: [typed, None, None, None] };
             g.do_player_select(&mut ps, &front.sel, &mut cx)
         });
