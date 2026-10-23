@@ -208,13 +208,7 @@ impl Nav {
         if !matches!(c.floor_collide(0.3, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some()) {
             return None;
         }
-        let strict = Self::edge_ok(c, a, b, radius);
-        // Drops need the player-like test too: a rail or parapet the loose
-        // sweep passes over stops the player at the edge.
-        if dy < -2.5 && !strict {
-            return None;
-        }
-        Some(strict)
+        Some(Self::edge_ok(c, a, b, radius))
     }
 
     fn edge_ok(c: &mut CollisionWorld, a: V3, b: V3, radius: f32) -> bool {
@@ -741,10 +735,12 @@ impl Bot {
                     }
                 }
                 self.attack_until = f + 40;
-                // Back off briefly (away from the blocked waypoint) before the new route.
+                // Escape: short moves at ±45°, ±90°, ±135° from the blocked
+                // waypoint's heading (sliding off the wall the player pushes
+                // into), then the new route.
                 if let Some(&b) = self.path.get(self.at) {
                     let q = self.nav.pts[b];
-                    self.backoff = Some((f + 10, [2.0 * p[0] - q[0], p[1], 2.0 * p[2] - q[2]]));
+                    self.backoff = Some((f, [q[0] - p[0], 0.0, q[2] - p[2]]));
                 }
                 // A container or obstacle item in the way (barrels, chests:
                 // kinds 2 and 10): face it while attacking.
@@ -784,9 +780,13 @@ impl Bot {
             self.progress = (f, p);
             return pad;
         }
-        if let Some((until, away)) = self.backoff {
-            if f < until {
-                return Self::steer(pad, g, p, away);
+        if let Some((since, d)) = self.backoff {
+            const TURNS: [f32; 6] = [0.785, -0.785, 1.571, -1.571, 2.356, -2.356];
+            let k = (f - since) / 6;
+            if let Some(&a) = TURNS.get(k) {
+                let (sn, cs) = a.sin_cos();
+                let v = [d[0] * cs - d[2] * sn, d[0] * sn + d[2] * cs];
+                return Self::steer(pad, g, p, [p[0] + v[0], p[1], p[2] + v[1]]);
             }
             self.backoff = None;
         }

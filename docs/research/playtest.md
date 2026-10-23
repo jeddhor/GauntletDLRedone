@@ -246,3 +246,27 @@ private/reports/menu-flows-m17-v1.json (actual disc), all five pass:
 
 Open: with entry 0 (Settings) selected in the Tower's pause menu, the frame
 shows Sumner's unlock scroll and the trace no page change; not yet explained.
+
+## Co-op matrix (M16, 2026-10-23)
+
+Headless (game_run.py --pads 0:1 --bot --players N; actual disc): player 1
+is the traversal bot, players 2..N follow it along the bot's graph and fight
+(their pads are present; health assists counted). Matrix c2 (scratch
+reports bots/c2-<level>-p<N>.json):
+
+| Level | 1 player | 2 players | 3 players | 4 players |
+|---|---|---|---|---|
+| S1 (treasure room, timer) | ends | ends | ends | ends |
+| B2 (ordinary, exit portal) | exit | exit | exit | see below |
+| B6 (dragon; legend item held) | boss dead, exit | boss dead, exit | boss dead, exit | boss dead, exit |
+
+Every run is free of unported paths; in each ending run all players reach
+the end state (5 = exited through the portal, 4 = left with the auto exit).
+B2 with four players: run c2 again after the follower fix (the first four-
+player run ended before the exit). Not compared with a reference: the
+reference has one pad configured.
+
+Device loss (GUI, scenarios-m16-v2 controller-reconnect): port 1 reports
+no device in G1; after joyGetStatus's 60 polls player 1 is lost, the game
+holds under ControllerMessageBox's CONTROLLERMISSING text, and START on the
+port reclaims the player (joy_remap back to port 0, controller_lost 0).
