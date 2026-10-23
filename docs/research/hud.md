@@ -585,7 +585,10 @@ Screen2D 0, movie table 0 (midway), movie table 1 (opening), movie table 2
 val_kni / wiz_sor / jes_arc by attract_movie_idx), Screen2D 2, a flyby,
 credits, movie table 4 (fail, only after a failed game), repeat; movies from
 MPEG2 via init_movie/do_movie. init_attract_mode skips the credits unless
-(attract_count & 0xf) == 0xf (or both shoulder buttons force 0x8000), the
+(attract_count & 0xf) == 0xf (or both right shoulder buttons — JoyLevels
+0x400000 R1 and 0x800000 R2 — force 0x8000; checked in the reference
+2026-10-23: R1+R2 held through the title's timeout start the credits, L1+R1
+do not), the
 table-0 screen once did_mc_check is set, the fail movie without a failed
 game and the title after the first cycle; attract_movie_idx advances each
 cycle (the class movies war_dwa, val_kni, wiz_sor, jes_arc in turn). Start

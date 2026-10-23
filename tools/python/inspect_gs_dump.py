@@ -13,7 +13,7 @@ import pathlib
 import struct
 
 
-def parse(data):
+def parse(data, keep_streams=False):
     def region(p, n):
         if p < 0 or n < 0 or p+n > len(data):
             raise ValueError(f'truncated dump range at {p:#x}')
@@ -102,9 +102,12 @@ def parse(data):
             cursor += payload_size
         decoded.append(dict(path=path, bytes=len(stream), tags=tags,
                             packed_register_counts=dict(counts), ad_writes=writes))
-    return dict(header=header, serial=serial, state_sha256=hashlib.sha256(state).hexdigest(),
-                initial_registers_sha256=hashlib.sha256(registers).hexdigest(), events=events,
-                gif_streams=decoded, scope='framing and raw register observations; material/primitive bindings unverified')
+    report = dict(header=header, serial=serial, state_sha256=hashlib.sha256(state).hexdigest(),
+                  initial_registers_sha256=hashlib.sha256(registers).hexdigest(), events=events,
+                  gif_streams=decoded, scope='framing and raw register observations; material/primitive bindings unverified')
+    if keep_streams:
+        report['streams'] = streams
+    return report
 
 
 def main():

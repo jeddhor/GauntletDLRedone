@@ -9,7 +9,7 @@ pub mod movie;
 
 use bevy::{
     asset::RenderAssetUsages,
-    image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
+    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     mesh::{Indices, MeshVertexBufferLayoutRef},
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
@@ -196,8 +196,8 @@ pub fn hud_texture_set(name: &str, objects: &Objects) -> gdl_core::game::hud::Te
 /// inline palette) takes the shared CLUT CBP 8968 the Tower dump binds for
 /// the 8Hifonts/INITIALS glyph sprites (white, alpha 8 × index). Format 130
 /// (8-bit, no palette: the CREDITS font page, texels 0/107/126/128) is read
-/// as white with the texel as GS alpha (HYPOTHESIS: an identity alpha CLUT;
-/// no dump of the credits screen).
+/// as white with the texel as GS alpha: the credits dump binds it to the
+/// runtime identity alpha CLUT at CBP 0x2300 (research/textures.md).
 pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index: usize) -> Option<Image> {
     let b = objects.bitmap_records.get(index)?;
     let rgba = if b.format == 146 {
@@ -237,6 +237,8 @@ pub struct GsParams {
     /// x: colour add of unlit draws (MBLightmapMod / MBNoShadeMod's add:
     /// colour × (1 + x)), y: ambient add of lit draws (MBTreeSetAmbientAdd
     /// / 255). HYPOTHESIS: setPrimColor's +0x48 term scales the colour.
+    /// z: TEX1 K (part lod_k / 16), w: 1 when the base texture has mips and
+    /// is sampled at the GS LOD log2(1/Q) + K (LCM 0, L 0).
     pub scale: Vec4,
     /// Point lights (MBPosLightNew from ProcessEffects): xyz render-space
     /// position, w radius; colour rgb, a attenuation (w = 0: unused).
@@ -418,6 +420,8 @@ pub struct MaterialSet {
     pub label_index: HashMap<String, u16>,
     pub record_images: HashMap<u16, Handle<Image>>,
     pub lightmaps: HashMap<u16, Handle<Image>>,
+    /// Records uploaded with mip levels (TEX1 MXL = the record's mip count).
+    pub mipmapped: std::collections::HashSet<u16>,
     pub unknown: Handle<GsMaterial>,
     pub unresolved: Vec<u32>,
 }
@@ -426,10 +430,34 @@ pub struct MaterialSet {
 /// draw matched to a record (observed); flag 0x4 → WMS CLAMP is a HYPOTHESIS
 /// by symmetry (draws with both clamps were not matched to records).
 fn record_sampler(flags: u16) -> ImageSampler {
+    mip_sampler(flags, 0)
+}
+
+/// record_sampler with `max_level` mip levels: setTexInfo's TEX1 with the
+/// render settings the fixture holds (+0x370 MMAG 1 linear, +0x36c MMIN 5
+/// LINEAR_MIPMAP_LINEAR, +0x368 L 0, +0x364 K bias 0; research/textures.md).
+fn mip_sampler(flags: u16, max_level: u8) -> ImageSampler {
     let mut sampler = ImageSamplerDescriptor::linear();
     sampler.address_mode_u = if flags & 0x4 != 0 { ImageAddressMode::ClampToEdge } else { ImageAddressMode::Repeat };
     sampler.address_mode_v = if flags & 0x8 != 0 { ImageAddressMode::ClampToEdge } else { ImageAddressMode::Repeat };
+    if 0 < max_level {
+        sampler.mipmap_filter = ImageFilterMode::Linear;
+        sampler.lod_min_clamp = 0.0;
+        sampler.lod_max_clamp = f32::from(max_level);
+    }
     ImageSampler::Descriptor(sampler)
+}
+
+/// An Rgba8Unorm image holding `levels` (level 0 first, each max(1, size >>
+/// k)) as its mip chain.
+fn mip_image(width: u16, height: u16, levels: Vec<Vec<u8>>, sampler: ImageSampler) -> Image {
+    let count = levels.len() as u32;
+    let mut image = raw_image(width, height, levels[0].clone(), TextureFormat::Rgba8Unorm, sampler);
+    if 1 < count {
+        image.data = Some(levels.concat());
+        image.texture_descriptor.mip_level_count = count;
+    }
+    image
 }
 
 /// 1 unless GDL_NO_DITHER is set: GsParams.extra.w.
@@ -451,8 +479,9 @@ fn raw_image(width: u16, height: u16, data: Vec<u8>, format: TextureFormat, samp
 
 /// GS-equivalent materials keyed by bitmap record index. Texels stay raw
 /// (Rgba8Unorm); 16-bit texel alpha becomes TEXA's TA1 0x80 / TA0 0 (the G1
-/// dump's TEXA). Base filtering is bilinear at level 0 (TEX1_1 MMAG/MMIN
-/// linear; the mipmap levels are not decoded). Lightmap texels carry the
+/// dump's TEXA). Records with mips get their whole chain and TEX1's
+/// trilinear filter; the LOD is chosen per part (object_meshes: K =
+/// lod_k / 16, the shader's log2(1/Q) + K). Lightmap texels carry the
 /// observed shared CLUT alpha 8 × index (DBP 0x2300 upload in the G1 dump;
 /// HYPOTHESIS for other packages).
 pub fn materials_for(
@@ -467,6 +496,7 @@ pub fn materials_for(
     let mut label_index = HashMap::new();
     let mut record_images = HashMap::new();
     let mut lightmaps = HashMap::new();
+    let mut mipmapped = std::collections::HashSet::new();
     let mut unresolved = Vec::new();
     for bitmap in &objects.bitmap_records {
         if bitmap.format == 146 {
@@ -492,15 +522,18 @@ pub fn materials_for(
                     && b.height == bitmap.height
             })
             .collect();
+        // Level 0 and, for records with mips, every level (the GS uploads
+        // them all and samples with TEX1's LOD).
         let decoded = if candidates.len() == 1 && bitmap.flags & 0x20 == 0 {
-            candidates[0].decode_base_rgba(textures).ok()
+            let levels: Vec<Vec<u8>> = (0..=candidates[0].mipmap_count).map_while(|k| candidates[0].decode_level_rgba(textures, k).ok()).collect();
+            (!levels.is_empty()).then_some(levels)
         } else {
             None
         };
         if candidates.len() == 1 {
             label_index.entry(candidates[0].label.to_uppercase()).or_insert(bitmap.index as u16);
         }
-        let Some(mut rgba) = decoded else {
+        let Some(mut levels) = decoded else {
             unresolved.push(bitmap.index);
             // A magenta placeholder image: texture modifiers (MBSetRomTexture /
             // MBCopyTexture) may later copy a decoded frame into this record.
@@ -521,12 +554,13 @@ pub fn materials_for(
             continue;
         };
         if matches!(bitmap.format, 0 | 16 | 48) {
-            for p in rgba.chunks_exact_mut(4) {
+            for p in levels.iter_mut().flat_map(|l| l.chunks_exact_mut(4)) {
                 p[3] = if p[3] != 0 { 0x80 } else { 0 };
             }
         }
         // Opaque when every texel passes at full coverage; Mask when texels
         // are either rejected by the alpha test or full; otherwise blended.
+        let rgba = &levels[0];
         let opaque = rgba.chunks_exact(4).all(|p| p[3] >= 0x80);
         let binary = rgba.chunks_exact(4).all(|p| p[3] <= 1 || p[3] >= 0x80);
         let alpha_mode = if opaque {
@@ -536,7 +570,11 @@ pub fn materials_for(
         } else {
             AlphaMode::Blend
         };
-        let image = images.add(raw_image(bitmap.width, bitmap.height, rgba, TextureFormat::Rgba8Unorm, record_sampler(bitmap.flags)));
+        let max_level = (levels.len() - 1) as u8;
+        if 0 < max_level {
+            mipmapped.insert(bitmap.index as u16);
+        }
+        let image = images.add(mip_image(bitmap.width, bitmap.height, levels, mip_sampler(bitmap.flags, max_level)));
         labels.entry(candidates[0].label.to_uppercase()).or_insert_with(|| image.clone());
         record_images.insert(bitmap.index as u16, image.clone());
         base.insert(
@@ -553,7 +591,7 @@ pub fn materials_for(
         );
     }
     let unknown = materials.add(GsMaterial::solid(Color::srgb(1.0, 0.0, 0.8), AlphaMode::Opaque));
-    MaterialSet { base, labels, label_index, record_images, lightmaps, unknown, unresolved }
+    MaterialSet { base, labels, label_index, record_images, lightmaps, mipmapped, unknown, unresolved }
 }
 
 /// Mesh/material handles for every object index, with unsupported parts listed.
@@ -567,8 +605,8 @@ pub fn object_meshes(
     meshes: &mut Assets<Mesh>,
 ) -> (HashMap<u32, Vec<(Handle<Mesh>, Handle<GsMaterial>)>>, Vec<String>) {
     let mut cache = HashMap::new();
-    let mut pairs: HashMap<(u16, u16), Handle<GsMaterial>> = HashMap::new();
-    let mut lit_pairs: HashMap<u16, Handle<GsMaterial>> = HashMap::new();
+    // One material per (texture, lightmap, VU-lit, K).
+    let mut variants: HashMap<(u16, Option<u16>, bool, i16), Handle<GsMaterial>> = HashMap::new();
     let mut unsupported = Vec::new();
     for object in &objects.objects {
         let mut parts = Vec::new();
@@ -579,29 +617,30 @@ pub fn object_meshes(
                     let lightmap = set.lightmaps.get(&part.lightmap_index).filter(|_| mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_some());
                     // Colourless parts without a lightmap are lit by the VU
                     // (ambient + directional; Tower dump fit, research/rendering.md).
-                    let base = if lightmap.is_none() && !coloured {
-                        lit_pairs
-                            .entry(part.texture_index)
+                    let lit = lightmap.is_none() && !coloured;
+                    // pbDrawObject passes the part's +0x16 to setTexInfo as
+                    // TEX1 K (lod_k / 16; every K of the G1 dump's mipmapped
+                    // draws is a part lod_k there).
+                    let k = if set.mipmapped.contains(&part.texture_index) { part.lod_k } else { 0 };
+                    let material = if !lit && lightmap.is_none() && k == 0 {
+                        base
+                    } else {
+                        variants
+                            .entry((part.texture_index, lightmap.map(|_| part.lightmap_index), lit, k))
                             .or_insert_with(|| {
                                 let mut m = materials.get(&base).cloned().expect("base material");
-                                m.lit = true;
+                                m.lit |= lit;
+                                if let Some(image) = lightmap {
+                                    m.lightmap = Some(image.clone());
+                                    m.params.options.y = 1.0;
+                                }
+                                if set.mipmapped.contains(&part.texture_index) {
+                                    m.params.scale.z = f32::from(k) / 16.0;
+                                    m.params.scale.w = 1.0;
+                                }
                                 materials.add(m)
                             })
                             .clone()
-                    } else {
-                        base
-                    };
-                    let material = match lightmap {
-                        Some(image) => pairs
-                            .entry((part.texture_index, part.lightmap_index))
-                            .or_insert_with(|| {
-                                let mut m = materials.get(&base).cloned().expect("base material");
-                                m.lightmap = Some(image.clone());
-                                m.params.options.y = 1.0;
-                                materials.add(m)
-                            })
-                            .clone(),
-                        None => base,
                     };
                     parts.push((meshes.add(mesh), material));
                 }

@@ -17,8 +17,12 @@ preserved slots 1 and 2 and existing files are never written.
 archive request there before hashing it) after every vblank and logs each
 change: a runtime request map at vblank granularity (requests made within
 one vblank are seen only as the last of them).
+--gs-dump saves a single-frame GS dump at the end through the Tools menu
+(Alt+T, then the item's mnemonic G — no function-key hotkey) and one more
+verified vblank; the new file in the private snaps directory is logged.
 """
 import argparse
+import compression.zstd
 import hashlib
 import json
 import pathlib
@@ -53,6 +57,7 @@ def main():
     parser.add_argument('--shot', type=pathlib.Path, help='private screenshot at the end')
     parser.add_argument('--report', type=pathlib.Path, required=True, help='new private JSON report')
     parser.add_argument('--sample-filename', action='store_true', help='log wad_last_filename changes after every vblank')
+    parser.add_argument('--gs-dump', action='store_true', help='save a single-frame GS dump at the end (Tools menu)')
     args = parser.parse_args()
     if args.skip_wave is not None and not 0x10100 <= args.skip_wave <= 0x10dff:
         raise ValueError('skip_wave must be 0x10000 + a wave of worlds 1..13')
@@ -149,6 +154,21 @@ def main():
         def filename():
             raw = b''.join(w.to_bytes(4, 'little') for w in pine.read_ee32([last_name + 4 * k for k in range(64)]))
             return raw.split(b'\0', 1)[0].decode('latin-1')
+        def advance(step):
+            before = word(vb_counter)
+            xdo('key', '--delay', '20', 'F10')
+            deadline = time.monotonic() + 5
+            resend = time.monotonic() + 1.5
+            while True:
+                after = word(vb_counter)
+                if pine.status() == 1 and after != before:
+                    break
+                if time.monotonic() >= resend:
+                    xdo('key', '--delay', '20', 'F10')
+                    resend = deadline
+                if time.monotonic() >= deadline:
+                    raise ValueError(f'frame step {step} did not settle')
+                time.sleep(0.01)
         seen = filename() if args.sample_filename else None
         if args.sample_filename:
             log.append(dict(step=0, filename=seen))
@@ -165,20 +185,7 @@ def main():
                         held.append(key)
                 for _ in range(seg['steps']):
                     step += 1
-                    before = word(vb_counter)
-                    xdo('key', '--delay', '20', 'F10')
-                    deadline = time.monotonic() + 5
-                    resend = time.monotonic() + 1.5
-                    while True:
-                        after = word(vb_counter)
-                        if pine.status() == 1 and after != before:
-                            break
-                        if time.monotonic() >= resend:
-                            xdo('key', '--delay', '20', 'F10')
-                            resend = deadline
-                        if time.monotonic() >= deadline:
-                            raise ValueError(f'frame step {step} did not settle')
-                        time.sleep(0.01)
+                    advance(step)
                     if args.sample_filename and (name := filename()) != seen:
                         seen = name
                         log.append(dict(step=step, filename=name, cur_world=word(sym['CurWorld']), game_mode=word(sym['game_mode'])))
@@ -190,6 +197,32 @@ def main():
         finally:
             for key in held:
                 xdo('keyup', key)
+        if args.gs_dump:
+            snaps = pathlib.Path('private/reference/config/PCSX2/snaps')
+            before = set(snaps.glob('*.gs.zst'))
+            xdo('key', '--delay', '50', 'alt+t')
+            time.sleep(0.5)
+            xdo('key', '--delay', '50', 'g')
+            time.sleep(0.5)
+            # The dump starts with the next frame and is closed at the vsync
+            # after it: advance until the zstd stream is complete.
+            new = []
+            for _ in range(8):
+                step += 1
+                advance(step)
+                time.sleep(1.0)
+                new = sorted(set(snaps.glob('*.gs.zst')) - before)
+                if new:
+                    d = compression.zstd.ZstdDecompressor()
+                    try:
+                        d.decompress(new[0].read_bytes(), max_length=64 * 1024 * 1024 + 1)
+                    except compression.zstd.ZstdError:
+                        continue
+                    if d.eof:
+                        break
+            else:
+                raise ValueError('the GS dump did not complete within 8 vblanks')
+            log.append(dict(step=step, gs_dump=str(new[0]), sha256=hashlib.sha256(new[0].read_bytes()).hexdigest()))
         if args.save_slot is not None:
             target = state_file(args.save_slot)
             if target.exists():

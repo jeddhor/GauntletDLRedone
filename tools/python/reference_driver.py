@@ -5,15 +5,20 @@
   reference_driver.py send TAG 'STEPS'
 
 Steps: ["key", "Up+K", seconds] holds PCSX2 pad bindings (Up/Down/Left/Right,
-K cross, I triangle, L circle, J square, Return start, BackSpace select),
+K cross, I triangle, L circle, J square, Return start, BackSpace select,
+Q L1, E R1, 1 L2, 3 R2),
 ["pause"] / ["resume"] toggle through PCSX2's TogglePause hotkey (Space)
 according to PINE's status, ["wait", s], ["shot", label] (the render window),
 ["status"] (PINE status, game_mode), ["dump", label, address, size]
-(EE bytes to dump-label.bin). No other key can be sent: the
+(EE bytes to dump-label.bin), ["gsdump"] (a single-frame GS dump through
+the Tools menu — Alt+T, then the item's mnemonic G — while running; waits
+for the complete file in the private snaps directory). No other key can be
+sent: the
 function-key hotkeys (savestate saves among them) are never pressed. Frames
 and output go to private/runs/reference-TAG/. Use only with the private
 reference launched by launch_reference.py; slot files are not touched.
 """
+import compression.zstd
 import json
 import os
 import pathlib
@@ -26,7 +31,7 @@ from pine_probe import Pine, configured_socket
 from virtual_display import environment
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-PAD_KEYS = {'Up', 'Down', 'Left', 'Right', 'K', 'I', 'L', 'J', 'Return', 'BackSpace'}
+PAD_KEYS = {'Up', 'Down', 'Left', 'Right', 'K', 'I', 'L', 'J', 'Return', 'BackSpace', 'Q', 'E', '1', '3'}
 
 
 def run_dir(tag):
@@ -50,14 +55,22 @@ def serve(tag):
     env = environment()
 
     def xdo(*a):
-        return subprocess.run(['xdotool', *a], env=env, capture_output=True, text=True, timeout=5).stdout.strip()
+        try:
+            return subprocess.run(['xdotool', *a], env=env, capture_output=True, text=True, timeout=5).stdout.strip()
+        except subprocess.TimeoutExpired:
+            return ''
 
     pid = (ROOT / 'private/reports/reference.pid').read_text().strip()
-    windows = [w for w in xdo('search', '--onlyvisible', '--pid', pid).split() if w.isdigit()]
-    render = [w for w in windows if xdo('getwindowname', w) == 'pcsx2-qt']
-    if len(render) != 1:
+
+    def render_window():
+        # PCSX2 recreates its render window (e.g. around movies), so the id is
+        # looked up again whenever it is needed.
+        windows = [w for w in xdo('search', '--onlyvisible', '--pid', pid).split() if w.isdigit()]
+        render = [w for w in windows if xdo('getwindowname', w) == 'pcsx2-qt']
+        return render[0] if len(render) == 1 else None
+    win = render_window()
+    if win is None:
         raise SystemExit('reference render window not found or ambiguous')
-    win = render[0]
     syms = symbols()
     # Continue an existing run's numbering: frames are never overwritten.
     shots = max((int(f.name[:3]) for f in d.glob('[0-9][0-9][0-9]-*.png')), default=0)
@@ -69,6 +82,8 @@ def serve(tag):
         raise SystemExit('reference is not running the supported serial')
 
     def focus():
+        nonlocal win
+        win = render_window() or win
         xdo('windowraise', win)
         xdo('windowfocus', '--sync', win)
         return xdo('getwindowfocus') == win
@@ -112,10 +127,39 @@ def serve(tag):
                 if o.exists():
                     out.append(f'{o} exists')
                     continue
-                subprocess.run(['import', '-window', win, str(o)], env=env)
-                out.append(str(o))
+                current = render_window()
+                if current is None:
+                    out.append('no render window for the shot')
+                    continue
+                try:
+                    subprocess.run(['import', '-window', current, str(o)], env=env, timeout=20)
+                    out.append(str(o))
+                except subprocess.TimeoutExpired:
+                    out.append(f'{o}: import timed out')
             elif kind == 'status':
                 out.append(json.dumps(status()))
+            elif kind == 'gsdump':
+                snaps = ROOT / 'private/reference/config/PCSX2/snaps'
+                before = set(snaps.glob('*.gs.zst'))
+                if pine.status() != 0 or not focus():
+                    out.append('gsdump needs the running reference in focus')
+                    continue
+                xdo('key', '--delay', '50', 'alt+t')
+                time.sleep(0.5)
+                xdo('key', '--delay', '50', 'g')
+                done = None
+                deadline = time.time() + 60
+                while time.time() < deadline and done is None:
+                    time.sleep(1.0)
+                    for f in sorted(set(snaps.glob('*.gs.zst')) - before):
+                        z = compression.zstd.ZstdDecompressor()
+                        try:
+                            z.decompress(f.read_bytes(), max_length=64 * 1024 * 1024 + 1)
+                        except compression.zstd.ZstdError:
+                            continue
+                        if z.eof:
+                            done = f
+                out.append(f'gsdump {done}' if done else 'gsdump did not complete')
             elif kind == 'dump':
                 # ["dump", label, address, size]: EE bytes to a new file.
                 label, addr, size = st[1], int(str(st[2]), 0), int(str(st[3]), 0)

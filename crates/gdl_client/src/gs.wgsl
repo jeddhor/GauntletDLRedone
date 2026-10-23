@@ -16,7 +16,8 @@ struct GsParams {
     // VU1 lighting: xyz towards the light (w = enabled); rgb dir colour, a ambient.
     light_dir: vec4<f32>,
     light: vec4<f32>,
-    // x: unlit colour add (× (1 + x)), y: lit ambient add.
+    // x: unlit colour add (× (1 + x)), y: lit ambient add, z: TEX1 K,
+    // w: mipmapped base sampled at the GS LOD.
     scale: vec4<f32>,
     // Point lights: position + radius, colour + attenuation.
     plight_pos: array<vec4<f32>, 8>,
@@ -109,7 +110,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let n = normalize(in.world_normal);
         uv = vec2(dot(n, params.chrome_u.xyz) + params.chrome_u.w, dot(n, params.chrome_v.xyz) + params.chrome_v.w);
     }
-    let t = textureSample(base_texture, base_sampler, uv);
+    // GS LOD (TEX1 LCM 0, L 0): log2(1/Q) + K, 1/Q the view depth in game
+    // units (the G1 dump's Q at the player matches it to ~5%). LOD < 0 is
+    // magnification at level 0; the sampler clamps at MXL.
+    var t: vec4<f32>;
+    if params.scale.w > 0.5 {
+        let depth = max(-(view.view_from_world * vec4(in.world_position.xyz, 1.0)).z, 1e-3);
+        t = textureSampleLevel(base_texture, base_sampler, uv, max(log2(depth) + params.scale.z, 0.0));
+    } else {
+        t = textureSample(base_texture, base_sampler, uv);
+    }
     if params.options.x > 0.5 {
         rgb = rgb * t.rgb;
         alpha = alpha * t.a * (255.0 / 128.0);

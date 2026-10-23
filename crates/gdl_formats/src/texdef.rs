@@ -133,14 +133,25 @@ impl Bitmap {
     /// Its high bit is a TEXA selector, displayed as 0/255 diagnostically.
     /// IDs 130/146 and actual TEXA/material alpha await consumer evidence.
     pub fn decode_base_rgba(&self, textures: &[u8]) -> Result<Vec<u8>, ParseError> {
-        let count = self.width as usize * self.height as usize;
-        let (palette_bytes, pixels_bytes) = match self.format {
-            0 => (0usize, count * 2),
-            2 => (0usize, count * 4),
-            16 => (32, count.div_ceil(2)),
-            34 => (64, count.div_ceil(2)),
-            48 => (512, count),
-            66 => (1024, count),
+        self.decode_level_rgba(textures, 0)
+    }
+
+    /// Candidate pixels of mip level `level` (0 = the base level). The levels
+    /// follow the base indices consecutively, each max(1, width >> level) ×
+    /// max(1, height >> level), and share the palette — the slices the
+    /// original uploads for each level (research/textures.md "Reference upload
+    /// and memory checks"). Levels beyond `mipmap_count` are refused.
+    pub fn decode_level_rgba(&self, textures: &[u8], level: u8) -> Result<Vec<u8>, ParseError> {
+        if self.mipmap_count < level {
+            return Err(fail(self.texture_offset as usize, Some(self.index), "mip level beyond the record's count"));
+        }
+        let (palette_bytes, bits) = match self.format {
+            0 => (0usize, 16usize),
+            2 => (0, 32),
+            16 => (32, 4),
+            34 => (64, 4),
+            48 => (512, 8),
+            66 => (1024, 8),
             _ => {
                 return Err(fail(
                     self.texture_offset as usize,
@@ -149,6 +160,15 @@ impl Bitmap {
                 ));
             }
         };
+        let dims = |k: u8| ((self.width as usize >> k).max(1), (self.height as usize >> k).max(1));
+        let level_bytes = |k: u8| {
+            let (w, h) = dims(k);
+            (w * h * bits).div_ceil(8)
+        };
+        let (width, height) = dims(level);
+        let count = width * height;
+        let pixels_bytes = level_bytes(level);
+        let skip: usize = (0..level).map(level_bytes).sum();
         let start = self.texture_offset as usize;
         let end = start
             .checked_add(self.texture_size as usize)
@@ -156,22 +176,22 @@ impl Bitmap {
         let bytes = textures
             .get(start..end)
             .ok_or_else(|| fail(start, Some(self.index), "texture exceeds payload"))?;
-        if palette_bytes + pixels_bytes > bytes.len() {
+        if palette_bytes + skip + pixels_bytes > bytes.len() {
             return Err(fail(
                 start,
                 Some(self.index),
-                "truncated base palette/pixels",
+                "truncated palette/pixels",
             ));
         }
         if self.format == 2 {
-            return Ok(bytes[..pixels_bytes].to_vec());
+            return Ok(bytes[skip..skip + pixels_bytes].to_vec());
         }
         let color_bytes = if matches!(self.format, 0 | 16 | 48) {
             2
         } else {
             4
         };
-        let indices = &bytes[palette_bytes..palette_bytes + pixels_bytes];
+        let indices = &bytes[palette_bytes + skip..palette_bytes + skip + pixels_bytes];
         let mut rgba = Vec::with_capacity(count * 4);
         for i in 0..count {
             let index = if self.format == 0 {
@@ -189,7 +209,8 @@ impl Bitmap {
                 index
             };
             if color_bytes == 2 {
-                let packed = u16le(bytes, palette_index * 2);
+                // Format 0 is direct CT16: the texel itself, in this level.
+                let packed = if self.format == 0 { u16le(bytes, skip + i * 2) } else { u16le(bytes, palette_index * 2) };
                 rgba.extend_from_slice(&[
                     ((packed & 31) << 3) as u8,
                     (((packed >> 5) & 31) << 3) as u8,
@@ -224,6 +245,36 @@ mod tests {
         }
         bytes
     }
+    #[test]
+    fn mip_levels_follow_the_base_and_share_the_palette() {
+        // 8x8 format 66 with two mips: palette 1024, then 64 + 16 + 4 indices.
+        let mut bytes = table(66, 1108);
+        bytes[58] = 2;
+        let t = TextureTable::parse(&bytes).unwrap();
+        let mut tex = vec![0u8; 1108];
+        for p in 0..256 {
+            tex[p * 4..p * 4 + 4].copy_from_slice(&[p as u8, p as u8, p as u8, 0x80]);
+        }
+        tex[1024 + 64..1024 + 80].fill(5);
+        tex[1024 + 80..].fill(9);
+        let b = &t.bitmaps[0];
+        assert_eq!(b.decode_level_rgba(&tex, 0).unwrap().len(), 64 * 4);
+        assert_eq!(b.decode_level_rgba(&tex, 1).unwrap(), [5, 5, 5, 0x80].repeat(16));
+        // Index 9 → CLUT entry 17 (bits 3 and 4 swapped).
+        assert_eq!(b.decode_level_rgba(&tex, 2).unwrap(), [17, 17, 17, 0x80].repeat(4));
+        assert!(b.decode_level_rgba(&tex, 3).is_err());
+        assert!(b.decode_level_rgba(&tex[..1100], 2).is_err());
+        // Direct CT16 (format 0) levels read their own texels.
+        let mut bytes = table(0, 160);
+        bytes[58] = 1;
+        let t = TextureTable::parse(&bytes).unwrap();
+        let mut tex = vec![0u8; 160];
+        for p in (128..160).step_by(2) {
+            tex[p..p + 2].copy_from_slice(&0x801fu16.to_le_bytes());
+        }
+        assert_eq!(t.bitmaps[0].decode_level_rgba(&tex, 1).unwrap(), [248, 0, 0, 255].repeat(16));
+    }
+
     #[test]
     fn exact_palette_addressing_and_nibble_order_preserve_alpha() {
         let mut texture = vec![0; 1088];

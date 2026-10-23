@@ -46,7 +46,7 @@ replaced by a plausible gameplay rule or generated asset.
 | Audio track timing | The EE voice queue is ported (audio_queue.rs); a queued sound's track (AudioTrackSet, the IOP's reply) is taken as allocated and set at the next frame's AudioPoll | Trace audioTrackData after an AudioQueUpdate start in a reference capture |
 | Boss instance after death | BossCamBossCalc reads the freed boss instance; its last bytes stand in | Read BossCritInst's bytes after a boss kill in a capture |
 | Effect tree colour | MBTreeSetColor (node +0x64, flag 0x100) is drawn as a modulation like MBBlitSetColor (block flash) | Trace the 0x100 path in the draw (setPrimColor / VU1) |
-| Credits font alpha | CREDITS.FNT's page is format 130 (8-bit, no palette; texels 0/107/126/128) drawn white with the texel as GS alpha (HYPOTHESIS) | Capture the credits screen in the reference |
+| Credits font alpha | RESOLVED 2026-10-23 (textures.md "Reference upload and memory checks"): the credits dump binds the format-130 page to the runtime identity alpha CLUT at CBP 0x2300 (white, alpha = texel) | — |
 | Attract flybys | Ported from instructions (transmitter path); the eye path is not compared with a reference trace; attract_cam_mode 0/1 are unused by the disc's attract levels | Trace Cam[0] (0x23e4f0 +0x70/+0x140) through a reference flyby |
 | Movie colour and height | ffmpeg's BT.601 limited-range conversion and the 480 movie lines over the 448-line frame (HYPOTHESES) | Capture a movie frame in the reference and compare pixels |
 | Cross-package texture search | MBCopyTexture/MBOX_FindTexture by name: own package first, then the level's load list (HYPOTHESIS); used for SFX weapon textures | Trace MBOX_FindTexture's package walk |
