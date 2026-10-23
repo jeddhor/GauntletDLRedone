@@ -786,3 +786,22 @@ Death (kill_player 0x131a98): see research/saves.md and playtest.md.
   runs main's AudioQueUpdate (vb_counter seeded) and game_main's
   do_auto_exit per update, restoring the custom effects and the voice queue
   per retry.
+
+### The G1 exit (2026-10-22/23)
+
+Capture w7l1-exit-v1 (slot 9): poison-fields-original with player 0 WARPED
+onto G1's exit node (warp-G1-exit-v1; pos write, labelled). trace-G1-exit-v1
+records 480 vblanks without input from it: player_collis_exit, DoExit,
+do_exit's countdown (+0x1ca from 0x32), the sink, the spin and SetSkinFX's
+exit skin, through ExitState. The whole-update replay (`--frame-replay`)
+matches 186/186 updates in every part (player, items, effects, world
+animation, critters, camera, wizard; replay-frame-G1exit-v5, kept in the
+regression set since r41). Fixed on the way: the replay maps the player's
+item links +0x880/+0x884/+0x888 from guest pointers to slots; do_exit's
+sink (0, −0.12, 0) × vb into +0x50..+0x58 and its spin YawMat3(SPF ×
+0x4116cbe5) of +0x20 with +0x93c bit 0; the item AnimInfo loop word
+(+0xb8) kept in step with the native clock (process_exit, process_trigger,
+attach_item_anim). Not modelled: do_exit's del_target 0x168f78 on state 5.
+Two repeats of the same warped exit through the tally to the Tower
+(baseline-transition-a/b-v1, equal logs)
+are in reference-baseline.md.

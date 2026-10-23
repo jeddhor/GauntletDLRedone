@@ -71,3 +71,29 @@ Tools: reference_snapshot.py (frozen or paused live fields), reference_trace.py
 (bounded Xvfb schedule), virtual_display.py (isolated GUI environment). All raw
 reports, state copies, control bytes and captures remain private. No native
 runtime component depends on these tools, PCSX2 or BIOS.
+
+## Scenario package (M03, 2026-10-23)
+
+Environment: PCSX2 2.6.3+dfsg-1build1 (reference-setup.md), the user's BIOS
+and disc as verified by launch_reference.py (hashes recorded in each launch
+context), software GS on the authenticated Xvfb, PINE slot 28011, F10
+FrameAdvance; the native side never depends on any of it. Every scenario
+below was run twice from the same starting state; "equal" means every
+recorded field of the second run equals the first.
+
+| Scenario | Start | Runs | Result |
+| --- | --- | --- | --- |
+| Idle | poison-fields-original (slot 1) | two 12-vblank runs | equal (every sampled field, control and clock words) |
+| Movement | poison-fields-original | two 24-vblank Up schedules | equal; slot 0 → (22.455997, 0, 2.3762474) |
+| Attack | poison-fields-original | two 36-vblank Cross traces; trace-combat-g1-v3 and -v4 (541 samples each, recorded on different days) | equal; v3/v4 equal over every field both record (player, observation, the enemy array), v4 adds fields |
+| Pickup | poison-fields-original | two Right 40 / Down 26 schedules, the second with the heap barrier | equal; keys 0 → 1 at step 50 at (19.625153, 0, 9.589942) |
+| Transition | poison-fields-original, WARPED onto G1's exit node (pos write, labelled) | baseline-transition-a-v1 / -b-v1, 800 vblanks | equal logs: do_exit state 4 at step 20, state 5 at 180, game mode 0x4012 (tally) at 380, CurWorld −1 at 420, the Tower (13) at 520 |
+| Save/reload | a new scratch card formatted by the game (scratch-save-v1.ps2) | save, then two quit → title → load → slot 1 cycles (private/runs/reference-save1) | the two loaded player records are equal over the save region, the live attributes and the backup copy; the card holds no checksum (saves.md) |
+
+Explained variability: a later desktop diagnostic differed by 54 updates with
+player fields unchanged (above); the heap restore race is fenced by the
+animation-pool barrier; the save scenario's play-time word +0xbec and the
+saved flag +0x9a7 change with time and flow, not between loads (saves.md).
+Native comparisons against these scenarios: the frame replays (G1 combat,
+G1 exit trace-G1-exit-v1 186/186 in every part, research/gameplay.md) and
+profile-load-check (saves.md).

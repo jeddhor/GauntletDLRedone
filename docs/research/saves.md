@@ -99,17 +99,91 @@ the captured record (output: private/reports/profile-check-pele-v1.txt):
 
 Read-only reader for PCSX2 .ps2 images (superblock, two-level indirect FAT,
 512-byte entries; ECC spare area skipped, not checked). The layout is an
-upstream description, checked only structurally: the private formatted copy
-`private/reference/config/PCSX2/memcards/Mcd001.ps2` parses (stride 528,
-empty root). The user's own `~/.config/PCSX2/memcards/Mcd001.ps2` and
-`Mcd002.ps2` are unformatted (all 0xff / identical hashes) and hold no saves,
-so no original save file has been decoded; the playable character comes from
-the savestate capture instead. Both cards were only read.
+upstream description, checked structurally and against cards the original
+wrote. The user's own `Mcd001.ps2`/`Mcd002.ps2` are unformatted and were only
+read (hashes before the card experiments:
+private/reports/user-cards-before-scratch.sha256).
+
+### A card the original wrote (2026-10-22, actual reference)
+
+`launch_reference.py --scratch-card1 scratch-save-v1.ps2` boots the reference
+with a new scratch card in slot 1 (slot 2 disabled). PCSX2 creates the
+missing file as an unformatted 8 MB card; the game offers to format it at
+boot ("Yes" → "Format succeeded"). A new Sorceress "JAKE" was created and
+saved through Tower Menu → Manage Character → Save (reference_driver.py run
+private/runs/reference-save1/). Captures: card-scratch-created-v1.ps2 (just
+formatted), card-scratch-jake-v1.ps2 (after the save); extraction
+private/reports/card-scratch-jake-v1/ (memcard-inspect).
+
+- `/BASLUS-20047GDL` holds icon.sys, view.ico, copy.ico, delete.ico,
+  `BASLUS-20047DirInfo` (0x80 bytes), `BASLUS-20047save0001` … `save0008`
+  (0x1074 bytes each; an unused file is all zero) and
+  `BASLUS-20047GameOpts` (0x20 bytes).
+- save%04d is the raw save region (player +0x99c..+0x1a10) with no header or
+  checksum, as saveSave's instructions say; the card copy carries +0x9a7
+  as it was before PlayerWriteSaveFile set it.
+- DirInfo: eight 16-byte entries {u32 level sum (+0x9aa), u32 class,
+  name[8]}; unused entries are `ffffffff ffffffff "Empty"`. JAKE's entry is
+  {16, 6, "JAKE"}.
+- GameOpts: 80 00 00 00 80 00 00 00 01 00 … 01 (sfx 128, music 128, stereo
+  1, 0, 0, 1, 0, 0) — the same block the native client uses as its default.
+
+### Loading it back (actual reference vs native)
+
+- `gdl_tools profile-load-check REGION LIVE_PLAYER SLUS_200.47 PDATA×16`
+  runs the native PlayerLoadSaveFile path (profile::load_character) on the
+  card's save0001 and compares with the original's player 0 record dumped
+  right after its own load (reference_driver.py `dump`): the save region,
+  the live attribute words +0x1a10..+0x1a28 and the backup copy
+  +0x1a28..+0x2a9c are equal; only runtime words (matrices, animation, the
+  select screen's +0x2ac4..+0x2af8) differ.
+- Repeated: Tower → Manage Character → Quit → title → Start → Load → slot 1
+  → JAKE → Done, twice in one boot. The second load
+  (dump-player0-loaded3.bin) equals the first over the region, attributes
+  and backup (0 differing bytes) and also passes profile-load-check.
+- Quit with the saved flag +0x9a7 = 0 (cleared by PlayerSaveState at the
+  Tower's level start) shows "Character Not Saved. Quit Anyway?" Yes/No with
+  No selected; the native select screen has the same prompt
+  (pselect.rs). Quit writes nothing: the card file's timestamp did not
+  change across both quits.
+- The Tower and Manage Character menus keep their cursor between openings.
+- New character: `gdl_tools profile-new-check JAKE 6 0 save0001 …` builds
+  the region with profile::new_character + save_region; it differs from the
+  card only at +0x9a7 (card 0: PlayerSaveState at the Tower's start; native
+  0xff, new_player), +0xa3c (class 6 experience: card 1, native 0 — the
+  original reached 1 between creation and the save; source not identified,
+  unknowns.md) and +0xbee/+0xbef (+0xbec below).
+- +0xbec (f32) counts up while the character is in play (844 at the save,
+  15248 four minutes later); HYPOTHESIS: a play-time counter. Kept byte for
+  byte.
+
+### Import (gdl_core::save::import_card)
+
+`SaveStore::import_card` / `gdl_tools card-import CARD.ps2 SAVE_DIR
+NEW_REPORT.json` / `run_play.py --import-card CARD.ps2`: reads DirInfo,
+save0001..0008 and GameOpts without writing the card. Each non-empty region
+with a valid class becomes a native slot (its own number when free, else the
+next free slot), source "imported:card:<card sha256>:save%04d"; all-zero
+files are reported empty; wrong sizes and classless regions are refused; a
+region already in the store is not imported twice; DirInfo is compared with
+each region (name bytes, class, level sum) and reported, not trusted;
+GameOpts goes to options.json only when the store has none. The PS2 import
+gate (M18) needs checksum and progression semantics: the files carry no
+checksum, and the imported region loads into the same record the original
+builds (above). Actual-data run: card-scratch-jake-v1.ps2 → slot 1, DirInfo
+agrees, seven empty files, GameOpts imported
+(private/reports/card-import-jake-v1.json; the card's SHA-256 is unchanged),
+a second import adds nothing. In gdl_play (private/runs/client-cardjake):
+title → Start → Load → slot 1 → JAKE (first row, as on the PS2) →
+Sorceress level 1, 200/400/150/600 → Done → the Tower.
 
 ## Native saves (gdl_core::save)
 
 - One JSON envelope per character, `save%04d.json` (the original's slot
-  numbering): format "gdl-native-save", schema 1, revision SLUS-20047, slot,
+  numbering; the select screen's card files 0..7 are save0001..save0008 —
+  interim builds before 2026-10-23 used save0000..save0007, and
+  `migrate_slot_zero` moves a save0000 to the first free card slot at start,
+  keeping the old files as migrated-save0000.*): format "gdl-native-save", schema 1, revision SLUS-20047, slot,
   source ("new", "imported:capture:<sha256>", "migrated:raw:<sha256>"),
   sequence, the 0x1074-byte region (hex) and its SHA-256.
 - Writes: `.tmp` written and flushed, the old file renamed to `.bak`, `.tmp`
@@ -127,7 +201,10 @@ the savestate capture instead. Both cards were only read.
 
 Tests (synthetic): store/backup/sequence, a corrupted primary recovers from
 the backup, an interrupted write recovers from `.tmp`, a truncated `.tmp` is
-ignored, raw migration, schema/revision refusal, options round trip; the
+ignored, raw migration, schema/revision refusal, options round trip, the
+slot-0 migration, card import (one character, empties, re-import, an
+occupied number, a disagreeing DirInfo, refused sizes/classes, a card
+without the game's directory, on memcard::synthetic_image cards); the
 profile round trip new character → play changes → region → reload.
 
 ## Front end (gdl_client::menu, gdl_play)
@@ -162,4 +239,6 @@ menu (alpha forced opaque). NATIVE presentation (labelled): text menus instead o
 scenes, the save list, the import entry, "Save Character" in Manage
 Character, the quit confirmation, volume steps. Not ported: Shop, Inventory,
 Compass, Controls, Screen, Game Options, hint menus, credits, the secret
-characters and Sumner, name entry rules of the original, DirInfo.
+characters and Sumner, name entry rules of the original, writing DirInfo
+(the native card view derives names, classes and level sums from the
+regions; DirInfo is read on import).

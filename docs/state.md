@@ -237,6 +237,21 @@ original (PCSX2 reference on Xvfb :191, private captures):
    A1: no panic, no simulation error, no unported path). Boss deaths re-run
    for all eleven bosses (critters.md); fixed ExtractPYR's zero divisor and
    the client's level end after the auto exit.
+   2026-10-22/23 (user: continue until M00–M18 are complete and tested):
+   G1's exit replayed 186/186 in every part (gameplay.md "The G1 exit":
+   item links, do_exit's sink and spin, the item loop word). Saves against
+   the reference: a scratch card formatted and written by the game
+   (launch_reference.py --scratch-card1, reference_driver.py), its layout
+   decoded (saves.md), the native load equal to the original's record after
+   two separate loads, PS2 card import (import_card / card-import /
+   run_play --import-card) and the imported character loaded in gdl_play.
+   Found and fixed: atan2f(0, 0) (the wrapper's DOMAIN path, +0.0) — any
+   connected gamepad stopped the select screen; the client's card view was
+   one slot off (save0000..; now save0001..0008 as the original, with a
+   save0000 migration); automated client runs ignore physical controllers
+   (GDL_NO_GAMEPADS). M03 closed with its scenario package
+   (reference-baseline.md). Checks: r42 equal to r41 (= r35 + G1exit),
+   Rust and Python suites, clippy.
 
 ---
 
