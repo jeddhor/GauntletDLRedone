@@ -1041,6 +1041,62 @@ fn run() -> Result<(), Box<dyn Error>> {
         serde_json::to_writer_pretty(&mut file, &serde_json::json!({"source_sha256":hash(&b),"superblock":card.superblock,"root":dirs}))?;
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "objects-triangles" {
+        // objects-triangles OBJECTS.PS2 NEW_REPORT.json: per object, the
+        // header's declared triangle and vertex counts against the decoded
+        // strips (candidates n − 2, emitted after the normal-bit suppression,
+        // emitted triangles with a repeated position, faces repeating an
+        // earlier one's position set, and same-winding repeats within the
+        // object and within each part) — to test what the declared count
+        // means (research/geometry.md).
+        let b = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let objects = gdl_formats::objects::Objects::parse(&b)?;
+        let mut rows = Vec::new();
+        for o in &objects.objects {
+            let (mut candidates, mut emitted, mut degenerate, mut repeated, mut same_winding, mut part_same_winding) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+            let mut seen = std::collections::HashSet::new();
+            let mut wound = std::collections::HashSet::new();
+            let mut failed = None;
+            for part in &o.parts {
+                let mut part_wound = std::collections::HashSet::new();
+                match part.decode_integer_geometry() {
+                    Ok(g) => {
+                        for s in &g.strips {
+                            candidates += s.positions.len().saturating_sub(2);
+                            for t in s.indices.chunks_exact(3) {
+                                emitted += 1;
+                                let p = [t[0], t[1], t[2]].map(|i| s.raw_position_words[i as usize]);
+                                if p[0] == p[1] || p[1] == p[2] || p[0] == p[2] {
+                                    degenerate += 1;
+                                    continue;
+                                }
+                                let mut key = p;
+                                key.sort();
+                                if !seen.insert(key) {
+                                    repeated += 1;
+                                }
+                                // The same face with the same winding (cyclic
+                                // order from its smallest corner).
+                                let r = (0..3).min_by_key(|&k| p[k]).unwrap();
+                                if !wound.insert([p[r], p[(r + 1) % 3], p[(r + 2) % 3]]) {
+                                    same_winding += 1;
+                                }
+                                if !part_wound.insert([p[r], p[(r + 1) % 3], p[(r + 2) % 3]]) {
+                                    part_same_winding += 1;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => failed = Some(e.to_string()),
+                }
+            }
+            rows.push(serde_json::json!({"index": o.index, "declared_triangles": o.declared_triangles, "declared_unique_vertices": o.declared_unique_vertices,
+                "candidates": candidates, "emitted": emitted, "degenerate": degenerate, "repeated_faces": repeated, "same_winding_repeats": same_winding, "part_same_winding_repeats": part_same_winding, "error": failed}));
+        }
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &serde_json::json!({"source_sha256": hash(&b), "objects": rows}))?;
+        return Ok(());
+    }
     if args.len() == 4 && args[0] == "card-import" {
         // card-import CARD.ps2 SAVE_DIR NEW_REPORT.json: the original's saves
         // on a PS2 card image into a native save store (SaveStore::import_card)
@@ -3908,7 +3964,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json\n       gdl_tools vu0-fqdist FQDIST_REQUESTS.json NEW_REPORT.json\n       gdl_tools collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]\n       gdl_tools player-displacement WORLDS.PS2 STEPS.json NEW_REPORT.json\n       gdl_tools textrom-inspect ROM NEW_REPORT.json\n       gdl_tools memcard-inspect CARD.ps2 NEW_DIRECTORY\n       gdl_tools card-import CARD.ps2 SAVE_DIR NEW_REPORT.json".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json\n       gdl_tools vu0-fqdist FQDIST_REQUESTS.json NEW_REPORT.json\n       gdl_tools collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]\n       gdl_tools player-displacement WORLDS.PS2 STEPS.json NEW_REPORT.json\n       gdl_tools textrom-inspect ROM NEW_REPORT.json\n       gdl_tools memcard-inspect CARD.ps2 NEW_DIRECTORY\n       gdl_tools card-import CARD.ps2 SAVE_DIR NEW_REPORT.json\n       gdl_tools objects-triangles OBJECTS.PS2 NEW_REPORT.json".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);

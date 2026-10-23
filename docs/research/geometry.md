@@ -29,8 +29,8 @@ Actual-disc checks performed:
 - All decoded vertex positions fit the source object bounding radii within
   0.015 units; all 944 deduplicated position counts match declared counts.
 - Emitted topology totals 8,237 triangles. 62 object records differ from the
-  declared triangle counts. Some repeated faces explain part of the difference;
-  the full header/primitive contract remains open. Counts are not forced to fit.
+  declared triangle counts; the difference is explained below (2026-10-23).
+  Counts are not forced to fit.
 - All 1,729 packet outputs agree with the unchanged pinned gdl_tools decoder
   on positions, topology, UVs, lightmap UVs, colors and normals within 3e-7.
   This is an independent implementation check with shared format knowledge,
@@ -72,3 +72,19 @@ Next discriminating checks: original world-position consumers, VIF/VU primitive
 assembly, triangle-count meaning, GS material/lightmap state, and one character
 rig. Do not repair unexplained transforms by changing coordinates until the
 runtime source or a measured original pose establishes the intended contract.
+
+## The declared triangle count (2026-10-23)
+
+`gdl_tools objects-triangles OBJECTS.PS2 NEW_REPORT.json` compares each
+object's header count (+36) with the decoded strips. The header counts
+distinct faces: the emitted triangles (after the normal-bit suppression)
+minus faces that repeat an earlier face of the same part with the same
+winding (strip joins redraw them); a face repeated with the reverse winding
+(two-sided geometry) is counted. G1: 944/944 objects. Every dictionary-named
+OBJECTS.PS2 (643 packages, 106,310 objects, no decode errors;
+private/reports/objects-triangles-all-v1.json): 106,243 fit exactly; 88,012
+have no repeats at all. The 67 left (ITEMS/levelC 32, WEAPONS 25,
+MONSTERS/SKY 6, LICH, DJINN, TRE and LEVELS/levelB3 one each) count some of
+their same-winding repeats; the count is authoring metadata no runtime path
+draws from (the VU draws the strips), so the residue is recorded, not
+modelled. The native meshes draw every emitted triangle, as the GS does.
