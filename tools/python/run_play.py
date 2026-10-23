@@ -170,22 +170,43 @@ def level_kinds(wdata_path, index):
     return level
 
 
-def realm_monsters(wdata_path, indices, known):
-    """(type, prefix) of every enemy type the realm's levels load (GetEnemyTypes
-    via `gdl_tools level-enemies`; prefixes from the ELF enemy_table 0x22c7a0)."""
+def enemy_dir(name, subtype):
+    """GetEnemyDir 0x138118(type, level) for the LoadEnemy types (not 0x1d,
+    0x20, 0x21): level 4 "monsters/%saux", 11 and above "monsters/%s%d" with
+    level - 10, else "monsters/%s"; the name is EnemyName 0x136f58 (the
+    enemy_table record +4)."""
+    if subtype == 4:
+        return f'MONSTERS/{name.upper()}AUX'
+    if subtype >= 11:
+        return f'MONSTERS/{name.upper()}{subtype - 10}'
+    return f'MONSTERS/{name.upper()}'
+
+
+def level_monsters(level, known):
+    """[(type, prefix, package directory)] that GauntWorldInit 0x162e38's
+    LoadEnemy loop loads for one level (`level`: the `gdl_tools level-enemies`
+    report): GetEnemyTypes slots in order, types other than 0x1d and
+    0x20..0x2c, the first slot of a type (LoadEnemy sets EnemyLevel 0x233708,
+    which skips later slots), with the slot's subtype as the level. The prefix
+    (the tree labels' EnemyDesc name) is the enemy_table 0x22c7a0 record
+    +0x14; packages missing from the disc catalog are left out."""
     from elf_read import read as elf_read
-    kinds = set()
-    for k in indices:
-        kinds |= set(level_kinds(wdata_path, k)['enemy_types']['kind'])
     elf = ELF.read_bytes()
-    out = {}
+    table = {}
     for k in range(44):
         rec = elf_read(elf, 0x22c7a0 + 0x24 * k, 0x24)
         t = int.from_bytes(rec[:4], 'little', signed=True)
-        prefix = rec[0x14:0x24].split(b'\0')[0].decode()
-        if t in kinds and t >= 0 and f'MONSTERS/{prefix}/ANIM.PS2' in known:
-            out[t] = prefix
-    return sorted(out.items())
+        table[t] = (rec[4:0x14].split(b'\0')[0].decode(), rec[0x14:0x24].split(b'\0')[0].decode())
+    types = level['enemy_types']
+    out = {}
+    for t, subtype in zip(types['kind'], types['subtype']):
+        if t < 0 or t == 0x1d or 0x20 <= t <= 0x2c or t in out or t not in table:
+            continue
+        name, prefix = table[t]
+        d = enemy_dir(name, subtype)
+        if f'{d}/ANIM.PS2' in known:
+            out[t] = (t, prefix, d)
+    return list(out.values())
 
 
 def main():
@@ -219,7 +240,7 @@ def main():
 
     known = known_names()
     packages = dict(POWERUPS=package('POWERUPS'), WEAPONS=package('WEAPONS'), STATIC=package('STATIC'))
-    monsters = {}
+    monsters = set()
 
     def realm_levels(letter, first=None):
         """Config entries of one realm's levels (level-code order, boss last)."""
@@ -231,10 +252,6 @@ def main():
         if first:
             records = [r for r in records if r[1] >= first.upper()] or records
         title = 'The Poison Fields' if letter == 'G' else ('The Tower' if letter == 'L' else ('Treasure room' if letter == 'S' else f'{wad.title()} realm ({letter})'))
-        realm_m = realm_monsters(wdata, [r[0] for r in records], known)
-        for t, prefix in realm_m:
-            monsters[t] = prefix
-            packages.setdefault(prefix, package(f'MONSTERS/{prefix}'))
         out = []
         for index, code, boss in records:
             # LoadItems 0x14f7d0: item_anim = items/<WorldItemDesc> (the
@@ -244,14 +261,22 @@ def main():
             items = [f'LEVEL{x}' for x, use in ((letter, boss < 0), (code, True)) if use and f'ITEMS/LEVEL{x}/ANIM.PS2' in known]
             for name in items:
                 packages.setdefault(f'ITEMS_{name[5:]}', package(f'ITEMS/{name}'))
-            critters = critter_files(level_kinds(wdata, index), world, known, wdata.read_bytes())
+            kinds = level_kinds(wdata, index)
+            # The level's enemy packages (package names: the directory under
+            # MONSTERS/, e.g. IMP2 for E1's subtype-12 imps).
+            level_m = [(t, prefix, d.split('/', 1)[1]) for t, prefix, d in level_monsters(kinds, known)]
+            for t, prefix, name in level_m:
+                monsters.add((t, name, prefix))
+                packages.setdefault(name, package(f'MONSTERS/{name}'))
+            critters = critter_files(kinds, world, known, wdata.read_bytes())
             for c in critters:
                 if 'lib' in c:
                     packages.setdefault(c['lib'], package(c['lib']))
             out.append(dict(name=code, index=index, world=world, wdata=str(wdata), title=title,
                             worlds=str(resolve([f'LEVELS/LEVEL{code}/WORLDS.PS2'])[0]),
                             level=package(f'LEVELS/LEVEL{code}', anim=f'LEVELS/LEVEL{code}/ANIM.PS2' in known), items=[f'ITEMS_{n[5:]}' for n in items],
-                            monsters=[p for _, p in realm_m], critters=critters))
+                            monsters=[n for _, _, n in level_m], monster_types=[dict(type=t, package=n, prefix=p) for t, p, n in level_m],
+                            critters=critters))
         return out
 
     # The Tower (hub) first, then every realm; exits and the boss's
@@ -265,7 +290,7 @@ def main():
         sim_start=str(START), game_start=str(GAME_START), elf=str(ELF), levels=levels,
         catalog=dict(names='private/reports/wad-independent.json', archive='private/wad/manifest.json', root='private/wad'),
         saves=str(save_dir), packages=packages,
-        monsters=[dict(type=t, package=p) for t, p in sorted(monsters.items())],
+        monsters=[dict(type=t, package=n, prefix=p) for t, n, p in sorted(monsters)],
         audio=audio_config(), movies=movie_config())
     CONFIG.write_text(json.dumps(config, indent=1) + '\n')
     env = os.environ.copy()

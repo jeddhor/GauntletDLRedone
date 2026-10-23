@@ -2497,7 +2497,7 @@ impl Game {
     /// "GEN_<EnemyTypePrefix(+0xf0)><+0xf6>". Its "BOSSGEN" test reads the
     /// caller's uninitialised name buffer; taken as not matching
     /// (HYPOTHESIS).
-    fn item_gen_desc(&self, slot: usize) -> String {
+    pub(crate) fn item_gen_desc(&self, slot: usize) -> String {
         let r = &self.items.records[slot];
         let level = r.u8_(0xf6);
         let t = r.i16_(0xf0);

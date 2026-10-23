@@ -87,29 +87,23 @@ def main():
         tmp.unlink()
     subprocess.run([TOOLS, 'level-enemies', str(wd), str(index), str(tmp)], check=True)
     level = json.loads(tmp.read_text())
-    kinds = level['enemy_types']['kind']
     tmp.unlink()
-    elf = ELF.read_bytes()
-    prefixes = {}
-    from elf_read import read as elf_read  # noqa: E402
-    for k in range(44):  # ELF enemy_table 0x22c7a0: type +0, prefix +0x14, stride 0x24
-        rec = elf_read(elf, 0x22c7a0 + 0x24 * k, 0x24)
-        t = int.from_bytes(rec[:4], 'little', signed=True)
-        if t in kinds and t >= 0:
-            prefixes[t] = rec[0x14:0x24].split(b'\0')[0].decode()
-    monsters = [(t, p) for t, p in prefixes.items() if f'MONSTERS/{p}/ANIM.PS2' in known]
+    # The level's enemy packages (run_play.level_monsters: GauntWorldInit's
+    # LoadEnemy loop, GetEnemyDir by the slot subtype).
+    from run_play import level_monsters  # noqa: E402
+    monsters = level_monsters(level, known)
     ia, wp, pw, clips, rom, pdata, *mons = resolve([items, 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2',
-                                                    'AUDIO/AUDATPS2.ROM', 'PDATA/SOR.WAD'] + [f'MONSTERS/{p}/ANIM.PS2' for _, p in monsters])
+                                                    'AUDIO/AUDATPS2.ROM', 'PDATA/SOR.WAD'] + [f'{d}/ANIM.PS2' for _, _, d in monsters])
     cmd = [TOOLS, 'game-run', str(w), str(wd), str(index), str(ELF), GAME_START, str(ia),
            str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}', f'pdata={pdata}']
-    cmd += [f'{t}={path}:{p}' for (t, p), path in zip(monsters, mons)]
+    cmd += [f'{t}={path}:{p}' for (t, p, _), path in zip(monsters, mons)]
     [text] = resolve(['TEXT/ENGLISH.ROM'])
     cmd += [f'text={text}']
     # HYPOTHESIS: the MBOX object tables loaded for the level (the original
     # load list is not traced); used by MBOX_FindObject_Sub lookups.
     obj = [n for n in [f'LEVELS/LEVEL{a.world}{a.level}/OBJECTS.PS2', f'ITEMS/LEVEL{a.world}{a.level}/OBJECTS.PS2',
                        f'ITEMS/LEVEL{a.world}/OBJECTS.PS2', 'WEAPONS/OBJECTS.PS2', 'POWERUPS/OBJECTS.PS2']
-           + [f'MONSTERS/{p}/OBJECTS.PS2' for _, p in monsters] if n in known]
+           + [f'{d}/OBJECTS.PS2' for _, _, d in monsters] if n in known]
     cmd += ['objects=' + ','.join(str(x) for x in resolve(obj))]
     from run_play import critter_files  # noqa: E402
     for c in critter_files(level, number, known, wd.read_bytes()):
@@ -121,7 +115,7 @@ def main():
     cmd += [f"items_role={'realm' if item_pkgs[0] == f'ITEMS/LEVEL{a.world}/ANIM.PS2' else 'level'}"]
     if a.world != 'G':
         cmd += [f'world={number}']
-    print('monsters', monsters, 'missing', sorted(set(prefixes.values()) - {p for _, p in monsters}))
+    print('monsters', monsters)
     if a.script:
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
     if a.pads:

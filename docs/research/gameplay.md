@@ -836,3 +836,67 @@ update by update:
   direction 1 natively where the original takes 7 — the native
   EnemyWallCollide hits A1FENCE#60 (triangle 789; the end point lies
   0.94 from the plane, inside the triangle) where the original's does not.
+
+### The other realms' first levels (2026-10-23)
+
+WARPED new-game captures (reference-setup.md slot 9 staging: D1 w4l1, E1
+w5l1, F1 w6l1, H1 w8l1, I1 w9l1, J1 w10l1, each reached from B1's exit with
+skip_wave; trace-<level>-newgame-v1: the stage start, idle and movement,
+two throws; 428 vblanks) replayed update by update (regression r44,
+replay-frame-<level>new-r44.json; camera 213/214 everywhere is the known
+stage-start ulp, unknowns.md):
+
+| Level | Enemies | Items | Player | Effects | World anim | Critters |
+|---|---|---|---|---|---|---|
+| D1 | 214/214 | 214/214 | 214/214 | 214/214 | 214/214 | 214/214 |
+| E1 | 214/214 | 214/214 | 214/214 | 214/214 | 214/214 | 214/214 |
+| F1 | 214/214 | 214/214 | 214/214 | 214/214 | 214/214 | 214/214 |
+| H1 | 214/214 | 204/214 | 214/214 | 214/214 | 214/214 | 214/214 |
+| I1 | 213/214 | 0/214 | 214/214 | 214/214 | 214/214 | 214/214 |
+| J1 | 214/214 | 212/214 | 214/214 | 214/214 | 214/214 | 214/214 |
+
+Fixed on the way:
+
+- Enemy packages are per level and per subtype. GauntWorldInit 0x162e38
+  runs LoadEnemy 0x138278(type, subtype) for each GetEnemyTypes slot whose
+  type is not 0x1d or 0x20..0x2c and not loaded yet (EnemyLevel 0x233708);
+  GetEnemyDir 0x138118 names the package: "monsters/%s/%s" for 0x1d/0x21,
+  "monsters/%s_%s" for 0x20, "monsters/%saux" for subtype 4,
+  "monsters/%s%d" with subtype − 10 for subtypes 11 and above, else
+  "monsters/%s" — the name is EnemyName 0x136f58 (enemy_table +4). E1's
+  subtype-12 types load ZOM2/PLA2/ICE2/IMP2 and F1's subtype-13 types
+  DEM3/GHO3/WAR3/SKY3, which hold only their one tree (no GENHIT, GENDIE or
+  GENFX1..3); the realm's aux packages (GRUAUX, TROAUX, SORAUX, LIZAUX,
+  ZOMAUX, ICEAUX, IMPAUX, PLAAUX) serve the subtype-4 levels (A3, B4, B5,
+  C4, D3, G4, I3, J3, J4, K3). The port had loaded MONSTERS/<prefix> for the
+  whole realm, so E1's InitEffects found IMP's GENFX trees and the
+  cathedral generators started GENFX2 flashes the original does not
+  (EffectHeaders 0x50..0x53 are all null in E1's RAM, genfx[] still 1).
+  run_play.level_monsters / enemy_dir; the client keeps the level's type →
+  (package, EnemyDesc prefix) map (Sources::monsters).
+- The CAT/HEL special generators take their tree from ItemGenDesc
+  ("GEN_SPECIAL<level>") through AtreeMatchAnyHeader in SetItem, as the
+  original, instead of the definition's tree (their clocks now run).
+- F1 step 116 was a replay ambiguity: ten Hell generators spawn in one
+  update and every pick (hell_rand_enemy[RandInt(4)], gendir RandInt(8))
+  reads the LCG's low bits, which advance by one per call; the seed solved
+  from the native's 60 calls was self-consistent but one blocked spawn
+  shifted every later choice. The reference's solution is 41 calls (ten
+  DEM spawns, then no slot). The replay's alternate-seed search now widens
+  to ±48 calls when ±2 does not reproduce the update.
+
+Left (first divergences):
+
+- H1 (steps 43, 61, 81, 107) and J1 (step 359): sound items' +0xfe on the
+  update their loop starts — the original stores −TID (AudioLOOP's
+  AudioTrack4 track id) until the IOP's AudioTrackSet reply lets
+  AudioFindTID return the voice mask; the native stores 1. Same residue as
+  K2, the Tower and I5 (ProcessItems 0x156d20..0x156dac: +0xfe < 0 is a
+  handle, > 0 a voice mask).
+- J1 step 361: a barrel's (BAROBJ, item 20) drop definition +0xf0 is 0x5c
+  natively and 0x60 in the original, and the dropped item (slot 56) follows.
+- I1: the GRU placed-enemy items standing on world-animated ice floes
+  (floor parents 728, 292, 731, 310, 293, 552, 551) differ by ulps in their
+  world rows from step 1 (z −1 ulp constant, y −4..+5 ulps varying), and
+  enemy 19's floor height +0x2a8 differs at step 245 (7.40 natively,
+  −47.33 in the original).

@@ -2610,16 +2610,36 @@ fn run() -> Result<(), Box<dyn Error>> {
                     if 0 < base {
                         let n0 = steps_between(seed, rand_after).unwrap_or(0);
                         let mut best = (base, seed);
-                        for n in [n0.checked_sub(1), Some(n0 + 1), n0.checked_sub(2), Some(n0 + 2)].into_iter().flatten() {
+                        let try_count = |game: &mut gdl_core::game::Game, n: u32, best: &mut (usize, u32)| -> Result<(), Box<dyn std::error::Error>> {
                             let s = back(rand_after, n);
-                            let r = attempt(&mut game, s)?;
+                            let r = attempt(game, s)?;
                             if r.is_err() || game.rng.state != rand_after {
-                                continue;
+                                return Ok(());
                             }
-                            write_back(&mut game);
-                            let sc = score(&game);
+                            write_back(game);
+                            let sc = score(game);
                             if sc < best.0 {
-                                best = (sc, s);
+                                *best = (sc, s);
+                            }
+                            Ok(())
+                        };
+                        for n in [n0.checked_sub(1), Some(n0 + 1), n0.checked_sub(2), Some(n0 + 2)].into_iter().flatten() {
+                            try_count(&mut game, n, &mut best)?;
+                        }
+                        // Other self-consistent counts further away (the
+                        // low bits of the LCG pick types and directions, so
+                        // one different spawn shifts every later choice:
+                        // trace-F1-newgame-v1 step 116, ten Hell generators,
+                        // 60 draws natively against a 41-draw solution).
+                        if 0 < best.0 {
+                            for n in n0.saturating_sub(48)..=n0 + 48 {
+                                if n.abs_diff(n0) <= 2 {
+                                    continue;
+                                }
+                                try_count(&mut game, n, &mut best)?;
+                                if best.0 == 0 {
+                                    break;
+                                }
                             }
                         }
                         alt_seed = best.1 != seed;

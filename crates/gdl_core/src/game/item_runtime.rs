@@ -184,9 +184,16 @@ impl Game {
             self.item_anims[slot] = None;
             return Ok(());
         }
-        let name = match self.items.statue_tree.get(slot).copied().flatten() {
-            Some(t) => t.to_string(),
-            None => String::from_utf8_lossy(self.items.definitions[r.definition()].name()).into_owned(),
+        // SetItem's generator case (0x152410..0x15242c): ItemGenDesc then
+        // AtreeMatchAnyHeader, passed to SetItemGeo — "GEN_SPECIAL<level>"
+        // for E's and F's special generators (trees in ITEMS/levelE/F; no
+        // GEN_<prefix><level> tree exists on the disc); without a match
+        // SetItemGeo falls back to the definition's tree.
+        let generator_tree = (self.items.definitions[r.definition()].kind() == 3).then(|| self.item_gen_desc(slot)).filter(|n| self.item_anim_lib.contains_key(n));
+        let name = match (self.items.statue_tree.get(slot).copied().flatten(), generator_tree) {
+            (Some(t), _) => t.to_string(),
+            (None, Some(g)) => g,
+            (None, None) => String::from_utf8_lossy(self.items.definitions[r.definition()].name()).into_owned(),
         };
         let (animated, nodes) = self.item_anim_nodes.get(&name).copied().unwrap_or((false, 0));
         self.item_anims[slot] = self.item_anim_lib.get(&name).map(|clips| ItemAnim { clock: super::setup::fresh_clock(), clips: clips.clone(), current: 0, animated });

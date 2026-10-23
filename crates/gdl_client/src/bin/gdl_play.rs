@@ -185,8 +185,12 @@ struct Sources {
     /// Each player slot's loaded character (load_player / load_player_model).
     players: [Option<PlayerChar>; 4],
     packages: HashMap<String, Package>,
-    /// Enemy type → monster package name (prefix).
-    monsters: HashMap<i32, String>,
+    /// The current level's enemy type → (monster package name, tree prefix):
+    /// GetEnemyDir's directory by the type's subtype (IMP2, IMPAUX, ...) and
+    /// the enemy_table name its EnemyDesc labels use.
+    monsters: HashMap<i32, (String, String)>,
+    /// Every monster package name of the campaign (enemy frame tables).
+    monster_packages: std::collections::HashSet<String>,
 }
 
 /// What a player's character was loaded for: class +0xc, colour +4, the
@@ -234,8 +238,10 @@ struct LevelSource {
     world: i32,
     wdata: std::path::PathBuf,
     title: String,
-    /// Monster packages of the level's realm (names in `packages`).
+    /// Monster packages of the level (names in `packages`).
     monsters: Vec<String>,
+    /// The level's LoadEnemy types: (type, package, tree prefix).
+    monster_types: Vec<(i32, String, String)>,
     worlds: std::path::PathBuf,
     package: Value,
     /// Item packages, level-specific first (names in `packages`).
@@ -272,7 +278,7 @@ struct Session {
     world: World,
     level: Package,
     /// (enemy type, package prefix, ANIM.PS2 path).
-    monster_paths: Vec<(i32, String, String)>,
+    monster_paths: Vec<(i32, String, String, String)>,
     /// ANIM.PS2 path by package name (ITEMS, WEAPONS, POWERUPS).
     anim_paths: HashMap<String, String>,
     audio_rom: Option<gdl_formats::audio::AudioRom>,
@@ -317,8 +323,8 @@ struct Base {
     package_cfg: HashMap<String, Value>,
     start: Value,
     levels: Vec<LevelSource>,
-    monster_paths: Vec<(i32, String, String)>,
-    monsters: HashMap<i32, String>,
+    monster_paths: Vec<(i32, String, String, String)>,
+    monster_packages: std::collections::HashSet<String>,
     anim_paths: HashMap<String, String>,
     audio_rom: Option<gdl_formats::audio::AudioRom>,
     shared_labels: std::collections::HashSet<String>,
@@ -2461,7 +2467,7 @@ fn setup(
         if !libraries.0.contains_key(name) {
             libraries.0.insert(name.clone(), build_library(pkg, &mut meshes, &mut images, &mut materials));
         }
-        if sources.monsters.values().any(|m| m == name) && !frames.0.contains_key(name) {
+        if sources.monster_packages.contains(name) && !frames.0.contains_key(name) {
             frames.0.insert(name.clone(), enemy_frames(pkg));
         }
     }
@@ -3069,7 +3075,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
     start["globals"]["pvp_mode"] = Value::from(session.prefs[7]);
     let start: setup::StartState = serde_json::from_value(start)?;
     let mut enemy_anims = gdl_core::game::enemy_ai::EnemyAnimData::default();
-    for (t, prefix, path) in session.monster_paths.iter().filter(|m| lv.monsters.contains(&m.1)) {
+    for (t, _, prefix, path) in session.monster_paths.iter().filter(|m| lv.monster_types.iter().any(|(t, n, _)| *t == m.0 && *n == m.1)) {
         let anim = Animations::parse(&gdl_client::bounded_read(Path::new(path))?)?;
         setup::enemy_trees(&mut enemy_anims, *t, prefix, &anim);
     }
@@ -3876,11 +3882,11 @@ fn present_world(
                 };
                 let (t, level) = anim.tree;
                 let tf = record_transform([row(r, 0x10), row(r, 0x20), row(r, 0x30)], row(r, 0x40));
-                let Some(pkg) = sources.monsters.get(&t) else {
+                let Some((pkg, prefix)) = sources.monsters.get(&t) else {
                     *vis = Visibility::Hidden;
                     continue;
                 };
-                let tree = setup::enemy_desc(pkg, level);
+                let tree = setup::enemy_desc(prefix, level);
                 let seq = anim.clock.sequence as usize;
                 // DoObjAnimation: frame (int)(f + 0.5) inside [start, start
                 // + count − 1] → base + frame − start; a one-frame entry
@@ -3933,11 +3939,11 @@ fn present_world(
                 if kind == 3 {
                     let level = r.u8_(0xf6);
                     let t = r.i16_(0xf0) as i32;
-                    let Some(pkg) = sources.monsters.get(&t) else {
+                    let Some((pkg, prefix)) = sources.monsters.get(&t) else {
                         *vis = Visibility::Hidden;
                         continue;
                     };
-                    let key = format!("GEN_{pkg}{level}");
+                    let key = format!("GEN_{prefix}{level}");
                     // ItemFindMBObjectL1: the name, then +"L1", then +"L1ROOT".
                     let parts = libs.0.get(pkg).and_then(|lib| [key.clone(), format!("{key}L1"), format!("{key}L1ROOT")].iter().find_map(|l| lib.by_label.get(l)).cloned()).map(|p| vec![(Vec3::ZERO, p, 0, None, None)]);
                     (Some(key), parts, tf)
@@ -4024,7 +4030,7 @@ fn present_world(
                         let pkg = match head.source {
                             0 => Some("WEAPONS".to_string()),
                             1 => Some("POWERUPS".to_string()),
-                            n if 0xc0 <= n => sources.monsters.get(&i32::from(n - 0xc0)).cloned(),
+                            n if 0xc0 <= n => sources.monsters.get(&i32::from(n - 0xc0)).map(|m| m.0.clone()),
                             n if 0x80 <= n => items.get(usize::from(n - 0x80)).cloned(),
                             n if 0x40 <= n => sources.players.get(usize::from(n - 0x40)).and_then(|p| p.as_ref()).map(|p| p.sfx_name.clone()),
                             n => session.levels[session.current].critters.get(n as usize - 2).and_then(|c| c.2.clone()),
@@ -4054,11 +4060,11 @@ fn present_world(
                         (Some(key), parts, tf)
                     }
                     Visual::EnemyMissile { t, kind } => {
-                        let Some(pkg) = sources.monsters.get(&t) else {
+                        let Some((pkg, prefix)) = sources.monsters.get(&t) else {
                             *vis = Visibility::Hidden;
                             continue;
                         };
-                        let label = format!("{pkg}_{}", g.effects.tables.enemy_missile_desc[kind as usize]);
+                        let label = format!("{prefix}_{}", g.effects.tables.enemy_missile_desc[kind as usize]);
                         let key = format!("{label}:{}", node.start.to_bits());
                         let fresh = slot.key.as_deref() != Some(key.as_str());
                         if fresh {
@@ -5250,7 +5256,7 @@ fn session_for(front: &Front, record: &Record, controls: profile::ControlOptions
         heart_rate: front.heart_rate,
         carried: [0, -1, -1, -1, -1, 0xd, 0],
     };
-    let sources = Sources { players: [Some(pc), None, None, None], packages, monsters: b.monsters.clone() };
+    let sources = Sources { players: [Some(pc), None, None, None], packages, monsters: level_monster_map(first), monster_packages: b.monster_packages.clone() };
     let mut records: [Record; 4] = std::array::from_fn(|_| Record::zeroed(record.0.len()));
     records[0] = record.clone();
     let mut controls4 = [[0u32; 4]; 4];
@@ -6023,14 +6029,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             anim_paths.insert(name.clone(), a.to_string());
         }
     }
-    let mut monsters = HashMap::new();
+    let mut monster_packages = std::collections::HashSet::new();
     let mut monster_paths = Vec::new();
     for m in cfg["monsters"].as_array().ok_or("config monsters")? {
         let t = m["type"].as_i64().ok_or("monster type")? as i32;
         let name = m["package"].as_str().ok_or("monster package")?.to_string();
+        let prefix = m["prefix"].as_str().ok_or("monster prefix (rerun run_play.py)")?.to_string();
         let path = anim_paths.get(&name).ok_or("monster package anim")?.clone();
-        monster_paths.push((t, name.clone(), path));
-        monsters.insert(t, name);
+        monster_paths.push((t, name.clone(), prefix, path));
+        monster_packages.insert(name);
     }
     let mut levels = Vec::new();
     let mut wdata_cache: HashMap<String, gdl_formats::wdata::WorldData> = HashMap::new();
@@ -6053,6 +6060,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             wdata: l["wdata"].as_str().ok_or("level wdata")?.into(),
             title: l["title"].as_str().unwrap_or("").to_string(),
             monsters: l["monsters"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default(),
+            monster_types: l["monster_types"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|m| Some((m["type"].as_i64()? as i32, m["package"].as_str()?.to_string(), m["prefix"].as_str()?.to_string()))).collect())
+                .unwrap_or_default(),
             worlds: l["worlds"].as_str().ok_or("level worlds")?.into(),
             package: l["level"].clone(),
             items: l["items"].as_array().ok_or("level items")?.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
@@ -6244,7 +6255,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             start,
             levels,
             monster_paths,
-            monsters,
+            monster_packages,
             anim_paths,
             audio_rom,
             shared_labels,
@@ -6344,6 +6355,11 @@ fn texmod_packages(session: &Session, sources: &Sources) -> Vec<String> {
         }
     }
     v
+}
+
+/// The level's enemy type → (package, tree prefix) (Sources::monsters).
+fn level_monster_map(lv: &LevelSource) -> HashMap<i32, (String, String)> {
+    lv.monster_types.iter().map(|(t, n, p)| (*t, (n.clone(), p.clone()))).collect()
 }
 
 fn level_packages(lv: &LevelSource) -> Vec<String> {
@@ -6556,12 +6572,12 @@ fn advance_level(
         // Packages of a realm not seen yet load now (libraries and frames too).
         let labels = load_level_packages(&mut sources.packages, &session.package_cfg, &session.levels[idx])?;
         for name in level_packages(&session.levels[idx]) {
+            let pkg = &sources.packages[&name];
             if !libraries.0.contains_key(&name) {
-                let pkg = &sources.packages[&name];
                 libraries.0.insert(name.clone(), build_library(pkg, &mut meshes, &mut images, &mut materials));
-                if sources.monsters.values().any(|m| *m == name) {
-                    frames.0.insert(name.clone(), enemy_frames(pkg));
-                }
+            }
+            if sources.monster_packages.contains(&name) && !frames.0.contains_key(&name) {
+                frames.0.insert(name.clone(), enemy_frames(pkg));
             }
         }
         session.object_labels = labels.into_iter().chain(character_labels(&sources)).collect();
@@ -6629,6 +6645,7 @@ fn advance_level(
                 a.stop_all();
             }
             session.current = idx;
+            sources.monsters = level_monster_map(&session.levels[idx]);
             init_hud(&mut game, &sources, &session, &front, &mut hud_sets, true);
             sim.game = game;
             for e in &old {
