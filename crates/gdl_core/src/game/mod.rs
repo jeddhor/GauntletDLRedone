@@ -326,6 +326,8 @@ pub struct Game {
     /// stage_playtime 0x2201a8 (vblanks of play; the tally's time) and
     /// do_show_path's state.
     pub stage_playtime: i32,
+    /// RestartReq 0x24951c: see Game::check_soft_reset.
+    pub restart_req: bool,
     pub show_path: stageinfo::ShowPath,
     /// death_touch: set while Death drains a player (do_enemy_attack).
     pub death_touch: bool,

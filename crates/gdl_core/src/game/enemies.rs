@@ -1018,6 +1018,10 @@ impl Game {
             self.delete_effect(fx, true);
             self.enemies[i].set_i32(0x1f4, -1);
         }
+        // SfxDeleteParented(+0x70, 0, −1) for the GRM: its attack effects.
+        if t == 0x1b {
+            self.delete_enemy_parented(i);
+        }
         self.uncouple_enemy(i);
         Ok(())
     }

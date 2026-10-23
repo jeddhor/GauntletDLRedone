@@ -114,6 +114,19 @@ pub struct EffectNode {
     /// matrix (PlayerStartMissile's weapon-powerup throw effect on its
     /// missile): drawn at that node, scaled with it.
     pub follow: Option<usize>,
+    /// SfxSetStreak's poly instance (+0xd4): presentation.
+    pub streak: Option<Streak>,
+}
+
+/// SfxSetStreak 0x17e0f0's MBNewPoly(0, 4, WeaponStreakTex — WEAPONS'
+/// WEP_STREAK) with MBPolyInstSetColorAlpha(colour, alpha) — GS alpha
+/// (0xff − alpha) >> 1 — and UpdateFXStreak 0x17ae48's four vertices (UV
+/// (0,0) (1,0) (1,1) (0,1), a triangle fan: textured, Gouraud, blended).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Streak {
+    pub colour: u32,
+    pub alpha: u8,
+    pub verts: [V3; 4],
 }
 
 /// An effect node parented to a player node, or (CritterDoSfxSub's
@@ -125,6 +138,10 @@ pub struct EffectParent {
     pub local: V3,
     pub local_matrix: [V3; 3],
     pub critter: Option<(usize, Option<usize>)>,
+    /// An enemy's node (+0x70; DoEnemyAction's GRM attack effects): its
+    /// record matrix (rows +0x10..+0x30, position +0x40) stands for the
+    /// node (HYPOTHESIS as for players).
+    pub enemy: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -469,6 +486,29 @@ impl Game {
         r.set_i16(fx::LINK, -1);
     }
 
+    /// SfxDeleteParented 0x17aa38(enemy node, 0, −1) for enemy `e`: every
+    /// effect whose node's parent is the enemy's (non-recursive).
+    pub(crate) fn delete_enemy_parented(&mut self, e: usize) {
+        for k in 0..self.effects.num {
+            if self.effects.nodes[k].and_then(|n| n.parent).is_some_and(|p| p.enemy == Some(e)) && 0.0 < self.fx(k).f32_(0x68) {
+                self.delete_effect(k, true);
+            }
+        }
+    }
+
+    /// StartEnemyAtkFX 0x17f5e8(position 0, k): StartFXSub(0, 0x56 + k,
+    /// none, 0, 0x800) when the header exists (only the GRM's ATK1FX /
+    /// ATK2FX are loaded), then SfxSetParent to enemy `e`'s node.
+    pub(crate) fn start_enemy_atk_fx(&mut self, e: usize, k: usize) -> R<()> {
+        let slot = self.start_fx_sub(0.0, 0x56 + k, None, 0)?;
+        if let Ok(s) = usize::try_from(slot)
+            && let Some(n) = self.effects.nodes[s].as_mut()
+        {
+            n.parent = Some(EffectParent { player: 0, local: [0.0; 3], local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: None, enemy: Some(e) });
+        }
+        Ok(())
+    }
+
     /// DeleteEffect(slot, force).
     pub(crate) fn delete_effect_pub(&mut self, i: usize) {
         self.delete_effect(i, true);
@@ -593,6 +633,7 @@ impl Game {
             ambient: None,
             alpha: None,
             follow: None,
+            streak: None,
         });
         let r = self.fx_mut(i);
         r.set_u32(0x14, 1);
@@ -707,7 +748,9 @@ impl Game {
         }
         // SfxSetStreak 0x17e0f0 (owner > 0): flag 0x40000, +0xd8 the class
         // record's +0x17c, +0xdc the radius (its time argument is 0); the
-        // poly (+0xd4), colour and alpha are presentation.
+        // colour streak_color 0x24eed0[player colour +4] and alpha
+        // streak_alpha 0x24eee0[player +8] (+0x40 for flag 0x2000000, at
+        // most 0xff), white at 0x40 for flags & 0x2100000 == 0x100000.
         if 0 < owner {
             let raw = &self.classes[(owner - 1) as usize].raw;
             let width = raw.get(0x17c..0x180).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
@@ -716,6 +759,21 @@ impl Game {
             r.set_f32(0xd8, width);
             let rad = r.f32_(fx::RADIUS);
             r.set_f32(0xdc, rad);
+            const STREAK_COLOR: [u32; 4] = [0xff_ff00, 0xff, 0xff_0000, 0xff00];
+            const STREAK_ALPHA: [u32; 8] = [64, 64, 192, 64, 64, 64, 192, 64];
+            let pl = &self.players[(owner - 1) as usize];
+            let (colour, alpha) = if flags & 0x210_0000 == 0x10_0000 {
+                (0xff_ffff, 0x40)
+            } else {
+                let mut a = STREAK_ALPHA.get(pl.u32_(8) as usize).copied().unwrap_or(64);
+                if flags & 0x200_0000 != 0 {
+                    a = (a + 0x40).min(0xff);
+                }
+                (STREAK_COLOR.get(pl.u32_(4) as usize).copied().unwrap_or(0xff_ffff), a)
+            };
+            if let Some(n) = self.effects.nodes[i].as_mut() {
+                n.streak = Some(Streak { colour, alpha: ((0xff - alpha) >> 1) as u8, verts: [[0.0; 3]; 4] });
+            }
         }
         Ok(i)
     }
@@ -2608,10 +2666,14 @@ impl Game {
         } else if let Some(Some(par)) = self.effects.nodes[i].map(|n| n.parent) {
             // The parent node's world transform this update (psfx.rs HYPOTHESIS
             // for players).
-            let parent = match par.critter {
+            let parent = match (par.critter, par.enemy) {
                 // The critter instance is gone: the node keeps its last transform.
-                Some(_) => None,
-                None => {
+                (Some(_), _) => None,
+                (None, Some(e)) => {
+                    let r = &self.enemies[e];
+                    Some(([r.v3(0x10), r.v3(0x20), r.v3(0x30)], r.v3(0x40)))
+                }
+                (None, None) => {
                     let r = &self.players[par.player];
                     Some(([r.v3(0x20), r.v3(0x30), r.v3(0x40)], r.v3(0x50)))
                 }
@@ -3325,6 +3387,11 @@ impl Game {
             let world = [[m[0][0], m[0][1], m[0][2], 0.0], [m[1][0], m[1][1], m[1][2], 0.0], [m[2][0], m[2][1], m[2][2], 0.0], [to[0], to[1], to[2], 1.0]];
             let local = match (self.effect_critter_parent(i), self.effects.nodes[i].and_then(|n| n.parent)) {
                 (Some((c, n)), _) => Some(self.effect_unparent_from_critter(c, n, world)?),
+                (None, Some(EffectParent { critter: None, enemy: Some(e), .. })) => {
+                    let r = &self.enemies[e];
+                    let pm: [[f32; 4]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x10 + 0x10 * i + 4 * j)));
+                    Some(super::doplayers::unparent_matrix(world, Some(&pm))?)
+                }
                 // HYPOTHESIS (psfx.rs): the player's record matrix stands for its node chain.
                 (None, Some(EffectParent { critter: None, player, .. })) => {
                     let pm = super::doplayers::record_matrix_of(&self.players[player]);
@@ -3341,7 +3408,48 @@ impl Game {
                 }
             }
         }
+        self.update_fx_streak(i);
         Ok(())
+    }
+
+    /// UpdateFXStreak 0x17ae48 (ProcessEffects, a slot with a streak poly)
+    /// at the effect's position: the velocity's direction × Cam[0]'s row 2,
+    /// normalised and scaled by its length (at least 0.25 either way);
+    /// width w = +0xdc; the front pos + velocity × +0xd8/30 at ±0.8w, the
+    /// back pos − velocity × min(w/2, the effect's age) at ±0.1w.
+    /// Presentation arithmetic (not compared).
+    fn update_fx_streak(&mut self, i: usize) {
+        let Some(n) = self.effects.nodes[i] else { return };
+        let Some(mut st) = n.streak else { return };
+        let r = self.fx(i);
+        let w = r.f32_(0xdc);
+        let (a, b) = (w * 0.8, w * 0.1);
+        let age = r.f32_(fx::DURATION) - (r.f32_(fx::END) - self.globals.atime);
+        let back = (w * 0.5).min(age);
+        let v = r.v3(fx::VELOCITY);
+        let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        let d = if len == 0.0 { v } else { [v[0] / len, v[1] / len, v[2] / len] };
+        let c = self.std_camera.as_ref().map_or([0.0, 0.0, 1.0], |c| c.cam0_mat.map_or(c.pb.cam_rows[2], |m| m[2]));
+        let mut side = [d[1] * c[2] - d[2] * c[1], d[2] * c[0] - d[0] * c[2], d[0] * c[1] - d[1] * c[0]];
+        let sl = (side[0] * side[0] + side[1] * side[1] + side[2] * side[2]).sqrt();
+        if sl != 0.0 {
+            side = side.map(|x| x / sl);
+        }
+        let k = if (0.0..0.25).contains(&sl) { 0.25 } else if (-0.25..0.0).contains(&sl) { -0.25 } else { sl };
+        side = side.map(|x| x * k);
+        let f = r.f32_(0xd8) * f32::from_bits(0x3d08_8889);
+        let p = n.position;
+        let front = [0, 1, 2].map(|j| f * v[j] + p[j]);
+        let tail = [0, 1, 2].map(|j| -back * v[j] + p[j]);
+        st.verts = [
+            [0, 1, 2].map(|j| b * side[j] + tail[j]),
+            [0, 1, 2].map(|j| a * side[j] + front[j]),
+            [0, 1, 2].map(|j| -a * side[j] + front[j]),
+            [0, 1, 2].map(|j| -b * side[j] + tail[j]),
+        ];
+        if let Some(n) = self.effects.nodes[i].as_mut() {
+            n.streak = Some(st);
+        }
     }
 }
 

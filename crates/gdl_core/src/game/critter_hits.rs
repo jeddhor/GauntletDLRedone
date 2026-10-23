@@ -489,7 +489,7 @@ impl Game {
         let time = CritterFile::f32_pub(srec, 0x3c);
         let k = self.start_fx_tree(time, Visual::Header(header as usize), h.frames, h.timing, Some(world), fl)?;
         if let (Some((c, n)), Some(node)) = (parent, self.effects.nodes[k].as_mut()) {
-            node.parent = Some(super::effects::EffectParent { player: 0, local: pos, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: Some((c, n)) });
+            node.parent = Some(super::effects::EffectParent { player: 0, local: pos, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: Some((c, n)), enemy: None });
         }
         self.fx_mut(k).set_u32(fx::KIND, header as u32);
         let id = self.crit(i).rec.u16_(c::ID) | 0x1000;

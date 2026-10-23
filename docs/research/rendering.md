@@ -269,6 +269,27 @@ they keep their vertex colours. The VU1 microcode was not read.
 
 ## Not yet implemented
 
+## Missile streaks (SfxSetStreak / UpdateFXStreak, 2026-10-23)
+
+StartMissile (player missiles) calls SfxSetStreak 0x17e0f0(0, PDAT +0x17c,
+slot, WeaponStreakTex, colour, alpha): effect flag 0x40000, +0xd8 = the
+class value, +0xdc = the radius (+0x98, the width argument being 0), and
+MBNewPoly(0, 4, …) — a 4-vertex poly instance with WEAPONS' WEP_STREAK
+(InitPlayerMissiles' MBOX_FindTexture), UVs from stvals 0x2b7018 ((0,0)
+(1,0) (1,1) (0,1)), colour streak_color 0x24eed0[player +4] (yellow, blue,
+red, green) and GS alpha (0xff − streak_alpha 0x24eee0[player +8]) >> 1
+(64 or 192; +0x40 with flag 0x2000000; white 0x40 when flags & 0x2100000 =
+0x100000). DoPlyrSfxSub's flag 0x20000 makes one with width 2.0, length
+1.0, alpha 0x40. ProcessEffects runs UpdateFXStreak 0x17ae48 for every
+slot with a poly: side = normalised velocity × Cam[0]'s row 2, normalised
+and scaled by its length (magnitude at least 0.25); front = position +
+velocity × +0xd8/30 (±0.8w), back = position − velocity × min(w/2, age)
+(±0.1w). DoPolyInstSub draws it as a textured Gouraud triangle fan with
+alpha blending (PRIM 0x15D, UV/RGBAQ/XYZ2) under the blit draw registers.
+Native: EffectNode::streak (gdl_core), gdl_play's present_streaks (one
+blended mesh, no depth writes). Ported from the instructions; no reference
+frame compared (GUI flow menu-flows-m17-v15 streak shows the trail).
+
 ## Scene lighting and skins (2026-10-21)
 
 - InitLighting 0x180a30 (init_next_level): Ambient = LEVL +0xec, one

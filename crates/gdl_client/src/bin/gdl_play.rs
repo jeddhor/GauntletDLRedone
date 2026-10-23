@@ -2995,6 +2995,83 @@ fn present_weapon_trails(
     }
 }
 
+/// The missile streaks (SfxSetStreak / UpdateFXStreak): one mesh of every
+/// live effect's quad (WEAPONS' WEP_STREAK, vertex colour streak_color / 128,
+/// alpha the poly's GS alpha / 128, blended without depth writes).
+#[derive(Component)]
+struct StreakMesh;
+
+fn present_streaks(
+    sim: Res<Sim>,
+    libraries: Res<Libraries>,
+    root: Query<Entity, With<MirrorRoot>>,
+    mut existing: Query<(&Mesh3d, &mut Visibility), With<StreakMesh>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut commands: Commands,
+) {
+    let g = &sim.game;
+    let quads: Vec<gdl_core::game::effects::Streak> = (0..g.effects.num)
+        .filter(|&k| 0.0 < g.effects.slots[k].f32_(0x68))
+        .filter_map(|k| g.effects.nodes[k].and_then(|n| n.streak))
+        .filter(|s| s.verts.iter().any(|v| *v != [0.0; 3]))
+        .collect();
+    let Some((mesh, mut vis)) = existing.iter_mut().next() else {
+        let Some(tex) = libraries.0.get("WEAPONS").and_then(|l| l.textures.get("WEP_STREAK")).cloned() else { return };
+        let Ok(parent) = root.single() else { return };
+        let material = materials.add(gdl_client::GsMaterial {
+            params: gdl_client::GsParams { tint: Vec4::ONE, options: Vec4::new(1.0, 0.0, 0.0, 0.0), ..default() },
+            lit: false,
+            base: Some(tex),
+            lightmap: None,
+            overlay: None,
+            alpha_mode: AlphaMode::Blend,
+            draw: gdl_client::GsDraw {
+                additive: false,
+                multiply: false,
+                fixed_alpha: false,
+                no_depth_write: true,
+                depth_always: false,
+                lightmap_pass: false,
+                depth_only: false,
+                sort_late: true,
+                sort_first: false,
+            },
+        });
+        let mesh = meshes.add(Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default()));
+        let e = commands.spawn((StreakMesh, Mesh3d(mesh), MeshMaterial3d(material), Transform::default(), Visibility::Hidden, LevelEntity, bevy::camera::visibility::NoFrustumCulling)).id();
+        commands.entity(parent).add_child(e);
+        return;
+    };
+    if quads.is_empty() {
+        *vis = Visibility::Hidden;
+        return;
+    }
+    *vis = Visibility::Inherited;
+    let Some(m) = meshes.get_mut(&mesh.0) else { return };
+    let n = quads.len();
+    let mut positions = Vec::with_capacity(n * 4);
+    let mut colors = Vec::with_capacity(n * 4);
+    let mut uvs = Vec::with_capacity(n * 4);
+    let mut indices = Vec::with_capacity(n * 6);
+    for (k, q) in quads.iter().enumerate() {
+        let c = q.colour;
+        let rgba = [((c >> 16) & 0xff) as f32 / 128.0, ((c >> 8) & 0xff) as f32 / 128.0, (c & 0xff) as f32 / 128.0, f32::from(q.alpha) / 128.0];
+        for (v, uv) in q.verts.iter().zip([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]) {
+            positions.push(*v);
+            uvs.push(uv);
+            colors.push(rgba);
+        }
+        let b = (k * 4) as u32;
+        indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
+    }
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; n * 4]);
+    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    m.insert_indices(bevy::mesh::Indices::U32(indices));
+}
+
 /// A world particle system (WorldPsysActivate → MBNewWorldPsys) with its
 /// node's world matrix (row-major PS2 layout) and the sprites of the last
 /// psys frame.
@@ -3708,6 +3785,11 @@ fn simulate(
             sim.game.scroll_box_open();
             sim.message_box = Some(sb);
         }
+    }
+    // game_main / ScrollMessageBox: CheckSoftReset (front_system ends the
+    // game on RestartReq).
+    if sim.game.globals.game_mode & 0x4000 != 0 || sim.message_box.is_some() {
+        sim.game.check_soft_reset();
     }
     // main: ScreenSaver before DoOptions (not inside ScrollMessageBox's
     // loop); while it runs the game halts in its own loop.
@@ -6087,7 +6169,6 @@ fn end_game(world: &mut EcsWorld) {
     refresh_saves(&mut front);
 }
 
-/// Menu keys this frame (keyboard and every gamepad), and the pause toggle.
 /// Left / right held (keyboard or d-pad): do_optmenu's level bits.
 fn menu_held(world: &mut EcsWorld) -> (bool, bool) {
     let keys = world.resource::<ButtonInput<KeyCode>>();
@@ -6101,6 +6182,7 @@ fn menu_held(world: &mut EcsWorld) -> (bool, bool) {
     (left, right)
 }
 
+/// Menu keys this frame (keyboard and every gamepad), and the pause toggle.
 fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
     let mut out = Vec::new();
     let mut toggle = false;
@@ -6613,6 +6695,13 @@ fn front_system(world: &mut EcsWorld) {
         if toggle || !keys.is_empty() {
             world.resource_mut::<Front>().title_timeout = 1800.0;
         }
+    }
+    if screen == Screen::Playing && world.get_resource::<Sim>().is_some_and(|s| s.game.restart_req && s.game.globals.game_mode != 0x400e) {
+        // game_main's RestartReq: everything ends, init_attract_mode(0x8009)
+        // (the title screen).
+        end_game(world);
+        world.resource_mut::<Front>().menu.page = gdl_client::menu::Page::PressStart;
+        return;
     }
     if screen == Screen::Playing {
         // game_main: no active player left (each declined to continue) →
@@ -7187,7 +7276,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

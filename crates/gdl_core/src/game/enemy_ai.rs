@@ -2635,6 +2635,17 @@ impl Game {
         if let Some(bit) = landed {
             rec.or_u32(0x2e4, bit);
         }
+        // LAB_00179938: the GRM (type 0x1b) starts ATK1FX on 0xc/0xe and
+        // ATK2FX on 0x10 on its node; any other new action but
+        // 0xd/0xf/0x11/0x1d/0x20 deletes the effects parented to it.
+        if t == 0x1b {
+            match next {
+                0xc | 0xe => self.start_enemy_atk_fx(i, 0)?,
+                0x10 => self.start_enemy_atk_fx(i, 1)?,
+                0xd | 0xf | 0x11 | 0x1d | 0x20 => {}
+                _ => self.delete_enemy_parented(i),
+            }
+        }
         if (next.wrapping_sub(0x18)) < 3 {
             let lc = self.level_f32(0xc0);
             let rec = &self.enemies[i];

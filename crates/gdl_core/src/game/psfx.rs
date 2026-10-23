@@ -531,7 +531,7 @@ impl Game {
             }
             let v = mul_vec_mat3(pos, &rows)?;
             let w = [add(v[0], base[0])?, add(v[1], base[1])?, add(v[2], base[2])?];
-            (w, rows, Some(EffectParent { player: owner, local: pos, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: None }))
+            (w, rows, Some(EffectParent { player: owner, local: pos, local_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], critter: None, enemy: None }))
         };
         let k = self.start_fx_tree(time, Visual::Header(header as usize), h.frames, h.timing, Some(world), fx_flags)?;
         self.fx_mut(k).set_u32(fx::KIND, header as u32);
@@ -539,7 +539,21 @@ impl Game {
             n.matrix = matrix;
             n.parent = parent;
         }
-        // +0x20000 SfxSetStreak, ambient add and colour (+0x4c): presentation.
+        // +0x20000: SfxSetStreak(2.0, 1.0, slot, WeaponStreakTex,
+        // streak_color[player colour], 0x40) — flag 0x40000, +0xd8 1.0,
+        // +0xdc 2.0 and the poly. Ambient add and colour (+0x4c):
+        // presentation.
+        if flags & 0x2_0000 != 0 {
+            const STREAK_COLOR: [u32; 4] = [0xff_ff00, 0xff, 0xff_0000, 0xff00];
+            let colour = STREAK_COLOR.get(self.players[owner].u32_(4) as usize).copied().unwrap_or(0xff_ffff);
+            let r = self.fx_mut(k);
+            r.or_u32(super::effects::fx::FLAGS, 0x4_0000);
+            r.set_f32(0xd8, 1.0);
+            r.set_f32(0xdc, 2.0);
+            if let Some(n) = self.effects.nodes[k].as_mut() {
+                n.streak = Some(super::effects::Streak { colour, alpha: ((0xff - 0x40) >> 1) as u8, verts: [[0.0; 3]; 4] });
+            }
+        }
         Ok(k as i32)
     }
 

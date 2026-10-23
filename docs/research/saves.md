@@ -20,6 +20,14 @@ ghidra-fe2, ghidra-save2, ghidra-plmodel, ghidra-plmodel2, ghidra-atts.
 - "Quit Game" (0x25) sets `quit_game`; game_main → `init_over` 0x127e70:
   game mode 0x4014, every player `inactivate_player` → `clear_player(k, 1)`.
   Nothing is written: progress since the last save is lost.
+- Soft reset: ControlsUpdate counts soft_reset per port while START and
+  SELECT are both held; CheckSoftReset 0x125238 (game_main in 0x4000 modes,
+  the message-box loops) sets RestartReq 0x24951c past 0x78, and game_main
+  (outside movies) ends everything — music, sounds, menus, the trigger
+  camera, the Tower, every player inactivated, ResetModels — and returns
+  to the title (init_attract_mode(0x8009)); nothing is saved. Native:
+  Game::check_soft_reset, gdl_play's end_game (keyboard Enter + Tab; GUI
+  flow menu-flows-m17-v13 soft-reset, 2026-10-23).
 - "Quit Level" (0x26, not in world 0xc) asks quitlevel_question, then sets
   `quit_level`; once OptionsDone (no menu, no fire scroll) game_main calls
   `abort_player` 0x131b88 for all four players: end_see_thru, kill_got_it,

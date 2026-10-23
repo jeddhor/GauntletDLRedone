@@ -144,3 +144,19 @@ impl Game {
         }
     }
 }
+
+impl Game {
+    /// CheckSoftReset 0x125238 (game_main in game modes with 0x4000,
+    /// ScrollMessageBox and ControllerMessageBox loops): RestartReq once a
+    /// port held START + SELECT long enough. game_main then (outside movies,
+    /// 0x400e) stops the music and sounds, ends the menus, the trigger
+    /// camera and the Tower, inactivates every player, ResetModels and
+    /// init_attract_mode(0x8009): the title, progress since the last save
+    /// lost (the host's end of the game).
+    pub fn check_soft_reset(&mut self) -> bool {
+        if self.controls.soft_reset_held() {
+            self.restart_req = true;
+        }
+        self.restart_req
+    }
+}

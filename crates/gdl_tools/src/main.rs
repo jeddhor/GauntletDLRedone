@@ -393,6 +393,7 @@ impl ReferenceEffects {
             alpha: None,
             ambient: None,
             follow: None,
+            streak: None,
         }
     }
 
@@ -405,7 +406,7 @@ impl ReferenceEffects {
         }
         let f = |o: usize| f32::from_le_bytes(n[o..o + 4].try_into().unwrap());
         let v = |o: usize| [f(o), f(o + 4), f(o + 8)];
-        Some(gdl_core::game::effects::EffectParent { player: 0, local: v(0x30), local_matrix: [v(0), v(0x10), v(0x20)], critter: None })
+        Some(gdl_core::game::effects::EffectParent { player: 0, local: v(0x30), local_matrix: [v(0), v(0x10), v(0x20)], critter: None, enemy: None })
     }
 
     /// A node parented to a critter's MB node (CritterDoSfxSub's
@@ -416,7 +417,7 @@ impl ReferenceEffects {
         let &(c, node) = critter_nodes.get(&par)?;
         let f = |o: usize| f32::from_le_bytes(n[o..o + 4].try_into().unwrap());
         let v = |o: usize| [f(o), f(o + 4), f(o + 8)];
-        Some(gdl_core::game::effects::EffectParent { player: 0, local: v(0x30), local_matrix: [v(0), v(0x10), v(0x20)], critter: Some((c, node)) })
+        Some(gdl_core::game::effects::EffectParent { player: 0, local: v(0x30), local_matrix: [v(0), v(0x10), v(0x20)], critter: Some((c, node)), enemy: None })
     }
 
     fn seed(&self, game: &mut gdl_core::game::Game, items_base: u32, atime: f32, player_node: u32, critter_nodes: &std::collections::HashMap<u32, (usize, Option<usize>)>) {

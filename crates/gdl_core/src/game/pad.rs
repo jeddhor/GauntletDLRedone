@@ -320,6 +320,12 @@ impl Controls {
         }
     }
 
+    /// CheckSoftReset 0x125238's test: a port held START + SELECT for more
+    /// than 0x78 ControlsUpdate passes (soft_reset).
+    pub fn soft_reset_held(&self) -> bool {
+        self.soft_reset.iter().any(|&n| 0x78 < n)
+    }
+
     /// ControlsUpdate 0x104130 (one call per vblank batch; ctrls_initialized).
     pub fn controls_update(&mut self, pads: &[PadStatus; 8]) -> R<()> {
         for (port, pad) in pads.iter().enumerate() {

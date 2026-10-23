@@ -540,6 +540,7 @@ impl Game {
             enemy_wall_hit: None,
             did_action: false,
             stage_playtime: 0,
+            restart_req: false,
             show_path: Default::default(),
             death_touch: false,
             fwrdval: vec![0.0; 34],

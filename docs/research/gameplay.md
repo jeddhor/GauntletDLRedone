@@ -143,6 +143,15 @@ Newly ported from instructions:
 - move_logic28 0x13d310 (C3 generators): hold, face the target and attack
   (0xc/0xe alternating on +0x33c, 0x10 at level ≥ 3, on the +0x334 timer)
   near the camera within +0x314 and ±10 height; within 6 → logic 7.
+- DoEnemyAction 0x1793f8's last block (after AnimateATree took the new
+  action): the GRM (type 0x1b) starts StartEnemyAtkFX 0x17f5e8 — ATK1FX
+  (header 0x56) on 0xc/0xe, ATK2FX (0x57) on 0x10 — parented to its node
+  (SfxSetParent); any other new action but 0xd/0xf/0x11/0x1d/0x20, and
+  kill_enemy / SetEnemyObj, delete the effects parented to it
+  (SfxDeleteParented(+0x70, 0, −1)). Native: Game::start_enemy_atk_fx /
+  delete_enemy_parented with EffectParent::enemy (the record matrix stands
+  for the node, HYPOTHESIS as for players); ported from the instructions,
+  not compared (no GRM in a reference trace; Garm raises them in H4).
 - move_logic31 0x13cbc0 (type 0x1b, the GRM raised by the boss, via
   enemy_fix_ai type 27): xlate31 0x13cb10 lunge on ATTACK1 (+0x2e0 = target
   within 7.5), 30–59-vblank rest after attacks, half-speed creep, then
