@@ -227,6 +227,38 @@ found one unported path (CritterDamage's breakable collision nodes, now
 ported: critters.md). Levels the bot does not finish are not traversal
 evidence either way.
 
+Bot rules added 2026-10-23 (b11/b12), each from a diagnosed failure (maps:
+floors by height, reachable nodes, items and trigger bindings; game_run
+`watch=`/`probe=`/`itemw=` samples of object matrices, floor probes and item
+words):
+- Exit portals: DoExit counts only while the stick is released, so the bot
+  stands still on a portal (+0x884 contact; A1 stood on its exit forever).
+- Ramps: edges steeper than STEP_UP are kept when the midpoint floor lies
+  near the mean height (A1's stair to the raised platform, 2.2 per cell).
+- Gates: closed (not entered) while no key is held; edges pressed against a
+  gate without a key are blocked only until a key is held.
+- Column sampling sweeps down in 8-unit pieces: a long radius-0.3 sweep from
+  far above misses some dynamic floor objects that short sweeps find (E1's
+  doorway, object 825; the player's own floor test is a short sweep, so
+  play is unaffected — noted, not investigated further).
+- The graph is regrown when collision objects moved (runtime flags, node
+  heights and matrices; at most every 300 updates): E1's doors open when
+  the player walks within pad 109's reach (+0xfc 10 + radius), as in the
+  reference (trace-E1-newgame-v1: the doors' world animation starts at
+  vblank 233, item 109 +0xe2 = 1 with the player 11 units away).
+- Stand-on triggers (+0xf4 0x100, lifts): the goal is a node on the bound
+  object (or a child), where the bot then stays.
+- When nothing is reachable, the blocked edges (guesses from stuck events)
+  are forgotten and the plan retried.
+- Labelled preconditions: `--pexp N` gives player 0 the experience of level
+  N through ModifyExp (PlayerUpdateAtts raises the attributes); route hints
+  (tools/bot-routes/<W><L>.json: items, points, waits; GDL_BOT_HINTS=0
+  ignores them).
+
+Found by the bot and fixed in the game logic: J4 (and any level starting on
+a moving platform) left the player behind (player.md "Level start on a
+moving floor").
+
 
 ## Menu flow tests (M17, 2026-10-23)
 

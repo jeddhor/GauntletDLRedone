@@ -36,6 +36,13 @@ const CELL: f32 = 1.5;
 const STEP_UP: f32 = 2.0;
 const DROP: f32 = 12.0;
 const STUCK: usize = 45;
+/// Floor probes for columns and edge midpoints.
+const FLOOR_RADIUS: f32 = 0.3;
+/// Column sweeps go down in pieces of this length: a long radius sweep
+/// misses some dynamic floor objects that short ones find (E1's doorway
+/// floor, object 825, under a sweep from 28 units up; the player's own
+/// floor test is a short sweep).
+const SWEEP: f32 = 8.0;
 const ATTACK_RANGE: f32 = 5.0;
 const NODE_LIMIT: usize = 400_000;
 const HEALTH: usize = 0x1a10;
@@ -43,6 +50,8 @@ const KEYS: usize = 0x1a14;
 
 pub struct Nav {
     pub pts: Vec<V3>,
+    /// The collision object each node's floor belongs to.
+    pub obj: Vec<usize>,
     pub adj: Vec<Vec<usize>>,
     /// Edges the player-like wall test rejects (kept at a higher cost).
     hard: HashSet<(usize, usize)>,
@@ -71,7 +80,7 @@ impl Nav {
     /// previous graph reached, so an isolated spot on a lift does not lose
     /// the known level).
     pub fn build(c: &mut CollisionWorld, seeds: &[V3], bottom: f32, top: f32, radius: f32) -> Nav {
-        let mut nav = Nav { pts: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top, bottom, radius, reached: 0 };
+        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top, bottom, radius, reached: 0 };
         let mut queue = VecDeque::new();
         let mut seen = Vec::new();
         for &p in seeds {
@@ -165,16 +174,23 @@ impl Nav {
         let (x, z) = centre(k);
         let mut out = Vec::new();
         let mut y = self.top;
-        for _ in 0..16 {
+        let mut sweeps = 0;
+        while out.len() < 16 && sweeps < 400 {
+            sweeps += 1;
             let depth = y - self.bottom + 2.0;
             if depth <= 0.0 {
                 break;
             }
-            let Ok((hit, _)) = c.floor_collide(0.3, 0.0, -depth, [x, y, z], true, 0) else { break };
-            let Some(h) = hit.solid else { break };
+            let seg = depth.min(SWEEP);
+            let Ok((hit, _)) = c.floor_collide(FLOOR_RADIUS, 0.0, -seg, [x, y, z], true, 0) else { break };
+            let Some(h) = hit.solid else {
+                y -= seg - 0.1;
+                continue;
+            };
             let fy = h.position[1];
             if out.last().is_none_or(|&l: &usize| 2.0 <= self.pts[l][1] - fy) {
                 self.pts.push([x, fy, z]);
+                self.obj.push(h.object);
                 self.adj.push(Vec::new());
                 out.push(self.pts.len() - 1);
             }
@@ -219,7 +235,7 @@ impl Nav {
         }
         let mid = [(a[0] + b[0]) * 0.5, a[1].max(b[1]) + 1.0, (a[2] + b[2]) * 0.5];
         let depth = mid[1] - a[1].min(b[1]) + 1.0;
-        if !matches!(c.floor_collide(0.3, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some()) {
+        if !matches!(c.floor_collide(FLOOR_RADIUS, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some()) {
             return None;
         }
         Some(Self::edge_ok(c, a, b, radius))
@@ -250,7 +266,7 @@ impl Nav {
         let mid = [(a[0] + b[0]) * 0.5, a[1].max(b[1]) + 1.0, (a[2] + b[2]) * 0.5];
         let h = mid[1];
         let depth = h - a[1].min(b[1]) + 1.0;
-        matches!(c.floor_collide(0.3, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some())
+        matches!(c.floor_collide(FLOOR_RADIUS, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some())
     }
 
     /// Every column's floors over the world's x/z bounds (diagnostic maps).
@@ -277,7 +293,7 @@ impl Nav {
 
     /// Why each edge from the node at `p` to its neighbour columns passes or fails (diagnostics).
     pub fn explain(c: &mut CollisionWorld, p: V3, radius: f32, top: f32, bottom: f32) -> Vec<serde_json::Value> {
-        let mut nav = Nav { pts: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top, bottom, radius, reached: 0 };
+        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top, bottom, radius, reached: 0 };
         let Some(n) = nav.locate(c, p) else { return Vec::new() };
         let a = nav.pts[n];
         let k = key(a[0], a[2]);
@@ -294,7 +310,7 @@ impl Nav {
                 let hit = match &wall { Ok((w, _)) => w.solid.map(|h| (h.object, format!("{:#x}", c.runtime_flags[h.object]), h.position)), Err(_) => None };
                 let mid = [(a[0] + b[0]) * 0.5, h, (a[2] + b[2]) * 0.5];
                 let depth = h - a[1].min(b[1]) + 1.0;
-                let floor = matches!(c.floor_collide(0.3, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some());
+                let floor = matches!(c.floor_collide(FLOOR_RADIUS, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some());
                 out.push(serde_json::json!({"from": a, "to": b, "dy": dy, "wall": hit, "mid_floor": floor, "class": Self::edge_class(c, a, b, radius)}));
             }
         }
@@ -395,6 +411,10 @@ pub struct Bot {
     at: usize,
     goal: Option<Goal>,
     blocked: HashSet<(Place, Place)>,
+    /// Edges into a gate the bot pressed against without a key: blocked
+    /// until a key is held (a node inside a gate's closed area may route
+    /// through it otherwise).
+    gate_blocked: HashSet<(Place, Place)>,
     /// Update of the last rebuild for want of a goal (rate limit).
     idle_rebuild_at: usize,
     given_up: HashSet<usize>,
@@ -404,6 +424,8 @@ pub struct Bot {
     progress: (usize, V3),
     attack_until: usize,
     start_health: f32,
+    /// Player 0's level (+0x2ac0) when the bot started (pexp precondition).
+    start_level: i32,
     /// Standing on a reached trigger: (since, y then, last y change).
     wait: Option<(usize, f32, usize)>,
     pub assists: u32,
@@ -448,12 +470,13 @@ impl Bot {
     pub fn new(g: &Game) -> Bot {
         let start = g.players[0].v3(0x50);
         let mut b = Bot {
-            nav: Nav { pts: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top: 0.0, bottom: 0.0, radius: 0.0, reached: 0 },
+            nav: Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top: 0.0, bottom: 0.0, radius: 0.0, reached: 0 },
             collision_at_build: 0,
             path: Vec::new(),
             at: 0,
             goal: None,
             blocked: HashSet::new(),
+            gate_blocked: HashSet::new(),
             idle_rebuild_at: 0,
             given_up: HashSet::new(),
             visited_triggers: HashSet::new(),
@@ -461,6 +484,7 @@ impl Bot {
             progress: (0, start),
             attack_until: 0,
             start_health: g.players[0].f32_(HEALTH),
+            start_level: g.players[0].i32_(0x2ac0),
             wait: None,
             assists: 0,
             log: Vec::new(),
@@ -504,6 +528,10 @@ impl Bot {
         for v in &c.node_rot {
             v.map(|m| m.map(|r| r.map(f32::to_bits))).hash(&mut h);
         }
+        // World animations' node matrices (doors, rotating platforms).
+        for v in &c.node_local {
+            v.map(|m| m.map(|r| r.map(f32::to_bits))).hash(&mut h);
+        }
         h.finish()
     }
 
@@ -525,6 +553,25 @@ impl Bot {
     fn item_nodes(&self, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
         let mut out = Vec::new();
         for &s in slots {
+            // A trigger that counts only players standing on its bound object
+            // (+0xf4 0x100, e.g. lifts): the nearest node on that object (or a
+            // child of it) within the trigger's reach.
+            let r = &g.items.records[s];
+            if item_kind(g, s).0 == 5
+                && r.u16_(0xf4) & 0x100 != 0
+                && let Some(b) = r.u32_(0xf0).checked_sub(1).map(|o| o as usize)
+            {
+                let q = r.v3(0x40);
+                let reach = r.f32_(0xfc).max(r.f32_(0xe8)).max(2.5) + 1.5;
+                let on = |o: usize| o == b || g.collision.objects.get(o).is_some_and(|c| c.parent == Some(b));
+                let best = (0..self.nav.pts.len())
+                    .filter(|&n| !self.nav.adj[n].is_empty() && on(self.nav.obj[n]) && dist_xz(self.nav.pts[n], q) < reach)
+                    .min_by(|&a, &c| dist_xz(self.nav.pts[a], q).total_cmp(&dist_xz(self.nav.pts[c], q)));
+                if let Some(n) = best {
+                    out.push((s, n));
+                }
+                continue;
+            }
             let q = g.items.records[s].v3(0x40);
             let k = key(q[0], q[2]);
             let mut best: Option<(f32, usize)> = None;
@@ -556,7 +603,14 @@ impl Bot {
     fn choose(&mut self, f: usize, g: &mut Game) {
         self.replans += 1;
         let p = g.players[0].v3(0x50);
-        if self.force_rebuild || self.nav.locate_cached(p, &HashSet::new()).is_none() {
+        // Objects moved since the graph was built (doors swung open by a
+        // trigger the player brushed, platforms): regrow it, at most every
+        // 300 updates.
+        let moved = Self::collision_state(g) != self.collision_at_build && (self.idle_rebuild_at == 0 || 300 <= f - self.idle_rebuild_at);
+        if moved {
+            self.idle_rebuild_at = f.max(1);
+        }
+        if self.force_rebuild || moved || self.nav.locate_cached(p, &HashSet::new()).is_none() {
             self.force_rebuild = false;
             self.rebuild(g);
         }
@@ -566,6 +620,16 @@ impl Bot {
         if Self::collision_state(g) != self.collision_at_build && (self.idle_rebuild_at == 0 || 300 <= f - self.idle_rebuild_at) {
             self.idle_rebuild_at = f.max(1);
             self.rebuild(g);
+            if self.plan(f, g) {
+                return;
+            }
+        }
+        // Nothing reachable: the edges blocked after stuck events may have
+        // cut the bot off (they are guesses); forget them and try again.
+        if !self.blocked.is_empty() || !self.bad_nodes.is_empty() {
+            self.log.push(serde_json::json!({"update": f, "unblocked": self.blocked.len()}));
+            self.blocked.clear();
+            self.bad_nodes.clear();
             if self.plan(f, g) {
                 return;
             }
@@ -607,6 +671,10 @@ impl Bot {
     /// The next goal on the current graph; false when none is reachable.
     fn plan(&mut self, f: usize, g: &mut Game) -> bool {
         let avoid = self.obstacle_nodes(g);
+        if 0 < g.players[0].i32_(KEYS) {
+            self.gate_blocked.clear();
+        }
+        let blocked: HashSet<(Place, Place)> = self.blocked.union(&self.gate_blocked).copied().collect();
         let p = g.players[0].v3(0x50);
         let Some(here) = self.nav.locate_cached(p, &self.bad_nodes).or_else(|| self.nav.locate_cached(p, &HashSet::new())) else {
             return false;
@@ -622,7 +690,7 @@ impl Bot {
                     continue;
                 }
                 let targets = self.item_nodes(g, &[s]);
-                let path = targets.first().and_then(|&(_, n)| self.nav.path(here, &|m| m == n, &self.blocked, &avoid));
+                let path = targets.first().and_then(|&(_, n)| self.nav.path(here, &|m| m == n, &blocked, &avoid));
                 // Not reachable yet: the ordinary goals (keys open gates,
                 // triggers move floors) until the next re-plan.
                 let Some(path) = path else { break };
@@ -640,7 +708,7 @@ impl Bot {
                     continue;
                 }
                 let goal = self.nav.locate_cached(q, &HashSet::new());
-                let path = goal.and_then(|n| self.nav.path(here, &|m| m == n, &self.blocked, &avoid));
+                let path = goal.and_then(|n| self.nav.path(here, &|m| m == n, &blocked, &avoid));
                 let Some(path) = path else { break };
                 self.goal = Some(Goal::Point(self.hint_at));
                 self.path = path;
@@ -697,7 +765,7 @@ impl Bot {
                 continue;
             }
             let goal_nodes: HashMap<usize, usize> = targets.iter().map(|&(s, n)| (n, s)).collect();
-            if let Some(path) = self.nav.path(here, &|n| goal_nodes.contains_key(&n), &self.blocked, &avoid) {
+            if let Some(path) = self.nav.path(here, &|n| goal_nodes.contains_key(&n), &blocked, &avoid) {
                 let slot = goal_nodes[path.last().unwrap()];
                 self.goal = Some(Goal::Item(slot));
                 self.path = path;
@@ -719,7 +787,7 @@ impl Bot {
                     d(a).total_cmp(&d(b))
                 });
             let near = |n: usize| foes.iter().any(|q| dist_xz(self.nav.pts[n], *q) < 4.0) || Some(n) == close;
-            if let Some(path) = self.nav.path(here, &near, &self.blocked, &avoid) {
+            if let Some(path) = self.nav.path(here, &near, &blocked, &avoid) {
                 let n = *path.last().unwrap();
                 self.goal = Some(Goal::Explore(n));
                 self.path = path;
@@ -733,7 +801,7 @@ impl Bot {
             let q = self.nav.pts[n];
             !self.nav.adj[n].is_empty() && !self.visited_cols.contains(&key(q[0], q[2])) && 3.0 < dist_xz(q, p)
         };
-        if let Some(path) = self.nav.path(here, &unvisited, &self.blocked, &avoid) {
+        if let Some(path) = self.nav.path(here, &unvisited, &blocked, &avoid) {
             let n = *path.last().unwrap();
             self.goal = Some(Goal::Explore(n));
             self.path = path;
@@ -857,6 +925,12 @@ impl Bot {
                 // a blocked edge that would outlast the next key.
                 let at_gate = (0..g.items.records.len())
                     .any(|s| g.items.records[s].active() && item_kind(g, s).0 == 7 && dist_xz(g.items.records[s].v3(0x40), p) < 4.0 && (g.items.records[s].v3(0x40)[1] - p[1]).abs() < 3.0);
+                if at_gate
+                    && g.players[0].i32_(KEYS) < 1
+                    && let (Some(&a), Some(&b)) = (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at))
+                {
+                    self.gate_blocked.insert((self.nav.place(a), self.nav.place(b)));
+                }
                 if !at_gate
                     && let (Some(&a), Some(&b)) = (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at))
                 {
@@ -945,6 +1019,8 @@ impl Bot {
         }
         let target = match (self.path.get(self.at), self.goal) {
             (Some(&n), _) => Some(self.nav.pts[n]),
+            // On a stand-on trigger's object: stay at the path's end.
+            (None, Some(Goal::Item(s))) if item_kind(g, s).0 == 5 && g.items.records[s].u16_(0xf4) & 0x100 != 0 => self.path.last().map(|&n| self.nav.pts[n]),
             (None, Some(Goal::Item(s))) => Some(g.items.records[s].v3(0x40)),
             (None, Some(Goal::Explore(n))) => self.nav.pts.get(n).copied(),
             (None, Some(Goal::Point(h))) => self.hints.get(h).and_then(|x| x.goto),
@@ -1074,7 +1150,7 @@ impl Bot {
     /// All floors of the level at the current collision state (bot=2).
     pub fn floors(&mut self, g: &Game, min: V3, max: V3) -> Vec<V3> {
         let mut c = g.collision.clone();
-        let mut nav = Nav { pts: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top: max[1] + 5.0, bottom: min[1] - 5.0, radius: 0.0, reached: 0 };
+        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top: max[1] + 5.0, bottom: min[1] - 5.0, radius: 0.0, reached: 0 };
         nav.sample_all(&mut c, min, max).into_iter().map(|p| p.map(|v| (v * 10.0).round() / 10.0)).collect()
     }
 
@@ -1106,7 +1182,7 @@ impl Bot {
             "nav_edges": edges, "items": marks, "all_items": all_items, "triggers": triggers,
             "critters": g.critters.iter().flatten().map(|c| serde_json::json!({"pos": c.rec.v3(0x40), "state": c.rec.i32_(8), "health": c.rec.f32_(0x4f4)})).collect::<Vec<_>>(),
             "scope": "TRAVERSAL BOT (gdl_tools bot.rs): port 0 driven through the ordinary pad path; health assist is a DEBUG shortcut",
-            "start": self.start, "player_radius": g.players[0].f32_(0x828), "collision_offset": g.players[0].f32_(0x820), "collision_height": g.players[0].f32_(0x82c), "nav_nodes": self.nav.pts.len(), "reachable_nodes": self.nav.reached,
+            "start": self.start, "start_level": self.start_level, "player_radius": g.players[0].f32_(0x828), "collision_offset": g.players[0].f32_(0x820), "collision_height": g.players[0].f32_(0x82c), "nav_nodes": self.nav.pts.len(), "reachable_nodes": self.nav.reached,
             "static_exit_reachable": self.static_exit_reachable, "exit_update": self.exit_update, "exit_wave": self.exit_wave.map(|w| format!("{w:#x}")),
             "health_assists": self.assists, "hints": self.hints.len(), "hints_done": self.hint_at, "replans": self.replans, "rebuilds": self.rebuilds, "given_up": self.given_up.iter().collect::<Vec<_>>(),
             "log": self.log,

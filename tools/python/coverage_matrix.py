@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Content coverage matrix (M14) from the private reports.
 
-  coverage_matrix.py SWEEP_LOG [SWEEP_LOG ...] REGRESSION_LOG NEW_REPORT.json
+  coverage_matrix.py [--traversal TRAVERSAL.json] SWEEP_LOG [SWEEP_LOG ...] REGRESSION_LOG NEW_REPORT.json
 
 Per level (play-config.json, all 61): the pad sweep's outcome (game_run
 --pads, 1400 updates: unsupported paths or OK), the whole-update replays
@@ -12,7 +12,9 @@ definition kind across the levels (enemy-logic-scan-v1.json; world-inspect
 item definitions): the levels using it and whether any replayed level uses
 it. Research report; the status words are: supported (runs, no unported
 path), compared (also in a passing reference replay), blocked (an unported
-path or failure).
+path or failure). With --traversal (traversal_report.py), each level also
+carries the traversal bot's result: ended (start to the level's end by
+native play) or the closest approach to an exit.
 """
 import collections
 import glob
@@ -62,7 +64,12 @@ def regression(path):
 def main():
     if len(sys.argv) < 4:
         raise SystemExit(__doc__)
-    sweeps, reg, target = sys.argv[1:-2], sys.argv[-2], pathlib.Path(sys.argv[-1])
+    args = sys.argv[1:]
+    traversal = {}
+    if args[:1] == ['--traversal']:
+        traversal = json.loads(pathlib.Path(args[1]).read_text())['levels']
+        args = args[2:]
+    sweeps, reg, target = args[:-2], args[-2], pathlib.Path(args[-1])
     if target.exists():
         raise SystemExit(f'{target} exists')
     cfg = json.loads((R / 'play-config.json').read_text())
@@ -75,8 +82,11 @@ def main():
         replays = rep.get(code, [])
         all_equal = bool(replays) and all(r['equal_updates'] == r['updates'] for r in replays)
         status = 'blocked' if sw.get(code, 'missing') != 'OK' else ('compared' if replays else 'supported')
+        t = traversal.get(code)
         levels.append(dict(code=code, world=lv['world'], sweep=sw.get(code, 'missing'), replays=replays,
-                           replays_all_equal=all_equal, scene_compared=code in scenes, status=status))
+                           replays_all_equal=all_equal, scene_compared=code in scenes, status=status,
+                           traversal=None if t is None else dict(ended=t.get('ended'), end_update=t.get('end_update'), end_wave=t.get('end_wave'),
+                                                                 closest_exit_ratio=t.get('closest_exit_ratio'), legend_item_held=t.get('legend_item_held'))))
     # Enemy type/AI pairs and item kinds per level.
     scan = json.loads((R / 'enemy-logic-scan-v1.json').read_text())['levels']
     compared_levels = {l['code'] for l in levels if l['replays']}
@@ -106,7 +116,8 @@ def main():
     summary = dict(levels=len(levels), levels_supported=sum(l['status'] != 'blocked' for l in levels),
                    levels_compared=sum(l['status'] == 'compared' for l in levels), levels_scene_compared=sum(l['scene_compared'] for l in levels),
                    enemy_type_ai=len(enemy), enemy_type_ai_compared=sum(e['compared'] for e in enemy),
-                   item_kind_subtypes=len(items), item_kind_subtypes_compared=sum(i['compared'] for i in items))
+                   item_kind_subtypes=len(items), item_kind_subtypes_compared=sum(i['compared'] for i in items),
+                   levels_traversed=sum(1 for l in levels if l['traversal'] and l['traversal']['ended']))
     with target.open('x') as f:
         json.dump(dict(summary=summary, levels=levels, enemy_type_ai=enemy, item_kinds=items), f, indent=1)
     print(json.dumps(summary))

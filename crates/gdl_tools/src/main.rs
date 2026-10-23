@@ -1986,6 +1986,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             // DEBUG: player 0's level (+0x2ac0).
             game.players[0].set_i32(0x2ac0, v.parse()?);
         }
+        if let Some(v) = opts.get("pexp") {
+            // DEBUG (a labelled campaign precondition): player 0 gains the
+            // experience of level N through ModifyExp, so the level and the
+            // attributes rise by the game's own PlayerUpdateAtts.
+            let l: i32 = v.parse()?;
+            let need = gdl_core::game::progress::level_to_exp(l) - game.players[0].i32_(0x1a1c);
+            if 0 < need {
+                game.modify_exp(0, need).map_err(|e| e.0)?;
+            }
+        }
         if opts.contains_key("legend") {
             // DEBUG: player 0 holds this world's legend item (class word +0xcf4);
             // GauntWorldInit's check then runs as at a level start.
@@ -2039,6 +2049,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 game.place_player(0, loc.position, loc.rotation[1]).map_err(|e| e.0)?;
                 game.players[0].set_u32(0x1e0, 0);
                 game.players[0].set_u32(0x1e4, 0);
+                // +0x100 (do_players' previous state) as a level entered
+                // through an exit leaves it: 5 (the reference J4 start,
+                // trace-J4-start-v2); the fixture's mid-play 1 would keep
+                // the first PlayerMotion on its standing path.
+                game.players[0].set_i32(0x100, 5);
             }
             game.init_player_anim(0).map_err(|e| e.0)?;
             // players=N (2..4): copies of player 0 (index +0 and colour +4 =
@@ -3310,11 +3325,14 @@ fn run() -> Result<(), Box<dyn Error>> {
                 if f % 15 == 0 || f + 1 == frames || (opts.contains_key("weapon") && f % 3 == 0) {
                     let r = &game.players[0];
                     // watch=OBJ,...: those collision objects' matrix translations.
-                    let watch: Vec<_> = opts.get("watch").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).map(|o| serde_json::json!([o, game.collision.object_matrix(o).ok().map(|m| m[3])])).collect()).unwrap_or_default();
+                    let watch: Vec<_> = opts.get("watch").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).map(|o| serde_json::json!([o, game.collision.object_matrix(o).ok().map(|m| m[3]), game.collision.object_matrix(o).ok().map(|m| [m[0], m[1], m[2]])])).collect()).unwrap_or_default();
                     // probe=X:Z;...: the highest floor there (object, y), probed from 60 above the player.
-                    let probe: Vec<_> = opts.get("probe").map(|w| w.split(';').filter_map(|q| { let v: Vec<f32> = q.split(':').filter_map(|t| t.parse().ok()).collect(); (v.len() == 2).then(|| [v[0], v[1]]) })
-                        .map(|q| { let mut c = game.collision.clone(); let top = r.v3(0x50)[1] + 60.0; let h = c.floor_collide(0.0, 0.0, -120.0, [q[0], top, q[1]], true, 0).ok().and_then(|(c, _)| c.solid); serde_json::json!([q, h.map(|h| (h.object, h.position[1]))]) }).collect()).unwrap_or_default();
-                    samples.push(serde_json::json!({"frame":f,"watch":watch,"probe":probe,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
+                    // X:Z[:TOP:LENGTH:RADIUS] (default: from 60 above the player, 120 down, radius 0).
+                    let probe: Vec<_> = opts.get("probe").map(|w| w.split(';').filter_map(|q| { let v: Vec<f32> = q.split(':').filter_map(|t| t.parse().ok()).collect(); (v.len() == 2 || v.len() == 5).then_some(v) })
+                        .map(|q| { let mut c = game.collision.clone(); let (top, len, rad) = if q.len() == 5 { (q[2], q[3], q[4]) } else { (r.v3(0x50)[1] + 60.0, 120.0, 0.0) }; let h = c.floor_collide(rad, 0.0, -len, [q[0], top, q[1]], true, 0).ok().and_then(|(c, _)| c.solid); serde_json::json!([q, h.map(|h| (h.object, h.position[1]))]) }).collect()).unwrap_or_default();
+                    // itemw=SLOT,...: those item records' +0xd8, +0xde, +0xe1, +0xe2.
+                    let itemw: Vec<_> = opts.get("itemw").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.items.records.len()).map(|o| { let ir = &game.items.records[o]; serde_json::json!([o, format!("{:#x}", ir.u16_(0xd8)), ir.i8_(0xde), ir.u8_(0xe1), ir.u8_(0xe2), ir.f32_(0xfc), ir.f32_(0xe8), ir.v3(0x60)]) }).collect()).unwrap_or_default();
+                    samples.push(serde_json::json!({"frame":f,"watch":watch,"probe":probe,"itemw":itemw,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
                         "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),"floor_y":r.f32_(0x88c),"water_y":r.f32_(0x8a4),
                         "turbo":r.f32_(0x800),"weapon_flags":r.u32_(0x130),"events":r.u32_(0x8d8),"levels":game.controls.control[0].u32_(4),"floor":r.u32_(0x89c),
                         "legend":r.i32_(0x80c),"quest":game.globals.quest_item_state,"boss_dead":game.globals.boss_is_dead,

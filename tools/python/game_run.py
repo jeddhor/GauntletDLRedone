@@ -44,6 +44,7 @@ def main():
     ap.add_argument('--script')
     ap.add_argument('--legend', action='store_true', help='DEBUG: player 0 holds the legend item')
     ap.add_argument('--plevel', help='DEBUG: player 0 level')
+    ap.add_argument('--pexp', help='DEBUG precondition: player 0 gains the experience of level N (ModifyExp, PlayerUpdateAtts)')
     ap.add_argument('--quest', help='DEBUG: QuestItemState 2 at this update')
     ap.add_argument('--boss-kill', help='DEBUG: lethal CritterDamage on the boss at this update')
     ap.add_argument('--replay', help='per-update replay of a reference_trace --player trace')
@@ -59,6 +60,7 @@ def main():
     ap.add_argument('--teleport', help='DEBUG: start player 0 at x,y,z')
     ap.add_argument('--watch', help='collision objects OBJ,... whose matrix translations are sampled')
     ap.add_argument('--probe', help='X:Z;... points whose highest floor (object, y) is sampled')
+    ap.add_argument('--itemw', help='item slots SLOT,... whose +0xd8/+0xde/+0xe1/+0xe2 are sampled')
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
     ap.add_argument('--fall', help='DEBUG: player 0 drops below the world bottom at this update')
     ap.add_argument('--players', help='players in play (copies of player 0 without input, placed by load_player_geo)')
@@ -157,6 +159,8 @@ def main():
         cmd += [f'watch={a.watch}']
     if a.probe:
         cmd += [f'probe={a.probe}']
+    if a.itemw:
+        cmd += [f'itemw={a.itemw}']
     if a.players:
         cmd += [f'players={a.players}']
     if a.spawn:
@@ -175,6 +179,8 @@ def main():
         cmd += ['legend=1']
     if a.plevel:
         cmd += [f'plevel={a.plevel}']
+    if a.pexp:
+        cmd += [f'pexp={a.pexp}']
     if a.quest:
         cmd += [f'quest={a.quest}']
     if a.boss_kill:
