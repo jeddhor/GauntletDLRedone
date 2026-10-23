@@ -372,6 +372,17 @@ struct Front {
     /// The Control Style screen's tables.
     controls_menu: Option<gdl_core::game::optmenu::ControlsMenu>,
     menu_clock: (Option<(&'static str, usize)>, f32),
+    /// What end_optmenu leaves behind: menus fading out and the fire scroll
+    /// over a closed menu's background (main pauses the game until both
+    /// are done).
+    ending: MenuEnding,
+    /// AudioFX requests of the menus (id, volume, priority), drained by
+    /// play_menu_cues.
+    sfx: Vec<(i32, i32, i32)>,
+    /// The audio menu's vblank remainder and snd.286 0x23d438 (the SFX
+    /// slider's two samples).
+    audio_clock: f32,
+    vol_sfx_samples: [i32; 2],
     base: Base,
     /// The attract sequence (init_attract_mode), its running entry and the
     /// entry's blits; SONY, GROUP1 and CREDITS as front texture sets 3–5.
@@ -412,6 +423,31 @@ enum AttractRun {
 /// Front-end text (menus) drawn over everything.
 #[derive(Component)]
 struct FrontText;
+/// end_optmenu 0x10b390's leftovers. A menu with flag 0x20 that is left
+/// (pushed under another, popped, or closed) keeps drawing through
+/// finish_optmenu 0x10b288 with +0x70 counting vblanks up to
+/// OPTMENU_FINISH_FRAMES, without its background (+0xdc), LOGO_BURN
+/// (+0xe0) or icon (+0x88). A pop to a menu without a background, or the
+/// last menu closed (end_optmenu(−1, 0) / (−1, −1)), starts the fire scroll
+/// over the background (StartFireScroll(1.0, +0x44, −1, +0x48..+0x54)),
+/// served by DoOptions (ServeFireScroll: 21 frames of two vblanks,
+/// ClearAllPlayerControls(2) each). DoOptions returns nonzero meanwhile,
+/// so main pauses the game. end_all_optmenus (end_optmenu(−1, 1): Manage
+/// Character, Shop) removes menus at once.
+#[derive(Default)]
+struct MenuEnding {
+    /// (record, selected entry, its frame count +0x7c, +0x70).
+    finishing: Vec<(gdl_core::game::optmenu::OptMenu, usize, i32, f32)>,
+    /// The burning background (texture name, rectangle) and its vblanks.
+    burn: Option<(String, [i32; 4], f32)>,
+}
+
+impl MenuEnding {
+    fn active(&self) -> bool {
+        !self.finishing.is_empty() || self.burn.is_some()
+    }
+}
+
 /// The native text menus' dark panel (hidden under original menus).
 #[derive(Component)]
 struct FrontPanel;
@@ -1173,7 +1209,8 @@ fn apply_material_requests(
 /// subtree each frame by DoTexModNode: frame-base ≥ 0 swaps texture record
 /// `target` for frame base + clamp((frame − start) / divisor, 0, count − 1)
 /// (MBTreeSetAltTex); −4 fades in and −5 out over `count` frames from
-/// `start` (DoTexFadeSub → MBTreeSetAlpha). Scrolls (−2/−3) are not ported.
+/// `start` (DoTexFadeSub → MBTreeSetAlpha); −2/−3 scroll U or V
+/// (DoTexScrollSub, request_tree_texmods).
 #[derive(Clone)]
 struct NodeTexMod {
     subtree: Vec<usize>,
@@ -2032,9 +2069,14 @@ fn ui_trace(front: Option<Res<Front>>, screen: Option<Res<Screen>>, ui: Res<Ui>,
         if s.movie.is_some() { v.push("movie") }
         if s.message_box.is_some() { v.push("message_box") }
         if s.flyby.is_some() { v.push("flyby") }
+        if s.game.saver.active { v.push("saver") }
         format!("{} world {} level {}", v.join("+"), s.game.globals.cur_world, s.game.globals.cur_level)
     });
-    let line = format!("{screen} paused={} {page} | {modal}", ui.paused);
+    let mut line = format!("{screen} paused={} {page} | {modal}", ui.paused);
+    if let Some(f) = front.as_ref().filter(|f| f.ending.active()) {
+        // end_optmenu's leftovers: fading menus and the fire scroll.
+        line += &format!(" | ending finish {}{}", f.ending.finishing.len(), if f.ending.burn.is_some() { " burn" } else { "" });
+    }
     if line != state.1 {
         state.1 = line.clone();
         use std::io::Write;
@@ -2764,7 +2806,10 @@ struct TexModState {
 
 /// InitTexMod 0x110f20 for the level package: frame modifiers resolve their
 /// frame base (+0x48, or by name for −1: MBOX_FindTexture + MBCopyTexture);
-/// −2/−3 become texture shifts; fades (−4/−5) and −6 are not ported.
+/// −2/−3 become texture shifts. Fades (−4/−5) occur on the disc only in
+/// tree-owned records (owner ≥ 0: ITEMS/LEVELL, WEAPONS; drawn per node by
+/// request_tree_texmods) and −6 in none, so the owner −1 list has no
+/// such entries.
 fn spawn_texmods(commands: &mut Commands, anim: &[u8], set: &gdl_client::MaterialSet) {
     let list = gdl_formats::animation::texmods(anim).unwrap_or_default();
     spawn_texmod_list(commands, &list, &set.label_index, &set.record_images, &[]);
@@ -3508,6 +3553,7 @@ fn simulate(
     time: Res<Time>,
     (mut harness, mut exit): (ResMut<TestHarness>, MessageWriter<AppExit>),
 ) {
+    let closing = front.ending.active();
     if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started {
         return;
     }
@@ -3663,17 +3709,57 @@ fn simulate(
             sim.message_box = Some(sb);
         }
     }
-    if ui.paused || sim.message_box.is_some() {
+    // main: ScreenSaver before DoOptions (not inside ScrollMessageBox's
+    // loop); while it runs the game halts in its own loop.
+    if sim.message_box.is_none() {
+        let vb = sim.game.globals.vb_elapsed;
+        let r = if sim.game.saver.active {
+            sim.game.screen_saver_frame(vb, &ports).map(|_| true)
+        } else {
+            sim.game.screen_saver_check(vb)
+        };
+        match r {
+            Ok(true) => {
+                // AudioStopAll / AudioStreamStop on the host's voices.
+                if sim.game.saver.active && let Some(a) = audio.as_mut() && a.stream_playing() {
+                    a.stop_all();
+                }
+                let new: Vec<Event> = sim.game.events.drain(..).collect();
+                play_audio(&mut audio, &new);
+                return;
+            }
+            Ok(false) => {}
+            Err(e) => sim.error = Some(format!("screen saver: {}", e.0)),
+        }
+    }
+    if ui.paused || closing || sim.message_box.is_some() {
         // main keeps running AudioQueUpdate / AudioPoll (DoOptions,
         // ScrollMessageBox): queued lines go on while the game waits.
         let vb = sim.game.globals.vb_elapsed;
+        if ui.paused && gdl_client::menu::page_record(&front.menu.page).is_some() {
+            // DoOptions with a menu up: LowerBGMusic(0.1, −1) (the music
+            // fades out), in the audio menu LowerBGMusic(0, 1).
+            if matches!(front.menu.page, gdl_client::menu::Page::Audio { .. }) {
+                sim.game.lower_bg_music(0.0, 1.0);
+            } else {
+                sim.game.lower_bg_music(0.1, -1.0);
+            }
+        }
+        // game_main runs BGMusicUpdate while paused (mode 0x4010);
+        // ScrollMessageBox runs it in its loop.
+        if sim.message_box.is_some() || sim.game.globals.game_mode == 0x4010 {
+            sim.game.bg_music_update();
+        }
         sim.game.main_audio(vb);
-        if !ui.paused {
+        if !ui.paused && !closing {
             step_message_box(&mut sim, &ports, time.delta_secs());
         } else if let Err(e) = sim.game.update_controls(&ports) {
             // DoOptions reads PlayerControl each frame, so the press that
             // closes a menu is an old level when the game resumes.
             sim.error = Some(format!("controls: {}", e.0));
+        } else if front.ending.burn.is_some() {
+            // ServeFireScroll: ClearAllPlayerControls(2) per frame.
+            let _ = sim.game.controls.clear_all_player_controls(2);
         }
         let new: Vec<Event> = sim.game.events.drain(..).collect();
         play_audio(&mut audio, &new);
@@ -3881,6 +3967,14 @@ fn simulate(
         r.set_f32(0x15c, 0.0);
         r.set_u32(0x160, f);
     }
+    // DEBUG: GDL_DEBUG_SAVER=<vblanks> starts the screen saver's count at
+    // 36000 − vblanks once at update 600 (the original's AuxLevels
+    // 0x100000000 starts it at once). Not a game feature.
+    if sim.updates == 600
+        && let Some(n) = std::env::var("GDL_DEBUG_SAVER").ok().and_then(|v| v.parse::<i32>().ok())
+    {
+        sim.game.saver.timer = 36000 - n;
+    }
     // DEBUG: GDL_DEBUG_FX=1 logs the live effect slots every 10 updates.
     if std::env::var("GDL_DEBUG_FX").is_ok() && sim.updates.is_multiple_of(10) {
         let g = &sim.game;
@@ -3978,7 +4072,6 @@ fn simulate(
                     }
                 }
             }
-            Event::CameraRequest { kind, .. } => sim.last_event = format!("camera: {kind} (trigger cameras not ported yet)"),
             _ => {}
         }
     }
@@ -5139,6 +5232,16 @@ impl MenuIcon {
 
 /// The icon's offscreen view: render layer, target and parts.
 const ICON_LAYER: usize = 2;
+/// The screen saver's weapons: the scene camera renders only this layer
+/// while ScreenSaverStart has hidden every node.
+const SAVER_LAYER: usize = 3;
+
+/// A screen-saver weapon's root (ssave_weap index) and its tree parts.
+#[derive(Component)]
+struct SaverNode(usize);
+/// POWERUPS' SAVER_AXE / SAVER_HAM / SAVER_SWD / SAVER_WND (tree, timing).
+#[derive(Resource, Default)]
+struct SaverTrees([Option<(usize, i16)>; 4]);
 #[derive(Component)]
 struct MenuIconNode;
 #[derive(Component)]
@@ -5167,6 +5270,31 @@ fn setup_menu_icon(
     let pkg = &front.powerups_pkg;
     let Some((tree_index, tree)) = pkg.anim.as_ref().and_then(|a| a.trees.iter().enumerate().find(|(_, t)| t.label == "ICON_ARROW")) else { return };
     let lib = build_library(pkg, &mut meshes, &mut images, &mut materials);
+    // ScreenSaverCreateWeap's trees (AtreeMatch(powerup_anim, ssave_desc[k])).
+    let mut saver = SaverTrees::default();
+    let saver_layer = bevy::camera::visibility::RenderLayers::layer(SAVER_LAYER);
+    for (k, name) in gdl_core::game::saver::TREES.iter().enumerate() {
+        let Some((ti, t)) = pkg.anim.as_ref().and_then(|a| a.trees.iter().enumerate().find(|(_, t)| t.label == *name)) else { continue };
+        let mut model = Vec::new();
+        for node in &t.nodes {
+            tree_node_model(pkg, &lib, t, node, Vec3::from_array(node.initial_position), &mut model);
+        }
+        let root = commands.spawn((Transform::default(), Visibility::Hidden, SaverNode(k), saver_layer.clone())).id();
+        for (at, parts, _, idx, extra) in model {
+            if matches!(extra, Some(NodeExtra::Psys(_))) {
+                continue;
+            }
+            let Some(idx) = idx else { continue };
+            let holder = commands.spawn((TreeNodeIdx(idx), Transform::from_translation(at), Visibility::Inherited, saver_layer.clone())).id();
+            commands.entity(root).add_child(holder);
+            for (mesh, material) in parts {
+                let c = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::default(), saver_layer.clone(), bevy::camera::visibility::NoFrustumCulling)).id();
+                commands.entity(holder).add_child(c);
+            }
+        }
+        saver.0[k] = Some((ti, t.sequences.first().map_or(30, |q| q.timing_factor)));
+    }
+    commands.insert_resource(saver);
     let mut model = Vec::new();
     for node in &tree.nodes {
         tree_node_model(pkg, &lib, tree, node, Vec3::from_array(node.initial_position), &mut model);
@@ -5265,6 +5393,63 @@ fn present_menu_icon(
     }
 }
 
+/// The screen saver (Game::saver): the scene camera shows only the
+/// weapons' layer; each weapon sits at its camera-space position and
+/// rotation (MB view space, mirrored into Bevy's −z-forward view) and plays
+/// its tree's sequence 0 (AnimateATree; HYPOTHESIS as effect trees).
+#[allow(clippy::type_complexity)]
+fn present_saver(
+    sim: Option<Res<Sim>>,
+    front: Res<Front>,
+    trees: Option<Res<SaverTrees>>,
+    mut camera: Query<(&GlobalTransform, Option<&bevy::camera::visibility::RenderLayers>, Entity), With<FollowCamera>>,
+    mut roots: Query<(&SaverNode, &mut Transform, &mut Visibility, &Children), Without<TreeNodeIdx>>,
+    mut parts: Query<(&TreeNodeIdx, &mut Transform), Without<SaverNode>>,
+    mut commands: Commands,
+) {
+    let active = sim.as_ref().is_some_and(|s| s.game.saver.active);
+    let Ok((cam, layers, cam_entity)) = camera.single_mut() else { return };
+    let saver_layer = bevy::camera::visibility::RenderLayers::layer(SAVER_LAYER);
+    match (active, layers) {
+        (true, l) if l != Some(&saver_layer) => {
+            commands.entity(cam_entity).insert(saver_layer.clone());
+        }
+        (false, Some(_)) => {
+            commands.entity(cam_entity).remove::<bevy::camera::visibility::RenderLayers>();
+        }
+        _ => {}
+    }
+    let cam = cam.to_matrix();
+    for (node, mut tf, mut vis, kids) in &mut roots {
+        let w = sim.as_ref().filter(|_| active).map(|s| &s.game.saver.weaps[node.0]).filter(|w| w.shown);
+        let want = if w.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        let Some(w) = w else { continue };
+        // MB view (x right, y up, z forward; row vectors) → Bevy view: S =
+        // diag(1, 1, −1) on the left; rows of rot are the local axes.
+        let s = Mat4::from_scale(Vec3::new(1.0, 1.0, -1.0));
+        let r = Mat4::from_cols(
+            Vec4::new(w.rot[0][0], w.rot[0][1], w.rot[0][2], 0.0),
+            Vec4::new(w.rot[1][0], w.rot[1][1], w.rot[1][2], 0.0),
+            Vec4::new(w.rot[2][0], w.rot[2][1], w.rot[2][2], 0.0),
+            Vec4::new(w.pos[0], w.pos[1], w.pos[2], 1.0),
+        );
+        *tf = Transform::from_matrix(cam * s * r);
+        let (Some(anim), Some(Some((tree, timing)))) = (front.powerups_pkg.anim.as_ref(), trees.as_ref().map(|t| t.0[node.0])) else { continue };
+        let frame = w.anim_vb as f32 / 59.94 * 900.0 / f32::from(timing.max(1));
+        let Ok(pose) = gdl_client::tree_pose(anim, tree, &front.powerups_pkg.anim_bytes, 0, frame, true) else { continue };
+        for k in kids.iter() {
+            if let Ok((idx, mut t)) = parts.get_mut(k)
+                && let Some(m) = pose.get(idx.0)
+            {
+                *t = Transform::from_matrix(*m);
+            }
+        }
+    }
+}
+
 /// pbScreenSetAdjust(screen_dx, screen_dy) as the final pass's shift.
 fn present_screen_adjust(front: Res<Front>, mut q: Query<&mut gdl_client::DisplayToLinear>) {
     let (dx, dy) = front.menu.screen;
@@ -5331,8 +5516,23 @@ fn present_hud(
     let mut front_list = Vec::new();
     if let (Some((key, at)), Some(style)) = (view, front.opt_style.as_ref()) {
         let sliders = if key == "audio_options" { vec![(0, front.menu.music), (1, front.menu.sfx)] } else { Vec::new() };
-        let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0), sliders };
+        let state = gdl_core::game::optmenu::MenuState { selected: at, frames: front.menu_clock.1 as i32, finishing: 0, player: Some(0), sliders, ended: false };
         let mut menu = front.menus[key].clone();
+        // do_audiomenu: the Mono entry (0x19) +0x1c = stereo + 1, +0x20 =
+        // stereo (the check mark and highlight on Mono or Stereo).
+        if key == "audio_options" {
+            let stereo = front.menu.prefs[2].clamp(0, 1);
+            for e in menu.entries.iter_mut().filter(|e| e.action == 0x19) {
+                e.mark = stereo + 1;
+                e.state = stereo;
+            }
+        }
+        // OptionsStart: game_menu's Quit Level (0x26) disabled in world 0xc.
+        if key == "game_menu" && front.menu.quit_level_disabled {
+            for e in menu.entries.iter_mut().filter(|e| e.action == 0x26) {
+                e.state = -1;
+            }
+        }
         // start_optmenu's marks: the current choice (DoOptions 0xa..0x11).
         if let gdl_client::menu::Page::Choice { key: k, .. } = &front.menu.page {
             let cur = front.menu.choice_value(k);
@@ -5371,6 +5571,18 @@ fn present_hud(
     } else {
         icon.shown = false;
         icon.key = "";
+    }
+    // finish_optmenu's fading menus and the fire scroll (end_optmenu).
+    if let Some(style) = front.opt_style.as_ref() {
+        let mut over = Vec::new();
+        for (m, at, frames, f) in &front.ending.finishing {
+            let state = gdl_core::game::optmenu::MenuState { selected: *at, frames: *frames, finishing: (*f as i32).max(1), player: Some(0), sliders: Vec::new(), ended: true };
+            over.extend(front.ui_hud.optmenu_blits(style, m, &state));
+        }
+        match &front.ending.burn {
+            Some((back, rect, vb)) => front_list.extend(front.ui_hud.optmenu_burn_blits(style, back, *rect, *vb as i32, over)),
+            None => front_list.extend(over),
+        }
     }
     if let (Some(cols), Some(style), Some(def)) = (select_columns(&front, *screen), front.opt_style.as_ref(), front.menus.get("sel_def_menu")) {
         front_list.extend(front.ui_hud.select_blits(style, def, &cols, front.menu_clock.1 as i32));
@@ -5876,6 +6088,19 @@ fn end_game(world: &mut EcsWorld) {
 }
 
 /// Menu keys this frame (keyboard and every gamepad), and the pause toggle.
+/// Left / right held (keyboard or d-pad): do_optmenu's level bits.
+fn menu_held(world: &mut EcsWorld) -> (bool, bool) {
+    let keys = world.resource::<ButtonInput<KeyCode>>();
+    let mut left = keys.pressed(KeyCode::ArrowLeft) || keys.pressed(KeyCode::KeyA);
+    let mut right = keys.pressed(KeyCode::ArrowRight) || keys.pressed(KeyCode::KeyD);
+    let mut pads = world.query::<&Gamepad>();
+    for g in pads.iter(world) {
+        left |= g.pressed(GamepadButton::DPadLeft);
+        right |= g.pressed(GamepadButton::DPadRight);
+    }
+    (left, right)
+}
+
 fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
     let mut out = Vec::new();
     let mut toggle = false;
@@ -6006,6 +6231,85 @@ fn inventory_text(r: &Record) -> String {
         r.u16_(0x1a24).count_ones(),
         if waves.is_empty() { "none".to_string() } else { waves.join(", ") },
     )
+}
+
+/// The menus' AudioFX requests: do_optmenu / DoOptions cues
+/// (Game::audio_cursor_v and the others: AudioFX(id, volume, priority),
+/// centre pan) and StartFireScroll's AudioMenuBurn.
+fn play_menu_cues(mut front: ResMut<Front>, mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>) {
+    use gdl_client::menu::Cue;
+    let cues = std::mem::take(&mut front.menu.cues);
+    let mut sfx = std::mem::take(&mut front.sfx);
+    for c in cues {
+        sfx.push(match c {
+            Cue::CursorV => (0xd, 0x7f, 3),
+            Cue::CursorH => (0xe, 0x7f, 3),
+            Cue::Select => (0x11, 0x7f, 3),
+            Cue::Exit => (0x10, 0x7f, 3),
+            Cue::Buzzer => (10, 0x7f, 0x30),
+            Cue::PlayerStart => (0xc, 0xe0, 4),
+            // AudioVolSfx: AudioSFX2(id, pan 0x7f, 0x7f, 1).
+            Cue::VolSfxEnd => (0x14, 0x7f, 1),
+            Cue::VolSfxSample(k) => (front.vol_sfx_samples[k % 2], 0x7f, 1),
+        });
+    }
+    if let Some(a) = audio.as_mut() {
+        for (id, volume, priority) in sfx {
+            a.play(id, volume, 0x7f, priority);
+        }
+    }
+}
+
+/// The original menu shown now: (record, selected entry, stack level).
+fn shown_menu(world: &EcsWorld) -> Option<(&'static str, usize, Option<usize>)> {
+    let front = world.resource::<Front>();
+    let (key, at) = menu_view(front, *world.resource::<Screen>(), world.resource::<Ui>())?;
+    Some((key, at, gdl_client::menu::page_depth(&front.menu.page)))
+}
+
+/// end_optmenu for the menu `before` once the page has changed (a push
+/// keeps the stack below, a pop or close removes it): see MenuEnding.
+fn end_menu(world: &mut EcsWorld, before: Option<(&'static str, usize, Option<usize>)>) {
+    let Some((key, at, depth)) = before else { return };
+    let after = shown_menu(world);
+    if after.map(|a| a.0) == Some(key) {
+        return;
+    }
+    let mut front = world.resource_mut::<Front>();
+    let Some(old) = front.menus.get(key).cloned() else { return };
+    let push = matches!((after, depth), (Some((_, _, Some(n))), Some(d)) if d < n);
+    let lower_back = after.and_then(|a| front.menus.get(a.0)).is_some_and(|m| m.back.is_some());
+    let rect = front.opt_style.as_ref().map(|style| front.ui_hud.optmenu_back_rect(style, &old));
+    if !push
+        && !lower_back
+        && let (Some(back), Some(rect)) = (old.back.clone(), rect)
+    {
+        // StartFireScroll: AudioMenuBurn (AudioFX(0x13, 0xe0, 3)) always;
+        // a new burn only when none is being served (fire_zmask 0).
+        front.sfx.push((0x13, 0xe0, 3));
+        if front.ending.burn.is_none() {
+            front.ending.burn = Some((back, rect, 0.0));
+        }
+    }
+    if old.flags & 0x20 != 0 {
+        let frames = front.menu_clock.1 as i32;
+        front.ending.finishing.push((old, at, frames, 1.0));
+    }
+}
+
+/// finish_optmenu and ServeFireScroll for `vb` vblanks.
+fn serve_menu_ending(front: &mut Front, vb: f32) {
+    let finish = front.opt_style.as_ref().map_or(30, |s| s.finish_frames) as f32;
+    for f in &mut front.ending.finishing {
+        f.3 += vb;
+    }
+    front.ending.finishing.retain(|f| f.3 <= finish);
+    if let Some(b) = front.ending.burn.as_mut() {
+        b.2 += vb;
+        if 0x15 <= (b.2 as i32) >> 1 {
+            front.ending.burn = None;
+        }
+    }
 }
 
 fn act(world: &mut EcsWorld, action: Action) {
@@ -6200,7 +6504,7 @@ fn act(world: &mut EcsWorld, action: Action) {
                     front.store.store_options(&opts)?;
                 }
             }
-            Action::Volumes { music, sfx } => {
+            Action::Volumes { music, sfx, store } => {
                 // OptionsSetup: AudioSetVolSfx / AudioSetStereo (host) and
                 // AudioSetVolMusic (the simulation's volMusic).
                 let stereo = world.resource::<Front>().menu.prefs[2];
@@ -6215,11 +6519,29 @@ fn act(world: &mut EcsWorld, action: Action) {
                 front.game_opts[4..8].copy_from_slice(&i32::from(music).to_le_bytes());
                 front.menu.prefs[0] = i32::from(sfx);
                 front.menu.prefs[1] = i32::from(music);
+                if store {
+                    let opts = front.game_opts.clone();
+                    front.store.store_options(&opts)?;
+                }
+                let prefs = front.menu.prefs;
+                if let Some(mut session) = world.get_resource_mut::<Session>() {
+                    session.prefs = prefs;
+                }
+            }
+            Action::Stereo { on } => {
+                // AudioSetStereo (GamePrefs word 2; mono when 0).
+                let mut front = world.resource_mut::<Front>();
+                let (sfx, stereo) = (front.menu.prefs[0], i32::from(on));
+                front.menu.prefs[2] = stereo;
+                front.game_opts[8..12].copy_from_slice(&stereo.to_le_bytes());
                 let opts = front.game_opts.clone();
                 front.store.store_options(&opts)?;
                 let prefs = front.menu.prefs;
                 if let Some(mut session) = world.get_resource_mut::<Session>() {
                     session.prefs = prefs;
+                }
+                if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
+                    a.set_options(sfx, stereo);
                 }
             }
         }
@@ -6245,8 +6567,15 @@ fn front_system(world: &mut EcsWorld) {
         }
         return;
     }
+    // DoOptions: finish_optmenu / ServeFireScroll each frame.
+    let vb = world.resource::<Time>().delta_secs() * 59.94;
+    serve_menu_ending(&mut world.resource_mut::<Front>(), vb);
     let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
-    let (keys, toggle) = menu_keys(world, naming);
+    let (keys, mut toggle) = menu_keys(world, naming);
+    // optmenu_active stays 1 while the last menu finishes (no OptionsStart).
+    if !world.resource::<Front>().ending.finishing.is_empty() && !world.resource::<Ui>().paused {
+        toggle = false;
+    }
     if screen == Screen::Front
         && let Some(idx) = world.resource_mut::<Front>().flyby_request.take()
     {
@@ -6331,13 +6660,23 @@ fn front_system(world: &mut EcsWorld) {
             if toggle && !blocked {
                 let tower = world.resource::<Session>().world_number == 0xd;
                 let controls = world.resource::<Session>().controls;
+                let cur_world = world.resource::<Sim>().game.globals.cur_world;
                 let mut front = world.resource_mut::<Front>();
                 front.menu.controls = controls;
                 front.menu.status.clear();
                 front.menu.pause(tower);
+                // OptionsStart: Quit Level disabled in world 0xc.
+                front.menu.quit_level_disabled = cur_world == 0xc;
                 world.resource_mut::<Ui>().paused = true;
-                // start_optmenu: ClearAllPlayerControls(2).
-                let _ = world.resource_mut::<Sim>().game.controls.clear_all_player_controls(2);
+                // start_optmenu: ClearAllPlayerControls(2); OptionsStart's
+                // AudioStopAll (the queue, the tracks and every SFX voice;
+                // the music stream goes on).
+                let mut sim = world.resource_mut::<Sim>();
+                let _ = sim.game.controls.clear_all_player_controls(2);
+                sim.game.audio_stop_all();
+                if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
+                    a.stop_voices();
+                }
             }
             if world.resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::F2)
                 && let Some(sim) = world.get_resource::<Sim>()
@@ -6433,7 +6772,10 @@ fn front_system(world: &mut EcsWorld) {
             return;
         }
         if toggle && matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Paused { .. }) {
+            let before = shown_menu(world);
+            world.resource_mut::<Front>().menu.cues.push(gdl_client::menu::Cue::Exit);
             world.resource_mut::<Ui>().paused = false;
+            end_menu(world, before);
             return;
         }
     } else if world.resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::Escape) && matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::PressStart) {
@@ -6442,13 +6784,36 @@ fn front_system(world: &mut EcsWorld) {
         return;
     }
     for k in keys {
+        let before = shown_menu(world);
         let action = world.resource_mut::<Front>().menu.input(k);
+        // end_all_optmenus (Manage Character, Shop), the inventory's
+        // hide_optmenu and the title's Start: no fade or burn.
+        let removes = matches!(action, Some(Action::ManageCharacter | Action::OpenShop | Action::OpenInventory | Action::StartSelect | Action::Play { .. } | Action::Create { .. } | Action::Import));
         if let Some(a) = action {
             act(world, a);
+        }
+        if !removes {
+            end_menu(world, before);
         }
         if *world.resource::<Screen>() != screen {
             break;
         }
+    }
+    // The audio menu's sliders while left/right is held (vblank steps).
+    if matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Audio { .. }) {
+        let (left, right) = menu_held(world);
+        let action = {
+            let mut front = world.resource_mut::<Front>();
+            front.audio_clock += vb;
+            let steps = front.audio_clock.floor() as i32;
+            front.audio_clock -= steps as f32;
+            front.menu.hold(left, right, steps)
+        };
+        if let Some(a) = action {
+            act(world, a);
+        }
+    } else {
+        world.resource_mut::<Front>().audio_clock = 0.0;
     }
     if *world.resource::<Screen>() == Screen::Playing && !world.resource::<Front>().menu.is_paused() {
         world.resource_mut::<Ui>().paused = false;
@@ -6664,6 +7029,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     let controls_menu = gdl_core::game::optmenu::ControlsMenu::from_elf(&elf).ok();
+    // snd.286 0x23d438: AudioVolSfx(0)'s two samples.
+    let vol_sfx_samples = elf
+        .symbol("snd.286")
+        .and_then(|sym| elf.read(sym.address, 8).ok())
+        .map_or([-1, -1], |b| [0, 1].map(|k| i32::from_le_bytes(b[4 * k..4 * k + 4].try_into().unwrap())));
     let catalog_hints = catalog.read("TEXT/HINTS_E.ROM")?;
     // The attract screens' packages (init_screen2d's "sony" / "group1",
     // init_credits' "credits") as front texture sets 3–5, and the credits
@@ -6722,6 +7092,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         powerups_pkg,
         controls_menu,
         menu_clock: (None, 0.0),
+        ending: MenuEnding::default(),
+        sfx: Vec::new(),
+        audio_clock: 0.0,
+        vol_sfx_samples,
         attract,
         attract_run: None,
         attract_blits: Vec::new(),
@@ -6811,12 +7185,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             Update,
             (
                 front_system,
+                play_menu_cues,
                 run_attract,
                 ps2_viewport,
                 (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
+                present_saver,
                 present_screen_adjust,
             )
                 .chain(),
@@ -6997,8 +7373,6 @@ fn advance_level(
                     }
                     (None, false)
                 }
-                // init_gamemovie (movies are not ported), then game_wave =
-                // TowerWave: init_next_level into the Tower.
                 // init_gamemovie(BossType): victory / garm (movietype 2),
                 // then init_shop and the Tower.
                 LevelEnd::Movie(b) => {

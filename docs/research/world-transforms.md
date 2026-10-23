@@ -120,4 +120,4 @@ matrix in the captures equals the native evaluation bit for bit — Tower
 new-game capture 150/150, Poison Fields fixture 27/27 (entries resting at
 an end are evaluated at the clamped frame, the rest one SPF × 30 back).
 Every object's loaded +0x1c matches: G1 1,360/1,360, Tower 3,379/3,379.
-Not ported: DoTexMods (texture animation).
+DoTexMods (texture animation) is presentation: gdl_play (rendering.md "Texture modifiers").

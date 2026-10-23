@@ -1,4 +1,7 @@
-//! INTERIM do_players for the local player (labelled; not fidelity evidence).
+//! INTERIM do_players for the local player (labelled; not fidelity evidence):
+//! PlayerDriver / drive_player, kept only for gdl_tools game-run's
+//! sim= / script= option. Gameplay and every replay run the transcribed
+//! do_players (doplayers.rs); the exit flow below is shared.
 //!
 //! Native and reference-compared pieces: PlayerSim (controls, motion code,
 //! displacement request, facing, static/dynamic collision), choose() and
@@ -16,9 +19,8 @@
 //! skin, the sinking spin; compared in replay-frame-G1exit). FireScrollActive
 //! is false whenever the simulation steps (the client's scroll box is modal);
 //! del_target 0x168f78 (the 15-entry target list at 0x23eec0) is not
-//! modelled; the help text is presentation. Level start placement follows
-//! get_player_pos 0x14cef8's single-player path (PlayerStartPos, FloorPos);
-//! test_location/new_offset spreading is not ported.
+//! modelled; the help text is presentation. Level start placement:
+//! get_player_pos 0x14cef8 with try_location / new_offset (doplayers.rs).
 use super::{Game, Unsupported, R};
 use crate::animation_clock::ClipTiming;
 use crate::controls::JoyTables;

@@ -313,8 +313,8 @@ pub fn save_region(r: &Record, controls: &ControlOptions) -> Vec<u8> {
 /// height +0x54, +0x828 radius +0x4c, +0x82c PDAT +0x48 × 0.5), the four
 /// 1.0 scales +0x964..+0x970, load_player_geo's constant stores, the
 /// "<CLS>_<COLOUR>" name +0x698 and the InitActions map at +0x1e8 (149 ×
-/// {sequence, frames}). Not ported: reset_player_powerups and
-/// setup_player_display; +0x94c = heart_rate (ELF initial value passed in).
+/// {sequence, frames}) and reset_player_powerups. setup_player_display is
+/// presentation; +0x94c = heart_rate (ELF initial value passed in).
 pub fn level_start(r: &mut Record, pdats: &Pdats, action_map: &[[i64; 2]], game_wave: i32, heart_rate: u8) -> R<()> {
     let class = class_of(r);
     r.set_i32(0x808, game_wave);
@@ -350,6 +350,15 @@ pub fn level_start(r: &mut Record, pdats: &Pdats, action_map: &[[i64; 2]], game_
     // load_player_geo.
     for o in [0x7d8, 0x7dc, 0x1e0, 0x1e4, 0x1dc, 0x8e8, 0x690, 0x694, 0x810, 0x818, 0x81c, 0x824, 0x830, 0x834, 0x838, 0x848, 0x84c, 0x850, 0x860, 0x864, 0x868, 0x870, 0x874, 0x7b4, 0x8cc, 0x8d0, 0x8d8, 0x8d4, 0x8dc, 0x8e0, 0x8e4, 0x8ec, 0x8f0, 0x948, 0x880, 0x940, 0x944, 0x984, 0x914, 0x918, 0x888, 0x974, 0x978, 0x8fc, 0x908, 0x130, 0x134, 0x138, 0x13c, 0x140, 0x89c] {
         r.set_u32(o, 0);
+    }
+    // reset_player_powerups 0x12c090 (after the +0x130..+0x140 stores):
+    // a slot of kind 9 (+0x148) with flag 8 (+0x150; powerup 0x24) loses
+    // its time (+0x144).
+    for k in 0..8 {
+        let o = 0x144 + 0x10 * k;
+        if r.i32_(o + 4) == 9 && r.u32_(o + 0xc) & 8 != 0 {
+            r.set_u32(o, 0);
+        }
     }
     for o in (0x7e0..0x800).step_by(4).chain((0x8a8..0x8c8).step_by(4)) {
         r.set_u32(o, 0);

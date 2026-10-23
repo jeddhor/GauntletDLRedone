@@ -30,21 +30,42 @@ pub struct Camera {
 impl Camera {
     /// MBWorldSphereClip 0x1c3eb0 == 0 (MBWorldSphereVisible).
     pub fn sphere_visible(&self, r: f32, p: V3) -> R<bool> {
+        Ok(self.sphere_clip(r, p)? == 0)
+    }
+
+    /// MBWorldSphereClip 0x1c3eb0(r, p): 0 inside, else the first plane
+    /// the sphere leaves — 6 near, 5 far, 2 right, 1 left, 3 top, 4 bottom.
+    pub fn sphere_clip(&self, r: f32, p: V3) -> R<i32> {
         let d = [sub(p[0], self.eye[0])?, sub(p[1], self.eye[1])?, sub(p[2], self.eye[2])?];
         let dot = |b: V3| -> R<f32> { Ok(add(add(mul(d[0], b[0])?, mul(d[1], b[1])?)?, mul(d[2], b[2])?)?) };
         let (vx, vy, vz) = (dot(self.basis[0])?, dot(self.basis[1])?, dot(self.basis[2])?);
         let [near, far, kz, kx, kz2, ky] = self.planes;
-        if vz < sub(near, r)? || add(r, far)? < vz {
-            return Ok(false);
+        if vz < sub(near, r)? {
+            return Ok(6);
+        }
+        if add(r, far)? < vz {
+            return Ok(5);
         }
         let h = add(mul(vz, kz)?, r)?;
         let x = mul(vx, kx)?;
-        if h < x || x < -h {
-            return Ok(false);
+        if h < x {
+            return Ok(2);
+        }
+        if x < -h {
+            return Ok(1);
         }
         let v = add(mul(vz, kz2)?, r)?;
         let y = mul(vy, ky)?;
-        Ok(!(v < y || y < -v))
+        if v < y {
+            return Ok(3);
+        }
+        Ok(if y < -v { 4 } else { 0 })
+    }
+
+    /// A camera-space point in the world (MulVec4Mat4 with the window
+    /// matrix: the eye plus the basis rows; presentation precision).
+    pub fn to_world(&self, v: V3) -> V3 {
+        [0, 1, 2].map(|i| self.eye[i] + v[0] * self.basis[0][i] + v[1] * self.basis[1][i] + v[2] * self.basis[2][i])
     }
 }
 

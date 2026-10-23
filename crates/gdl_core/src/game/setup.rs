@@ -661,6 +661,7 @@ impl Game {
             vol_music: i32::from_le_bytes(inp.elf.read(0x21_f6c8, 4)?.try_into()?),
             weap_trail: Default::default(),
             see_thru: Default::default(),
+            saver: Default::default(),
             weaptrail_dalpha: ints("weaptrail_dalpha")?.first().copied().ok_or("weaptrail_dalpha")?,
             secret_char: inp.elf.object("secret_char")?.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect(),
             boss1_items: {

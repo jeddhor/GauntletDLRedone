@@ -43,7 +43,12 @@ pub enum Action {
     QuitLevel,
     QuitGame,
     Exit,
-    Volumes { music: u8, sfx: u8 },
+    /// The audio sliders (AudioSetVolMusic / AudioSetVolSfx); `store`
+    /// writes GamePrefs (the audio menu's end).
+    Volumes { music: u8, sfx: u8, store: bool },
+    /// The audio menu's Mono / Stereo entry (GamePrefs word 2,
+    /// AudioSetStereo).
+    Stereo { on: bool },
     /// The title's Start: the select screen (init_player_select(0)).
     StartSelect,
     /// Tower menu → Manage Character (the select screen).
@@ -65,6 +70,88 @@ pub enum Action {
     ShowHint { list: usize },
 }
 
+/// The option menus' sound cues (do_optmenu 0x10c4f8 and DoOptions
+/// 0x10d4e0), for the host to play (AudioFX).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cue {
+    /// AudioCursorV 0x160698: up/down in a menu with entries.
+    CursorV,
+    /// AudioCursorH 0x1606a8: left/right on Control Style (or Mono/Stereo).
+    CursorH,
+    /// AudioCursorSelect 0x1606c8: an entry accepted in a menu with flag
+    /// 0x400 (and the title's Options, DoOptions case 2 0xc).
+    Select,
+    /// AudioMenuExit 0x1606d8: DoOptions' pop after −1 / −2 (Back).
+    Exit,
+    /// AudioBuzzer 0x160688: a disabled entry (+0x20 < 0) accepted.
+    Buzzer,
+    /// AudioPlayerStart 0x160700: a choice stored (DoOptions 0x0010e340),
+    /// the audio menu ended, Control Style or Screen Adjust accepted.
+    PlayerStart,
+    /// AudioVolSfx 0x15f078(1): the SFX slider held at its end
+    /// (AudioSFX2(0x14, 0x7f, 0x7f, 1)).
+    VolSfxEnd,
+    /// AudioVolSfx(0): the SFX slider's sample, snd.286[k] (k alternates).
+    VolSfxSample(usize),
+}
+
+/// The cues do_optmenu / DoOptions play for `key` on `page`.
+fn cues(page: &Page, key: Key) -> &'static [Cue] {
+    use Cue::*;
+    let vertical = matches!(key, Key::Up | Key::Down);
+    match page {
+        // title_menu (flags 0): Options plays AudioCursorSelect itself.
+        Page::Title { at } => match key {
+            _ if vertical => &[CursorV],
+            Key::Accept if *at == 1 => &[Select],
+            _ => &[],
+        },
+        // Flag 0x400 menus: select on Accept, the pop's exit on Back.
+        Page::Options { .. } | Page::Submenu { .. } | Page::Paused { .. } | Page::Hints { .. } => match key {
+            _ if vertical => &[CursorV],
+            Key::Accept => &[Select],
+            Key::Back => &[Exit],
+            _ => &[],
+        },
+        Page::Choice { .. } => match key {
+            _ if vertical => &[CursorV],
+            Key::Accept => &[Select, PlayerStart],
+            Key::Back => &[Exit],
+            _ => &[],
+        },
+        // The questions (flags 0x60): No is action −1 (a pop).
+        Page::ConfirmQuit { at, .. } => match key {
+            _ if vertical => &[CursorV],
+            Key::Accept if *at == 0 => &[Exit],
+            Key::Back => &[Exit],
+            _ => &[],
+        },
+        // end_audiomenu + AudioPlayerStart; bVar4 skips AudioMenuExit.
+        Page::Audio { .. } => match key {
+            _ if vertical => &[CursorV],
+            Key::Back => &[PlayerStart],
+            _ => &[],
+        },
+        Page::ControlStyle { .. } => match key {
+            _ if vertical => &[CursorV],
+            Key::Left | Key::Right => &[CursorH],
+            Key::Accept => &[PlayerStart],
+            _ => &[],
+        },
+        // screen_options has no entries (no cursor sound).
+        Page::Screen { .. } => match key {
+            Key::Accept => &[PlayerStart],
+            Key::Back => &[Exit],
+            _ => &[],
+        },
+        Page::HintText { .. } => match key {
+            Key::Back => &[Exit],
+            _ => &[],
+        },
+        _ => &[],
+    }
+}
+
 /// A save shown in the list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
@@ -84,7 +171,9 @@ pub enum Page {
     Colour { class: u32, at: usize },
     Name { class: u32, colour: u8, name: String },
     Paused { tower: bool, at: usize },
-    ConfirmQuit { at: usize },
+    /// quitgame_question (the Tower's Quit Game) or quitlevel_question (a
+    /// realm's Quit Level, DoOptions case 4 action 0x26): No / Yes.
+    ConfirmQuit { at: usize, tower: bool },
     Shop { at: usize },
     Inventory,
     /// end_fullscreen_inventory: the exit swirl, then the Tower menu.
@@ -154,7 +243,7 @@ pub fn page_record(page: &Page) -> Option<(&'static str, usize)> {
             *at,
         ),
         Page::Paused { tower, at } => (if *tower { "tower_menu" } else { "game_menu" }, *at),
-        Page::ConfirmQuit { at } => ("quitgame_question", *at),
+        Page::ConfirmQuit { at, tower } => (if *tower { "quitgame_question" } else { "quitlevel_question" }, *at),
         Page::Hints { at } => ("hint_menu", *at),
         Page::Audio { at, .. } => ("audio_options", *at),
         Page::HintText { .. } => ("hint_general_menu", 0),
@@ -164,6 +253,18 @@ pub fn page_record(page: &Page) -> Option<(&'static str, usize)> {
         _ => return None,
     })
 }
+/// The option-menu stack level a page is drawn at (options_level: 0 for
+/// the first menu, +1 per start_optmenu push); None for pages without a
+/// menu record.
+pub fn page_depth(page: &Page) -> Option<usize> {
+    Some(match page {
+        Page::Title { .. } | Page::Paused { .. } | Page::Hints { .. } => 0,
+        Page::ConfirmQuit { .. } | Page::HintText { .. } => 1,
+        Page::Options { back, .. } | Page::Audio { back, .. } | Page::Submenu { back, .. } | Page::Choice { back, .. } | Page::ControlStyle { back, .. } | Page::Screen { back, .. } => page_depth(back)? + 1,
+        _ => return None,
+    })
+}
+
 const TOWER_MENU: [&str; 5] = ["Settings", "Manage Character", "Shop", "Inventory", "Quit Game"];
 const GAME_MENU: [&str; 2] = ["Settings", "Quit Level"];
 const HINT_MENU: [&str; 4] = ["General Hints", "Guardians", "Items of Legend", "Runestones"];
@@ -213,6 +314,15 @@ pub struct Menu {
     /// pbScreenSetAdjust's current dx/dy (screen_dx/screen_dy).
     pub screen: (i32, i32),
     pub controls: [u32; 4],
+    /// OptionsStart: game_menu's Quit Level (action 0x26) gets +0x20 = −1
+    /// (disabled) when CurWorld is 0xc.
+    pub quit_level_disabled: bool,
+    /// Sound cues of the inputs so far (drained by the host).
+    pub cues: Vec<Cue>,
+    /// do_audiomenu's sfx_sound_count (vblanks since the last SFX slider
+    /// sound) and AudioVolSfx's idx.285.
+    pub sfx_sound_count: i32,
+    pub sfx_sample: usize,
 }
 
 fn wrap(at: usize, n: usize, up: bool) -> usize {
@@ -235,7 +345,27 @@ fn list(title: &str, items: &[String], at: usize) -> String {
 
 impl Menu {
     pub fn new(music: u8, sfx: u8) -> Self {
-        Self { page: Page::PressStart, saves: Vec::new(), import: None, music, sfx, status: String::new(), shop: Vec::new(), gold: 0, inventory: String::new(), hints: Vec::new(), hint_title: None, hint_scale: 1.0, prefs: [0; 8], screen: (0, 0), controls: [0; 4] }
+        Self {
+            page: Page::PressStart,
+            saves: Vec::new(),
+            import: None,
+            music,
+            sfx,
+            status: String::new(),
+            shop: Vec::new(),
+            gold: 0,
+            inventory: String::new(),
+            hints: Vec::new(),
+            hint_title: None,
+            hint_scale: 1.0,
+            prefs: [0; 8],
+            screen: (0, 0),
+            controls: [0; 4],
+            quit_level_disabled: false,
+            cues: Vec::new(),
+            sfx_sound_count: 0,
+            sfx_sample: 0,
+        }
     }
 
     /// The Select page's entries (for the original-style column menu).
@@ -270,6 +400,69 @@ impl Menu {
     }
 
     pub fn input(&mut self, key: Key) -> Option<Action> {
+        let disabled = self.disabled_entry(&self.page);
+        // do_optmenu: Accept on a disabled entry buzzes and returns 0.
+        if key == Key::Accept && disabled {
+            self.cues.push(Cue::Buzzer);
+            return None;
+        }
+        self.cues.extend_from_slice(cues(&self.page, key));
+        let action = self.input_page(key);
+        // do_optmenu's cursor skips disabled entries (+0x20 < 0).
+        if matches!(key, Key::Up | Key::Down) {
+            for _ in 0..8 {
+                if !self.disabled_entry(&self.page) {
+                    break;
+                }
+                self.input_page(key);
+            }
+        }
+        action
+    }
+
+    /// One audio-menu frame of `vb` vblanks with left/right held (DoOptions
+    /// case 8, do_optmenu's level results 5/6 after the edges 3/4; left
+    /// first): the selected slider moves by vb (0..=255); the SFX slider at
+    /// its end sounds AudioVolSfx(1) every 16 vblanks, resting on Sfx
+    /// Volume AudioVolSfx(0) every 61.
+    pub fn hold(&mut self, left: bool, right: bool, vb: i32) -> Option<Action> {
+        let Page::Audio { at, .. } = self.page else { return None };
+        self.sfx_sound_count += vb;
+        let delta = if left { -vb } else if right { vb } else { 0 };
+        let moved = |v: u8| (i32::from(v) + delta).clamp(0, 0xff) as u8;
+        match at {
+            0 if delta != 0 => {
+                self.music = moved(self.music);
+                Some(Action::Volumes { music: self.music, sfx: self.sfx, store: false })
+            }
+            1 if delta != 0 => {
+                let v = moved(self.sfx);
+                if v != self.sfx {
+                    self.sfx = v;
+                    return Some(Action::Volumes { music: self.music, sfx: self.sfx, store: false });
+                }
+                if 0x10 <= self.sfx_sound_count {
+                    self.cues.push(Cue::VolSfxEnd);
+                    self.sfx_sound_count = 0;
+                }
+                None
+            }
+            1 if 0x3d <= self.sfx_sound_count => {
+                self.cues.push(Cue::VolSfxSample(self.sfx_sample));
+                self.sfx_sample = (self.sfx_sample + 1) % 2;
+                self.sfx_sound_count = 0;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// The selected entry of `page` is disabled (+0x20 < 0).
+    fn disabled_entry(&self, page: &Page) -> bool {
+        matches!(page, Page::Paused { tower: false, at: 1 }) && self.quit_level_disabled
+    }
+
+    fn input_page(&mut self, key: Key) -> Option<Action> {
         let page = self.page.clone();
         match page {
             Page::PressStart => {
@@ -380,7 +573,9 @@ impl Menu {
                     self.page = Page::ControlStyle { style, back };
                     None
                 }
-                Key::Accept | Key::Back => {
+                // DoOptions 0xe: Select (0x21) stores the style in
+                // PlayerControl +0x2c and pops; triangle (−1) is ignored.
+                Key::Accept => {
                     self.page = *back;
                     self.controls[0] = style as u32;
                     Some(Action::Choose { key: "controlstyle_options", idx: style })
@@ -401,8 +596,10 @@ impl Menu {
                         self.page = *back;
                         None
                     }
+                    // DoOptions 0xa..0x11: the choice is stored and marked;
+                    // the menu stays until Back.
                     Key::Accept => {
-                        self.page = *back;
+                        self.page = Page::Choice { key: k, at, back };
                         Some(Action::Choose { key: k, idx: at })
                     }
                     _ => {
@@ -411,21 +608,31 @@ impl Menu {
                     }
                 }
             }
+            // audio_options: Music Volume (0x17), Sfx Volume (0x18) and Mono
+            // (0x19, value "Stereo"). The sliders move while left/right is
+            // held (Menu::hold); the edge toggles Mono / Stereo
+            // (AudioCursorH, entry +0x20 ^= 1, AudioSetStereo).
             Page::Audio { at, back } => match key {
                 Key::Up | Key::Down => {
-                    self.page = Page::Audio { at: wrap(at, 2, key == Key::Up), back };
+                    self.page = Page::Audio { at: wrap(at, 3, key == Key::Up), back };
                     None
                 }
-                Key::Left | Key::Right => {
-                    let v = if at == 0 { &mut self.music } else { &mut self.sfx };
-                    *v = if key == Key::Left { v.saturating_sub(16) } else { v.saturating_add(16) };
-                    Some(Action::Volumes { music: self.music, sfx: self.sfx })
+                Key::Left | Key::Right if at == 2 => {
+                    self.cues.push(Cue::CursorH);
+                    self.prefs[2] ^= 1;
+                    self.page = Page::Audio { at, back };
+                    Some(Action::Stereo { on: self.prefs[2] != 0 })
                 }
-                Key::Back | Key::Accept => {
+                // DoOptions case 8: the entries' actions (0x17..0x19) do
+                // nothing; −1 / −2 end the audio menu (GamePrefs kept).
+                Key::Back => {
                     self.page = *back;
+                    Some(Action::Volumes { music: self.music, sfx: self.sfx, store: true })
+                }
+                _ => {
+                    self.page = Page::Audio { at, back };
                     None
                 }
-                _ => None,
             },
             Page::NotPorted { back, .. } => {
                 if matches!(key, Key::Back | Key::Accept) {
@@ -502,8 +709,10 @@ impl Menu {
                         // DoOptions 0xd: init_player_select(1) with this
                         // player at the select screen's menu 1.
                         "Manage Character" => return Some(Action::ManageCharacter),
-                        "Quit Game" => self.page = Page::ConfirmQuit { at: 0 },
-                        "Quit Level" => return Some(Action::QuitLevel),
+                        // start_optmenu(quitgame_question / quitlevel_question)
+                        // with +0x74 = 0 ("No").
+                        "Quit Game" => self.page = Page::ConfirmQuit { at: 0, tower: true },
+                        "Quit Level" => self.page = Page::ConfirmQuit { at: 0, tower: false },
                         "Shop" => return Some(Action::OpenShop),
                         "Inventory" => return Some(Action::OpenInventory),
                         other => self.page = Page::NotPorted { what: other.to_string(), back: Box::new(page) },
@@ -550,14 +759,16 @@ impl Menu {
                 None
             }
             Page::InventoryClose => None,
-            Page::ConfirmQuit { at } => match key {
+            Page::ConfirmQuit { at, tower } => match key {
                 Key::Up | Key::Down => {
-                    self.page = Page::ConfirmQuit { at: wrap(at, 2, key == Key::Up) };
+                    self.page = Page::ConfirmQuit { at: wrap(at, 2, key == Key::Up), tower };
                     None
                 }
-                Key::Accept if at == 1 => Some(Action::QuitGame),
+                // DoOptions 0x13 / 0x14: quit_game / quit_level and
+                // end_optmenu(−1, −1).
+                Key::Accept if at == 1 => Some(if tower { Action::QuitGame } else { Action::QuitLevel }),
                 Key::Accept | Key::Back => {
-                    self.page = Page::Paused { tower: true, at: 4 };
+                    self.page = if tower { Page::Paused { tower, at: 4 } } else { Page::Paused { tower, at: 1 } };
                     None
                 }
                 _ => None,
@@ -573,7 +784,11 @@ impl Menu {
             Page::Options { at, back } => {
                 list("OPTIONS", &s(option_names(back)), *at)
             }
-            Page::Audio { at, .. } => list("AUDIO\n(left/right to change)", &[format!("Music  {:>3}", self.music), format!("Sound  {:>3}", self.sfx)], *at),
+            Page::Audio { at, .. } => list(
+                "AUDIO\n(hold left/right to change)",
+                &[format!("Music  {:>3}", self.music), format!("Sound  {:>3}", self.sfx), (if self.prefs[2] != 0 { "Stereo" } else { "Mono" }).to_string()],
+                *at,
+            ),
             Page::NotPorted { what, .. } => format!("{what}\n\nnot ported yet\n\n(Enter / Esc to go back)"),
             Page::Submenu { key, at, .. } | Page::Choice { key, at, .. } => list(key, &s(submenu_entries(key)), *at),
             Page::Screen { .. } => format!("Screen Adjust\n\nd-pad: move the picture ({}, {})\nC: center   Enter: accept   Esc: back", self.screen.0, self.screen.1),
@@ -606,7 +821,7 @@ impl Menu {
                 )
             }
             Page::Inventory | Page::InventoryClose => format!("INVENTORY\n\n{}\n\n(Enter / Esc to go back)", self.inventory),
-            Page::ConfirmQuit { at } => list("QUIT GAME?\nprogress since your last save is lost", &s(&["No", "Yes"]), *at),
+            Page::ConfirmQuit { at, tower } => list(if *tower { "QUIT GAME?\nprogress since your last save is lost" } else { "ABORT LEVEL?" }, &s(&["No", "Yes"]), *at),
         };
         if self.status.is_empty() { body } else { format!("{body}\n\n{}", self.status) }
     }
@@ -659,11 +874,26 @@ mod tests {
         assert_eq!(m.input(Key::Accept), Some(Action::QuitGame));
         m.pause(false);
         m.input(Key::Down);
+        m.input(Key::Accept);
+        assert_eq!(page_record(&m.page), Some(("quitlevel_question", 0)));
+        assert_eq!(m.input(Key::Accept), None);
+        assert_eq!(m.page, Page::Paused { tower: false, at: 1 });
+        m.input(Key::Accept);
+        m.input(Key::Down);
         assert_eq!(m.input(Key::Accept), Some(Action::QuitLevel));
         m.pause(false);
         m.input(Key::Accept);
         m.input(Key::Accept);
-        assert_eq!(m.input(Key::Right), Some(Action::Volumes { music: 144, sfx: 128 }));
+        assert_eq!(m.input(Key::Right), None);
+        assert_eq!(m.hold(false, true, 2), Some(Action::Volumes { music: 130, sfx: 128, store: false }));
+        m.input(Key::Down);
+        m.sfx = 255;
+        m.sfx_sound_count = 0;
+        assert_eq!(m.hold(false, true, 16), None);
+        assert_eq!(m.cues.last(), Some(&Cue::VolSfxEnd));
+        m.input(Key::Down);
+        assert_eq!(m.input(Key::Left), Some(Action::Stereo { on: true }));
+        assert_eq!(m.input(Key::Back), Some(Action::Volumes { music: 130, sfx: 255, store: true }));
     }
 
     #[test]

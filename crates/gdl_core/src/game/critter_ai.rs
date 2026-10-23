@@ -1,7 +1,8 @@
 //! Critter per-frame logic: ProcessCritterList 0x199058, ProcessCritter
 //! 0x198c28, CritterBossAI 0x197c50 and the move/target/action functions
-//! they call (research/critters.md). Child critters (chimera heads) and the
-//! golem/gargoyle AI are not ported yet and stop with Unsupported.
+//! they call (research/critters.md), child critters (the chimera's heads)
+//! and CritterGolemAI (golems, gargoyles, generals). Paths no data reaches
+//! stop with Unsupported.
 use super::critters::{c, mul_vec_mat3, CritterFile};
 use super::damage::pd;
 use super::{unsupported, Game, Unsupported, R};

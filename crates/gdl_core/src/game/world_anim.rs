@@ -12,8 +12,8 @@
 //! (crate::animation::sample_channels); InitAnimData's incremental cache is
 //! not needed for a fresh evaluation.
 //!
-//! Not ported: DoTexMods (texture animation, presentation), the
-//! MBTreeClearFlags show call (presentation).
+//! Presentation (gdl_play): DoTexMods (texture animation) and the
+//! MBTreeClearFlags show call.
 use super::enemy_ai::{ffcos, ffsin};
 use super::{Game, Unsupported, R};
 use crate::numeric::{add_guarded_rz as add, mul_rz as mul, sub_guarded_rz as sub};

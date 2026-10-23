@@ -259,6 +259,10 @@ pub struct MenuState {
     pub player: Option<usize>,
     /// do_audiomenu's volume sliders: (entry, value 0..=255).
     pub sliders: Vec<(usize, u8)>,
+    /// A menu finishing after end_optmenu (+0x70 counting): its background
+    /// (+0xdc), LOGO_BURN (+0xe0) and icon (+0x88) are gone and only the
+    /// text fades.
+    pub ended: bool,
 }
 
 fn rgb(c: [i32; 3]) -> u32 {
@@ -314,20 +318,14 @@ impl Hud {
         Some((x + menu.icon_x, y + fh / 2))
     }
 
-    /// show_optmenu for `menu` in `state` (entries may be relabelled by the
-    /// caller, e.g. for value columns).
-    pub fn optmenu_blits(&self, style: &OptStyle, menu: &OptMenu, state: &MenuState) -> Vec<Blit> {
-        let mut out = Vec::new();
-        let font = style.font;
-        let fh = self.font_height(font, menu.scale);
-        // start_optmenu_nostack: measured height/width, item y, background.
+    /// start_optmenu_nostack's background rectangle (+0x48..+0x54, written
+    /// back into the record): negative words derived from the measured item
+    /// block and OPTMENU_MARGIN_X/Y, centred on (256, 192). end_optmenu
+    /// burns the background here.
+    pub fn optmenu_back_rect(&self, style: &OptStyle, menu: &OptMenu) -> [i32; 4] {
+        let fh = self.font_height(style.font, menu.scale);
         let height = if menu.height < 1 { menu.entries.iter().map(|e| fh + e.gap).sum() } else { menu.height };
-        let width = if menu.width < 1 { menu.entries.iter().map(|e| self.string_width(font, menu.scale, e.label.as_bytes())).max().unwrap_or(0) } else { menu.width };
-        let mut y = match menu.y {
-            -1 => 0xc0 - height / 2,
-            y if y < 0 => -(height / 2) - y,
-            y => y,
-        };
+        let width = if menu.width < 1 { menu.entries.iter().map(|e| self.string_width(style.font, menu.scale, e.label.as_bytes())).max().unwrap_or(0) } else { menu.width };
         let [mut bx, mut by, mut bw, mut bh] = menu.back_rect;
         if bw < 0 {
             bw = style.margin[0] * 2 + width;
@@ -341,13 +339,44 @@ impl Hud {
         if by < 0 {
             by = 0xc0 - bh / 2;
         }
+        [bx, by, bw, bh]
+    }
+
+    /// end_optmenu's fire scroll over a closed menu's background `back` at
+    /// `rect` (the background blit +0xdc, MBBlitOrder'ed behind the fire's
+    /// z mask) after `vb` vblanks, with `over` (the finishing menus' text)
+    /// burnt through the same hole.
+    pub fn optmenu_burn_blits(&self, style: &OptStyle, back: &str, rect: [i32; 4], vb: i32, over: Vec<Blit>) -> Vec<Blit> {
+        let tex = self.lookup(back);
+        let [x, y, w, h] = rect;
+        let mut b = self.make_pub(tex, x, y, w, h);
+        b.z = style.scroll_z - 1.0;
+        let mut under = vec![b];
+        under.extend(over);
+        self.fire_scroll_blits(tex, rect, vb, under)
+    }
+
+    /// show_optmenu for `menu` in `state` (entries may be relabelled by the
+    /// caller, e.g. for value columns).
+    pub fn optmenu_blits(&self, style: &OptStyle, menu: &OptMenu, state: &MenuState) -> Vec<Blit> {
+        let mut out = Vec::new();
+        let font = style.font;
+        let fh = self.font_height(font, menu.scale);
+        // start_optmenu_nostack: measured height/width, item y, background.
+        let height = if menu.height < 1 { menu.entries.iter().map(|e| fh + e.gap).sum() } else { menu.height };
+        let mut y = match menu.y {
+            -1 => 0xc0 - height / 2,
+            y if y < 0 => -(height / 2) - y,
+            y => y,
+        };
+        let [bx, by, bw, bh] = self.optmenu_back_rect(style, menu);
         let back = menu.back.as_deref().and_then(|n| self.lookup(n));
-        if back.is_some() {
+        if back.is_some() && !state.ended {
             let mut b = self.make_pub(back, bx, by, bw, bh);
             b.z = style.scroll_z - 1.0;
             out.push(b);
         }
-        if let Some(t) = menu.burn.as_deref().and_then(|n| self.lookup(n)) {
+        if let Some(t) = menu.burn.as_deref().and_then(|n| self.lookup(n)).filter(|_| !state.ended) {
             let [x, yy, w, h] = menu.burn_rect;
             let t = self.offset_pub(t, (state.frames >> 3) % 5).unwrap_or(t);
             // MBNewBlit's z 1.0 (start_optmenu_nostack's second MBBlitSetZ
@@ -386,6 +415,11 @@ impl Hud {
                 out.extend(hud.glyphs(&m));
             }
         };
+        // A value's x: after the label and " ~ " (centred labels: −x).
+        let value_x = |hud: &Hud, x: i32, label: &str| -> i32 {
+            let lx = if x < 0 { -x - hud.string_width(font, menu.scale, label.as_bytes()) / 2 } else { x };
+            lx + hud.string_width(font, menu.scale, label.as_bytes()) + hud.string_width(font, menu.scale, b" ~ ")
+        };
         if let (Some(title), true) = (&menu.title, back.is_some()) {
             let ty = by + style.margin_title;
             let tx = -(bw / 2 + bx);
@@ -408,8 +442,15 @@ impl Hud {
                 if style.choice_twice {
                     let a = (fade + 0x7f - ((i * 0xff + style.fade - 1) / style.fade.max(1)) / 2).min(0xff);
                     let glow = gar.or(self.lookup("FONT32_GLOW"));
-                    push(self, &mut out, menu.scale, x, y, rgb(menu.rgb[2]), a, 0x4000, glow, &e.label);
-                    push(self, &mut out, menu.scale, x, y, rgb(menu.rgb[1]), fade, 0, gar, &e.label);
+                    // The glow pass sits on the value when +0x20 > 0 (the
+                    // second pass's string), the label's colour is "on"
+                    // only for pass 0 (+0x20 == 0).
+                    match (&e.value, 0 < e.state) {
+                        (Some(v), true) => push(self, &mut out, menu.scale, value_x(self, x, &e.label), y, rgb(menu.rgb[2]), a, 0x4000, glow, v),
+                        _ => push(self, &mut out, menu.scale, x, y, rgb(menu.rgb[2]), a, 0x4000, glow, &e.label),
+                    }
+                    let c = if e.state == 0 { rgb(menu.rgb[1]) } else { rgb(menu.rgb[0]) };
+                    push(self, &mut out, menu.scale, x, y, c, fade, 0, gar, &e.label);
                 } else {
                     let c: [i32; 3] = [0, 1, 2].map(|j| (menu.rgb[2][j] + (i * (menu.rgb[1][j] - menu.rgb[2][j]) + style.fade - 1) / style.fade.max(1)).clamp(0, 255));
                     let s = menu.scale * ((i as f32 / style.fade as f32) * style.hilite_scale + 1.0);
@@ -430,15 +471,19 @@ impl Hud {
                 // (the font's check mark) after its label.
                 let lx = if x < 0 { -x - self.string_width(font, menu.scale, e.label.as_bytes()) / 2 } else { x };
                 let mx = lx + self.string_width(font, menu.scale, e.label.as_bytes());
-                let c = if selected { rgb(menu.rgb[1]) } else if parch_items.is_none() || gar.is_some() { rgb(menu.rgb[0]) } else { 0xffffff };
+                let c = if selected && e.state == 0 { rgb(menu.rgb[1]) } else if parch_items.is_none() || gar.is_some() { rgb(menu.rgb[0]) } else { 0xffffff };
                 push(self, &mut out, menu.scale, mx, y, c, alpha, 0, gar.or(parch_items), " ~");
             }
             if let Some(v) = &e.value {
-                // The value column after " ~ ".
-                let lx = if x < 0 { -x - self.string_width(font, menu.scale, e.label.as_bytes()) / 2 } else { x };
-                let vx = lx + self.string_width(font, menu.scale, e.label.as_bytes()) + self.string_width(font, menu.scale, b" ~ ");
-                let c = if selected { rgb(menu.rgb[1]) } else { rgb(menu.rgb[0]) };
+                // The value column after " ~ " (pass 1): "on" when the
+                // entry is selected and +0x20 is 1; +0x1c 2 marks it.
+                let vx = value_x(self, x, &e.label);
+                let c = if selected && e.state == 1 { rgb(menu.rgb[1]) } else { rgb(menu.rgb[0]) };
                 push(self, &mut out, menu.scale, vx, y, c, fade, 0, gar.or(parch_items), v);
+                if e.mark == 2 {
+                    let mx = vx + self.string_width(font, menu.scale, v.as_bytes());
+                    push(self, &mut out, menu.scale, mx, y, c, alpha, 0, gar.or(parch_items), " ~");
+                }
             }
             if let Some(&(_, v)) = state.sliders.iter().find(|(i, _)| *i == k) {
                 out.extend(self.slider_blits(menu.x, y + fh, v, k != state.selected));

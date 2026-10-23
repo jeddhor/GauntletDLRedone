@@ -2,9 +2,10 @@
 //! view state it drives (research/camera.md).
 //!
 //! main calls StdCamUpdate 0x115fe8 during play because new_camera_switch
-//! 0x20eaa0 is initialised to 1 and never written; the older Cam array /
-//! StandardCamera system still runs for trigger and boss cameras (not ported
-//! here). The StdCam record (StdCamera 0x2bc740, 0x1b0 bytes) is kept in its
+//! 0x20eaa0 is initialised to 1 and never written. Trigger cameras
+//! (TriggerCamUpdate) and the boss camera (BossCameraUpdate) are here too;
+//! the older Cam array runs for the attract flybys (flyby.rs) and the
+//! AuxLevels & 2 debug camera (not ported). The StdCam record (StdCamera 0x2bc740, 0x1b0 bytes) is kept in its
 //! original layout so reference traces compare byte for byte.
 //!
 //! Index loops mirror the original per-component loops.
@@ -2270,7 +2271,7 @@ impl super::Game {
     /// main's camera dispatch (0x100600..0x10075c) and MBEndFrame for one
     /// update: front-end modes keep a fixed camera, boss modes and levels with
     /// a BossCritInst run BossCameraUpdate, otherwise StdCamUpdate
-    /// (new_camera_switch is 1). TriggerCamUpdate is not ported yet.
+    /// (new_camera_switch is 1); an active trigger camera first.
     /// main's camera dispatch after game_main (replays).
     pub fn camera_step_pub(&mut self) -> R<()> {
         self.camera_step()

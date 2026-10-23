@@ -241,11 +241,20 @@ impl Controls {
     /// cleared with lockout n, then JoyLevels, JoyEdges, JoyRepEdges,
     /// StartEdges (entries 0..3; not modelled, nothing reads them here) and
     /// JoyAnyLevel/Edge/RepEdge zeroed. n < 0 (ScreenSaverEnd) first runs
-    /// ClearControls 0x104088, which is not ported.
+    /// ClearControls 0x104088 and then uses −n.
     pub fn clear_all_player_controls(&mut self, n: i32) -> R<()> {
-        if n < 0 {
-            return super::unsupported("ClearAllPlayerControls with ClearControls (n < 0)");
-        }
+        let n = if n < 0 {
+            // ClearControls 0x104088: plr_repedges, plr_edges, plr_levels,
+            // right_jstick and old_plr_levels (here: plr_levels, which
+            // ReadControls takes as the previous levels) for the 8 ports.
+            self.plr_repedges = [0; 8];
+            self.plr_edges = [0; 8];
+            self.plr_levels = [0; 8];
+            self.right_jstick = [0; 8];
+            -n
+        } else {
+            n
+        };
         for k in 0..4 {
             self.clear_player_control(k, n);
         }

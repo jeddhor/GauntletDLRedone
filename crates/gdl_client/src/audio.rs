@@ -308,6 +308,14 @@ impl AudioOut {
         }
     }
 
+    /// aud_stop_all_sounds (AudioStopAll): every SFX voice; the music
+    /// channel goes on.
+    pub fn stop_voices(&mut self) {
+        if let Ok(mut m) = self.mixer.lock() {
+            m.stop_where(|_| true);
+        }
+    }
+
     pub fn stop_all(&mut self) {
         if let Ok(mut m) = self.mixer.lock() {
             m.stop_where(|_| true);

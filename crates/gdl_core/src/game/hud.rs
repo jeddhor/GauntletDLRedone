@@ -1040,7 +1040,7 @@ impl Hud {
         let (x0, y0, ty) = (0x100 - w / 2, 0xa0 - height / 2, 0xc0 - height / 2);
         let scroll = self.lookup("Scroll_A");
         let mut out = Vec::new();
-        let mut back = self.make(scroll, x0, y0, w, height);
+        let back = self.make(scroll, x0, y0, w, height);
         // Text: DrawScrollText → DrawStringTextSub, one DrawTextSub per line.
         let mut glyphs = Vec::new();
         let mut y = ty;
@@ -1061,25 +1061,40 @@ impl Hud {
                 }
             }
             Some(vb) => {
-                let frame = (vb >> 1).clamp(0, 0x14);
-                let (fy, fh2) = if y0 < 0 { (0, height + y0 + 0x20) } else { (y0, height) };
-                let rect = [x0 as f32, fy as f32, w as f32, fh2 as f32];
-                let mask = self.lookup("greenCircTransM").and_then(|t| self.offset(t, 1 + frame));
-                let fire = self.lookup("greenCircTrans").and_then(|t| self.offset(t, 1 + frame));
-                if let Some(m) = mask {
-                    back.mask = Some((m, rect));
-                    out.push(back);
-                    for mut g in glyphs {
-                        g.mask = Some((m, rect));
-                        out.push(g);
-                    }
-                }
-                let mut f = self.make(fire, x0, fy, w, fh2);
-                f.z = 0.125;
-                f.mask = scroll.map(|s| (s, [x0 as f32, y0 as f32, w as f32, height as f32]));
-                out.push(f);
+                let mut under = vec![back];
+                under.extend(glyphs);
+                out.extend(self.fire_scroll_blits(scroll, [x0, y0, w, height], vb, under));
             }
         }
+        out
+    }
+
+    /// StartFireScroll 0x128b78 (z 1.0, type −1: fscroll_descs' four
+    /// entries are all greenCircTrans / greenCircTransM) and ServeFireScroll
+    /// at `vb` vblanks for the scroll texture `scroll` at `rect`: `under`
+    /// (the parchment and what is drawn on it) through the z mask
+    /// greenCircTransM + 1 + frame (the burnt hole), then greenCircTrans +
+    /// 1 + frame at z 0.125 clipped to the scroll's silhouette
+    /// (scroll_zmask). A rectangle above the screen (y < 0) burns from y 0
+    /// with the height + y + 0x20.
+    pub fn fire_scroll_blits(&self, scroll: Option<TexRef>, rect: [i32; 4], vb: i32, under: Vec<Blit>) -> Vec<Blit> {
+        let [x0, y0, w, height] = rect;
+        let frame = (vb >> 1).clamp(0, 0x14);
+        let (fy, fh2) = if y0 < 0 { (0, height + y0 + 0x20) } else { (y0, height) };
+        let r = [x0 as f32, fy as f32, w as f32, fh2 as f32];
+        let mask = self.lookup("greenCircTransM").and_then(|t| self.offset(t, 1 + frame));
+        let fire = self.lookup("greenCircTrans").and_then(|t| self.offset(t, 1 + frame));
+        let mut out = Vec::new();
+        if let Some(m) = mask {
+            for mut b in under {
+                b.mask = Some((m, r));
+                out.push(b);
+            }
+        }
+        let mut f = self.make(fire, x0, fy, w, fh2);
+        f.z = 0.125;
+        f.mask = scroll.map(|s| (s, [x0 as f32, y0 as f32, w as f32, height as f32]));
+        out.push(f);
         out
     }
     /// init_got_it 0x12afe8: every pickup notice cleared (blits removed).

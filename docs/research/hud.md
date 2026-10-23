@@ -167,7 +167,114 @@ window values (only in-game ones are captured; placement round-trips
 either way) and AnimateATree's rate (sequence 0 at its timing factor). audio_options' sliders follow
 position_audioslider (empty_bar 264×32, pink_bar 264·v/255, marker_left
 −52, marker_right +264−24, the knob at fill − 0x14; unselected alpha
-100/150/160); Mono/Stereo is drawn but not selectable natively.
+100/150/160).
+
+### Leaving a menu (end_optmenu, finish_optmenu, the fire scroll)
+
+Read from the instructions (2026-10-23; ghidra-optmenu, ghidra-scroll1,
+ghidra-menuaudio1). start_optmenu(menu, player) with a menu pushes:
+end_optmenu(1, 0) on the current top (its background blit +0xdc removed;
+with flag 0x20 it keeps drawing through finish_optmenu, +0x70 counting
+vblanks to OPTMENU_FINISH_FRAMES 30, its text fading; else removed).
+start_optmenu(0) pops: end_optmenu(−1, 0). DoOptions' −1/−2 results pop
+and play AudioMenuExit; quit_game / quit_level end every level with
+end_optmenu(−1, −1); end_all_optmenus (Manage Character, Shop, Inventory's
+end) uses end_optmenu(−1, 1): removal without fade or burn. A pop to a
+menu without a background (+0x44 0) or with none below, and every
+end_optmenu(−1, −1), start the fire scroll over the closed menu's
+background: StartFireScroll(z 0 → 1.0, +0x44, −1, +0x48..+0x54) — the
+derived rectangle start_optmenu_nostack wrote back — and MBBlitOrder of
+the +0xdc blit behind its z mask. fscroll_descs 0x220448 holds four
+identical entries (greenCircTrans / greenCircTransM), so the type cycle
+(last_fscroll_type) changes nothing. ServeFireScroll runs at the top of
+DoOptions every frame (21 frames of two vblanks, ClearAllPlayerControls(2)
+each); DoOptions returns nonzero while the last menu finishes
+(optmenu_active 1 → finish_optmenu) and then while the fire is served, so
+main pauses the game until both are done. Native: gdl_play's MenuEnding
+(end_menu / serve_menu_ending; the sim's pause gate includes it; GUI flows
+menu-burn and pause-burn).
+
+Sounds (do_optmenu 0x10c4f8 and DoOptions): up/down in a menu with
+entries AudioCursorV; accept AudioCursorSelect when the menu has flag
+0x400 (title_options, tower/game menus and options, hint_menu, the
+submenus and choice menus) — the title's Options plays it explicitly —
+and AudioBuzzer on a disabled entry; triangle AudioMenuExit only with flag
+0x800 (sel_def_menu); a DoOptions pop AudioMenuExit (not after the audio
+menu, which plays AudioPlayerStart); a stored choice AudioPlayerStart;
+Control Style left/right AudioCursorH, its accept AudioPlayerStart;
+Screen Adjust's accept AudioPlayerStart. Native: menu::Cue, played by
+play_menu_cues.
+
+Choice menus (DoOptions 0xa..0x11) store and mark the accepted entry and
+stay open until Back. Control Style ignores triangle (−1 → 0); Select
+stores the style and pops. The audio menu's entry actions (0x17..0x19) do
+nothing on accept. OptionsStart 0x10d3e0 (START in play): tower_menu or
+game_menu — game_menu's Quit Level (0x26) disabled (+0x20 −1) when
+CurWorld is 0xc — then AudioStopAll (queue, tracks, every SFX voice).
+game_menu's Quit Level opens quitlevel_question ("Abort Level?", No −1 /
+Yes 0x26), like the Tower's Quit Game (quitgame_question). While a menu is
+up DoOptions calls LowerBGMusic(0.1, −1) (the music eases to 0; the audio
+menu LowerBGMusic(0, 1)), and game_main keeps running BGMusicUpdate in
+mode 0x4010 while paused (ScrollMessageBox runs it in its loop).
+
+Audio menu (case 8, do_audiomenu 0x10cc00): Music Volume (0x17), Sfx
+Volume (0x18), Mono (0x19, value "Stereo"; +0x1c = stereo + 1 marks Mono or
+Stereo, +0x20 = stereo moves the highlight to the value). do_optmenu
+returns 3/4 for a left/right edge and 5/6 while held, so a slider moves by
+vb_elapsed_menu per frame (0..255). Music: AudioSetVolMusic +
+AudioTuneUpdateVol(0x80). SFX: AudioSetVolSfx on a change; at an end, with
+sfx_sound_count ≥ 0x10, AudioVolSfx(1) (AudioSFX2(0x14, 0x7f, 0x7f, 1));
+resting on Sfx Volume with the count ≥ 0x3d, AudioVolSfx(0): snd.286
+0x23d438 [idx.285] (the two ELF words, alternating). Mono's edge:
+AudioCursorH, +0x20 ^= 1 (GamePrefs word 2), AudioSetStereo. Native:
+Menu::hold each frame with the held d-pad; GamePrefs are stored when the
+menu ends.
+
+## Screen saver (ScreenSaver 0x12acf8)
+
+Read from the instructions (2026-10-23; ghidra-saver1..3). main calls
+ScreenSaver before DoOptions every frame. Outside game_mode & 0x8000
+(attract, title), 0x400e (movies) and 0x4015, once the world is loaded,
+saver_timer counts vb_elapsed_ctl and resets whenever a player's
+PlayerControl +4 level word differs from saver_levels; at 36000 vblanks
+(ten minutes; AuxLevels 0x100000000 forces it) ScreenSaverStart runs:
+AudioStopAll, AudioStreamStop, optmenu_active saved and set to 100, every
+node except types 7/9 hidden (MBTreeSetFlags 2), saverroot, and the four
+weapons. ScreenSaver then loops on its own — ClockOncePerFrame,
+ScreenSaverUpdate (DoTexMods for powerup_anim, ScreenSaverUpdateWeap ×4),
+PlayerControls, MBEndFrame — until a level word changes, so the game is
+halted; blits (the HUD panels) keep drawing. ScreenSaverEnd removes the
+weapons, shows every node, ClearAllPlayerControls(−2) (ClearControls 0x104088
+first: plr_repedges/edges/levels, right_jstick, old_plr_levels), restores
+optmenu_active, and in mode 0x400b AudioSelect(1), in 0x4012 ShopMusicStart.
+
+Weapons (ssave_weap 0x2c12c0, 0x90 bytes; POWERUPS trees ssave_desc
+SAVER_AXE / SAVER_HAM / SAVER_SWD / SAVER_WND): InitWeap = CreateWeap,
+ResetWeap, delay k × 30 + RandInt(15) + 1. ResetWeap: position
+ssave_initpos (±20 in x or y, z 1), timer 0, delay ssave_delay 3 × (Random(1)
++ 0.5) × 60 + 1, end ssave_endtime 10 × (Random(1) + 0.5) × 60, node removed.
+StartWeap (once the timer reaches the delay): node (re)created, position,
+normalised ssave_initdir, pitch 0, bounce 0, +0x34/+0x38 = ssave_speed /
+ssave_dpitch × (Random(0.2) + 0.9) (unused by UpdateWeap), delay 0, shown.
+UpdateWeap: position += ssave_speed 10 × vb/30 × direction; pitch −=
+ssave_dpitch 2π × vb/30 (wrapped to (−π, π]); node rotation
+CreateDirMatrix(direction) · PitchMat3 · the window matrix (MboxWinPtr
++0x70), position = MulVec4Mat4(position, that matrix): positions are in
+the window camera's space. Clip code: 5 beyond ssave_max_z 40, 6 nearer
+than ssave_min_z 5, else MBWorldSphereClip(−1, world position) (6 near, 5
+far, 2 right, 1 left, 3 top, 4 bottom). Bounce state +0x24: 0 waits until
+the weapon is inside (code 0 → 1); armed (≥ 1), a nonzero code turns it —
+1/2: x = ±(Random(0.5) + 0.5), y += ssave_rand 0.1 × (Random(2) − 1); 3/4
+the same with y and x; 6: z = Random(0.5) + 0.5; 5: z = −(Random(0.5) +
+0.5) and past its end time ResetWeap — then NormalVector and −10; a
+negative state becomes vb the next frame. AnimateATree each update.
+Native: game::saver (the game RNG; presentation arithmetic, not compared),
+gdl_play's simulate (the halt) and present_saver (the scene camera shows
+only SAVER_LAYER; HYPOTHESIS: the trees play sequence 0 at their timing,
+the window matrix is the camera basis and eye). NATIVE: the pause menu's
+text is not hidden while the saver runs over a paused game (the original
+keeps only its persistent blits). GUI flow saver (GDL_DEBUG_SAVER
+shortens the count; menu-flows-m17-v7).
 
 ## Title screen
 

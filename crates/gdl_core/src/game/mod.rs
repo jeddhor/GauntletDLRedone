@@ -56,6 +56,7 @@ pub mod stage;
 pub mod teammove;
 pub mod weaptrail;
 pub mod seethru;
+pub mod saver;
 
 use crate::collision::{CollisionWorld, UnsupportedCollision};
 use crate::item_collision::DynGrid;
@@ -218,9 +219,6 @@ pub enum Event {
     /// ScrollMessageBox(mask, FindScrollMessage(name), line, audio): a named
     /// SCROLL_E.ROM entry, one line or every line (None) as pages.
     ScrollNamed { player_mask: u32, name: &'static str, line: Option<usize>, audio: i32 },
-    /// A trigger camera the original activates here (camera system not
-    /// ported yet): "crystal", "sumner", "window", "rune".
-    CameraRequest { kind: &'static str, arg: i32 },
     /// inactivate_player's clear_player(k, 1): the host rebuilds the slot's
     /// record (it holds every class's PDAT).
     PlayerInactivated { player: usize },
@@ -505,9 +503,14 @@ pub struct Game {
     pub weaptrail_dalpha: i32,
     /// The X-ray view per player (seethru.rs).
     pub see_thru: [seethru::SeeThru; 4],
+    /// ScreenSaver 0x12acf8's timer, levels and weapons.
+    pub saver: saver::ScreenSaver,
     /// Where BossDeath placed the boss key effect.
     pub boss_key_position: Option<[f32; 3]>,
-    /// LockCamReq 0x23f2c4: camera-lock request (camera logic not ported; 0).
+    /// LockCamReq 0x23f2c4: camera-lock request. Only LockCamera (from the
+    /// old camera's screen_limitation) sets it nonzero, and play runs
+    /// StdCamUpdate (new_camera_switch 1), so it stays 0 (do_players,
+    /// InitCamera clear it).
     pub lock_cam_req: i32,
     /// Enemy tree alpha (presentation; see enemy_mod_alpha).
     pub enemy_alpha: Vec<i32>,

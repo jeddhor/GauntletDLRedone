@@ -37,6 +37,26 @@ FLOWS = {
         + k('Return') + [["shot", "options-first"]] + k('BackSpace') + k('BackSpace') + [["shot", "back"], ["wait", 1]],
         expect=[r'front .*PressStart', r'front .*Title \{ at: 0 \}', r'front .*Title \{ at: 1 \}', r'front .*Options \{ at: 0',
                 r'front .*Title \{ at: 1 \}']),
+    # Title → Options → Back: title_options fades out (finish_optmenu) and
+    # its background burns (StartFireScroll: title_menu has none).
+    'menu-burn': dict(
+        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Down') + k('Return') + [["wait", 1], ["shot", "options"]]
+        + [["key", "BackSpace", 0.1], ["wait", 0.1], ["shot", "burn1"], ["wait", 0.15], ["shot", "burn2"], ["wait", 0.15], ["shot", "burn3"],
+           ["wait", 1.5], ["shot", "after"]],
+        expect=[r'front .*Options \{ at: 0', r'front .*Title \{ at: 1 \}.*ending finish 1 burn', r'front .*Title \{ at: 1 \} \| $']),
+    # In the Tower: pause → Back: tower_menu fades and burns while the game
+    # stays paused; it resumes after the burn.
+    'pause-burn': dict(
+        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Return') + [["wait", 3]] + k('space', 8, gap=1.5) + [["wait", 12]]
+        + k('i', 6, gap=1.5) + [["wait", 2]] + k('Escape') + [["wait", 1], ["shot", "paused"], ["key", "BackSpace", 0.1], ["wait", 0.2], ["shot", "burn"],
+           ["wait", 1.5], ["shot", "after"]],
+        expect=[r'paused=true Paused \{ tower: true, at: 0', r'paused=false Paused .*ending finish 1 burn', r'paused=false Paused \{ tower: true, at: 0 \} \| [a-z+]* ?world 13 level \d+$']),
+    # The screen saver (GDL_DEBUG_SAVER shortens the ten idle minutes): in
+    # G1 with no input it starts, the weapons fly; a key ends it.
+    'saver': dict(
+        env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1', GDL_DEBUG_SAVER='300'),
+        steps=[["wait", 60], ["shot", "saver1"], ["wait", 10], ["shot", "saver2"], ["wait", 10], ["shot", "saver3"]] + k('Down') + [["wait", 3], ["shot", "after"]],
+        expect=[r'playing .*\| saver world 7', r'playing .*\|  world 7']),
     # Start → the select screen: a new character (default name) → the Tower.
     'new-character': dict(
         steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Return') + [["wait", 3], ["shot", "select"]] + k('space', 8, gap=1.5)
@@ -56,12 +76,14 @@ FLOWS = {
         expect=[r'playing .*\| select world 13', r'paused=true Paused \{ tower: true, at: 0', r'Paused \{ tower: true, at: 1 \} \| select',
                 r'Paused \{ tower: true, at: 2 \} \| select\+shop', r'paused=true Inventory', r'InventoryClose', r'paused=true ConfirmQuit',
                 r'paused=false Paused \{ tower: true, at: 4']),
-    # In a realm (G1, TEST autostart): pause → Quit Level → back in the Tower.
+    # In a realm (G1, TEST autostart): pause → Quit Level → "Abort Level?"
+    # (quitlevel_question) → Yes → back in the Tower.
     'pause-realm': dict(
         env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1'),
         steps=[["wait", 15]] + k('Escape') + [["wait", 1], ["shot", "paused"]] + k('Down') + k('Return') + [["wait", 1], ["shot", "quit"]]
-        + k('Return') + [["wait", 15], ["shot", "after"]],
-        expect=[r'playing .*world 7 level 0', r'paused=true Paused \{ tower: false, at: 0', r'Paused \{ tower: false, at: 1', r'world 13']),
+        + k('Down') + k('Return') + [["wait", 15], ["shot", "after"]],
+        expect=[r'playing .*world 7 level 0', r'paused=true Paused \{ tower: false, at: 0', r'Paused \{ tower: false, at: 1',
+                r'paused=true ConfirmQuit \{ at: 1, tower: false', r'world 13']),
 }
 
 
