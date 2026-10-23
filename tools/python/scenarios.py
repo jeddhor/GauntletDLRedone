@@ -99,6 +99,35 @@ SCENARIOS.update({
         menu=[],
         checks=[("after", "controller_lost", "==", 0), ("after", "joy_remap", "==", [0, -1, -1, -1]),
                 ("after", "last_event", "contains", "reassigned"), ("lost", "update", "==", 160)]),
+    # Exploration (no checks): two card files from one character (health
+    # 500 and 123), then player 1 loads file 0 and player 2 joins on port 2
+    # (keyboard set 2: U start, TFGH d-pad, R cross).
+    'coop-explore': dict(
+        level=None, updates=400,
+        actions=[{"at": 100, "save": 0}, {"at": 110, "health": 123}, {"at": 120, "save": 1}, {"at": 130, "dump": "made"}],
+        menu=presses(TRIANGLE, 30, 8, 30),
+        then=dict(load_slot=1, level=None, updates=3000, actions=[{"at": 100, "dump": "p1"}, {"at": 900, "dump": "later"}], menu=presses(TRIANGLE, 30, 8, 30),
+                  steps=[["wait", 25], ["shot", "tower"], ["key", "u", 0.3], ["wait", 6], ["shot", "join"], ["key", "r", 0.3], ["wait", 3], ["shot", "load"],
+                         ["key", "g", 0.4], ["wait", 2], ["shot", "down"], ["key", "r", 0.3], ["wait", 3], ["shot", "pick"], ["key", "r", 0.3], ["wait", 3],
+                         ["shot", "pick2"], ["key", "r", 0.3], ["wait", 4], ["shot", "pick3"]]),
+        checks=[]),
+    # M18 co-op ownership (GUI, keyboard set 2 for player 2): card files 0
+    # and 1 hold the same character with health 500 and 123. Player 1
+    # starts from file 0 (+0x2af4 = 0); player 2 joins (U), Load (R),
+    # memory card slot 1 (R): the file list shows file 0 unavailable (owned
+    # by player 1, verify_vmu_file_ok) and selects file 1 (R), then the
+    # character and Done (R, R). Player 2 then holds file 1's character.
+    'coop-ownership': dict(
+        level=None, updates=400,
+        actions=[{"at": 100, "save": 0}, {"at": 110, "health": 123}, {"at": 120, "save": 1}, {"at": 130, "dump": "made"}],
+        menu=presses(TRIANGLE, 30, 8, 30),
+        then=dict(load_slot=1, level=None, updates=400, actions=[{"at": 100, "dump": "p1"}, {"at": 300, "dump": "both"}], menu=presses(TRIANGLE, 30, 8, 30),
+                  steps=[["wait", 25], ["key", "u", 0.3], ["wait", 6], ["shot", "join"], ["key", "r", 0.3], ["wait", 3], ["key", "r", 0.3], ["wait", 3],
+                         ["shot", "files"], ["key", "r", 0.3], ["wait", 4], ["key", "r", 0.3], ["wait", 4], ["shot", "menu"], ["key", "r", 0.3], ["wait", 6],
+                         ["shot", "joined"]]),
+        checks=[("made", "health", "==", 123.0), ("p1", "players.0.file", "==", 0), ("both", "players.0.file", "==", 0),
+                ("both", "players.1.file", "==", 1), ("both", "players.1.health", "==", 123.0), ("both", "players.1.port", "==", 1),
+                ("both", "players.0.health", "==", 500.0)]),
 })
 
 
@@ -141,7 +170,7 @@ def run(tag, name, sc, saves_from=None, mutations=()):
     script.write_text(json.dumps(sc.get('script', [])))
     out = d / 'state.txt'
     steps = d / 'steps.json'
-    s = []
+    s = list(sc.get('steps', []))
     for k in range(200):
         s += [["wait", 3]] + ([["shot", f"t{k:03d}"]] if k % 5 == 4 else [])
     steps.write_text(json.dumps(s))
@@ -152,6 +181,8 @@ def run(tag, name, sc, saves_from=None, mutations=()):
         env['GDL_DEBUG_LEVEL'] = sc['level']
     if sc.get('load_slot'):
         env['GDL_TEST_LOAD_SLOT'] = str(sc['load_slot'])
+    if sc.get('level') is None:
+        env.pop('GDL_DEBUG_LEVEL', None)
     subprocess.run([sys.executable, str(ROOT / 'tools/python/client_driver.py'), 'serve', run_tag, str(steps)],
                    cwd=ROOT, env=env, timeout=2400)
     dumps = {}
@@ -163,7 +194,9 @@ def run(tag, name, sc, saves_from=None, mutations=()):
         dumps.update(b['dumps'])
     results = []
     for label, field, op, ref in sc['checks']:
-        got = dumps.get(label, {}).get(field)
+        got = dumps.get(label, {})
+        for part in field.split('.'):
+            got = got[int(part)] if isinstance(got, list) and part.isdigit() and int(part) < len(got) else (got.get(part) if isinstance(got, dict) else None)
         want = value(dumps, ref)
         if op == 'contains':
             ok = isinstance(got, str) and want in got

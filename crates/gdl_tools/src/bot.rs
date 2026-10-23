@@ -735,12 +735,10 @@ impl Bot {
                     }
                 }
                 self.attack_until = f + 40;
-                // Escape: short moves at ±45°, ±90°, ±135° from the blocked
-                // waypoint's heading (sliding off the wall the player pushes
-                // into), then the new route.
+                // Back off briefly (away from the blocked waypoint) before the new route.
                 if let Some(&b) = self.path.get(self.at) {
                     let q = self.nav.pts[b];
-                    self.backoff = Some((f, [q[0] - p[0], 0.0, q[2] - p[2]]));
+                    self.backoff = Some((f + 10, [2.0 * p[0] - q[0], p[1], 2.0 * p[2] - q[2]]));
                 }
                 // A container or obstacle item in the way (barrels, chests:
                 // kinds 2 and 10): face it while attacking.
@@ -780,13 +778,9 @@ impl Bot {
             self.progress = (f, p);
             return pad;
         }
-        if let Some((since, d)) = self.backoff {
-            const TURNS: [f32; 6] = [0.785, -0.785, 1.571, -1.571, 2.356, -2.356];
-            let k = (f - since) / 6;
-            if let Some(&a) = TURNS.get(k) {
-                let (sn, cs) = a.sin_cos();
-                let v = [d[0] * cs - d[2] * sn, d[0] * sn + d[2] * cs];
-                return Self::steer(pad, g, p, [p[0] + v[0], p[1], p[2] + v[1]]);
+        if let Some((until, away)) = self.backoff {
+            if f < until {
+                return Self::steer(pad, g, p, away);
             }
             self.backoff = None;
         }
@@ -851,12 +845,7 @@ impl Bot {
             .filter(|e| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && (e.v3(0x40)[1] - p[1]).abs() < 3.0)
             .map(|e| (dist_xz(e.v3(0x40), p), e.v3(0x40)));
         let critters = g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| (dist_xz(c.rec.v3(0x40), p), c.rec.v3(0x40)));
-        // Generators (kind 3) feed the enemies: in reach up to 3 units
-        // further, and preferred (counted 3 units nearer).
-        let generators = (0..g.items.records.len())
-            .filter(|&s| g.items.records[s].active() && g.items.records[s].u8_(0xe1) == 0 && item_kind(g, s).0 == 3 && (g.items.records[s].v3(0x40)[1] - p[1]).abs() < 3.0)
-            .map(|s| (dist_xz(g.items.records[s].v3(0x40), p) - 3.0, g.items.records[s].v3(0x40)));
-        enemies.chain(critters).chain(generators).filter(|(d, _)| *d < range).min_by(|a, b| a.0.total_cmp(&b.0))
+        enemies.chain(critters).filter(|(d, _)| *d < range).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
     /// The left stick toward `t`: PlayerMotion's heading is the camera yaw

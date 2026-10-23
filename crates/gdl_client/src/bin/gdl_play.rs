@@ -3422,6 +3422,12 @@ fn simulate(
             if let (Some(label), Some(out)) = (a["dump"].as_str(), harness.state_out.as_ref()) {
                 let mut d = progress_dump(&sim.game, label, now);
                 d["controller_lost"] = serde_json::Value::from(sim.game.controls.controller_lost);
+                // Every player: state +0xfc, health, name (+0x99c), class, the
+                // card file it owns (+0x2af4) and its port.
+                d["players"] = serde_json::json!((0..4).map(|k| { let r = &sim.game.players[k]; serde_json::json!({
+                    "state": r.i32_(0xfc), "health": r.f32_(0x1a10), "class": r.u32_(0xc),
+                    "name": String::from_utf8_lossy(&r.0[0x99c..0x9a4]).trim_end_matches('\0').to_string(),
+                    "file": r.i32_(0x2af4), "port": sim.game.controls.joy_remap[k] }) }).collect::<Vec<_>>());
                 d["joy_remap"] = serde_json::json!(sim.game.controls.joy_remap);
                 // The client's status line (e.g. "save recovered from …").
                 d["last_event"] = serde_json::Value::from(sim.last_event.clone());
@@ -3441,7 +3447,6 @@ fn simulate(
             }
         }
         ports[0] = p;
-        ports[1] = PadStatus::default();
         harness.menu_ticks += 1;
     }
     if let Some(script) = harness.script.as_ref().filter(|_| in_play) {
@@ -3455,7 +3460,6 @@ fn simulate(
             }
         }
         ports[0] = p;
-        ports[1] = PadStatus::default();
     }
     // TEST: a port without its device, then back with START held.
     if let Some((port, after)) = harness.disconnect
@@ -5427,6 +5431,12 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         // (+0x2c style, +0x30 vibration, +0x38 auto attack, +0x34 auto aim).
         for (o, v) in [0x2c, 0x30, 0x38, 0x34].into_iter().zip(session.controls) {
             game.controls.control[0].set_u32(o, v);
+        }
+        // PlayerLoadSaveFile's +0x2af4: the card file player 1 owns (file k
+        // is slot k + 1), which the select screen's verify_vmu_file_ok
+        // keeps other players from loading or overwriting.
+        if let Some(slot) = from.filter(|s| (1..=8).contains(s)) {
+            game.players[0].set_i32(0x2af4, slot as i32 - 1);
         }
         init_hud(&mut game, &sources, &session, front, &mut hud_sets, true);
         (session, sources, game, recovered)
