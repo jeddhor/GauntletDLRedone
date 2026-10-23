@@ -39,16 +39,21 @@ select screen (init_player_select(1)) with the player's own character and is
 placed by load_player_geo / get_player_pos; the camera is the original StdCam
 (research/camera.md).
 
-Controls: arrows/WASD move, Space/K throw, E/L use a potion (magic), F1
+Controls (PS2 buttons as measured, player.md "Pad buttons"; keyboard is a
+native choice with K/L/I/J as the reference's PCSX2 bindings): arrows/WASD
+move, Space/K cross (attack), E/L circle (magic), Shift/I triangle (turbo;
+closes message scrolls), Q/J square, Z L1, X L2 (team move), Ctrl R1
+(strafe), V R2, Enter start, Tab select; gamepads by their own buttons. F1
 toggles the diagnostics block, stand still in the exit portal to leave the
 level, F9 debug-skips to the next level. Death: do_players state 8 plays the
 dying action, then kill_player — in a realm the player is out (keys
 dropped, powerups cleared); with nobody left game_main goes to TowerWave and
 the level-start state is restored (PlayerRestoreState); in the Tower the
-player is restored at once. Message scrolls close with Enter/Esc (the
-original's Triangle). Menus: arrows/WASD or D-pad,
-Enter/Space or South to accept, Esc/Backspace or East to go back; Esc on the
-"Press Start" screen exits. The HUD shows colour/class, level, experience,
+player is restored at once. Message scrolls turn their pages on triangle
+only, as in the original. Menus: arrows/WASD or D-pad, cross
+(Enter/Space/K, gamepad South) to accept, triangle (Esc/Backspace/I/Shift,
+gamepad North) to go back, circle (C/L/E, gamepad East) centres Screen
+Adjust; Escape on the "Press Start" screen exits. The HUD shows colour/class, level, experience,
 save slot, health, gold, keys, potions, kills, active enemies and standing
 generators; F1 adds the interim labels and any unported path hit.
 

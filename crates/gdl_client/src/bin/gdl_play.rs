@@ -1796,14 +1796,17 @@ enum MovieThen {
     Shop(usize),
 }
 
-/// One port's joyGetStatus entries this update. HYPOTHESIS mapping (the
-/// physical pad → entry assignment is not measured; research/unknowns.md):
-/// entries 0–3 d-pad (left, right, up, down; observed level bits), 0xd
-/// attack, 0xb magic/potion, 0xc turbo, 0xa the second attack button
-/// (GetPlayerDMotion 0x400), 0x12 strafe, 0x13 code 2, 8 dash, 9 team move,
-/// 0x14/0x15 start/select. Port 0: WASD/arrows, Space/K, E/L, Shift/J,
-/// Q/I, Ctrl, Enter/Tab, or gamepad 0 (stick as analog entries 4–7); port
-/// 1: TFGH, R, Y; ports 2–3: gamepads.
+/// One port's joyGetStatus entries this update. Physical buttons measured in
+/// the reference (private/reports/trace-buttons-{a,b}-v1.json, research/
+/// player.md "Pad buttons"): entries 0–3 d-pad (left, right, up, down), 0xd
+/// cross (attack), 0xb circle (magic), 0xc triangle (turbo; closes
+/// scrolls), 0xa square, 8 L1 (dash), 9 L2 (team move), 0x12 R1 (strafe),
+/// 0x13 R2, 0x14/0x15 start/select; L3/R3 set nothing. NATIVE keyboard
+/// choice — port 0: WASD/arrows, Space/K cross, E/L circle, Shift/I
+/// triangle, Q/J square, Z L1, X L2, Ctrl R1, V R2, Enter start, Tab
+/// select (K/L/I/J as the reference's PCSX2 bindings); port 1: TFGH, R
+/// cross, Y circle, U start, B L2; gamepads by their face/shoulder
+/// buttons (left stick as analog entries 4–7).
 fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> PadStatus {
     let mut s = PadStatus { connected: true, ..Default::default() };
     let press = |s: &mut PadStatus, i: usize, on: bool| {
@@ -1820,13 +1823,14 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> 
             press(&mut s, 3, k(KeyCode::ArrowDown) || k(KeyCode::KeyS));
             press(&mut s, 0xd, k(KeyCode::Space) || k(KeyCode::KeyK));
             press(&mut s, 0xb, k(KeyCode::KeyE) || k(KeyCode::KeyL));
-            press(&mut s, 0xc, k(KeyCode::ShiftLeft) || k(KeyCode::KeyJ));
-            press(&mut s, 0xa, k(KeyCode::KeyQ) || k(KeyCode::KeyI));
+            press(&mut s, 0xc, k(KeyCode::ShiftLeft) || k(KeyCode::KeyI));
+            press(&mut s, 0xa, k(KeyCode::KeyQ) || k(KeyCode::KeyJ));
+            press(&mut s, 8, k(KeyCode::KeyZ));
+            press(&mut s, 9, k(KeyCode::KeyX));
             press(&mut s, 0x12, k(KeyCode::ControlLeft));
+            press(&mut s, 0x13, k(KeyCode::KeyV));
             press(&mut s, 0x14, k(KeyCode::Enter));
             press(&mut s, 0x15, k(KeyCode::Tab));
-            // NATIVE: R2 (entry 9: the team move, PlayerControl 0x20000).
-            press(&mut s, 9, k(KeyCode::KeyX));
         }
         1 => {
             press(&mut s, 0, k(KeyCode::KeyF));
@@ -1848,12 +1852,12 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> 
         press(&mut s, 3, b(GamepadButton::DPadDown));
         press(&mut s, 0xd, b(GamepadButton::South));
         press(&mut s, 0xb, b(GamepadButton::East));
-        press(&mut s, 0xc, b(GamepadButton::West));
-        press(&mut s, 0xa, b(GamepadButton::North));
-        press(&mut s, 0x12, b(GamepadButton::LeftTrigger));
-        press(&mut s, 0x13, b(GamepadButton::RightTrigger));
-        press(&mut s, 8, b(GamepadButton::LeftTrigger2));
-        press(&mut s, 9, b(GamepadButton::RightTrigger2));
+        press(&mut s, 0xc, b(GamepadButton::North));
+        press(&mut s, 0xa, b(GamepadButton::West));
+        press(&mut s, 8, b(GamepadButton::LeftTrigger));
+        press(&mut s, 9, b(GamepadButton::LeftTrigger2));
+        press(&mut s, 0x12, b(GamepadButton::RightTrigger));
+        press(&mut s, 0x13, b(GamepadButton::RightTrigger2));
         press(&mut s, 0x14, b(GamepadButton::Start));
         press(&mut s, 0x15, b(GamepadButton::Select));
         // The left stick as pressure-style entries 4–7 (left, right, up, down).
@@ -3185,18 +3189,9 @@ fn simulate(
     ui: Res<Ui>,
     mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
     front: Res<Front>,
+    time: Res<Time>,
 ) {
     if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started {
-        return;
-    }
-    if ui.paused || sim.message_box.is_some() {
-        // main keeps running AudioQueUpdate / AudioPoll (DoOptions,
-        // ScrollMessageBox): queued lines go on while the game waits.
-        let vb = sim.game.globals.vb_elapsed;
-        sim.game.main_audio(vb);
-        let new: Vec<Event> = sim.game.events.drain(..).collect();
-        let me = Vec3::from_array(sim.game.players[0].v3(0x50));
-        play_audio(&mut audio, &new, me, presentation.basis[0]);
         return;
     }
     let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().collect();
@@ -3207,6 +3202,23 @@ fn simulate(
         *port = player_input(k, &keys, &pads);
         // Only ports with a device are connected (keyboard: ports 0 and 1).
         port.connected = k < 2 || pads.get(k).is_some();
+    }
+    if ui.paused || sim.message_box.is_some() {
+        // main keeps running AudioQueUpdate / AudioPoll (DoOptions,
+        // ScrollMessageBox): queued lines go on while the game waits.
+        let vb = sim.game.globals.vb_elapsed;
+        sim.game.main_audio(vb);
+        if !ui.paused {
+            step_message_box(&mut sim, &ports, time.delta_secs());
+        } else if let Err(e) = sim.game.update_controls(&ports) {
+            // DoOptions reads PlayerControl each frame, so the press that
+            // closes a menu is an old level when the game resumes.
+            sim.error = Some(format!("controls: {}", e.0));
+        }
+        let new: Vec<Event> = sim.game.events.drain(..).collect();
+        let me = Vec3::from_array(sim.game.players[0].v3(0x50));
+        play_audio(&mut audio, &new, me, presentation.basis[0]);
+        return;
     }
     // PlayStreamComplete: a stage music part played once has ended.
     if sim.game.bg_music.stream_playing && audio.as_ref().is_some_and(|a| !a.stream_playing()) {
@@ -3438,18 +3450,19 @@ fn simulate(
             }
             // NewHelp draws its own box (Game::new_help / DoHelp).
             Event::HintMenu { .. } => sim.hint_menu = true,
-            Event::ScrollMessage { text, .. } => {
+            Event::ScrollMessage { player_mask, text } => {
                 // A scroll item: line `text` of SCROLLS<level code>
                 // (SetScrollLevelMsgList(level_data + 8)).
                 let code = format!("SCROLLS{}", session.levels[session.current].name);
                 if let Some(e) = front.scrolls.entry(&code)
                     && let Some(line) = usize::try_from(text).ok().and_then(|k| e.lines.get(k))
                 {
-                    let sb = scroll_box(&sim.game, &front.scrolls, e, vec![line.replace('\r', "")]);
+                    let sb = scroll_box(&sim.game, &front.scrolls, e, vec![line.replace('\r', "")], player_mask);
+                    sim.game.scroll_box_open();
                     sim.message_box = Some(sb);
                 }
             }
-            Event::ScrollNamed { name, line, .. } => {
+            Event::ScrollNamed { player_mask, name, line, .. } => {
                 // FindScrollMessage(name): SCROLL_E.ROM entries are upper case.
                 if let Some(e) = front.scrolls.entry(&name.to_uppercase()) {
                     let pages: Vec<String> = match line {
@@ -3458,7 +3471,8 @@ fn simulate(
                     };
                     let pages: Vec<String> = pages.into_iter().map(|p| p.replace('\r', "")).collect();
                     if !pages.is_empty() {
-                        let sb = scroll_box(&sim.game, &front.scrolls, e, pages);
+                        let sb = scroll_box(&sim.game, &front.scrolls, e, pages, player_mask);
+                        sim.game.scroll_box_open();
                         sim.message_box = Some(sb);
                     }
                 }
@@ -4213,12 +4227,47 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, front: &Front
     sets.images.clear();
 }
 
+/// One ScrollMessageBox loop pass per elapsed vblank batch (wall time at
+/// the NTSC rate): on the pages PlayerControls runs and, once 15 vblanks
+/// have passed, the masked players' triangle edge turns the page
+/// (ClearAllPlayerControls(2) after it); the fire scroll polls no controls
+/// and clears them per frame; the end clears them with lockout 4.
+fn step_message_box(sim: &mut Sim, ports: &[PadStatus; 8], dt: f32) {
+    sim.scroll_clock += dt * 59.94;
+    let vb = sim.scroll_clock.floor() as i32;
+    if vb < 1 {
+        return;
+    }
+    sim.scroll_clock -= vb as f32;
+    let Some(mut sb) = sim.message_box.take() else { return };
+    let burning = sb.burn.is_some();
+    let mut pressed = false;
+    if !burning {
+        if let Err(e) = sim.game.update_controls(ports) {
+            sim.error = Some(format!("controls: {}", e.0));
+        }
+        pressed = sb.wait < 1 && sim.game.scroll_box_pressed(sb.mask);
+    }
+    let page = sb.page;
+    let open = sb.step(vb, pressed);
+    if burning || sb.page != page {
+        sim.game.scroll_box_page_end();
+    }
+    if open {
+        sim.message_box = Some(sb);
+    } else {
+        sim.game.scroll_box_close();
+    }
+}
+
 /// ScrollMessageBox pages of a SCROLL_E entry: its FONT name resolved
 /// against font_desc (StringInitSub), scale and space scale.
-fn scroll_box(game: &Game, rom: &gdl_formats::textrom::TextRom, e: &gdl_formats::textrom::TextEntry, pages: Vec<String>) -> gdl_core::game::hud::ScrollBox {
+fn scroll_box(game: &Game, rom: &gdl_formats::textrom::TextRom, e: &gdl_formats::textrom::TextEntry, pages: Vec<String>, mask: u32) -> gdl_core::game::hud::ScrollBox {
     let name = rom.fonts.get(e.font as usize).cloned().unwrap_or_default();
     let font = game.hud.tables.as_ref().and_then(|t| t.font_desc.iter().position(|n| *n == name)).unwrap_or(0);
-    gdl_core::game::hud::ScrollBox::new(pages, font, e.scale, e.space)
+    let mut sb = gdl_core::game::hud::ScrollBox::new(pages, font, e.scale, e.space);
+    sb.mask = mask;
+    sb
 }
 
 /// FONTS/<font_desc>.FNT (font_init_desc).
@@ -5094,10 +5143,12 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
             (&[KeyCode::ArrowDown, KeyCode::KeyS][..], Key::Down),
             (&[KeyCode::ArrowLeft, KeyCode::KeyA][..], Key::Left),
             (&[KeyCode::ArrowRight, KeyCode::KeyD][..], Key::Right),
-            (&[KeyCode::Enter, KeyCode::Space][..], Key::Accept),
-            (&[KeyCode::Escape, KeyCode::Backspace][..], Key::Back),
-            // NATIVE: the circle button's Center (gamepad East is Back here).
-            (&[KeyCode::KeyC][..], Key::Center),
+            // The original's menu edges: cross 0x2000000 accepts, triangle
+            // 0x8000000 goes back, circle 0x1000000 (Center); the keys of
+            // player_input plus Enter/Escape/Backspace/C.
+            (&[KeyCode::Enter, KeyCode::Space, KeyCode::KeyK][..], Key::Accept),
+            (&[KeyCode::Escape, KeyCode::Backspace, KeyCode::KeyI, KeyCode::ShiftLeft][..], Key::Back),
+            (&[KeyCode::KeyC, KeyCode::KeyL, KeyCode::KeyE][..], Key::Center),
         ] {
             if ks.iter().any(|&k| pressed(k)) {
                 out.push(key);
@@ -5113,7 +5164,8 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
             (GamepadButton::DPadLeft, Key::Left),
             (GamepadButton::DPadRight, Key::Right),
             (GamepadButton::South, Key::Accept),
-            (GamepadButton::East, Key::Back),
+            (GamepadButton::North, Key::Back),
+            (GamepadButton::East, Key::Center),
         ] {
             if g.just_pressed(b) {
                 out.push(key);
@@ -5462,18 +5514,7 @@ fn front_system(world: &mut EcsWorld) {
             return;
         }
         if world.get_resource::<Sim>().is_some_and(|s| s.message_box.is_some()) {
-            // ScrollMessageBox's own loop: vblanks from wall time (NTSC).
-            let dt = world.resource::<Time>().delta_secs();
-            let pressed = keys.contains(&Key::Accept) || keys.contains(&Key::Back);
-            let mut sim = world.resource_mut::<Sim>();
-            sim.scroll_clock += dt * 59.94;
-            let vb = sim.scroll_clock.floor() as i32;
-            sim.scroll_clock -= vb as f32;
-            if let Some(sb) = sim.message_box.as_mut()
-                && !sb.step(vb, pressed)
-            {
-                sim.message_box = None;
-            }
+            // ScrollMessageBox is modal (simulate steps it): no menus.
             return;
         }
         if std::mem::take(&mut world.resource_mut::<Sim>().hint_menu) && !world.resource::<Ui>().paused {
@@ -5483,6 +5524,8 @@ fn front_system(world: &mut EcsWorld) {
             world.resource_mut::<Front>().hints = hints;
             world.resource_mut::<Front>().menu.page = gdl_client::menu::Page::Hints { at: 0 };
             world.resource_mut::<Ui>().paused = true;
+            // start_optmenu: ClearAllPlayerControls(2).
+            let _ = world.resource_mut::<Sim>().game.controls.clear_all_player_controls(2);
             return;
         }
         let paused = world.resource::<Ui>().paused;
@@ -5503,6 +5546,8 @@ fn front_system(world: &mut EcsWorld) {
                 front.menu.status.clear();
                 front.menu.pause(tower);
                 world.resource_mut::<Ui>().paused = true;
+                // start_optmenu: ClearAllPlayerControls(2).
+                let _ = world.resource_mut::<Sim>().game.controls.clear_all_player_controls(2);
             }
             if world.resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::F1) {
                 let mut ui = world.resource_mut::<Ui>();
@@ -5514,7 +5559,8 @@ fn front_system(world: &mut EcsWorld) {
             world.resource_mut::<Ui>().paused = false;
             return;
         }
-    } else if keys.contains(&Key::Back) && matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::PressStart) {
+    } else if world.resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::Escape) && matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::PressStart) {
+        // NATIVE: Escape on "Press Start" quits the client.
         world.write_message(AppExit::Success);
         return;
     }

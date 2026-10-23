@@ -882,7 +882,7 @@ impl Game {
         t.speech_frame = 0;
         t.speech_idx = n;
         t.caption = (0, 0, 0x3c);
-        self.disable_player_controls = 1;
+        self.disable_controls();
     }
 
     /// SumnerRuneSpeechStart 0x174a88(n): runes 0..=0xd speak (index 100 +
@@ -898,7 +898,7 @@ impl Game {
             self.tower.sumner_speech_time = 0.0;
             self.sumner_speech_end()?;
         }
-        self.disable_player_controls = 1;
+        self.disable_controls();
         self.tower.caption = (0, 0, 0x3c);
         Ok(())
     }
@@ -972,7 +972,7 @@ impl Game {
         self.tower.ghost = None;
         self.trigger_camera_end();
         self.tower.cam_active = false;
-        self.disable_player_controls = 0;
+        self.enable_controls();
         let idx = self.tower.speech_idx;
         if idx == 0x70 {
             let Some(o) = self.find_world_object("L1RUNE13") else { return Ok(()) };
@@ -1269,7 +1269,7 @@ impl Game {
             self.tower.sumner_speech_time = 0.5;
             self.tower.speech_frame = 0;
             self.tower.caption = (0, 0, 0x3c);
-            self.disable_player_controls = 1;
+            self.disable_controls();
             self.events.push(Event::SumnerAnim { player: usize::MAX });
         }
         n

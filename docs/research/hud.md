@@ -81,7 +81,14 @@ private/reference/captures/render/tower-newgame-v1-240.png). Port:
   button_tri_tex) at (0xdf, y + 8) and DrawGlowText(0.5, "Press     when
   done.") in font32 (glow pass: FONT32_GLOW, colour 0x8200ea, flag 0x4000
   grows glyphs ~2 units, alpha pulse hilite_fade 40 / hold 5; then white).
-  Input counts after 15 vblanks; a press advances the page.
+  EnablePlayerControls first (disable flag 0, ClearAllPlayerControls(4));
+  each loop pass runs PlayerControls; after 15 vblanks a page ends on the
+  triangle edge (PlayerControl +8 bit 0x8000000, entry 0xc) of an active
+  player (+0xfc) in the mask, or at once when no masked player is active;
+  ClearAllPlayerControls(2) after each page (unless AuxLevels & 8); the end
+  clears every player's +0x93e and ClearAllPlayerControls(4). Cross does not
+  close a scroll. Native: Game::scroll_box_open/pressed/page_end/close,
+  stepped by gdl_play's step_message_box with the real pads.
 - After the last page the fire scroll (StartFireScroll/ServeFireScroll):
   21 frames (one per two vblanks) of greenCircTrans (+1 + n, colour, z
   0.125) with z-only blits (flag 0x10000: FBMSK all, TEST ATST 4 = EQUAL,

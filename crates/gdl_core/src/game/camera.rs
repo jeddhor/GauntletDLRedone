@@ -2450,8 +2450,8 @@ impl super::Game {
             d => d * 6,
         };
         self.globals.trig_cam_active = 2;
-        // DisablePlayerControls 0x105e20 (ResetPlayerControls clears inputs).
-        self.disable_player_controls = 1;
+        // DisablePlayerControls 0x105e20.
+        self.disable_controls();
         let rows = trigger_camera_rows(pitch_yaw)?;
         self.trig_cam = TriggerCam { rows, eye: pos, wait, hold, wobj };
         self.vibrators_off();
@@ -2556,7 +2556,7 @@ impl super::Game {
         }
         if self.globals.trig_cam_active == 2 {
             // EnablePlayerControls 0x105e50.
-            self.disable_player_controls = 0;
+            self.enable_controls();
         }
         self.globals.trig_cam_active = 0;
         // AuxLevels & 2 is a debug option: do_camera() (old Cam array) and

@@ -233,6 +233,37 @@ impl Controls {
         }
     }
 
+    /// ClearAllPlayerControls 0x105b78(n), n ≥ 0: every PlayerControl
+    /// cleared with lockout n, then JoyLevels, JoyEdges, JoyRepEdges,
+    /// StartEdges (entries 0..3; not modelled, nothing reads them here) and
+    /// JoyAnyLevel/Edge/RepEdge zeroed. n < 0 (ScreenSaverEnd) first runs
+    /// ClearControls 0x104088, which is not ported.
+    pub fn clear_all_player_controls(&mut self, n: i32) -> R<()> {
+        if n < 0 {
+            return super::unsupported("ClearAllPlayerControls with ClearControls (n < 0)");
+        }
+        for k in 0..4 {
+            self.clear_player_control(k, n);
+        }
+        self.joy_levels = [0; 4];
+        self.joy_edges = [0; 2];
+        self.joy_rep_edges = [0; 2];
+        self.joy_any = [0; 3];
+        Ok(())
+    }
+
+    /// ResetPlayerControls 0x105d68 without its disable_player_controls = 0
+    /// (a Game field; see Game::enable_controls): every PlayerControl
+    /// cleared (lockout 0), the players' sw_cnt/sw_idx rows (the two rows
+    /// ReadControls uses) and JoyPrevLevels zeroed.
+    pub fn reset_player_controls(&mut self) {
+        for k in 0..4 {
+            self.clear_player_control(k, 0);
+        }
+        self.sw = [[0; 2]; 2];
+        self.joy_prev_levels = [0; 2];
+    }
+
     /// controls_remove_active_player 0x107268 (one player): its port's
     /// edges cleared and both mappings released (controls_set_active_players
     /// recomputes from joy_remap on the next update).
@@ -565,6 +596,62 @@ impl Game {
             self.serve_vibes();
         }
         Ok(())
+    }
+
+    /// EnablePlayerControls 0x105e50: ResetPlayerControls (with
+    /// disable_player_controls = 0), then ClearAllPlayerControls(4) — four
+    /// PlayerControls passes see no input.
+    pub fn enable_controls(&mut self) {
+        self.disable_player_controls = 0;
+        self.controls.reset_player_controls();
+        // n = 4 ≥ 0: never unsupported.
+        let _ = self.controls.clear_all_player_controls(4);
+    }
+
+    /// DisablePlayerControls 0x105e20: as EnablePlayerControls, then
+    /// disable_player_controls = 1.
+    pub fn disable_controls(&mut self) {
+        self.enable_controls();
+        self.disable_player_controls = 1;
+    }
+
+    /// ScrollMessageBox 0x128158's start: EnablePlayerControls (the box
+    /// polls PlayerControls itself; paused = 1 is the client's modal box).
+    pub fn scroll_box_open(&mut self) {
+        self.enable_controls();
+    }
+
+    /// ScrollMessageBox's close test once a page's 15 vblanks have passed,
+    /// after its PlayerControls: the edges (PlayerControl +8) of the active
+    /// players (+0xfc) in `mask` — a page ends on 0x8000000 (triangle,
+    /// entry 0xc) or when no player of the mask is active.
+    pub fn scroll_box_pressed(&self, mask: u32) -> bool {
+        let mut edges = 0;
+        let mut n = 0;
+        for k in 0..4 {
+            if mask >> k & 1 != 0 && self.players[k].i32_(0xfc) != 0 {
+                edges |= self.controls.control[k].u32_(8);
+                n += 1;
+            }
+        }
+        edges & 0x800_0000 != 0 || n == 0
+    }
+
+    /// ScrollMessageBox after each page and ServeFireScroll per burn frame:
+    /// ClearAllPlayerControls(2) unless AuxLevels bit 8.
+    pub fn scroll_box_page_end(&mut self) {
+        if self.globals.aux_levels & 8 == 0 {
+            let _ = self.controls.clear_all_player_controls(2);
+        }
+    }
+
+    /// ScrollMessageBox's end: every player's +0x93e (panel written bits)
+    /// cleared and ClearAllPlayerControls(4).
+    pub fn scroll_box_close(&mut self) {
+        for k in 0..4 {
+            self.players[k].set_u16(0x93e, 0);
+        }
+        let _ = self.controls.clear_all_player_controls(4);
     }
 
     /// do_vibe 0x1069a8(player, strength, frames) from damage_player: with

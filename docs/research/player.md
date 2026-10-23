@@ -87,6 +87,42 @@ chunks; process_effect applies their damage. HYPOTHESIS: effects parented
 to the player's node follow the record matrix (the animated child node's
 pose is not applied). Not trace-checked yet.
 
+## Pad buttons (measured 2026-10-22)
+
+Reference: slot 2 (tower-newgame-v1), each PCSX2 Pad1 binding held 6
+vblanks with release gaps (reference_trace.py --player; private/reports/
+trace-buttons-a-v1.json, trace-buttons-b-v1.json). PlayerControl +4 of
+player 0 while held (level bit from ControlsUpdate, plus the remap row of
+the default set):
+
+| Button (PCSX2 key) | Levels | joyGetStatus entry | Game use |
+| --- | --- | --- | --- |
+| cross (K) | 0x2000200 | 0xd | attack (DMotion 0xf); menu accept 0x2000000 |
+| circle (L) | 0x1000100 | 0xb | magic (DMotion 0x18); menus return 2 |
+| triangle (I) | 0x8000800 | 0xc | turbo (edge 0x800 → 0x15); menu back, scroll close 0x8000000 |
+| square (J) | 0x4000400 | 0xa | DMotion 0x10 |
+| L1 (Q) | 0x102000 | 8 | edge 0x2000 with turbo ≥ 5 → 7 |
+| L2 (1) | 0x220000 | 9 | 0x20000: team move (combo_player) |
+| R1 (E) | 0x404000 | 0x12 | 0x4000: strafe with the left stick |
+| R2 (3) | 0x801000 | 0x13 | edge 0x1000 → 2 |
+| select (BackSpace) | 0x80000 | 0x15 | |
+| L3 (2), R3 (4) | 0 | — | |
+
+Start (entry 0x14, bit 0x40000) is from ControlsUpdate only (pressing it
+opens the pause menu). gdl_play's gamepad buttons and its keyboard (K/L/I/J
+as PCSX2's bindings) follow this table; the earlier HYPOTHESIS mapping had
+triangle and square swapped and every shoulder button wrong.
+
+Control resets (ELF callers): EnablePlayerControls 0x105e50 =
+ResetPlayerControls (disable_player_controls 0, every PlayerControl and
+the repeat counters cleared) + ClearAllPlayerControls(4) (lockout: four
+PlayerControls passes see nothing); DisablePlayerControls 0x105e20 the
+same with the flag 1 (Sumner's speech starts, TriggerCameraActivate;
+Enable: SumnerSpeechEnd, TriggerCamUpdate). start_optmenu clears with 2,
+GeneralMenu with 1, ServeFireScroll with 2 per frame. The pause menu
+(DoOptions) reads PlayerControl edges itself; gdl_play keeps PlayerControls
+running while paused so a closing press is an old level on resume.
+
 ## Numeric domain
 
 EE FPU and VU arithmetic flush subnormal results to signed zero and read

@@ -17,7 +17,10 @@ from pine_probe import Pine, configured_socket
 from reference_snapshot import describe, fixture_regions
 from virtual_display import environment
 
-KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L']
+# PCSX2 Pad1 bindings (private/reference/config/PCSX2/inis/PCSX2.ini):
+# K cross, J square, I triangle, L circle, Q L1, E R1, 1 L2, 3 R2, 2 L3,
+# 4 R3, BackSpace select. None of them is a PCSX2 hotkey.
+KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L', 'Q', 'E', '1', '3', '2', '4', 'BackSpace']
 # Preserved savestates by PCSX2 slot (reference_slots.py; 3.. are
 # reference_warp.py captures) and the staging slot 9 for other captures.
 from reference_slots import SLOTS, resolve  # noqa: E402

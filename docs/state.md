@@ -207,6 +207,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    X / B). The plan's listed items are done; next: reference comparisons
    (multi-player, flyby camera) and the remaining Unsupported paths in
    player.md.
+   2026-10-22: GUI walkthrough on the private Xvfb (xdotool on the client's
+   own window): title → select (New, name, class) → the Tower's welcome →
+   crystal camera → play, matching the reference's new-game frame. Found and
+   fixed: the welcome scroll could not be closed with the in-game triangle
+   (the box used host menu keys); ScrollMessageBox's input is now the
+   original's (PlayerControls, the masked players' triangle edge, the
+   control clears); the physical buttons were measured in the reference
+   (player.md "Pad buttons") — gamepad/keyboard triangle and square were
+   swapped and the shoulder buttons wrong; Enable/DisablePlayerControls
+   ported in full (lockout 4); the pause menu keeps PlayerControls running.
 
 ---
 

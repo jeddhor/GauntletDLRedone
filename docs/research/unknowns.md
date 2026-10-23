@@ -72,7 +72,7 @@ which is data only and must not be executed.
 
 Resumed 2026-10-14 by a new agent session. The current resume queue and log paths
 are in [state.md](../state.md); movement evidence is in [movement.md](movement.md).
-| Physical pad → joyGetStatus entry | Entries 0–3 are the d-pad (left/right/up/down, observed level bits); remap shows attack = entry 0xd, magic 0xa, turbo 0xc, potion 0xb (by GetPlayerDMotion use) | Press each PS2 button in the reference and read plr_levels 0x2bacc0 |
+| Physical pad → joyGetStatus entry | RESOLVED 2026-10-22 (player.md "Pad buttons"): measured in the reference — cross 0xd, circle 0xb, triangle 0xc, square 0xa, L1 8, L2 9, R1 0x12, R2 0x13, select 0x15; L3/R3 set nothing. Start (0x14) from the code only (pressing it opens the pause menu) | — |
 | Player node under PlayerRootNode | 150 traced updates consistent with GetWorldMat = local matrix; −0.0 → +0.0. Moving-floor parents now traced: the Tower (player on 2903 under fade object 2902) and G1's moving floors match; native's translation-only path equals MulMat4 there (identity rotations). A rotating floor and a grabbed player are untested | Trace a rotating floor and a grabbed player |
 | Milestones table | update_player_milestone reads Milestones (0x70 each) / NumMilestones; kind-5 locators are the likely source | Export the Milestones builder and compare with a capture |
 | Panel inputs | button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, menu_on/optmenu/full-screen inventory flags from the front end, MBOX texture search order across packages | Export ResetModels; front-end port |

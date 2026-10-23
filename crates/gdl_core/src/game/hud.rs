@@ -1133,16 +1133,19 @@ pub struct ScrollBox {
     pub wait: i32,
     pub burn: Option<i32>,
     pub vb_counter: u32,
+    /// The players whose triangle closes a page (ScrollMessageBox's mask;
+    /// Game::scroll_box_pressed).
+    pub mask: u32,
 }
 
 impl ScrollBox {
     pub fn new(pages: Vec<String>, font: usize, scale: f32, space: f32) -> Self {
-        Self { pages, font, scale, space, page: 0, wait: 15, burn: None, vb_counter: 0 }
+        Self { pages, font, scale, space, page: 0, wait: 15, burn: None, vb_counter: 0, mask: u32::MAX }
     }
 
-    /// One loop pass with `vb` vblanks elapsed and the close button state;
-    /// false once the fire scroll has finished (ServeFireScroll: 21 frames,
-    /// one per two vblanks).
+    /// One loop pass with `vb` vblanks elapsed and the close test
+    /// (Game::scroll_box_pressed, read once `wait` < 1); false once the fire
+    /// scroll has finished (ServeFireScroll: 21 frames, one per two vblanks).
     pub fn step(&mut self, vb: i32, pressed: bool) -> bool {
         self.vb_counter = self.vb_counter.wrapping_add(vb as u32);
         if let Some(b) = self.burn.as_mut() {
