@@ -6,7 +6,8 @@
 //!
 //! Layout of a save directory:
 //! - `save0001.json` … : one character each; the number follows the
-//!   original's BASLUS-20047save%04d (slot + 1).
+//!   original's BASLUS-20047save%04d (slot + 1): the select screen's card
+//!   files 0..7 are save0001..save0008.
 //! - `<name>.bak`: the previous valid version, kept on every write.
 //! - `<name>.tmp`: a write in progress; never trusted unless valid.
 //! - `options.json`: the GameOpts block (0x20 bytes from GamePrefs 0x21edb8).
@@ -209,6 +210,33 @@ impl SaveStore {
         self.store(slot, &format!("migrated:raw:{}", sha256(raw)), raw)
     }
 
+    /// Interim builds (before 2026-10-23) mapped select-screen file k to
+    /// slot k, writing file 0 to save0000.json. Move such a character to the
+    /// first free card slot (1..=8, else any free slot); the old files are
+    /// kept as migrated-save0000.* so nothing is deleted. Returns the new slot.
+    pub fn migrate_slot_zero(&self) -> Result<Option<u32>, String> {
+        let zero = self.path(0);
+        if !zero.exists() && !zero.with_extension("bak").exists() && !zero.with_extension("tmp").exists() {
+            return Ok(None);
+        }
+        let old = self.load(0)?;
+        let region = old.save.region()?;
+        let slot = match (1..=CARD_SAVES).find(|&s| !self.path(s).exists() && !self.path(s).with_extension("bak").exists()) {
+            Some(s) => s,
+            None => self.free_slot()?,
+        };
+        let mut e = SaveEnvelope::new(slot, &old.save.source, &region)?;
+        e.sequence = old.save.sequence + 1;
+        write_atomic(&self.path(slot), &serde_json::to_vec_pretty(&e).map_err(|e| e.to_string())?)?;
+        for ext in ["json", "bak", "tmp"] {
+            let f = zero.with_extension(ext);
+            if f.exists() {
+                fs::rename(&f, self.dir.join(format!("migrated-save0000.{ext}"))).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(Some(slot))
+    }
+
     pub fn free_slot(&self) -> Result<u32, String> {
         (1..=999).find(|&s| !self.path(s).exists() && !self.path(s).with_extension("bak").exists()).ok_or_else(|| "no free save slot".into())
     }
@@ -255,6 +283,126 @@ impl SaveStore {
         let v = serde_json::json!({"format": "gdl-native-options", "schema": 1, "revision": REVISION, "game_opts_hex": hex(opts), "game_opts_sha256": sha256(opts)});
         write_atomic(&self.dir.join("options.json"), &serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())?)
     }
+
+    /// Import the original's saves from a PS2 memory-card image (read only).
+    /// Each non-empty `save%04d` region becomes a native slot — its own
+    /// number when free, else the next free one — with source
+    /// "imported:card:<card sha256>:save%04d"; a region already in the store
+    /// is not imported again. GameOpts is imported only when the store has
+    /// no options.json. DirInfo is compared with each region, not trusted.
+    pub fn import_card(&self, card: &[u8]) -> Result<CardReport, String> {
+        let mc = gdl_formats::memcard::MemoryCard::parse(card).map_err(|e| e.to_string())?;
+        let file = |n: &str| mc.file(CARD_DIR, &format!("{CARD_PREFIX}{n}")).map_err(|e| e.to_string());
+        let card_sha = sha256(card);
+        let dirinfo = match file("DirInfo")? {
+            Some(b) => Some(parse_dirinfo(&b)?),
+            None => None,
+        };
+        if dirinfo.is_none() && (1..=CARD_SAVES).all(|n| matches!(file(&format!("save{n:04}")), Ok(None))) {
+            return Err(format!("no /{CARD_DIR} saves on this card"));
+        }
+        let have: Vec<String> = self.list().iter().filter_map(|l| self.load(l.slot).ok()).map(|l| l.save.region_sha256).collect();
+        let mut saves = Vec::new();
+        for n in 1..=CARD_SAVES {
+            let name = format!("save{n:04}");
+            let info = dirinfo.as_ref().map(|d| d[n as usize - 1].clone());
+            let mut e = CardSave { number: n, dirinfo: info.clone(), sha256: None, summary: None, dirinfo_agrees: None, slot: None, outcome: String::new() };
+            let raw = match file(&name)? {
+                Some(raw) => raw,
+                None => {
+                    e.outcome = "no file".into();
+                    saves.push(e);
+                    continue;
+                }
+            };
+            e.sha256 = Some(sha256(&raw));
+            if raw.len() != SAVE_LEN {
+                e.outcome = format!("refused: {:#x} bytes, expected {SAVE_LEN:#x}", raw.len());
+            } else if raw.iter().all(|&b| b == 0) {
+                e.outcome = "empty (all zero)".into();
+            } else if let Some(s) = summary(&raw) {
+                e.dirinfo_agrees = info.as_ref().map(|d| !d.empty && d.name_bytes == raw[..8] && d.class == s.class as u32 && d.level_sum == s.level_sum as u32);
+                e.summary = Some(s);
+                if have.contains(&sha256(&raw)) {
+                    e.outcome = "already in the store".into();
+                } else {
+                    let slot = if self.path(n).exists() || self.path(n).with_extension("bak").exists() { self.free_slot()? } else { n };
+                    self.store(slot, &format!("imported:card:{card_sha}:{name}"), &raw)?;
+                    e.slot = Some(slot);
+                    e.outcome = format!("imported into slot {slot}");
+                }
+            } else {
+                e.outcome = "refused: no valid class".into();
+            }
+            saves.push(e);
+        }
+        let opts = file("GameOpts")?;
+        let options = match &opts {
+            None => "no GameOpts file".to_string(),
+            Some(o) if o.len() != GAME_OPTS_LEN => format!("refused: GameOpts is {:#x} bytes", o.len()),
+            Some(_) if self.dir.join("options.json").exists() => "kept the store's options.json".into(),
+            Some(o) => {
+                self.store_options(o)?;
+                "imported into options.json".into()
+            }
+        };
+        Ok(CardReport { card_sha256: card_sha, dirinfo, saves, game_opts_sha256: opts.as_deref().map(sha256), options })
+    }
+}
+
+/// The original's card directory and file prefix (getSaveFileName 0x107a80).
+pub const CARD_DIR: &str = "BASLUS-20047GDL";
+pub const CARD_PREFIX: &str = "BASLUS-20047";
+/// save0001 … save0008 (DirInfo has eight entries).
+pub const CARD_SAVES: u32 = 8;
+
+/// One BASLUS-20047DirInfo entry: 16 bytes {u32 level sum (+0x9aa), u32
+/// class, name[8]}. Empty entries hold ffffffff ffffffff "Empty" (observed on
+/// a card the original wrote: card-scratch-jake-v1).
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct DirInfoEntry {
+    pub level_sum: u32,
+    pub class: u32,
+    pub name: String,
+    #[serde(skip)]
+    pub name_bytes: Vec<u8>,
+    pub empty: bool,
+}
+
+pub fn parse_dirinfo(b: &[u8]) -> Result<Vec<DirInfoEntry>, String> {
+    if b.len() != 16 * CARD_SAVES as usize {
+        return Err(format!("DirInfo is {:#x} bytes, expected 0x80", b.len()));
+    }
+    Ok(b.chunks(16)
+        .map(|e| {
+            let w = |o: usize| u32::from_le_bytes(e[o..o + 4].try_into().unwrap());
+            let n = &e[8..16];
+            let name = String::from_utf8_lossy(&n[..n.iter().position(|&c| c == 0).unwrap_or(8)]).into_owned();
+            DirInfoEntry { level_sum: w(0), class: w(4), empty: w(0) == u32::MAX && w(4) == u32::MAX, name, name_bytes: n.to_vec() }
+        })
+        .collect())
+}
+
+#[derive(Debug, Serialize)]
+pub struct CardSave {
+    /// save%04d number.
+    pub number: u32,
+    pub dirinfo: Option<DirInfoEntry>,
+    pub sha256: Option<String>,
+    pub summary: Option<Summary>,
+    /// DirInfo's name, class and level sum equal the region's.
+    pub dirinfo_agrees: Option<bool>,
+    pub slot: Option<u32>,
+    pub outcome: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CardReport {
+    pub card_sha256: String,
+    pub dirinfo: Option<Vec<DirInfoEntry>>,
+    pub saves: Vec<CardSave>,
+    pub game_opts_sha256: Option<String>,
+    pub options: String,
 }
 
 #[cfg(test)]
@@ -344,6 +492,88 @@ mod tests {
         let opts = [7u8; GAME_OPTS_LEN];
         s.store_options(&opts).unwrap();
         assert_eq!(s.load_options().unwrap(), opts);
+        fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// DirInfo as the original writes it (synthetic values): `named` entries
+    /// {level sum, class, name}, the rest ffffffff ffffffff "Empty".
+    fn dirinfo(named: &[(u32, u32, &[u8])]) -> Vec<u8> {
+        let mut d = Vec::new();
+        for k in 0..CARD_SAVES as usize {
+            let (l, c, n): (u32, u32, &[u8]) = named.get(k).copied().unwrap_or((u32::MAX, u32::MAX, b"Empty"));
+            d.extend(l.to_le_bytes());
+            d.extend(c.to_le_bytes());
+            let mut name = [0u8; 8];
+            name[..n.len()].copy_from_slice(n);
+            d.extend(name);
+        }
+        d
+    }
+
+    fn card(saves: &[Vec<u8>], info: &[u8], opts: &[u8]) -> Vec<u8> {
+        let names: Vec<String> = (1..=CARD_SAVES).map(|n| format!("{CARD_PREFIX}save{n:04}")).collect();
+        let empty = vec![0u8; SAVE_LEN];
+        let mut files: Vec<(&str, &[u8])> = vec![("BASLUS-20047DirInfo", info)];
+        for (k, n) in names.iter().enumerate() {
+            files.push((n.as_str(), saves.get(k).unwrap_or(&empty)));
+        }
+        files.push(("BASLUS-20047GameOpts", opts));
+        gdl_formats::memcard::synthetic_image(CARD_DIR, &files)
+    }
+
+    #[test]
+    fn slot_zero_moves_to_the_first_free_card_slot() {
+        let s = SaveStore::open(dir("zero")).unwrap();
+        assert_eq!(s.migrate_slot_zero().unwrap(), None);
+        s.store(0, "new", &region(b"OLD", 1)).unwrap();
+        s.store(0, "", &region(b"OLD", 2)).unwrap();
+        s.store(1, "new", &region(b"ONE", 1)).unwrap();
+        assert_eq!(s.migrate_slot_zero().unwrap(), Some(2));
+        let l = s.load(2).unwrap().save;
+        assert_eq!((l.summary().unwrap().gold, l.source.as_str(), l.sequence), (2, "new", 2));
+        assert!(!s.path(0).exists() && s.dir.join("migrated-save0000.json").exists() && s.dir.join("migrated-save0000.bak").exists());
+        assert_eq!(s.list().iter().map(|l| l.slot).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(s.migrate_slot_zero().unwrap(), None);
+        fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn imports_original_card_saves() {
+        let s = SaveStore::open(dir("card")).unwrap();
+        let jake = region(b"JAKE", 0);
+        let level_sum = summary(&jake).unwrap().level_sum as u32;
+        let opts = [0x80u8; GAME_OPTS_LEN];
+        let image = card(&[jake.clone()], &dirinfo(&[(level_sum, 6, b"JAKE")]), &opts);
+        let r = s.import_card(&image).unwrap();
+        assert_eq!(r.saves.len(), CARD_SAVES as usize);
+        assert_eq!((r.saves[0].slot, r.saves[0].dirinfo_agrees), (Some(1), Some(true)));
+        assert!(r.saves[1..].iter().all(|e| e.outcome == "empty (all zero)" && e.dirinfo.as_ref().unwrap().empty));
+        assert_eq!(r.options, "imported into options.json");
+        let l = s.load(1).unwrap();
+        assert_eq!(l.save.region().unwrap(), jake);
+        assert_eq!(l.save.source, format!("imported:card:{}:save0001", sha256(&image)));
+        assert_eq!(s.load_options().unwrap(), opts);
+        // Importing the same card again adds nothing and keeps the options.
+        let r = s.import_card(&image).unwrap();
+        assert_eq!(r.saves[0].outcome, "already in the store");
+        assert_eq!(r.options, "kept the store's options.json");
+        assert_eq!(s.list().len(), 1);
+        // Another character in an occupied number goes to the next free slot;
+        // a DirInfo that disagrees with the region is reported.
+        let pele = region(b"PELE", 3);
+        let other = card(&[pele.clone()], &dirinfo(&[(1, 2, b"PELE")]), &opts);
+        let r = s.import_card(&other).unwrap();
+        assert_eq!((r.saves[0].slot, r.saves[0].dirinfo_agrees), (Some(2), Some(false)));
+        assert_eq!(s.load(2).unwrap().save.region().unwrap(), pele);
+        // Wrong sizes and classless regions are refused, not imported.
+        let mut bad = region(b"BAD", 0);
+        bad[0x9a4 - SAVE_START] = 40;
+        let r = s.import_card(&card(&[bad, pele[..100].to_vec()], &dirinfo(&[]), &opts)).unwrap();
+        assert_eq!(r.saves[0].outcome, "refused: no valid class");
+        assert!(r.saves[1].outcome.starts_with("refused: 0x64 bytes"));
+        // A card without the game's directory is an error.
+        let none = gdl_formats::memcard::synthetic_image("OTHER", &[("x", &[1])]);
+        assert!(s.import_card(&none).unwrap_err().contains("no /BASLUS-20047GDL"));
         fs::remove_dir_all(&s.dir).unwrap();
     }
 }

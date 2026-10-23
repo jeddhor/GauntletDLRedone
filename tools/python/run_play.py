@@ -7,7 +7,10 @@ Inputs are resolved from the verified private extraction by package label and
 decoded hash (character packages are resolved and verified by the client from
 the same manifests), plus the user's executable and the private start state
 exported from the preserved save (session globals; the import source). Saves
-go to --save-dir (default $XDG_DATA_HOME/gdl-native/SLUS-20047/saves). Runs on
+go to --save-dir (default $XDG_DATA_HOME/gdl-native/SLUS-20047/saves);
+--import-card CARD.ps2 first imports the original's saves from a PS2 card
+image into that directory (gdl_tools card-import; the card is only read, the
+report goes to a new file beside the saves). Runs on
 the current desktop by default; --virtual uses the project's authenticated Xvfb
 session for automated smoke tests.
 """
@@ -189,10 +192,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--virtual', action='store_true', help='run inside the authenticated Xvfb session')
     parser.add_argument('--save-dir', type=pathlib.Path, help='native save directory')
+    parser.add_argument('--import-card', type=pathlib.Path, help='PS2 memory-card image to import saves from (read only)')
     args = parser.parse_args()
     data_home = pathlib.Path(os.environ.get('XDG_DATA_HOME', pathlib.Path.home() / '.local/share'))
     save_dir = args.save_dir or data_home / 'gdl-native' / 'SLUS-20047' / 'saves'
     save_dir.mkdir(parents=True, exist_ok=True)
+    if args.import_card:
+        n = 1 + sum(1 for _ in save_dir.glob('card-import-*.json'))
+        subprocess.run(['target/release/gdl_tools', 'card-import', str(args.import_card), str(save_dir),
+                        str(save_dir / f'card-import-{n:03d}.json')], check=True)
     source = json.loads(pathlib.Path('profiles/ps2/slus-20047.json').read_text())
     if hashlib.sha256(ELF.read_bytes()).hexdigest() != source['executable']['sha256']:
         raise ValueError('executable identity differs from the supported profile')

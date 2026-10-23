@@ -1041,6 +1041,21 @@ fn run() -> Result<(), Box<dyn Error>> {
         serde_json::to_writer_pretty(&mut file, &serde_json::json!({"source_sha256":hash(&b),"superblock":card.superblock,"root":dirs}))?;
         return Ok(());
     }
+    if args.len() == 4 && args[0] == "card-import" {
+        // card-import CARD.ps2 SAVE_DIR NEW_REPORT.json: the original's saves
+        // on a PS2 card image into a native save store (SaveStore::import_card)
+        // and the per-file report. The card is only read.
+        let b = bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?;
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[3])?;
+        let store = gdl_core::save::SaveStore::open(Path::new(&args[2]))?;
+        let report = store.import_card(&b)?;
+        for e in &report.saves {
+            println!("save{:04} {}{}", e.number, e.outcome, e.summary.as_ref().map_or(String::new(), |s| format!(" ({} class {} level sum {}, DirInfo agrees {:?})", s.name, s.class, s.level_sum, e.dirinfo_agrees)));
+        }
+        println!("GameOpts: {}", report.options);
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "textrom-inspect" {
         // textrom-inspect ROM NEW_REPORT.json: fonts, entries and lists.
         let b = bounded_read(Path::new(&args[1]), 1024 * 1024)?;
@@ -3893,7 +3908,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
     if args.len() != 3 || (args[0] != "wad-inspect" && args[0] != "wad-extract") {
-        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json\n       gdl_tools vu0-fqdist FQDIST_REQUESTS.json NEW_REPORT.json\n       gdl_tools collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]\n       gdl_tools player-displacement WORLDS.PS2 STEPS.json NEW_REPORT.json\n       gdl_tools textrom-inspect ROM NEW_REPORT.json".into());
+        return Err("Usage: gdl_tools wad-inspect WAD.BIN NEW_MANIFEST.json\n       gdl_tools wad-extract WAD.BIN NEW_DIRECTORY\n       gdl_tools texdef-inspect TEXDEF.PS2 NEW_DIRECTORY\n       gdl_tools texdef-extract TEXDEF.PS2 TEXTURES.PS2 NEW_DIRECTORY\n       gdl_tools objects-inspect OBJECTS.PS2 NEW_REPORT.json\n       gdl_tools world-inspect WORLDS.PS2 NEW_REPORT.json\n       gdl_tools anim-inspect ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-initial-frames ANIM.PS2 NEW_REPORT.json\n       gdl_tools anim-keys ANIM.PS2 TREE_INDEX SEQUENCE_INDEX NEW_REPORT.json\n       gdl_tools anim-samples ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-transforms ANIM.PS2 INITIAL_POSITION_ANIM.PS2 REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-clock-start START_REQUESTS.json NEW_REPORT.json\n       gdl_tools anim-select SELECTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools player-anim-select ANIM.PS2 PLAYER_REQUESTS.json NEW_REPORT.json\n       gdl_tools world-matrix MATRIX_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-code MOTION_REQUESTS.json NEW_REPORT.json\n       gdl_tools motion-request MOTION_STEPS.json NEW_REPORT.json\n       gdl_tools vu0-fqdist FQDIST_REQUESTS.json NEW_REPORT.json\n       gdl_tools collision-query WORLDS.PS2 NEW_REPORT.json [QUERIES.json]\n       gdl_tools player-displacement WORLDS.PS2 STEPS.json NEW_REPORT.json\n       gdl_tools textrom-inspect ROM NEW_REPORT.json\n       gdl_tools memcard-inspect CARD.ps2 NEW_DIRECTORY\n       gdl_tools card-import CARD.ps2 SAVE_DIR NEW_REPORT.json".into());
     }
     let extracting = args[0] == "wad-extract";
     let source = Path::new(&args[1]);

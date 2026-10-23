@@ -3100,7 +3100,8 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
 }
 
 /// NATIVE (docs/decisions: memory cards become host saves): the save store
-/// as the select screen's card — files 0..7 are store slots 0..7.
+/// as the select screen's card — file k is store slot k + 1, the original's
+/// BASLUS-20047save%04d (getSaveFileName 0x107a80: slot + 1).
 struct NativeCard<'a> {
     store: &'a gdl_core::save::SaveStore,
 }
@@ -3108,7 +3109,7 @@ struct NativeCard<'a> {
 impl gdl_core::game::pselect::SaveCard for NativeCard<'_> {
     fn directory(&self) -> [Option<gdl_core::game::pselect::CardFile>; 8] {
         std::array::from_fn(|k| {
-            let region = self.store.load(k as u32).ok()?.save.region().ok()?;
+            let region = self.store.load(k as u32 + 1).ok()?.save.region().ok()?;
             let name = String::from_utf8_lossy(&region[..region.iter().take(8).position(|&c| c == 0).unwrap_or(8)]).into_owned();
             let w = |o: usize| i32::from(i16::from_le_bytes([region[o], region[o + 1]]));
             // +0x9a4 class and +0x9aa level sum (region offsets 8 / 0xe).
@@ -3116,10 +3117,10 @@ impl gdl_core::game::pselect::SaveCard for NativeCard<'_> {
         })
     }
     fn load(&mut self, k: usize) -> Option<Vec<u8>> {
-        self.store.load(k as u32).ok()?.save.region().ok()
+        self.store.load(k as u32 + 1).ok()?.save.region().ok()
     }
     fn save(&mut self, k: usize, region: &[u8]) -> bool {
-        self.store.store(k as u32, "", region).is_ok()
+        self.store.store(k as u32 + 1, "", region).is_ok()
     }
 }
 
@@ -5918,6 +5919,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     let english = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/ENGLISH.ROM")?)?;
     let scrolls = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/SCROLL_E.ROM")?)?;
     let store = SaveStore::open(p("saves")?)?;
+    if let Some(slot) = store.migrate_slot_zero()? {
+        println!("save0000 (interim slot numbering) moved to save{slot:04}; the old file is kept as migrated-save0000");
+    }
     // GameOpts: the stored block, else the captured session's GamePrefs
     // (sfx 128, music 128, stereo 1, …).
     let game_opts = store.load_options().unwrap_or_else(|| {
@@ -6098,14 +6102,19 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<EnemyFrames>()
         .insert_resource(Time::<Fixed>::from_hz(30.0))
         .insert_resource(ClearColor(Color::linear_rgb(0.035, 0.04, 0.05)))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Gauntlet: Dark Legacy - INTERIM native build".into(),
-                resolution: (1280, 896).into(),
+        .add_plugins({
+            let plugins = DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Gauntlet: Dark Legacy - INTERIM native build".into(),
+                    resolution: (1280, 896).into(),
+                    ..default()
+                }),
                 ..default()
-            }),
-            ..default()
-        }))
+            });
+            // GDL_NO_GAMEPADS: automated runs (client_driver.py) ignore the
+            // machine's physical controllers.
+            if std::env::var_os("GDL_NO_GAMEPADS").is_some() { plugins.disable::<bevy::gilrs::GilrsPlugin>() } else { plugins }
+        })
         .add_plugins(gdl_client::GsMaterialPlugin)
         .init_resource::<Ui>()
         .init_resource::<HudSets>()

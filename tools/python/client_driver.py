@@ -8,7 +8,8 @@
   client_driver.py send TAG 'STEPS'       queue steps for a running session
                                            and print its output
 
-Steps: ["key", "a+w", seconds] (XTEST key holds on the client's focused
+The client runs with GDL_NO_GAMEPADS, so the machine's physical controllers
+do not reach it. Steps: ["key", "a+w", seconds] (XTEST key holds on the client's focused
 window), ["wait", seconds], ["shot", label] (an import of the client's own
 window), ["quit"]. Only this session's window is used: PCSX2's reference
 window shares the display and the game's name, so the window must carry the
@@ -47,7 +48,7 @@ def serve(tag, steps):
     saves.mkdir(exist_ok=True)
     log = open(d / 'client.log', 'w')
     p = subprocess.Popen([sys.executable, 'tools/python/run_play.py', '--virtual', '--save-dir', str(saves)],
-                         cwd=ROOT, env=dict(os.environ, GDL_NO_ATTRACT='1'), stdout=log, stderr=subprocess.STDOUT,
+                         cwd=ROOT, env=dict(os.environ, GDL_NO_ATTRACT='1', GDL_NO_GAMEPADS='1'), stdout=log, stderr=subprocess.STDOUT,
                          start_new_session=True)
 
     def x(*a):

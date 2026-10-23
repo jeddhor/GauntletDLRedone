@@ -223,6 +223,56 @@ impl<'a> MemoryCard<'a> {
     }
 }
 
+/// SYNTHETIC test image: a plain (no ECC) card holding one directory of
+/// files, with only the superblock fields this reader uses. It is not a
+/// formatted card a BIOS or PCSX2 would accept; tests use it so that card
+/// readers can be checked without private data.
+pub fn synthetic_image(dir: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+    let entry = |mode: u16, length: u32, cluster: u32, name: &str| {
+        let mut e = vec![0u8; 512];
+        e[0..2].copy_from_slice(&mode.to_le_bytes());
+        e[4..8].copy_from_slice(&length.to_le_bytes());
+        e[0x10..0x14].copy_from_slice(&cluster.to_le_bytes());
+        e[0x40..0x40 + name.len().min(31)].copy_from_slice(&name.as_bytes()[..name.len().min(31)]);
+        e
+    };
+    // Objects in allocation order: root (3 entries: relative clusters 0-1),
+    // the directory (from relative 2), then each file.
+    let count = 2 + files.len() as u32;
+    let mut objects: Vec<Vec<u8>> = vec![[entry(0x8427, 3, 0, "."), entry(0xa426, 0, 0, ".."), entry(0x8427, count, 2, dir)].concat()];
+    let mut dir_entries = vec![entry(0x8427, count, 2, "."), entry(0xa426, 0, 0, "..")];
+    let mut next = 2 + (512 * count as usize).div_ceil(1024) as u32;
+    for (name, bytes) in files {
+        dir_entries.push(entry(0x8497, bytes.len() as u32, next, name));
+        next += bytes.len().div_ceil(1024).max(1) as u32;
+    }
+    objects.push(dir_entries.concat());
+    objects.extend(files.iter().map(|(_, b)| b.to_vec()));
+    let alloc = 8usize;
+    let clusters = alloc + next as usize;
+    assert!(next <= 256, "synthetic image: one FAT cluster");
+    let mut b = vec![0u8; clusters * 1024];
+    b[..28].copy_from_slice(MAGIC);
+    b[0x28..0x2a].copy_from_slice(&512u16.to_le_bytes());
+    b[0x2a..0x2c].copy_from_slice(&2u16.to_le_bytes());
+    b[0x2c..0x2e].copy_from_slice(&16u16.to_le_bytes());
+    b[0x30..0x34].copy_from_slice(&(clusters as u32).to_le_bytes());
+    b[0x34..0x38].copy_from_slice(&(alloc as u32).to_le_bytes());
+    b[0x50..0x54].copy_from_slice(&1u32.to_le_bytes());
+    b[1024..1028].copy_from_slice(&2u32.to_le_bytes());
+    let mut at = 0usize;
+    for o in &objects {
+        let n = o.len().div_ceil(1024).max(1);
+        b[(alloc + at) * 1024..(alloc + at) * 1024 + o.len()].copy_from_slice(o);
+        for k in 0..n {
+            let v = if k + 1 == n { 0x8000_0000 | FAT_END } else { 0x8000_0000 | (at + k + 1) as u32 };
+            b[2048 + 4 * (at + k)..2052 + 4 * (at + k)].copy_from_slice(&v.to_le_bytes());
+        }
+        at += n;
+    }
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +335,18 @@ mod tests {
         assert_eq!(f.len(), 1500);
         assert!(f.iter().enumerate().all(|(k, &v)| v == (k % 251) as u8));
         assert!(card.file("GDL", "missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn synthetic_image_round_trips() {
+        let big: Vec<u8> = (0..4212u32).map(|k| (k % 253) as u8).collect();
+        let b = synthetic_image("DIR", &[("a", &big), ("b", &[1, 2, 3]), ("c", &[9; 1024])]);
+        let card = MemoryCard::parse(&b).unwrap();
+        assert_eq!(card.root().unwrap().len(), 1);
+        assert_eq!(card.file("DIR", "a").unwrap().unwrap(), big);
+        assert_eq!(card.file("DIR", "b").unwrap().unwrap(), [1, 2, 3]);
+        assert_eq!(card.file("DIR", "c").unwrap().unwrap(), [9; 1024]);
+        assert_eq!(card.list(&card.root().unwrap()[0]).unwrap().len(), 3);
     }
 
     #[test]
