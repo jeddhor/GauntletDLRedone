@@ -99,3 +99,20 @@ game_run.py --frame-replay seeds each update from the sample before it and
 compares the sample after it part by part (report: updates, *_updates_equal,
 per-update diffs and the first divergence). WARPED captures (guest writes)
 are named and labelled in the trace's source.
+
+## Render-rate independence (2026-10-23, gdl_play)
+
+tools/python/fps_independence.py runs gdl_play with the TEST harness:
+GDL_TEST_AUTOSTART (a new default character, no menu time), G1, a scripted
+port 0 (fps-independence-script-g1-v1: walking in four directions, turning,
+throws, square and triangle presses) for 480 updates, and a render cap; the
+client hashes its simulation records (players, enemies, items, effects,
+rand state, Time) after every update. Reached render rates 4.84, 9.13 and
+11.06 frames per second (caps 5, 12, none; about 6.2, 3.3 and 2.7 fixed
+updates per rendered frame): all 480 hashes identical
+(fps-independence-g1-v4). A run with caps 30, 60 and 144 (g1-v3) also
+matched, but those caps did not bind on the Xvfb/llvmpipe renderer, whose
+uncapped rate is about 11; rates of 60 and above need a hardware GPU and
+were not measured. A first attempt (g1-v1/v2) entered the level through the
+menus, whose wall-clock time changes Time and rand before the level, so its
+hashes differed from the first update — the reason for the autostart.

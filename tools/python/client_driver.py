@@ -119,7 +119,9 @@ def serve(tag, steps):
         try:
             os.killpg(p.pid, signal.SIGTERM)
             p.wait(10)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
+        except ProcessLookupError:
+            pass  # the client already exited (e.g. a TEST harness run)
+        except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL)
 
 

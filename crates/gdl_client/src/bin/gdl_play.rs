@@ -1922,6 +1922,14 @@ struct TestHarness {
     exit_after: Option<u64>,
     state_out: Option<std::path::PathBuf>,
     hashes: Vec<String>,
+    autostarted: bool,
+    /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
+    /// {"at": u, "health": h} | {"at": u, "dump": "label"}] for player 1.
+    actions: Vec<serde_json::Value>,
+    /// GDL_MENU_SCRIPT: like GDL_INPUT_SCRIPT, indexed by the ticks spent
+    /// outside play (tally, shop, select screen, map, message boxes).
+    menu_script: Option<Vec<(u64, u64, Vec<usize>)>>,
+    menu_ticks: u64,
 }
 
 impl TestHarness {
@@ -1929,7 +1937,9 @@ impl TestHarness {
         let script = std::env::var("GDL_INPUT_SCRIPT").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok());
         let exit_after = std::env::var("GDL_EXIT_AFTER").ok().and_then(|v| v.parse().ok());
         let state_out = std::env::var_os("GDL_STATE_OUT").map(std::path::PathBuf::from);
-        Self { script, exit_after, state_out, hashes: Vec::new() }
+        let actions = std::env::var("GDL_TEST_ACTIONS").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let menu_script = std::env::var("GDL_MENU_SCRIPT").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok());
+        Self { script, exit_after, state_out, hashes: Vec::new(), autostarted: false, actions, menu_script, menu_ticks: 0 }
     }
 }
 
@@ -1954,8 +1964,28 @@ fn sim_state_hash(g: &Game) -> String {
     gdl_core::save::sha256(&b)
 }
 
-/// GDL_RENDER_FPS: sleep to the next frame deadline (TEST harness).
-fn frame_limiter(mut next: Local<Option<std::time::Instant>>) {
+/// Player 1's progression words and save region hash (TEST dumps).
+fn progress_dump(g: &Game, label: &str, update: u64) -> serde_json::Value {
+    let r = &g.players[0];
+    let class = r.u32_(0) as usize;
+    let rec = profile::CLASS_RECORD + profile::CLASS_STRIDE * class.min(15);
+    let waves: Vec<String> = (0..16).map(|c| r.0[0x182c + 0xe * c..0x182c + 0xe * c + 0xe].iter().map(|b| format!("{b:02x}")).collect()).collect();
+    let region = profile::save_region(r, &[0, 2, 1, 1]);
+    serde_json::json!({"label": label, "update": update, "world": g.globals.cur_world, "level": g.globals.cur_level, "state": r.i32_(0xfc),
+        "health": r.f32_(0x1a10), "exp": r.i32_(0x1a1c), "gold": r.i32_(rec + 0x30), "keys": r.i32_(0x1a14), "potions": r.i32_(0x1a18),
+        "shards": r.u16_(0x1a24), "runes": r.u16_(0x1a26), "waves": waves, "region_sha256": gdl_core::save::sha256(&region)})
+}
+
+/// GDL_RENDER_FPS: sleep to the next frame deadline (TEST harness); with
+/// GDL_STATE_OUT the rendered frames and wall time go to <out>.frames.
+fn frame_limiter(mut next: Local<Option<std::time::Instant>>, mut count: Local<(u64, Option<std::time::Instant>)>, harness: Res<TestHarness>) {
+    let t0 = *count.1.get_or_insert_with(std::time::Instant::now);
+    count.0 += 1;
+    if count.0.is_multiple_of(30)
+        && let Some(out) = harness.state_out.as_ref()
+    {
+        let _ = std::fs::write(out.with_extension("frames"), format!("{} {:.3}\n", count.0, t0.elapsed().as_secs_f64()));
+    }
     let Some(fps) = std::env::var("GDL_RENDER_FPS").ok().and_then(|v| v.parse::<f64>().ok()).filter(|f| *f > 0.0) else { return };
     let period = std::time::Duration::from_secs_f64(1.0 / fps);
     let now = std::time::Instant::now();
@@ -3302,7 +3332,42 @@ fn simulate(
     }
     // Only while the level plays: the select screen, shop, map and movies
     // keep the keyboard (they read the same PlayerControl ports).
-    let in_play = sim.select.is_none() && sim.shop.is_none() && sim.map.is_none() && sim.movie.is_none();
+    let in_play = sim.select.is_none() && sim.shop.is_none() && sim.map.is_none() && sim.movie.is_none() && sim.message_box.is_none();
+    if in_play && !harness.actions.is_empty() {
+        let now = sim.updates;
+        let due: Vec<serde_json::Value> = harness.actions.iter().filter(|a| a["at"].as_u64() == Some(now)).cloned().collect();
+        for a in due {
+            if let Some(v) = a["teleport"].as_array() {
+                let v: Vec<f32> = v.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect();
+                let yaw = sim.game.players[0].f32_(0x86c);
+                if let (3, Err(e)) = (v.len(), sim.game.place_player(0, [v[0], v[1], v[2]], yaw)) {
+                    sim.error = Some(format!("TEST teleport: {}", e.0));
+                }
+            }
+            if let Some(h) = a["health"].as_f64() {
+                sim.game.players[0].set_f32(0x1a10, h as f32);
+            }
+            if let (Some(label), Some(out)) = (a["dump"].as_str(), harness.state_out.as_ref()) {
+                let d = progress_dump(&sim.game, label, now);
+                let path = out.with_extension(format!("{label}.json"));
+                let _ = std::fs::write(path, serde_json::to_vec_pretty(&d).unwrap_or_default());
+            }
+        }
+    }
+    if !in_play && let Some(script) = harness.menu_script.as_ref() {
+        let n = harness.menu_ticks;
+        let mut p = PadStatus { connected: true, ..Default::default() };
+        for (first, last, entries) in script {
+            if (*first..=*last).contains(&n) {
+                for &i in entries.iter().filter(|&&i| i < 0x16) {
+                    p.press(i);
+                }
+            }
+        }
+        ports[0] = p;
+        ports[1] = PadStatus::default();
+        harness.menu_ticks += 1;
+    }
     if let Some(script) = harness.script.as_ref().filter(|_| in_play) {
         let n = sim.updates;
         let mut p = PadStatus { connected: true, ..Default::default() };
@@ -5675,6 +5740,14 @@ fn act(world: &mut EcsWorld, action: Action) {
 /// Front end and pause menus (exclusive: it starts and ends games).
 fn front_system(world: &mut EcsWorld) {
     let screen = *world.resource::<Screen>();
+    // TEST harness: GDL_TEST_AUTOSTART creates a default character (TEST,
+    // the Sorceress, yellow) and starts at once — no menu time before the
+    // level, so runs start from the same state.
+    if screen == Screen::Front && std::env::var_os("GDL_TEST_AUTOSTART").is_some() && !world.resource::<TestHarness>().autostarted {
+        world.resource_mut::<TestHarness>().autostarted = true;
+        act(world, Action::Create { class: 6, colour: 0, name: "TEST".into() });
+        return;
+    }
     let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
     let (keys, toggle) = menu_keys(world, naming);
     if screen == Screen::Front
