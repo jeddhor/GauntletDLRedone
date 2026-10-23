@@ -1993,6 +1993,39 @@ fn progress_dump(g: &Game, label: &str, update: u64) -> serde_json::Value {
 
 /// GDL_RENDER_FPS: sleep to the next frame deadline (TEST harness); with
 /// GDL_STATE_OUT the rendered frames and wall time go to <out>.frames.
+/// GDL_UI_TRACE=FILE (TEST): one line per change of the screen, the
+/// front-end page or the in-game modal state (select screen, shop, map,
+/// movie, message box, pause), with the frame number — menu flow tests
+/// assert the sequence a key script produces.
+fn ui_trace(front: Option<Res<Front>>, screen: Option<Res<Screen>>, ui: Res<Ui>, sim: Option<Res<Sim>>, mut state: Local<(u64, String, Option<std::path::PathBuf>, bool)>) {
+    if !state.3 {
+        state.3 = true;
+        state.2 = std::env::var_os("GDL_UI_TRACE").map(std::path::PathBuf::from);
+    }
+    state.0 += 1;
+    let Some(path) = state.2.clone() else { return };
+    let page = front.as_ref().map_or(String::new(), |f| format!("{:?}", f.menu.page));
+    let screen = screen.map_or("none", |s| if *s == Screen::Playing { "playing" } else { "front" });
+    let modal = sim.as_ref().map_or(String::new(), |s| {
+        let mut v = Vec::new();
+        if s.select.is_some() { v.push("select") }
+        if s.shop.is_some() { v.push("shop") }
+        if s.map.is_some() { v.push("map") }
+        if s.movie.is_some() { v.push("movie") }
+        if s.message_box.is_some() { v.push("message_box") }
+        if s.flyby.is_some() { v.push("flyby") }
+        format!("{} world {} level {}", v.join("+"), s.game.globals.cur_world, s.game.globals.cur_level)
+    });
+    let line = format!("{screen} paused={} {page} | {modal}", ui.paused);
+    if line != state.1 {
+        state.1 = line.clone();
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{} {line}", state.0);
+        }
+    }
+}
+
 fn frame_limiter(mut next: Local<Option<std::time::Instant>>, mut count: Local<(u64, Option<std::time::Instant>)>, harness: Res<TestHarness>) {
     let t0 = *count.1.get_or_insert_with(std::time::Instant::now);
     count.0 += 1;
@@ -6353,7 +6386,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<MenuIcon>()
         .add_systems(Startup, (setup_static, setup_menu_icon).chain())
         .insert_resource(TestHarness::from_env())
-        .add_systems(Last, frame_limiter)
+        .add_systems(Last, (frame_limiter, ui_trace))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
             Update,

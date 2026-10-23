@@ -220,3 +220,29 @@ triggers. The bot found one unported path (CritterDamage's breakable
 collision nodes, now ported: critters.md). Not yet traversal evidence for
 the other levels.
 
+
+## Menu flow tests (M17, 2026-10-23)
+
+tools/python/menu_flows.py runs gdl_play on the private Xvfb through
+client_driver.py, sends key holds to the client's window and records
+GDL_UI_TRACE (gdl_play `ui_trace`: one line per change of the screen, the
+front-end page or the in-game modal state — select screen, shop, map,
+movie, message box, flyby — with the world and level). A flow passes when
+its patterns match trace lines in order. Report
+private/reports/menu-flows-m17-v1.json (actual disc), all five pass:
+
+- title-options: Press Start → Title → Options → Audio (the original audio
+  sliders) → Options → Title.
+- options-all: every Options entry opened and closed: Audio, Game Options
+  (gameoption_options), Compass (compass_options), Controls
+  (controls_options), Screen Adjust; the list wraps after five.
+- new-character: Title → Start → the in-game select screen (cross = Space;
+  in play Return is Start) → a new default character → the Tower with its
+  welcome scroll.
+- pause-tower: the Tower's pause menu — Manage Character (the select
+  screen), Shop, Inventory (with its closing swirl), Quit Game (the confirm
+  page) — each opened and backed out of.
+- pause-realm: G1 (TEST autostart) → pause → Quit Level → the Tower.
+
+Open: with entry 0 (Settings) selected in the Tower's pause menu, the frame
+shows Sumner's unlock scroll and the trace no page change; not yet explained.
