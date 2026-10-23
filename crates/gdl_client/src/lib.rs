@@ -444,7 +444,7 @@ impl Material for GsMaterial {
                 depth.depth_write_enabled = true;
                 depth.depth_compare = CompareFunction::Always;
             }
-            if let Some(Some(target)) = descriptor.fragment.as_mut().map(|f| f.targets.get_mut(0)).flatten() {
+            if let Some(Some(target)) = descriptor.fragment.as_mut().and_then(|f| f.targets.get_mut(0)) {
                 target.write_mask = ColorWrites::empty();
                 target.blend = None;
             }

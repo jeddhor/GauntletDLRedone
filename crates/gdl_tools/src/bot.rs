@@ -1236,7 +1236,7 @@ impl Bot {
                 }
                 if f < *aside {
                     let (dx, dz) = (goal[0] - p[0], goal[2] - p[2]);
-                    let side = if k % 2 == 0 { 1.0 } else { -1.0 };
+                    let side = if k.is_multiple_of(2) { 1.0 } else { -1.0 };
                     return Self::steer(pad, g, p, [p[0] - dz * side, p[1], p[2] + dx * side]);
                 }
                 if 30 <= f - *since {
