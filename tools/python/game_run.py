@@ -58,6 +58,7 @@ def main():
     ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
     ap.add_argument('--boss-health', help='DEBUG: set the boss critter health')
     ap.add_argument('--teleport', help='DEBUG: start player 0 at x,y,z')
+    ap.add_argument('--place0', action='store_true', help='DEBUG: place player 0 at the start locator through load_player_geo (placement comparisons)')
     ap.add_argument('--watch', help='collision objects OBJ,... whose matrix translations are sampled')
     ap.add_argument('--probe', help='X:Z;... points whose highest floor (object, y) is sampled')
     ap.add_argument('--itemw', help='item slots SLOT,... whose +0xd8/+0xde/+0xe1/+0xe2 are sampled')
@@ -156,6 +157,8 @@ def main():
         cmd += [f'crystals={a.crystals}']
     if a.teleport:
         cmd += [f'teleport={a.teleport}']
+    if a.place0:
+        cmd += ['place0=1']
     if a.watch:
         cmd += [f'watch={a.watch}']
     if a.probe:

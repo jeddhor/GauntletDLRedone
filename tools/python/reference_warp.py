@@ -53,6 +53,8 @@ def main():
     parser.add_argument('--stage', help='a preserved capture name to start from through the staging slot 9')
     parser.add_argument('--pos', type=float, nargs=3, help='player 0 position written after the reload (guest write)')
     parser.add_argument('--pos2', type=float, nargs=3, help='player 2 (second record) position written after the reload (guest write)')
+    parser.add_argument('--pos3', type=float, nargs=3, help='player 3 (third record) position written after the reload (guest write)')
+    parser.add_argument('--pos4', type=float, nargs=3, help='player 4 (fourth record) position written after the reload (guest write)')
     parser.add_argument('--skip-wave', type=lambda v: int(v, 0), help="skip_wave written after the reload: 0x10000 + world << 8 | record (do_exit's wave skip; guest write)")
     parser.add_argument('--critter-health', nargs=2, metavar=('INDEX', 'VALUE'),
                         help='CritterInsts[INDEX] +0x4f4 health written after the reload (a live instance; guest write)')
@@ -151,17 +153,19 @@ def main():
                 write32(p + 0x50 + 4 * k, bits)
                 write32(node + 0x30 + 4 * k, bits)
             log.append(dict(write=dict(pos=args.pos, node=f'{node:08x}')))
-        if args.pos2:
-            # Player 2's record (players + 0x2b00), the same two writes.
-            p2 = sym['players'] + 0x2b00
-            node2 = word(p2 + 0x80)
-            if not (node2 and node2 % 16 == 0 and 0x100000 <= node2 < 0x2000000):
-                raise ValueError('player 2 node pointer outside main memory')
-            for k, v in enumerate(args.pos2):
+        # Players 2..4 (records players + 0x2b00 × (n − 1)), the same two writes.
+        for n, pos in ((2, args.pos2), (3, args.pos3), (4, args.pos4)):
+            if not pos:
+                continue
+            pn = sym['players'] + 0x2b00 * (n - 1)
+            noden = word(pn + 0x80)
+            if not (noden and noden % 16 == 0 and 0x100000 <= noden < 0x2000000):
+                raise ValueError(f'player {n} node pointer outside main memory')
+            for k, v in enumerate(pos):
                 bits = struct.unpack('<I', struct.pack('<f', v))[0]
-                write32(p2 + 0x50 + 4 * k, bits)
-                write32(node2 + 0x30 + 4 * k, bits)
-            log.append(dict(write=dict(pos2=args.pos2, node=f'{node2:08x}')))
+                write32(pn + 0x50 + 4 * k, bits)
+                write32(noden + 0x30 + 4 * k, bits)
+            log.append(dict(write={f'pos{n}': pos, 'node': f'{noden:08x}'}))
         if args.skip_wave is not None:
             write32(sym['skip_wave'], args.skip_wave)
             log.append(dict(write=dict(skip_wave=f'{args.skip_wave:#x}')))
@@ -272,7 +276,7 @@ def main():
         time.sleep(0.3)
         subprocess.run(['import', '-window', 'root', str(args.shot)], env=env, check=True)
     with args.report.open('x') as f:
-        json.dump(dict(source_slot=args.slot, source_capture=frozen.name, warped=bool(args.pos) or bool(args.pos2) or args.skip_wave is not None,
+        json.dump(dict(source_slot=args.slot, source_capture=frozen.name, warped=bool(args.pos) or bool(args.pos2) or bool(args.pos3) or bool(args.pos4) or args.skip_wave is not None,
                        schedule=segments, log=log), f, indent=1)
     for entry in log:
         print(entry)

@@ -2070,6 +2070,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             if !(1..=4).contains(&n) {
                 return Err("players=1..4".into());
             }
+            // DEBUG place0=1: player 0 placed as init_next_level does (the
+            // level's start locator, then load_player_geo → get_player_pos(0, 1))
+            // instead of the fixture's position — for placement comparisons.
+            if opts.get("place0").is_some_and(|v| v == "1") {
+                let (start, yaw) = game.player_start;
+                game.place_player(0, start, yaw).map_err(|e| e.0)?;
+                game.load_player_geo_place(0).map_err(|e| e.0)?;
+                eprintln!("player 0 placed at {:?} yaw {}", game.players[0].v3(0x50), game.players[0].f32_(0x86c));
+            }
             for k in 1..n {
                 let mut r = game.players[0].clone();
                 r.set_u32(0, k as u32);

@@ -365,9 +365,13 @@ enemies 165/166, effects 165/166, players 157/166, camera 157/166. Found
 and fixed: SetNumPlayers' NumVirtualPlayers (0x20f954 when set, else the
 active count) was never assigned natively, so multiplayer-only items
 (ShowItem's player count) stayed hidden for a second player. First
-divergence (kept as the reproducer): step 201, player 2's position by
-0.003 units while both players attack touching each other (PlayerCollide-
-Players itself matches the instructions; the input differs upstream).
+divergence of v3 (kept as the reproducer): step 201, player 2's position by
+0.003 units while both players attack touching each other. Cause: the
+harness — player 2's node was not traced, so the record's matrix stood in
+for it. trace-G1-2p-v2 (the same schedule from w7l0-2p-v6, recorded with
+node1 under the multitap configuration) replays 166/166 in every part
+(replay-frame-G1-2p-v4: enemies, items, both players, effects, world
+animation, camera, critters).
 
 Multitap reference, players 3 and 4 (2026-10-23): launch_reference.py
 --multitap puts a multitap in port 1 ([Pad] MultitapPort1) with DualShock 2s
@@ -405,6 +409,18 @@ the client. The original's assign_controller only maps port & 3 == 0 to
 player port / 4 when neither port has a multitap (mtap_status ≠ 2); the
 native port omits that condition (no native multitap; recorded in
 unknowns.md).
+
+Four players in G1 (2026-10-23): from tower-4p-v1 all four records are
+written onto the Poison Fields portal (reference_warp --pos/--pos2/--pos3/
+--pos4, labelled guest writes) and G1 loads (w7l0-4p-v1, warp-G1-4p-v1).
+Placement: (24.375, 0, 2.5), (26.20339, 0, 6.0576653), (22.645727, 0,
+7.886057), (20.817335, 0, 4.3283916), yaw −2.391101 — native bit-exact
+when player 0 is placed as init_next_level does (game_run --place0:
+the start locator, then load_player_geo; game_run otherwise keeps the
+Poison Fields fixture's position for player 0). trace-G1-4p-v1 (332
+vblanks: all four walking in three directions, two rounds of attacks)
+replays 166/166 in every part (replay-frame-G1-4p-v1: enemies, items, all
+four players, effects, world animation, camera, critters; --vplayers 4).
 
 Device loss (GUI, scenarios-m16-v2 controller-reconnect): port 1 reports
 no device in G1; after joyGetStatus's 60 polls player 1 is lost, the game
