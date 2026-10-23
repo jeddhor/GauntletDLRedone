@@ -27,8 +27,7 @@ PSMCT16S + dither output, texture modifiers, skins, chrome, particle
 systems, effect trees.
 
 Open (unknowns.md, rendering.md): the GS's per-draw integer truncation of
-lighting (colours can differ by one or two steps); the Tower emblem's dark
-texel-edge outlines (L1LINE154/131); critter broken-part models use the
+lighting (colours can differ by one or two steps); critter broken-part models use the
 "<prefix>D<label>" name (HYPOTHESIS). Remaining differences in the frames
 are timing (animation phase, enemy positions), not content.
 

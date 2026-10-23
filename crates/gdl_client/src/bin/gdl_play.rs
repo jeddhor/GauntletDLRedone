@@ -2607,6 +2607,7 @@ fn spawn_level(
         f
     };
     let mut variants: HashMap<(AssetId<gdl_client::GsMaterial>, u32), Handle<gdl_client::GsMaterial>> = HashMap::new();
+    let mut lm_variants: HashMap<AssetId<gdl_client::GsMaterial>, Handle<gdl_client::GsMaterial>> = HashMap::new();
     if let Ok(placements) = session.world.placements() {
         let parent: HashMap<usize, usize> =
             placements.iter().filter_map(|p| p.parent.map(|q| (p.node_index as usize, q as usize))).collect();
@@ -2639,13 +2640,31 @@ fn spawn_level(
             let rest = Vec3::from_array(p.summed_position);
             for (mesh, material) in list {
                 let key = (material.id(), flags & (0x800000 | 0x4000 | 0x1000 | 0x80 | 0x40));
+                // A lightmapped part whose texture is not opaque draws its
+                // lightmap as a pass of its own (GsDraw::lightmap_pass): the
+                // base keeps the texture alone.
+                let split = materials.get(material).is_some_and(|m| m.lightmap.is_some() && m.alpha_mode != AlphaMode::Opaque) && flags & 0x4000 == 0;
                 let material = variants
                     .entry(key)
                     .or_insert_with(|| {
-                        let m = materials.get(material).expect("part material").with_draw(flags);
+                        let mut m = materials.get(material).expect("part material").with_draw(flags);
+                        if split {
+                            m.params.options.y = 0.0;
+                        }
                         materials.add(m)
                     })
                     .clone();
+                let lm_pass = split
+                    .then(|| {
+                        lm_variants
+                            .entry(material.id())
+                            .or_insert_with(|| {
+                                let mut base = materials.get(&material).cloned().expect("variant");
+                                base.params.options.y = 1.0;
+                                materials.add(base.lightmap_pass().expect("lightmapped"))
+                            })
+                            .clone()
+                    });
                 let mut entity = commands.spawn((
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material),
@@ -2670,6 +2689,12 @@ fn spawn_level(
                 }
                 let child = entity.id();
                 commands.entity(root).add_child(child);
+                // The lightmap pass: the same geometry under the part (its
+                // transform and visibility), drawn just after it.
+                if let Some(lm) = lm_pass {
+                    let pass = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(lm), Transform::IDENTITY, Visibility::Inherited)).id();
+                    commands.entity(child).add_child(pass);
+                }
             }
         }
     }
@@ -3124,6 +3149,7 @@ fn present_particles(
                     fixed_alpha: em.psys.fixed_alpha(),
                     no_depth_write,
                     depth_always,
+                    lightmap_pass: false,
                 },
             };
             let handle = materials.add(m);

@@ -164,6 +164,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if floor(alpha * 128.0) <= 1.0 {
         discard;
     }
+#ifdef LIGHTMAP_PASS
+    // setLmapInfo's pass on its own (GsDraw::lightmap_pass): ALPHA_1 Cd × As,
+    // As the lightmap's CLUT alpha, TEST 0x5c000 (DATE/DATM: where the
+    // destination alpha bit is set — the pixels this part's base pass wrote
+    // with FBA 1; the floor below already ran its own lightmap pass, whose
+    // alpha leaves the bit clear). So: the base pass's alpha test, then the
+    // frame (the base blended over what was there) times the lightmap.
+#ifdef VERTEX_UVS_B
+    return vec4(vec3(min(floor(lm * 255.0 + 0.5) / 128.0, 1.0)), 1.0);
+#else
+    return vec4(1.0);
+#endif
+#else
 #ifdef ADDITIVE
     // ALPHA 0x48 Cs·As + Cd: (Cs × As) >> 7 in integers with As up to 0xff
     // (2.0), the sum saturating (COLCLAMP) — premultiplied, blended One/One.
@@ -173,5 +186,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #else
     // Display values: the frame is converted once by DisplayToLinear.
     return vec4(min(rgb, vec3(1.0)), min(alpha, 1.0));
+#endif
 #endif
 }

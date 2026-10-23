@@ -301,6 +301,11 @@ pub struct GsDraw {
     pub multiply: bool,
     /// ALPHA C = FIX 0x80 (As = 1.0): psys flag 0x20 sprites.
     pub fixed_alpha: bool,
+    /// setLmapInfo's lightmap pass on its own (ALPHA_1 0x89 Cd × As, TEST
+    /// 0x5c000: no alpha test), for lightmapped parts whose texture is not
+    /// opaque — the GS multiplies the frame under the whole polygon,
+    /// including below the base pass's rejected or translucent texels.
+    pub lightmap_pass: bool,
 }
 
 impl From<&GsMaterial> for GsDraw {
@@ -321,6 +326,7 @@ impl GsDraw {
             depth_always: flags & 0x40 != 0,
             multiply: false,
             fixed_alpha: false,
+            lightmap_pass: false,
         }
     }
 }
@@ -365,9 +371,29 @@ impl GsMaterial {
     }
 }
 
+impl GsMaterial {
+    /// The lightmap pass of a lightmapped part as a separate draw (the base
+    /// keeps its own pass without the lightmap): None when the part has no
+    /// lightmap.
+    pub fn lightmap_pass(&self) -> Option<Self> {
+        self.lightmap.as_ref()?;
+        let mut m = self.clone();
+        m.draw.lightmap_pass = true;
+        m.draw.additive = false;
+        m.alpha_mode = AlphaMode::Blend;
+        Some(m)
+    }
+}
+
 impl Material for GsMaterial {
     fn fragment_shader() -> ShaderRef {
         "embedded://gdl_client/gs.wgsl".into()
+    }
+
+    /// The lightmap pass sorts just after its base draw (same mesh centre;
+    /// Transparent3d sorts by view distance + bias, stable).
+    fn depth_bias(&self) -> f32 {
+        if self.draw.lightmap_pass { 0.001 } else { 0.0 }
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -390,6 +416,23 @@ impl Material for GsMaterial {
     ) -> Result<(), SpecializedMeshPipelineError> {
         let draw = key.bind_group_data;
         descriptor.primitive.cull_mode = None;
+        if draw.lightmap_pass {
+            if let Some(depth) = descriptor.depth_stencil.as_mut() {
+                depth.depth_write_enabled = false;
+                depth.depth_compare = CompareFunction::GreaterEqual;
+            }
+            if let Some(f) = descriptor.fragment.as_mut() {
+                f.shader_defs.push("LIGHTMAP_PASS".into());
+                if let Some(Some(target)) = f.targets.get_mut(0) {
+                    // Cd × As: the destination times the source.
+                    target.blend = Some(BlendState {
+                        color: BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::Src, operation: BlendOperation::Add },
+                        alpha: BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add },
+                    });
+                }
+            }
+            return Ok(());
+        }
         if let Some(depth) = descriptor.depth_stencil.as_mut() {
             depth.depth_write_enabled = !draw.no_depth_write;
             if draw.depth_always {

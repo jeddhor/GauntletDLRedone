@@ -601,3 +601,29 @@ the reference always has the weapon node). Evidence: the reference's first
 update after a reload sets +0x7d8 −1 in every record (trace-tower-4p-v2,
 matched natively); no reference trace yet shows a trail (the Sorceress
 traces never enter 0x21/0x25/0x3c), so the copies' drawing is not compared.
+
+## The lightmap pass of translucent world parts (2026-10-23)
+
+Tower dump (…20261020081101): every blended 256×256 PSMT8 world draw
+(ALPHA_1 0x44, TEST 0x5001d) is followed by its lightmap pass over the same
+vertices (ALPHA_1 0x89 Cd × As, TEST 0x5c000: DATE/DATM, no alpha test) —
+102 pairs (gs_pairs research script). The pass multiplies the frame, so at
+a decal's soft edge the GS gives (B·As + D·(1 − As)) · L, not the folded
+B·L·As + D·(1 − As): the floor under the edge band is darkened by the
+decal's lightmap — the dark texel-edge outlines of the Tower emblem
+(L1LINE154/131, texture DRAGONBODY2: alpha 0/17/43/77/105/121/128, black
+where 0). gdl_play now draws lightmapped parts whose texture is not opaque
+as two draws: the base (texture × colour, no lightmap) and a child draw of
+the same geometry (GsDraw::lightmap_pass: blend Dst × Src, depth
+GreaterEqual without writes, sorted just after the base by a 0.001 depth
+bias) that applies the base pass's alpha test and outputs the lightmap's
+As / 128. The multiply covers only the pixels the base pass wrote: a first
+attempt multiplying the whole polygon blackened large floor areas and cut
+rectangles into torch glows, unlike the reference, which shows DATE/DATM
+limits it to the base pass's own pixels (FBA 1 sets their alpha bit; the
+floor's own lightmap pass, written with the lightmap's alpha < 0x80, leaves
+the floor's bit clear — inferred from that frame, not traced). Tower at the
+reference camera (client-towercmp-h): the emblem's outlines and the floor
+decals' edges as in the reference; emblem region (rows 200..384, x
+150..500) 18.8/15.1/8.7 → 18.1/14.7/8.4 against 16.6/13.3/7.4. G1, A1 and C1
+at their reference cameras (client-lmpass-*): no visible change otherwise.
