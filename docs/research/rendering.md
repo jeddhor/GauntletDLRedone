@@ -517,3 +517,19 @@ the G1 dump's water draw received vertex colour 128 (as native's factor 1),
 so the difference is attributed to the water texmod frame at capture time
 (not verified). Overall mean (rows 100..352): reference 21.7/22.3/7.5,
 native 25.4/27.3/11.4.
+
+## Integer truncation at the GS multiplies (2026-10-23)
+
+gs.wgsl now computes TFX MODULATE as the GS does, (Cv × Ct) >> 7 per
+channel in integers (Cv the vertex colour as sent, 0..255 with 128 = 1.0;
+Ct the texel), and the lightmap pass as Cd × As >> 7 (Cd the frame value
+after the base pass's 16-bit write, As the lightmap's CLUT alpha). Tower at
+the reference camera (new game, welcome scroll closed; the reference
+tower-newgame-v1-viewport.png), 64×32-block means over the 3-D area:
+overall mean RGB native 35.3/26.5/12.5 → 33.7/25.4/11.9 against
+32.7/24.5/10.9; block mean absolute error 2.71/2.09/1.72 → 2.38/1.92/1.37;
+pixel mean absolute error 7.93/6.88/4.98 → 7.51/6.91/4.90 (runs
+client-towercmp-b / -c). The left wall's bright blocks (rows 64..96, x
+0..128) went from 7..15 above the reference to 21..26 below it: the
+remaining open difference there (not explained yet; candidates: the
+Gouraud interpolation of integer vertex colours, additive glow passes).

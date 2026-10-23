@@ -379,6 +379,9 @@ pub struct Bot {
     last_y: f32,
     /// Followers' (waypoint index, path) by player.
     followers: [(usize, Vec<usize>); 4],
+    /// The leader's positions every 10 updates (walkable by construction):
+    /// followers walk this trail.
+    trail: Vec<V3>,
     backoff: Option<(usize, V3)>,
     attack_at: Option<V3>,
     bad_nodes: HashSet<Place>,
@@ -421,6 +424,7 @@ impl Bot {
             force_rebuild: false,
             last_y: f32::NAN,
             followers: Default::default(),
+            trail: Vec::new(),
             backoff: None,
             attack_at: None,
             bad_nodes: HashSet::new(),
@@ -703,6 +707,9 @@ impl Bot {
         }
         let p = g.players[0].v3(0x50);
         self.visited_cols.insert(key(p[0], p[2]));
+        if f.is_multiple_of(10) && self.trail.last().is_none_or(|q| 1.0 < dist_xz(*q, p) || 1.0 < (q[1] - p[1]).abs()) {
+            self.trail.push(p);
+        }
         if let Some((since, y0, moved)) = self.wait {
             let moved = if 0.05 < (p[1] - y0).abs() { f } else { moved };
             let done = if moved == since { 90 <= f - since } else { 30 <= f - moved } || 600 <= f - since;
@@ -895,25 +902,26 @@ impl Bot {
         if dist_xz(p, lead) <= 5.0 {
             return pad;
         }
-        // A path to the leader on the leader's graph, renewed every 30 updates.
+        // The leader's trail: from the trail point nearest the follower (in
+        // 3D) onward, each point passed within 1.5 units.
         let st = &mut self.followers[k];
-        if st.1.is_empty() || f.is_multiple_of(30) {
-            let none = HashSet::new();
-            let to = self.nav.locate_cached(lead, &none);
-            st.1 = match (self.nav.locate_cached(p, &none), to) {
-                (Some(a), Some(b)) => self.nav.path(a, &|n| n == b, &self.blocked, &HashSet::new()).unwrap_or_default(),
-                _ => Vec::new(),
-            };
-            st.0 = 0;
+        if self.trail.is_empty() {
+            return Self::steer(pad, g, p, lead);
         }
-        while let Some(&n) = st.1.get(st.0) {
-            if dist_xz(p, self.nav.pts[n]) < 1.2 {
-                st.0 += 1;
-            } else {
-                break;
-            }
+        if st.1.is_empty() || f.is_multiple_of(150) {
+            let near = (0..self.trail.len())
+                .min_by(|&a, &b| {
+                    let d = |i: usize| dist_xz(self.trail[i], p) + (self.trail[i][1] - p[1]).abs() * 2.0;
+                    d(a).total_cmp(&d(b))
+                })
+                .unwrap_or(0);
+            st.1 = vec![near];
+            st.0 = near;
         }
-        let t = st.1.get(st.0).map(|&n| self.nav.pts[n]).unwrap_or(lead);
+        while st.0 + 1 < self.trail.len() && dist_xz(p, self.trail[st.0]) < 1.5 && (p[1] - self.trail[st.0][1]).abs() < 2.5 {
+            st.0 += 1;
+        }
+        let t = self.trail.get(st.0).copied().unwrap_or(lead);
         Self::steer(pad, g, p, t)
     }
 

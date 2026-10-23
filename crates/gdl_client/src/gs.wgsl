@@ -77,6 +77,15 @@ fn gs_write(c: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     return floor(v / 8.0) * 8.0 / 255.0;
 }
 
+// TFX MODULATE on the GS: (Cv × Ct) >> 7 per channel in integers — the
+// vertex colour as sent (0..255, 128 = 1.0; `cv` here in that ratio) and
+// the texel 0..255; the result as a display value.
+fn gs_modulate(cv: vec3<f32>, tex: vec3<f32>) -> vec3<f32> {
+    let v = floor(clamp(cv * 128.0, vec3(0.0), vec3(255.0)) + 0.001);
+    let t = floor(tex * 255.0 + 0.5);
+    return floor(v * t / 128.0) / 255.0;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var rgb = params.tint.rgb;
@@ -121,7 +130,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         t = textureSample(base_texture, base_sampler, uv);
     }
     if params.options.x > 0.5 {
-        rgb = rgb * t.rgb;
+        rgb = gs_modulate(rgb, t.rgb);
         alpha = alpha * t.a * (255.0 / 128.0);
     }
 #endif
@@ -140,14 +149,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 #endif
 #ifdef VERTEX_UVS_B
-    let l = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r * (255.0 / 128.0);
+    let lm = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r;
     if params.options.y > 0.5 {
         // The base pass's own frame write truncates before the lightmap
         // pass reads it back (opaque texels; translucent ones blend first).
         if params.extra.w > 0.5 && alpha >= 0.999 {
             rgb = gs_write(rgb, in.position.xy);
         }
-        rgb = rgb * l;
+        // ALPHA_1 Cd × As >> 7 in integers (As: the lightmap's CLUT alpha).
+        rgb = floor(floor(min(rgb, vec3(1.0)) * 255.0 + 0.5) * floor(lm * 255.0 + 0.5) / 128.0) / 255.0;
     }
 #endif
     // Av (0..255) must exceed AREF 1.
