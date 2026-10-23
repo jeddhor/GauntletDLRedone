@@ -225,6 +225,13 @@
       "section_index": 4,
       "size": 4,
       "type": 1
+    },
+    "RandomItemNum": {
+      "guest_address": 2344812,
+      "size": 4,
+      "type": 1,
+      "binding": 1,
+      "section_index": 4
     }
   },
   "player_layout": {

@@ -199,6 +199,13 @@ impl Game {
         if new138 & 0x400 == 0 && old138 & 0x400 != 0 {
             self.sfx(99, Some(at), 0xe0, 0x28)?;
         }
+        // PlayerProcessScale 0x12cf18(player, 1, old flags): back at
+        // scale 1 (not class 0xc, not grown, level ≤ 0x62) after the grow
+        // powerup (0x100): AudioUngrow 0x1605a8 (AudioSFX(0x57, player +0x60,
+        // 0xe0, 0x28)).
+        if self.players[p].u32_(0xc) != 0xc && new138 & 0x100 == 0 && self.players[p].i32_(0x2ac0) <= 0x62 && old138 & 0x100 != 0 {
+            self.sfx(0x57, Some(at), 0xe0, 0x28)?;
+        }
         if new138 & 1 == 0 && old138 & 1 != 0 {
             self.sfx(0x59, Some(at), 0xe0, 0x28)?;
         }

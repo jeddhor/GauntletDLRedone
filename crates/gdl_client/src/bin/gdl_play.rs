@@ -2070,7 +2070,15 @@ fn ui_trace(front: Option<Res<Front>>, screen: Option<Res<Screen>>, ui: Res<Ui>,
         if s.message_box.is_some() { v.push("message_box") }
         if s.flyby.is_some() { v.push("flyby") }
         if s.game.saver.active { v.push("saver") }
-        format!("{} world {} level {}", v.join("+"), s.game.globals.cur_world, s.game.globals.cur_level)
+        let mut line = format!("{} world {} level {}", v.join("+"), s.game.globals.cur_world, s.game.globals.cur_level);
+        if let Some(e) = &s.error {
+            line += &format!(" | ERROR {e}");
+        }
+        let unsupported: Vec<String> = s.game.log.unsupported.iter().filter(|(_, n)| 0 < **n).map(|(k, _)| k.clone()).collect();
+        if !unsupported.is_empty() {
+            line += &format!(" | UNSUPPORTED {}", unsupported.join("; "));
+        }
+        line
     });
     let mut line = format!("{screen} paused={} {page} | {modal}", ui.paused);
     if let Some(f) = front.as_ref().filter(|f| f.ending.active()) {

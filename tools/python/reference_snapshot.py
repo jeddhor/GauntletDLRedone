@@ -40,7 +40,7 @@ def fixture_regions(memory, profile):
 def describe(read, profile):
     symbols = profile['symbols']
     result = {'scalars': {}, 'strings': {}, 'players': []}
-    for name in ('AFrame', 'Time', 'SPF', 'vb_counter', 'vb_elapsed', 'ticks_elapsed', 'game_mode', 'CurLevel'):
+    for name in ('AFrame', 'Time', 'SPF', 'vb_counter', 'vb_elapsed', 'ticks_elapsed', 'game_mode', 'CurLevel', 'RandomItemNum'):
         address = symbols[name]['guest_address']
         raw = read(address, 4)
         word, = struct.unpack('<I', raw)

@@ -2330,6 +2330,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let seed_all = |game: &mut gdl_core::game::Game| -> Result<(), Box<dyn Error>> {
                     let (bp, ap) = (&b["player"], &a["player"]);
                     game.players[0] = gdl_core::game::record::Record(hexb(&bp["player0"])?);
+                    // RandomItemNum 0x23c76c (RandItemIdx's counter) when the
+                    // trace samples it (reference_snapshot.py from 2026-10-23).
+                    if let Some(v) = b["observation"]["scalars"]["RandomItemNum"]["raw_u32"].as_u64() {
+                        game.items.session.random_item_num = v as u32;
+                    }
                     // Co-op traces carry the other records too.
                     for &k in &coop {
                         if let Some(pk) = bp.get(format!("player{k}")) {

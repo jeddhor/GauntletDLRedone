@@ -41,9 +41,11 @@ def main():
     levels = {}
     for p in sys.argv[2:]:
         code = pathlib.Path(p).stem.rsplit('-', 1)[-1].upper()
+        if not (len(code) == 2 and code[0] in 'ABCDEFGHIJKLS' and code[1].isdigit()):
+            continue
         try:
             s = summary(p)
-        except (OSError, ValueError, KeyError) as e:
+        except (OSError, ValueError, KeyError, TypeError) as e:
             s = dict(source=p, error=str(e)[:200], ended=False)
         old = levels.get(code)
         better = old is None or (s['ended'] and not old['ended']) or (
