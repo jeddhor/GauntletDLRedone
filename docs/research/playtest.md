@@ -213,12 +213,19 @@ barrels and chests in 12-update windows, and restores health below 40 %
 follow player 1 and attack. Reports: the bot section of the game-run JSON
 (goals reached, stuck events, the level end and its wave).
 
-Batch b2 (30,000 updates per level, all 61 levels, scratch reports):
-the level ended for the nine treasure rooms (their timers) and B2 (its exit
-at update 4,873); G1 reached y 37.8 of 86 through two lifts and five
-triggers. The bot found one unported path (CritterDamage's breakable
-collision nodes, now ported: critters.md). Not yet traversal evidence for
-the other levels.
+Batches (30,000 updates per level, all 61 levels, scratch reports): b2
+ended the nine treasure rooms (their timers) and B2; b9 (2026-10-23, the
+current rules: regular exits before secret ones, triggers counted on the
+game's contact, foes sought only on boss levels, the legend item held on
+boss levels as a labelled precondition) ends 21 of 61: S1–S9, B2, B5, A6,
+the Tower (its first realm door → wave 0x700), and the bosses of A5, B6,
+D5, F2, G5, H4, J5 and K5; a 60,000-update run ends E2 (Skorne 1 dead at
+33,000). The closest approach to an exit in the others ranges from 0.19
+(A1) to 1.0 of the start distance. Tried and dropped (worse batches):
+escape sweeps when stuck (b6), generators as attack targets (b7). The bot
+found one unported path (CritterDamage's breakable collision nodes, now
+ported: critters.md). Levels the bot does not finish are not traversal
+evidence either way.
 
 
 ## Menu flow tests (M17, 2026-10-23)

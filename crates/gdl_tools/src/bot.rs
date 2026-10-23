@@ -597,7 +597,9 @@ impl Bot {
             }
         }
         // A boss or other critter alive: go to it (the attack logic fights it).
-        let foes: Vec<V3> = g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40)).collect();
+        // Only on boss levels: elsewhere the critters are statues' creatures
+        // (gargoyles, golems, generals), fought when met, not sought.
+        let foes: Vec<V3> = if g.globals.boss_type < 0 { Vec::new() } else { g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40)).collect() };
         if !foes.is_empty() {
             // Within 4 units of a foe, else the reachable node nearest to one.
             let close = (0..self.nav.pts.len())
@@ -663,10 +665,11 @@ impl Bot {
         match self.goal {
             Some(Goal::Item(s)) => {
                 let (k, _) = item_kind(g, s);
-                // A trigger counts once the bot stands within 2.5 of it or the
-                // trigger reports a player on it (+0xe2).
+                // A trigger counts once the game shows the contact: its state
+                // (+0xde) or a player's touch bits (+0xe2); near it without
+                // contact the bot steers onto the item's own position.
                 let r = &g.items.records[s];
-                let reached = !r.active() || (k == 5 && (dist_xz(g.players[0].v3(0x50), r.v3(0x40)) < 2.5 || r.u8_(0xe2) & 1 != 0));
+                let reached = !r.active() || (k == 5 && (r.i8_(0xde) != 0 || r.u8_(0xe2) != 0));
                 if reached {
                     self.log.push(serde_json::json!({"update": f, "reached": s, "keys": g.players[0].i32_(KEYS)}));
                     self.bad_nodes.clear();

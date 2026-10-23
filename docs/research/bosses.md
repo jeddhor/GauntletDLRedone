@@ -31,7 +31,7 @@ Evidence:
 | B6 | dragon (0x22) | 2000 | 1, 2, 5, 99 | 3225 | 4099 → 0xd00 |
 | C5 | djinn (0x24) | 3000 | 1, 2, 5, 6 | — | not reached |
 | D5 | drider (0x25) | 3250 | 1, 2, 3, 5, 99 | 6975 | 7865 → 0xd00 |
-| E2 | Skorne 1 (0x2a) | 6000 | 1, 2, 3, 5, 6 | — | not reached |
+| E2 | Skorne 1 (0x2a) | 6000 | 1, 2, 3, 5, 6, 99 | 32985 (60,000-update run) | 34236 → 0xd00 |
 | F2 | Skorne 2 (0x2b) | 3000 | 0, 99 | 20220 | 21093 → 0xd00 (the "garm" movie follows in the client) |
 | G5 | lich (0x29) | 4500 | 1, 2, 3, 5, 99 | 5805 | 6686 → 0xd00 |
 | H4 | Garm (0x2c) | 5625 | 0, 99 | 13605 | 14310 → 0xd00 ("victory", final stats) |
@@ -39,8 +39,10 @@ Evidence:
 | J5 | wraith (0x28) | 5000 | 1, 2, 3, 5, 6, 99 | 13230 | 14120 → 0xd00 |
 | K5 | pboss (0x26) | 3750 | 1, 2, 3, 5, 6, 99 | 5205 | 6079 → 0xd00 |
 
-Eight of eleven bosses are defeated by native play from the level start;
-C5 and E2 survive the bot past the legend item's 29 s window (state 6), and
-the bot does not reach I5's yeti. Co-op: B6 with 2–4 players (playtest.md
+Nine of eleven bosses are defeated by native play from the level start
+(E2 in a 60,000-update run); C5's djinn was defeated in one bot build (b7)
+but stalls near 1,556 health in the current one, and the bot does not reach
+I5's yeti (its arena is a separate floor region; the reference capture of
+I5 also needed a warp). Co-op: B6 with 2–4 players (playtest.md
 "Co-op matrix"). Not done: a campaign that earns the legend items in play
 and chains realm → boss (the full critical path, M15).
