@@ -712,7 +712,10 @@ impl Bot {
         }
         if let Some((since, y0, moved)) = self.wait {
             let moved = if 0.05 < (p[1] - y0).abs() { f } else { moved };
-            let done = if moved == since { 90 <= f - since } else { 30 <= f - moved } || 600 <= f - since;
+            // Co-op: pads may need every player on them (+0xf4 0x400) and
+            // lifts carry only those aboard — wait for the followers.
+            let apart = (1..4).any(|k| g.globals.active_players >> k & 1 != 0 && g.players[k].i32_(0xfc) == 1 && 3.0 < dist_xz(g.players[k].v3(0x50), p));
+            let done = (!apart && if moved == since { 90 <= f - since } else { 30 <= f - moved }) || 600 <= f - since;
             if done {
                 self.wait = None;
                 self.force_rebuild = true;
@@ -898,6 +901,11 @@ impl Bot {
         if let Some((_, at)) = enemy.filter(|_| (f / 12).is_multiple_of(2)) {
             pad.press(0xd);
             return Self::steer(pad, g, p, at);
+        }
+        // The leader waits on a trigger: stand beside it (pads for all
+        // players, lifts).
+        if self.wait.is_some() {
+            return if dist_xz(p, lead) <= 1.5 { pad } else { Self::steer(pad, g, p, lead) };
         }
         if dist_xz(p, lead) <= 5.0 {
             return pad;

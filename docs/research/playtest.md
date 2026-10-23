@@ -269,8 +269,11 @@ reports bots/c2-<level>-p<N>.json):
 
 Every run is free of unported paths; in each ending run all players reach
 the end state (5 = exited through the portal, 4 = left with the auto exit).
-B2 with four players: run c2 again after the follower fix (the first four-
-player run ended before the exit). Not compared with a reference: the
+Followers walk the leader's trail (its positions every 10 updates) and
+join it on triggers (the leader waits until they stand within 3 units:
+pads for every player, lifts). Matrix c4: as above, and B2 with four
+players does not end — one follower stays at a climb the leader made (the
+camera then holds the others): a bot limitation, not a game state. Not compared with a reference: the
 reference has one pad configured.
 
 Device loss (GUI, scenarios-m16-v2 controller-reconnect): port 1 reports
