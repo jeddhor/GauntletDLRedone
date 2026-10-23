@@ -20,7 +20,9 @@ from virtual_display import environment
 # PCSX2 Pad1 bindings (private/reference/config/PCSX2/inis/PCSX2.ini):
 # K cross, J square, I triangle, L circle, Q L1, E R1, 1 L2, 3 R2, 2 L3,
 # 4 R3, BackSpace select. None of them is a PCSX2 hotkey.
-KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L', 'Q', 'E', '1', '3', '2', '4', 'BackSpace']
+# Pad 2 (private ini [Pad2], 2026-10-23): Y/B/V/N up/down/left/right, M cross,
+# U square, O triangle, P circle, Z start, X select, R L1, C R1.
+KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L', 'Q', 'E', '1', '3', '2', '4', 'BackSpace', 'Y', 'B', 'V', 'N', 'M', 'U', 'O', 'P', 'Z', 'X', 'R', 'C']
 # Preserved savestates by PCSX2 slot (reference_slots.py; 3.. are
 # reference_warp.py captures) and the staging slot 9 for other captures.
 from reference_slots import SLOTS, resolve  # noqa: E402

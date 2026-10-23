@@ -50,7 +50,8 @@ def player_probe(memory):
                                       'BossCamera', 'BossCamData', 'good_wiz_objgrp'})
     player, control = sym['players'], sym['PlayerControl']
     win, = struct.unpack_from('<I', memory, sym['MboxWinPtr'])
-    blocks = {'player0': (player, 0x2b00), 'control': (control, 0xf0), 'win': (win, 0xb0),
+    # player1: the second record (players stride 0x2b00), for co-op traces.
+    blocks = {'player0': (player, 0x2b00), 'player1': (player + 0x2b00, 0x2b00), 'control': (control, 0xf0), 'win': (win, 0xb0),
               'stdcam': (sym['StdCamera'], 0x1b0), 'options': (sym['Options'], 0x30),
               # Cam[0]'s matrix rows (Cam +0x10..+0x3c) and eye (+0x40..+0x4c).
               'cam0': (sym['Cam'] + 0x10, 0x40),

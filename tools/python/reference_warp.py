@@ -37,7 +37,9 @@ from reference_player import elf_symbols
 from reference_slots import SLOTS, STAGE_SLOT, resolve, stage_is_preserved, state_file
 from virtual_display import environment
 
-KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L', 'Return']
+# Pad 2 (private ini [Pad2], 2026-10-23): Y/B/V/N up/down/left/right, M cross,
+# U square, O triangle, P circle, Z start, X select, R L1, C R1.
+KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L', 'Return', 'Y', 'B', 'V', 'N', 'M', 'U', 'O', 'P', 'Z', 'X', 'R', 'C']
 
 
 def main():

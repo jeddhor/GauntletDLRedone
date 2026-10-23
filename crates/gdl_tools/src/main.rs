@@ -2141,6 +2141,18 @@ fn run() -> Result<(), Box<dyn Error>> {
             let samples = trace["samples"].as_array().ok_or("trace samples")?;
             let clips = anim_of("clips")?;
             game.player_clips[0] = gdl_core::game::setup::clips_of(&clips, 0);
+            // A co-op trace (player1 recorded): player 1 in play with player 0's
+            // class tables, clips and rig (the trace's second Sorceress; other
+            // classes would need their packages).
+            if samples.first().is_some_and(|s| s["player"].get("player1").is_some()) {
+                game.classes[1] = game.classes[0].clone();
+                game.init_player_missiles(1);
+                game.resolve_plyr_data(1);
+                game.player_clips[1] = game.player_clips[0].clone();
+                game.player_rigs[1] = game.player_rigs[0].clone();
+                game.controls.assign(1, 1);
+                game.globals.active_players |= 2;
+            }
             let hexb = |v: &serde_json::Value| -> Result<Vec<u8>, Box<dyn Error>> {
                 let s = v.as_str().ok_or("hex field")?;
                 (0..s.len()).step_by(2).map(|i| Ok(u8::from_str_radix(&s[i..i + 2], 16)?)).collect()
@@ -2245,8 +2257,20 @@ fn run() -> Result<(), Box<dyn Error>> {
             let mut by_item_offset: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
             // Per item slot over every update (item_diffs keeps 60 per update).
             let mut by_item_slot: std::collections::BTreeMap<u64, usize> = std::collections::BTreeMap::new();
-            for w in samples.windows(2) {
+            // main's camera dispatch can land in the next vblank sample (same
+            // AFrame: the pause fell between game_main and StdCamUpdate,
+            // trace-tower-2p-v1 Time 3.0167): an update's camera is compared
+            // with the last sample of its AFrame.
+            let aframe = |s: &serde_json::Value| s["observation"]["scalars"]["AFrame"]["raw_u32"].as_u64();
+            let mut last_same: Vec<usize> = (0..samples.len()).collect();
+            for i in (0..samples.len().saturating_sub(1)).rev() {
+                if aframe(&samples[i]) == aframe(&samples[i + 1]) {
+                    last_same[i] = last_same[i + 1];
+                }
+            }
+            for (wi, w) in samples.windows(2).enumerate() {
                 let (b, a) = (&w[0], &w[1]);
+                let a_cam = &samples[last_same[wi + 1]]["player"];
                 let mut ref_after = ReferenceItems(ref_before.0.clone());
                 have_items &= ref_after.apply(a)?;
                 let ref_b = std::mem::replace(&mut ref_before, ref_after);
@@ -2280,6 +2304,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let seed_all = |game: &mut gdl_core::game::Game| -> Result<(), Box<dyn Error>> {
                     let (bp, ap) = (&b["player"], &a["player"]);
                     game.players[0] = gdl_core::game::record::Record(hexb(&bp["player0"])?);
+                    // Co-op traces carry the second record too.
+                    if let Some(p1) = bp.get("player1") {
+                        game.players[1] = gdl_core::game::record::Record(hexb(p1)?);
+                    }
                     // The boss completion state before the update (traces from
                     // trace-B6-goodwiz-v1): DoGoodWizard's globals, the
                     // wizard node (good_wiz_objgrp +0x60), the auto exit.
@@ -2330,6 +2358,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     gl.help = word(&g("help")?) as i32;
                     gl.trig_cam_active = word(&g("trig_cam_active")?) as i32;
                     gl.num_active_players = word(&g("NumActivePlayers")?) as i32;
+                    // NumInGamePlayers (not traced) by SetNumPlayers' rule from
+                    // the seeded records: state ≠ 0 and not 2/3 (co-op traces).
+                    let in_game = (0..4).filter(|&k| { let st = game.players[k].i32_(0xfc); st != 0 && 1 < (st as u32).wrapping_sub(2) }).count() as i32;
+                    let gl = &mut game.globals;
+                    gl.num_in_game_players = in_game.clamp(1, 4);
                     gl.boss_index = word(&hexb(&b["enemies"]["BossIndex"])?) as i32;
                     game.stop_time = word(&g("StopTime")?) as i32;
                     // world_update's start_enemyinfo from the update's
@@ -2481,6 +2514,26 @@ fn run() -> Result<(), Box<dyn Error>> {
                         // the node matrix from the trace.
                         // The floor link: the traced WORLDS object (0x3c bytes
                         // from WorldBase) as index + 1.
+                        // Co-op traces: player 1's links are mapped the same way
+                        // (its node is not traced: the record's matrix stands in).
+                        if bp.get("player1").is_some() {
+                            let v = game.players[1].u32_(0x89c);
+                            let fo = (v != 0 && world_base <= v && (v - world_base).is_multiple_of(0x3c)).then(|| ((v - world_base) / 0x3c) as usize);
+                            let r = &mut game.players[1];
+                            let links = [0x880, 0x884, 0x888].map(|o| (o, r.u32_(o)));
+                            r.set_u32(0x89c, fo.map_or(0, |o| o as u32 + 1));
+                            for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
+                                r.set_u32(o, 0);
+                            }
+                            for (o, item) in links {
+                                if item >= items_base && (item - items_base).is_multiple_of(0x110) {
+                                    r.set_u32(o, (item - items_base) / 0x110 + 1);
+                                }
+                            }
+                            r.set_u16(0x93e, 0);
+                            game.player_floor_parent[1] = fo.filter(|&o| game.collision.runtime_flags.get(o).is_some_and(|f| f & 0x1000 != 0));
+                            game.player_node[1] = None;
+                        }
                         let floor_obj = {
                             let v = game.players[0].u32_(0x89c);
                             (v != 0 && world_base <= v && (v - world_base).is_multiple_of(0x3c)).then(|| ((v - world_base) / 0x3c) as usize)
@@ -2672,6 +2725,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                         res = game.do_enemies(&visible);
                     }
                     if frame_mode && res.is_ok() {
+                        // do_players' first block as the game loop runs it:
+                        // the welcome check, then TowerCheckMessages (the Tower).
+                        game.welcome_check();
+                        res = game.tower_check_messages(false);
+                    }
+                    if frame_mode && res.is_ok() {
                         res = game.do_players().map(|_| ());
                         if res.is_ok() {
                             res = game.process_effects();
@@ -2820,6 +2879,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                             player_diffs.push(serde_json::json!({"offset":format!("{o:#x}"),"native":format!("{n:08x}"),"reference":format!("{r:08x}")}));
                         }
                     }
+                    if let Some(after1) = a["player"].get("player1") {
+                        let after1 = hexb(after1)?;
+                        for o in (0..0x2b00).step_by(4) {
+                            if player_pointer_words.contains(&o) || player_hud_words.contains(&o) {
+                                continue;
+                            }
+                            let (n, r) = (game.players[1].u32_(o), word(&after1[o..]));
+                            if n != r {
+                                player_diffs.push(serde_json::json!({"player":1,"offset":format!("{o:#x}"),"native":format!("{n:08x}"),"reference":format!("{r:08x}")}));
+                            }
+                        }
+                    }
                     if player_diffs.is_empty() && res.is_ok() {
                         player_updates_equal += 1;
                     }
@@ -2828,7 +2899,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     }
                     // main's camera dispatch after game_main, compared with
                     // the after sample (traces with the boss camera state).
-                    if let Some(abc) = a["player"].get("bosscam") {
+                    if let Some(abc) = a_cam.get("bosscam") {
                         let cr = game.camera_step_pub();
                         let mut d = Vec::new();
                         if let Err(e) = &cr {
@@ -2841,13 +2912,13 @@ fn run() -> Result<(), Box<dyn Error>> {
                                     d.push(serde_json::json!({"camera":"bosscam","offset":format!("{o:#x}"),"native":format!("{:08x}", bc.rec.u32_(o)),"reference":format!("{:08x}", word(&rb[o..]))}));
                                 }
                             }
-                            let m = word(&hexb(&a["player"]["BossCameraMode"])?);
+                            let m = word(&hexb(&a_cam["BossCameraMode"])?);
                             if bc.mode as u32 != m {
                                 d.push(serde_json::json!({"camera":"BossCameraMode","native":bc.mode,"reference":m}));
                             }
                         }
-                        let rs = hexb(&a["player"]["stdcam"])?;
-                        let wa = hexb(&a["player"]["win"])?;
+                        let rs = hexb(&a_cam["stdcam"])?;
+                        let wa = hexb(&a_cam["win"])?;
                         if let Some(c) = &game.std_camera {
                             for o in (0..0x1b0).step_by(4) {
                                 if c.std.u32_(o) != word(&rs[o..]) {

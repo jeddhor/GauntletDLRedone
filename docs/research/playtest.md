@@ -305,8 +305,31 @@ Followers walk the leader's trail (its positions every 10 updates) and
 join it on triggers (the leader waits until they stand within 3 units:
 pads for every player, lifts). Matrix c4: as above, and B2 with four
 players does not end — one follower stays at a climb the leader made (the
-camera then holds the others): a bot limitation, not a game state. Not compared with a reference: the
-reference has one pad configured.
+camera then holds the others): a bot limitation, not a game state.
+
+Two-pad reference (2026-10-23): the private reference ini gives Pad 2 a
+DualShock 2 on free keys (Y/B/V/N directions, M cross, U square, O
+triangle, P circle, Z start, X select, R L1, C R1; reference_warp and
+reference_trace accept them; PCSX2 ejects a pad a state was saved without
+and re-inserts the configured one after its eject delay). From the Tower
+new game (slot 2) pad 2's START opens player 2's select column (New/Load),
+New → name "A" (up, right to END, cross) → Sorceress → the Tower reloads
+with two players (captures tower-2p-select-v1, tower-2p-v2; tower-2p-v1 is
+a mistaken early stop, the start state). Native placement of player 2 by
+load_player_geo → get_player_pos (game_run --players 2 in the Tower) is
+bit-exact with the reference: (3.1742401, −0.2734375, −27.781271), yaw
+−3.1031971. trace-tower-2p-v1 (292 vblanks: idle, both players moving
+apart, attacks; player1 record now captured by reference_player) replayed
+update by update (replay-frame-tower2p-v6): enemies, both player records,
+effects and world animation 146/146, items 145/146 (sound item 160's
++0xfc, the audio driver's track word, as in the one-player Tower replay),
+camera 145/146 (the two-player stage-start zoom's step x differs by 45 ulp
+at its first update). Replay harness fixes found on the way: NumInGamePlayers
+is seeded from the traced player states (the camera's multi-player branch),
+do_players' first block (welcome check, TowerCheckMessages, whose
+SumnerLevelSpeechStart writes the class experience copies) runs before
+do_players, and an update's camera is compared with the last sample of its
+AFrame (the vblank pause can fall between game_main and StdCamUpdate).
 
 Device loss (GUI, scenarios-m16-v2 controller-reconnect): port 1 reports
 no device in G1; after joyGetStatus's 60 polls player 1 is lost, the game
