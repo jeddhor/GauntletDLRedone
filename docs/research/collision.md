@@ -141,3 +141,18 @@ The dyngrid cells themselves (NextDynGrid order: a dynamic object reached
 through two cells is tested once per query via +0x42, so only the candidate
 order could differ). The CheckNum wrap after 255 queries is reproduced
 per native world, but its original value depends on every caller.
+
+## Water (2026-10-23, actual reference)
+
+Collision objects with flag 0x200 go to water_col (WorldObjCollide's water
+slot); PlayerCollideFloor stores player_water_wobj/player_water_y and the
+player's +0x8a4 takes the water height instead of the floor's (+0x88c).
+Levels with such nodes: A2, A4, C1 (27), C2, C4, D1, E1, G3, G5, I3, I4, J3
+(not all are water: rock piles, flame holders and music books carry the
+flag too). Capture w3l1-water-v1 (C1's new game, player 0 WARPED to (22,
+−9, 33) above C1WATER19; warp-C1-water-v1): the player drops at step 199,
+stands on the river bed (+0x88c −12.0781) with +0x8a4 = −10.7578 (the
+surface) and wades. Whole-update replays: trace-C1-water-v1 (idle, the
+fall) 120/120 and trace-C1-water-v2 (fall, then Up / Left / Down+Right
+through the water) 180/180 in every part except one camera update each
+(unknowns.md "Stage-start zoom step").
