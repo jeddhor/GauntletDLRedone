@@ -301,8 +301,11 @@ impl Game {
             }
             self.players[k].set_u16(0x93e, 0);
         }
+        // SetNumPlayers 0x103668: NumActivePlayers, NumInGamePlayers (0..4),
+        // and NumVirtualPlayers = 0x20f954 when set, else the active count.
         self.globals.num_active_players = total;
         self.globals.num_in_game_players = in_game.clamp(0, 4);
+        self.globals.num_virtual_players = if self.globals_954 != 0 { self.globals_954 } else { total };
     }
 
     /// Rotator (type 12) case of ProcessItems 0x1566c0: the bound object

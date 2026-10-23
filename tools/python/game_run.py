@@ -61,6 +61,7 @@ def main():
     ap.add_argument('--watch', help='collision objects OBJ,... whose matrix translations are sampled')
     ap.add_argument('--probe', help='X:Z;... points whose highest floor (object, y) is sampled')
     ap.add_argument('--itemw', help='item slots SLOT,... whose +0xd8/+0xde/+0xe1/+0xe2 are sampled')
+    ap.add_argument('--vplayers', help='NumVirtualPlayers at the level load (co-op traces)')
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
     ap.add_argument('--fall', help='DEBUG: player 0 drops below the world bottom at this update')
     ap.add_argument('--players', help='players in play (copies of player 0 without input, placed by load_player_geo)')
@@ -161,6 +162,8 @@ def main():
         cmd += [f'probe={a.probe}']
     if a.itemw:
         cmd += [f'itemw={a.itemw}']
+    if a.vplayers:
+        cmd += [f'vplayers={a.vplayers}']
     if a.players:
         cmd += [f'players={a.players}']
     if a.spawn:

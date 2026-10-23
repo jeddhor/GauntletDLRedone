@@ -1876,6 +1876,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             effect_tables.set_item_role(1, 1);
         }
         let start_rune_disp = start.globals.rune_disp_timer;
+        // vplayers=N: NumVirtualPlayers at the level load (SetNumPlayers: the
+        // active count — the players who entered; co-op traces).
+        if let Some(v) = opts.get("vplayers") {
+            start.globals.num_virtual_players = v.parse()?;
+        }
         let mut game = gdl_core::game::Game::new_level(gdl_core::game::setup::LevelInputs {
             world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, item_anim_nodes, effect_tables,
             // load_players=N: the select-screen entry (the Tower of a new game: 0).
@@ -2361,8 +2366,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // NumInGamePlayers (not traced) by SetNumPlayers' rule from
                     // the seeded records: state ≠ 0 and not 2/3 (co-op traces).
                     let in_game = (0..4).filter(|&k| { let st = game.players[k].i32_(0xfc); st != 0 && 1 < (st as u32).wrapping_sub(2) }).count() as i32;
+                    let g954 = game.globals_954;
                     let gl = &mut game.globals;
                     gl.num_in_game_players = in_game.clamp(1, 4);
+                    // SetNumPlayers: NumVirtualPlayers from 0x20f954 or the active count.
+                    gl.num_virtual_players = if g954 != 0 { g954 } else { gl.num_active_players };
                     gl.boss_index = word(&hexb(&b["enemies"]["BossIndex"])?) as i32;
                     game.stop_time = word(&g("StopTime")?) as i32;
                     // world_update's start_enemyinfo from the update's

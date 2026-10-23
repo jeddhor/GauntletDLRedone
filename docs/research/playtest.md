@@ -331,6 +331,24 @@ SumnerLevelSpeechStart writes the class experience copies) runs before
 do_players, and an update's camera is compared with the last sample of its
 AFrame (the vblank pause can fall between game_main and StdCamUpdate).
 
+Two players in a realm level: joining is Tower-only (pad 2's START in B1
+does nothing, as natively). From tower-2p-v2 both players are written onto
+the Poison Fields portal (reference_warp --pos/--pos2, labelled guest
+writes; with one player at the portal the game waits in state 4 for the
+other — capture w7l0-2p-v1 is that Tower state despite its name) and G1
+loads (w7l0-2p-v6, after the realm movie; a state saved during the movie,
+mode 0x400e, cannot be frame-stepped after reloading). trace-G1-2p-v1 (332
+vblanks: walking, attacks, both players) replayed with the level loaded for
+two players (game_run --vplayers 2: NumVirtualPlayers at load) —
+replay-frame-G1-2p-v3: items, world animation and critters 166/166,
+enemies 165/166, effects 165/166, players 157/166, camera 157/166. Found
+and fixed: SetNumPlayers' NumVirtualPlayers (0x20f954 when set, else the
+active count) was never assigned natively, so multiplayer-only items
+(ShowItem's player count) stayed hidden for a second player. First
+divergence (kept as the reproducer): step 201, player 2's position by
+0.003 units while both players attack touching each other (PlayerCollide-
+Players itself matches the instructions; the input differs upstream).
+
 Device loss (GUI, scenarios-m16-v2 controller-reconnect): port 1 reports
 no device in G1; after joyGetStatus's 60 polls player 1 is lost, the game
 holds under ControllerMessageBox's CONTROLLERMISSING text, and START on the
