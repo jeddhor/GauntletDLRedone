@@ -13,6 +13,10 @@ bounded key schedule one verified vblank at a time (F10), reports CurWorld,
 game_mode and player 0's position after every segment, and can save the state
 to a new PCSX2 slot (PINE MsgSaveState) copied to a new private capture. The
 preserved slots 1 and 2 and existing files are never written.
+--sample-filename reads wad_last_filename (GetWadInfo 0x1d47f8 formats every
+archive request there before hashing it) after every vblank and logs each
+change: a runtime request map at vblank granularity (requests made within
+one vblank are seen only as the last of them).
 """
 import argparse
 import hashlib
@@ -48,6 +52,7 @@ def main():
     parser.add_argument('--capture', help='new file name under private/reference/captures for the saved state')
     parser.add_argument('--shot', type=pathlib.Path, help='private screenshot at the end')
     parser.add_argument('--report', type=pathlib.Path, required=True, help='new private JSON report')
+    parser.add_argument('--sample-filename', action='store_true', help='log wad_last_filename changes after every vblank')
     args = parser.parse_args()
     if args.skip_wave is not None and not 0x10100 <= args.skip_wave <= 0x10dff:
         raise ValueError('skip_wave must be 0x10000 + a wave of worlds 1..13')
@@ -81,6 +86,7 @@ def main():
     args.slot, frozen = resolve(args.slot, args.stage)
     profile = json.loads(pathlib.Path('profiles/ps2/slus-20047-reference.json').read_text())
     vb_counter = profile['symbols']['vb_counter']['guest_address']
+    last_name = profile['symbols']['wad_last_filename']['guest_address']
     sym = elf_symbols({'players', 'CurWorld', 'CurLevel', 'game_mode', 'skip_wave', 'CritterInsts', 'NumCritterInsts'})
 
     def xdo(*a):
@@ -140,6 +146,12 @@ def main():
                 raise ValueError('critter-health needs a live instance and a positive value')
             write32(inst + 0x4f4, struct.unpack('<I', struct.pack('<f', v))[0])
             log.append(dict(write=dict(critter_health=[k, v])))
+        def filename():
+            raw = b''.join(w.to_bytes(4, 'little') for w in pine.read_ee32([last_name + 4 * k for k in range(64)]))
+            return raw.split(b'\0', 1)[0].decode('latin-1')
+        seen = filename() if args.sample_filename else None
+        if args.sample_filename:
+            log.append(dict(step=0, filename=seen))
         step = 0
         try:
             for seg in segments:
@@ -167,6 +179,9 @@ def main():
                         if time.monotonic() >= deadline:
                             raise ValueError(f'frame step {step} did not settle')
                         time.sleep(0.01)
+                    if args.sample_filename and (name := filename()) != seen:
+                        seen = name
+                        log.append(dict(step=step, filename=name, cur_world=word(sym['CurWorld']), game_mode=word(sym['game_mode'])))
                 obs = observe(step)
                 log.append(obs)
                 if args.until_wave is not None and (obs['cur_world'] << 8 | obs['cur_level'] & 0xff) == args.until_wave \
