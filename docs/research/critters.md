@@ -195,6 +195,15 @@ Found by the comparison:
   0x112a30 — 2026-10-22). Key gaps of 256+
   frames use a direct float reciprocal (sample_channels_long_gaps,
   HYPOTHESIS).
+- Drawing (gdl_play present_critters, 2026-10-22): each tree node's object
+  "<prefix><label>" (15 characters) unless the node has flag bit 0 or is an
+  OANIM node (AtreeNodeInit's rule, as for item trees); an OANIM node (type
+  2) draws one frame object of the critter's current sequence
+  (DoObjAnimation: (int)(frame + 0.5) − start, the entry's objects from its
+  first name's index on). Skorne's lower body (E2's robe, F2's lava column)
+  is such a flipbook: BOSS1_RDY0F02.. 17 sequences, each entry's objects
+  checked contiguous in MONSTERS/SKORNE1. Before, only named nodes were
+  drawn and Skorne floated without them (scene-e2-v1 / ref-e2-active-v1).
 - Effects parented to a critter node (CritterDoSfxSub's SfxSetParent: SFX
   flag 0x800 the +0xcc root's MB parent, 1 the +0xcc root, otherwise the
   +0xdc transition node, for SFX with flags 0x801 or an attaching caller)

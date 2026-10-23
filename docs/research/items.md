@@ -98,7 +98,12 @@ the definition's tree (+0x4c) when there is one, else ItemFindMBObjectL1
 kind gets geometry except 4 (statues aside), 13, 12 other than subtype 2
 and instances with flag bit 2 (ItemWorld::geo); triggers (kind 5) draw
 their tree (TRIGGER2 switches in every realm package) or model (I5's
-BRIDGEPADL1). gdl_play had drawn no triggers, statues or rocks, and only
+BRIDGEPADL1). Models may live in the level's own table: E2's falling rocks
+(kind 10 type 0x28, instances E2ROCKFALL#00..#20 in LEVELS/LEVELE2) are the
+slabs covering Skorne's pit, falling from step 271 of trace-E2-boss-v2 (as
+the reference frames ref-e2-rocks-260/290-v1 show); gdl_play's item models
+search the level's table last (unknowns.md). gdl_play had drawn no
+triggers, statues or rocks, and only
 generators whose model has no "L1" suffix (GEN_RAT1 but not GEN_GRU1L1);
 scene comparisons at reference cameras (private/reports/scene-*-ref.png /
 -native.png; K5's three SAFEROCK vats, A1's GRU generator arches and

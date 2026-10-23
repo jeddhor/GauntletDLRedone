@@ -429,17 +429,21 @@ struct CritterPart {
     node: usize,
 }
 
-/// Critters drawn from the simulation skeleton: each tree node with an
-/// object "<tree prefix><node label>" (15 characters) in the critter's model
-/// package, posed by gdl_core::tree_pose (presentation of the native pose;
-/// skinned parts and effects attached to the tree are not drawn).
+/// Critters drawn from the simulation skeleton: each tree node's object
+/// "<tree prefix><node label>" (15 characters; AtreeNodeInit: not for node
+/// flag bit 0 nor OANIM nodes) in the critter's model package, and an OANIM
+/// node's frame objects (DoObjAnimation: the critter's sequence and frame
+/// pick one; Skorne's lower body), posed by gdl_core::tree_pose
+/// (presentation of the native pose). Effects started on the critter are
+/// the effect slots'.
+#[allow(clippy::type_complexity)]
 fn present_critters(
     mut commands: Commands,
     sim: Res<Sim>,
     session: Res<Session>,
     libs: Res<Libraries>,
     mut slots: Query<(Entity, &mut CritterSlot, &mut Visibility, Option<&Children>)>,
-    mut parts: Query<(&CritterPart, &mut Transform)>,
+    mut parts: Query<(&CritterPart, &mut Transform, Option<&OFrame>, &mut Visibility), Without<CritterSlot>>,
 ) {
     let g = &sim.game;
     for (entity, mut slot, mut vis, children) in &mut slots {
@@ -465,15 +469,36 @@ fn present_critters(
             // else a package named after the tree prefix (bosses).
             let lib_name = session.levels.get(session.current).and_then(|l| l.critters.get(cr.ty.0)).and_then(|c| c.2.clone()).unwrap_or_else(|| t.prefix.clone());
             if let Some(lib) = libs.0.get(&lib_name) {
+                let add = |commands: &mut Commands, node: usize, list: &Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>, frame: Option<OFrame>| {
+                    let holder = commands.spawn((CritterPart { node }, Transform::default(), Visibility::default())).id();
+                    if let Some(f) = frame {
+                        commands.entity(holder).insert(f);
+                    }
+                    for (mesh, material) in list {
+                        let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+                        commands.entity(holder).add_child(child);
+                    }
+                    commands.entity(entity).add_child(holder);
+                };
                 for node in &t.nodes {
+                    if node.node_type == 2 {
+                        for (seq, e) in node.oanim.iter().enumerate() {
+                            let Some(&base) = lib.index_of.get(&e.name.to_uppercase()) else { continue };
+                            for k in 0..e.count.max(1) {
+                                if let Some(list) = lib.by_index.get(&(base + k as u32)) {
+                                    let f = OFrame { seq: seq as u16, start: e.start, k, single: e.count <= 1 };
+                                    add(&mut commands, node.index as usize, list, Some(f));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    if node.flags & 1 != 0 {
+                        continue;
+                    }
                     let label: String = (t.prefix.clone() + &node.label).chars().take(15).collect();
                     if let Some(list) = lib.by_label.get(&label) {
-                        let holder = commands.spawn((CritterPart { node: node.index as usize }, Transform::default(), Visibility::default())).id();
-                        for (mesh, material) in list {
-                            let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
-                            commands.entity(holder).add_child(child);
-                        }
-                        commands.entity(entity).add_child(holder);
+                        add(&mut commands, node.index as usize, list, None);
                     }
                 }
             }
@@ -488,12 +513,15 @@ fn present_critters(
         root[12..15].copy_from_slice(&r.v3(0x40));
         let Some(children) = children else { continue };
         for child in children.iter() {
-            if let Ok((part, mut tf)) = parts.get_mut(child)
-                && let Ok(m) = gdl_core::tree_pose::node_world(&cr.parents, &cr.locals, root, part.node, None)
-            {
-                let mat = Mat4::from_cols_array(&m);
-                if mat.is_finite() {
-                    *tf = Transform::from_matrix(mat);
+            if let Ok((part, mut tf, of, mut v)) = parts.get_mut(child) {
+                if let Some(f) = of {
+                    show_oframe(f, cr.clip, cr.clock.frame.max(0.0), &mut v);
+                }
+                if let Ok(m) = gdl_core::tree_pose::node_world(&cr.parents, &cr.locals, root, part.node, None) {
+                    let mat = Mat4::from_cols_array(&m);
+                    if mat.is_finite() {
+                        *tf = Transform::from_matrix(mat);
+                    }
                 }
             }
         }
@@ -1963,6 +1991,11 @@ fn build_library(
 ) -> Library {
     let set = gdl_client::materials_for(&pkg.objects, &pkg.table, &pkg.textures, images, materials);
     let (parts, _) = gdl_client::object_meshes(&pkg.objects, &set, materials, meshes);
+    assemble_library(pkg, set, parts)
+}
+
+/// A package's library from its materials and object meshes.
+fn assemble_library(pkg: &Package, set: gdl_client::MaterialSet, parts: HashMap<u32, Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>>) -> Library {
     let mut by_label = HashMap::new();
     let mut index_of = HashMap::new();
     for d in &pkg.objects.definitions {
@@ -2334,7 +2367,8 @@ fn setup(
     mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
 ) {
     let root = commands.spawn((Transform::from_scale(MIRROR), Visibility::default(), MirrorRoot)).id();
-    spawn_level(&mut commands, root, &session, sim.game.items.records.len(), &mut meshes, &mut images, &mut materials);
+    let level_lib = spawn_level(&mut commands, root, &session, sim.game.items.records.len(), &mut meshes, &mut images, &mut materials);
+    libraries.0.insert(LEVEL_LIB.to_string(), level_lib);
     spawn_bodies(&mut commands, root, &sources, &session, &mut meshes, &mut images, &mut materials);
     for (name, pkg) in &sources.packages {
         if !libraries.0.contains_key(name) {
@@ -2356,7 +2390,7 @@ fn spawn_level(
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     materials: &mut Assets<gdl_client::GsMaterial>,
-) {
+) -> Library {
     let level = &session.level;
     let set = gdl_client::materials_for(&level.objects, &level.table, &level.textures, images, materials);
     let (parts, _) = gdl_client::object_meshes(&level.objects, &set, materials, meshes);
@@ -2454,6 +2488,9 @@ fn spawn_level(
             commands.entity(root).add_child(e);
         }
     }
+    // The level's own objects as a library (LEVEL_LIB): ItemFindMBObjectL1
+    // searches every loaded model table (E2's E2ROCKFALL#nn falling rocks).
+    assemble_library(level, set, parts)
 }
 
 /// GDL_DEBUG_HIDE=<label,...>: world nodes not spawned (render research).
@@ -3525,8 +3562,14 @@ fn item_tree_packages<'a>(sources: &'a Sources, items: &'a [String]) -> Vec<&'a 
     out
 }
 
+/// The current level's object library key (not a configured package).
+const LEVEL_LIB: &str = "#LEVEL";
+
 fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str) -> Model {
     let own = items.len() + 1;
+    // Static models: the item packages and POWERUPS, then the level's own
+    // table (HYPOTHESIS: the search order across tables; names rarely recur).
+    let level = libs.0.get(LEVEL_LIB);
     for (i, pkg) in item_tree_packages(sources, items).into_iter().enumerate() {
         let (Some(p), Some(lib)) = (sources.packages.get(pkg), libs.0.get(pkg)) else { continue };
         if let Some(tree) = p.anim.as_ref().and_then(|a| a.trees.iter().find(|t| t.label == name)) {
@@ -3547,6 +3590,15 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
             continue;
         }
         // ItemFindMBObjectL1: the name, then +"L1", then +"L1ROOT".
+        for label in [name.to_string(), format!("{name}L1"), format!("{name}L1ROOT")] {
+            if let Some(parts) = lib.by_label.get(&label) {
+                return vec![(Vec3::ZERO, parts.clone(), 0, None, None)];
+            }
+        }
+    }
+    if let Some(lib) = level
+        && !name.is_empty()
+    {
         for label in [name.to_string(), format!("{name}L1"), format!("{name}L1ROOT")] {
             if let Some(parts) = lib.by_label.get(&label) {
                 return vec![(Vec3::ZERO, parts.clone(), 0, None, None)];
@@ -5627,11 +5679,27 @@ fn front_system(world: &mut EcsWorld) {
                 let cls = 0xb4 * g.players[0].u32_(0xc) as usize;
                 let counts: Vec<i16> = (0..9).map(|n| g.players[0].i16_(0xd0a + cls + 2 * n)).collect();
                 eprintln!("DEBUG F2 player {at:?} crystals {counts:?} max {:?} time {} garg_mtime {:?} door_mtime {:?}", g.items.tables.max_crystals, g.globals.time, g.tower.garg_mtime, g.tower.door_mtime);
+                for (k, c) in g.critters.iter().enumerate() {
+                    if let Some(c) = c {
+                        eprintln!("DEBUG F2 critter {k} type {:?} clip {} frame {} clips {}", c.ty, c.clip, c.clock.frame, c.clips.len());
+                    }
+                }
                 if world.resource::<ButtonInput<KeyCode>>().pressed(KeyCode::ShiftLeft) {
                     // Shift+F2: every active item.
                     for (s, r) in g.items.records.iter().enumerate().filter(|(_, r)| r.active()) {
                         let def = &g.items.definitions[r.definition()];
-                        eprintln!("DEBUG F2 all {s} {} kind {} sub {} pos {:?} d8 {:#06x}", String::from_utf8_lossy(def.name()), def.kind(), def.subtype(), r.position(), r.u16_(0xd8));
+                        eprintln!(
+                            "DEBUG F2 all {s} {} kind {} sub {} pos {:?} d8 {:#06x} geo {:?} geo_name {:?} f0 {} f2 {}",
+                            String::from_utf8_lossy(def.name()),
+                            def.kind(),
+                            def.subtype(),
+                            r.position(),
+                            r.u16_(0xd8),
+                            g.items.geo.get(s),
+                            g.items.geo_name.get(s),
+                            r.i16_(0xf0),
+                            r.i16_(0xf2)
+                        );
                     }
                 }
                 eprintln!(
@@ -6358,7 +6426,8 @@ fn advance_level(
             }
             if let Ok(root) = root.single() {
                 let n = sim.game.items.records.len();
-                spawn_level(&mut commands, root, &session, n, &mut meshes, &mut images, &mut materials);
+                let level_lib = spawn_level(&mut commands, root, &session, n, &mut meshes, &mut images, &mut materials);
+                libraries.0.insert(LEVEL_LIB.to_string(), level_lib);
                 spawn_package_texmods(&mut commands, &libraries, &texmod_packages(&session, &sources));
                 if new_body {
                     for b in &bodies {
