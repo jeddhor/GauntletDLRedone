@@ -469,7 +469,7 @@ fn present_critters(
             // else a package named after the tree prefix (bosses).
             let lib_name = session.levels.get(session.current).and_then(|l| l.critters.get(cr.ty.0)).and_then(|c| c.2.clone()).unwrap_or_else(|| t.prefix.clone());
             if let Some(lib) = libs.0.get(&lib_name) {
-                let add = |commands: &mut Commands, node: usize, list: &Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>, frame: Option<OFrame>| {
+                let add = |commands: &mut Commands, node: usize, list: &Parts, frame: Option<OFrame>| {
                     let holder = commands.spawn((CritterPart { node }, Transform::default(), Visibility::default())).id();
                     if let Some(f) = frame {
                         commands.entity(holder).insert(f);
@@ -1995,7 +1995,7 @@ fn build_library(
 }
 
 /// A package's library from its materials and object meshes.
-fn assemble_library(pkg: &Package, set: gdl_client::MaterialSet, parts: HashMap<u32, Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)>>) -> Library {
+fn assemble_library(pkg: &Package, set: gdl_client::MaterialSet, parts: HashMap<u32, Parts>) -> Library {
     let mut by_label = HashMap::new();
     let mut index_of = HashMap::new();
     for d in &pkg.objects.definitions {
