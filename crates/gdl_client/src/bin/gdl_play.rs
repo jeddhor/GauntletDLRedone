@@ -4817,6 +4817,10 @@ fn step_message_box(sim: &mut Sim, ports: &[PadStatus; 8], dt: f32) {
     }
     let page = sb.page;
     let open = sb.step(vb, pressed);
+    // StartFireScroll after the last page: AudioMenuBurn.
+    if !burning && sb.burn.is_some() {
+        sim.game.audio_menu_burn();
+    }
     if burning || sb.page != page {
         sim.game.scroll_box_page_end();
     }

@@ -720,6 +720,8 @@ impl Game {
         };
         // AddItemInstList's ProcessItemWobjs node writes (fade objects).
         load_nodes.apply(&mut game);
+        // AudioWorldInit: the elevator sounds by the level letter.
+        game.audio_world_init_elevators();
         // init_next_level: InitLighting(1); GauntWorldInit's lightning.
         game.init_lighting();
         game.init_lightning().map_err(|e| format!("lightning: {}", e.0))?;
@@ -907,6 +909,11 @@ impl Game {
         // ActivePlayerMask, the +0x93e panel-written bits, player counts)
         // after the quit/restart checks, before the mode dispatch.
         self.set_player_vars();
+        // game_main: AudioUnshrink 0x1605d0 (AudioSFX2(0x55, 0x7f, 0xe0,
+        // 0x28)) when the shrink powerup has worn off since ProcessItems.
+        if self.old_enemy_shrink < self.globals.enemy_shrink && self.globals.game_mode == 0x4010 {
+            self.sfx2(0x55, 0x7f, 0xe0, 0x28);
+        }
         let spf = self.globals.spf;
         self.globals.time += spf;
         self.globals.atime += spf;

@@ -1489,6 +1489,7 @@ impl Game {
     pub fn process_item_wobjs(&mut self) -> R<()> {
         // OnWobj reads players and enemies only, which the loop leaves alone.
         let ons: Vec<i32> = self.items.wobjs.iter().map(|w| self.on_wobj(w.object, true)).collect();
+        self.wobj_sounds()?;
         let g = WobjGlobals { spf: self.globals.spf, start_of_stage: self.globals.start_of_stage != 0, vb_elapsed: self.globals.vb_elapsed };
         let mut nodes = GameWobjNodes {
             alpha: &mut self.node_alpha,
@@ -1500,6 +1501,56 @@ impl Game {
         // The rest of the update's collision sees the new words.
         for k in 0..self.items.wobjs.len() {
             self.sync_collision_object(self.items.wobjs[k].object);
+        }
+        Ok(())
+    }
+}
+
+impl Game {
+    /// ProcessItemWobjs' sound part, per object before its +0x17 copy
+    /// (object +0x16 now vs +0x17 last update; position its node's
+    /// translation; skipped for item_wobj_snd < 0, while menu_on or during
+    /// the stage start): bridges (trigger 0x14/0x16) open or close with bit
+    /// 0x20; snd ≥ 10 is a trap switch (11: bit 0x20 rising on a flag-
+    /// 0xc00000 object; else any change of bit 0x10) on row snd − 10; snd <
+    /// 10 an elevator — bit 0x10 set runs AudioElevator(0) for the first such
+    /// object, falling plays AudioElevator(2); with none running the loop is
+    /// killed (AudioElevator(−1)).
+    fn wobj_sounds(&mut self) -> R<()> {
+        let mut running = 0;
+        for k in 0..self.items.wobjs.len() {
+            let w = &self.items.wobjs[k];
+            let (o, snd) = (w.object, w.snd);
+            let ow = self.items.objects[o];
+            let (now, last) = (ow.byte_16, ow.byte_17);
+            if snd < 0.0 || self.hud.menu_on != 0 || self.globals.start_of_stage != 0 {
+                continue;
+            }
+            let pos = self.collision.object_matrix(o).map(|m| [m[3][0], m[3][1], m[3][2]]).unwrap_or(self.items.object_position[o]);
+            let kind = ow.word_14 & 0xff;
+            if kind == 0x14 || kind == 0x16 {
+                if (now ^ last) & 0x20 != 0 {
+                    self.audio_bridge(now & 0x20 != 0, pos)?;
+                }
+            } else if 10.0 <= snd {
+                let row = (snd - 10.0) as i32;
+                if snd == 11.0 {
+                    if now & 0x20 != 0 && last & 0x20 == 0 && ow.flags_10 & 0xc0_0000 != 0 {
+                        self.audio_trap_switch(pos, row)?;
+                    }
+                } else if (now ^ last) & 0x10 != 0 {
+                    self.audio_trap_switch(pos, row)?;
+                }
+            } else if now & 0x10 == 0 {
+                if last & 0x10 != 0 {
+                    self.audio_elevator(2, pos, snd as i32)?;
+                }
+            } else if running == 0 {
+                running = self.audio_elevator(0, pos, snd as i32)?;
+            }
+        }
+        if running == 0 {
+            self.audio_elevator(-1, [0.0; 3], 0)?;
         }
         Ok(())
     }

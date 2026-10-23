@@ -30,6 +30,13 @@ pub struct CueTables {
     pub lvl_snd: Vec<i32>,
     pub gwiz: Vec<i32>,
     pub legend: [Vec<i32>; 4],
+    /// snd.566 0x23dda0 / snd.571 0x23ddb8 (AudioMissedLegend /
+    /// AudioMissedRune: four of Sumner's lines each) and their indices
+    /// missed_idx.565 / missed_idx.570 (0 in the data; never reset).
+    pub missed_legend: Vec<i32>,
+    pub missed_rune: Vec<i32>,
+    pub missed_legend_idx: usize,
+    pub missed_rune_idx: usize,
     /// AudioWeaponReflect's ricochet_time.
     pub ricochet_time: f32,
 }
@@ -39,9 +46,55 @@ fn at(v: &[i32], k: i64) -> i32 {
 }
 
 impl Game {
+    /// DoWaveEndAudio 0x177848 (do_exit, after AudioPlayerExit, once
+    /// per level end): outside worlds 5 and 8, a level whose quest item
+    /// (QuestItem: kind 1, subtype 0xd) no player holds — PlayerHasLegendItem
+    /// (−1, its +0xf4) — gets AudioMissedLegend; else a level whose rune
+    /// (RuneItem: kind 1, subtype 10) no player has — PlayerHasRune(−1, its
+    /// definition +0x40) — gets AudioMissedRune. Each queues the next of its
+    /// four lines (AudioMissedLegend 0x161488 / AudioMissedRune 0x1614d8):
+    /// AudioVQueAdd4(−1, 0.5, line, 0xe0, 0x7f, 2).
+    pub(crate) fn do_wave_end_audio(&mut self) {
+        if self.globals.cur_world == 5 || self.globals.cur_world == 8 {
+            return;
+        }
+        let kind = |g: &Game, slot: usize| {
+            let d = &g.items.definitions[g.items.records[slot].definition()];
+            (d.kind(), d.subtype())
+        };
+        let line = if let Some(q) = self.items.quest_item.filter(|&q| kind(self, q) == (1, 0xd)) {
+            let world = self.items.records[q].i32_(0xf4);
+            if (0..4).any(|k| self.player_has_legend_item(k, world)) {
+                return;
+            }
+            let c = &mut self.sounds.cues;
+            let id = at(&c.missed_legend, c.missed_legend_idx as i64);
+            c.missed_legend_idx = (c.missed_legend_idx + 1) % 4;
+            id
+        } else if let Some(r) = self.items.rune_item.filter(|&r| kind(self, r) == (1, 10)) {
+            let rune = i32::from(self.items.definitions[self.items.records[r].definition()].i16_(0x40));
+            if self.player_has_rune(-1, rune) {
+                return;
+            }
+            let c = &mut self.sounds.cues;
+            let id = at(&c.missed_rune, c.missed_rune_idx as i64);
+            c.missed_rune_idx = (c.missed_rune_idx + 1) % 4;
+            id
+        } else {
+            return;
+        };
+        self.vque_add(0.5, QueEntry::new(line, 0xe0, 0x7f, 2));
+    }
+
     /// pantab 0x23ccc0[player] (0x7f for every player on this disc).
     fn pan_of(&self, p: usize) -> i32 {
         self.sounds.pantab.get(p).copied().unwrap_or(0x7f)
+    }
+
+    /// AudioMenuBurn 0x1606e8 (StartFireScroll: a scroll or option menu
+    /// starts burning away): AudioFX(0x13, 0xe0, 3).
+    pub fn audio_menu_burn(&mut self) {
+        self.sfx_flat(0x13, 0xe0, 3);
     }
 
     /// AudioCursorSelect 0x1606c8: AudioFX(0x11, 0x7f, 3).

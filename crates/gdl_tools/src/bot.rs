@@ -449,9 +449,9 @@ pub struct Bot {
     hint_wait: Option<usize>,
     /// Followers' (waypoint index, path) by player.
     followers: [(usize, Vec<usize>); 4],
-    /// Followers' fallback: a path on the leader's graph to the leader when
-    /// the trail stalls (since, position then, path, next waypoint, next plan).
-    follow_nav: [(usize, V3, Vec<usize>, usize, usize); 4],
+    /// Followers' path to the exit portal while the leader waits on one
+    /// (path, next waypoint, next plan update).
+    follow_nav: [(Vec<usize>, usize, usize); 4],
     /// The leader's positions every 10 updates (walkable by construction):
     /// followers walk this trail.
     trail: Vec<V3>,
@@ -1176,37 +1176,43 @@ impl Bot {
         if self.wait.is_some() {
             return if dist_xz(p, lead) <= 1.5 { pad } else { Self::steer(pad, g, p, lead) };
         }
+        // The leader waits on an exit portal (state 4): every player must
+        // stand on one (B2 with four players: followers idled within 5 units
+        // of the leader beside the portal). On an exit portal (+0x884 contact,
+        // kind 9) release the stick, as the leader does; else walk the
+        // leader's graph to the exit nearest the leader.
+        if g.players[0].i32_(0xfc) != 1 {
+            if let Some(it) = g.players[k].u32_(0x884).checked_sub(1).map(|i| i as usize)
+                && it < g.items.records.len()
+                && item_kind(g, it).0 == 9
+            {
+                return pad;
+            }
+            let exit = (0..g.items.records.len())
+                .filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9)
+                .map(|s| g.items.records[s].v3(0x40))
+                .min_by(|a, b| dist_xz(*a, lead).total_cmp(&dist_xz(*b, lead)));
+            if let Some(t) = exit {
+                let (path, idx, next) = &mut self.follow_nav[k];
+                if *idx >= path.len() && *next <= f {
+                    *next = f + 150;
+                    let none = HashSet::new();
+                    if let (Some(a), Some(b)) = (self.nav.locate_cached(p, &none), self.nav.locate_cached(t, &none))
+                        && let Some(found) = self.nav.path(a, &|n| n == b, &HashSet::new(), &Avoid::default())
+                    {
+                        *path = found;
+                        *idx = 0;
+                    }
+                }
+                while *idx < path.len() && dist_xz(p, self.nav.pts[path[*idx]]) < 0.9 && (p[1] - self.nav.pts[path[*idx]][1]).abs() < 2.5 {
+                    *idx += 1;
+                }
+                let goal = path.get(*idx).map_or(t, |&n| self.nav.pts[n]);
+                return Self::steer(pad, g, p, goal);
+            }
+        }
         if dist_xz(p, lead) <= 5.0 {
             return pad;
-        }
-        // Stalled (under a unit in 120 updates) or the leader no longer in
-        // play (waiting on the exit): a path on the leader's graph to the
-        // leader, planned at most every 150 updates (B2 with four players: a
-        // follower stuck below a climb the trail led it to).
-        {
-            let (since, at, path, idx, next) = &mut self.follow_nav[k];
-            if 1.0 < dist_xz(p, *at) || 2.0 < (p[1] - at[1]).abs() {
-                *at = p;
-                *since = f;
-            }
-            let stalled = 120 <= f - *since;
-            if (stalled || g.players[0].i32_(0xfc) != 1) && *idx >= path.len() && *next <= f {
-                *next = f + 150;
-                let none = HashSet::new();
-                if let (Some(a), Some(b)) = (self.nav.locate_cached(p, &none), self.nav.locate_cached(lead, &none))
-                    && let Some(found) = self.nav.path(a, &|n| n == b, &HashSet::new(), &Avoid::default())
-                {
-                    *path = found;
-                    *idx = 0;
-                }
-            }
-            while *idx < path.len() && dist_xz(p, self.nav.pts[path[*idx]]) < 0.9 && (p[1] - self.nav.pts[path[*idx]][1]).abs() < 2.5 {
-                *idx += 1;
-            }
-            if let Some(&n) = path.get(*idx) {
-                let t = self.nav.pts[n];
-                return Self::steer(pad, g, p, t);
-            }
         }
         // The leader's trail: from the trail point nearest the follower (in
         // 3D) onward, each point passed within 1.5 units.

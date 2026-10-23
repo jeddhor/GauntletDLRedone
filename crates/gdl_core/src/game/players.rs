@@ -520,6 +520,7 @@ impl Game {
             if self.globals.end_of_stage == 0 {
                 let pos = self.players[p].v3(0x50);
                 self.sfx(4, Some(pos), 0x7f, 9)?;
+                self.do_wave_end_audio();
                 self.globals.end_of_stage = 1;
             }
             let v = self.players[p].u32_(0x88c);

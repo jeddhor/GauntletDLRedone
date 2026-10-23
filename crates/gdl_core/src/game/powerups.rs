@@ -9,9 +9,9 @@
 //! words from the eight powerup slots (+0x144 + 16k: time, kind, amount,
 //! flags), counts their timers down outside the Tower, applies speed/magic
 //! boosts and the turbo refill, and clamps the derived words to the class
-//! ranges. Not ported (presentation or separate systems): see-through, skin
-//! effects, attached models and trees, PlayerProcessFamiliar,
-//! PlayerProcessScale, death effects and sounds.
+//! ranges, and plays the pojo/levitation wear-off sounds. Not ported
+//! (presentation or separate systems): see-through, skin effects, attached
+//! models and trees, PlayerProcessFamiliar, PlayerProcessScale, death effects.
 use super::{Game, R};
 use crate::numeric::{add_guarded_rz as add, mul_rz as mul, sub_guarded_rz as sub};
 
@@ -86,6 +86,8 @@ impl Game {
         for (k, w) in words.iter().enumerate() {
             r.set_f32(0x118 + 4 * k, *w);
         }
+        // uVar1: the powerup flags before they are rebuilt.
+        let old138 = r.u32_(0x138);
         r.set_u32(0x130, 0);
         r.set_u32(0x134, 0);
         r.set_u32(0x138, 0);
@@ -178,6 +180,16 @@ impl Game {
         }
         let stop = u16::from(r.u32_(0x138) & 8 != 0);
         r.set_u16(0x938, stop);
+        // The pojo (0x400) and levitation (1) wearing off: AudioUnpojo
+        // 0x160580 (AudioSFX(99, player +0x60, 0xe0, 0x28)) and
+        // AudioLevitatedown 0x1605e8 (AudioSFX(0x59, …)).
+        let (new138, at) = (self.players[p].u32_(0x138), self.players[p].v3(0x60));
+        if new138 & 0x400 == 0 && old138 & 0x400 != 0 {
+            self.sfx(99, Some(at), 0xe0, 0x28)?;
+        }
+        if new138 & 1 == 0 && old138 & 1 != 0 {
+            self.sfx(0x59, Some(at), 0xe0, 0x28)?;
+        }
         for k in 0..6 {
             let (lo, hi) = self.class_tables.ranges[k];
             let r = &mut self.players[p];

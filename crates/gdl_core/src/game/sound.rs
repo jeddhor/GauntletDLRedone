@@ -67,6 +67,16 @@ pub struct SoundTables {
     /// snd1_370 0x23d568 / snd2_371 0x23d5a0: rotator loop / stop per world.
     rotator_loop: Vec<i32>,
     rotator_stop: Vec<i32>,
+    /// snd.471 0x23d5d8 (two rows of 14 worlds: AudioTrapSwitch), snd.475
+    /// 0x23d648 / snd.479 0x23d680 (AudioBridgeOpen / Close per world).
+    trap_switch: Vec<i32>,
+    bridge_open: Vec<i32>,
+    bridge_close: Vec<i32>,
+    /// elev_sound 0x2c2518: AudioWorldInit's (loop, stop) per elev_desc
+    /// entry ("MET", "ROPE", "CHAIN", "ICE", "STONE", "*ROCK").
+    pub elev: [(i32, i32); 6],
+    /// The elevator loop running (AudioPriExists(0x73)'s track).
+    pub elev_loop: Option<i32>,
     /// Loop IDs started and not yet killed (AudioSoundExists).
     pub loops: std::collections::BTreeSet<i32>,
     barrel_explode: Vec<i32>,
@@ -159,6 +169,11 @@ impl SoundTables {
             poison_barrel: t(0x23_d488, 56)?,
             rotator_loop: t(0x23_d568, 56)?,
             rotator_stop: t(0x23_d5a0, 56)?,
+            trap_switch: t(0x23_d5d8, 112)?,
+            bridge_open: t(0x23_d648, 56)?,
+            bridge_close: t(0x23_d680, 56)?,
+            elev: [(-1, -1); 6],
+            elev_loop: None,
             loops: Default::default(),
             barrel_explode: t(0x23_d4c0, 56)?,
             rock: t(0x23_d4f8, 56)?,
@@ -183,6 +198,10 @@ impl SoundTables {
                 lvl_snd: t(0x23_d7c8, 576)?,
                 gwiz: t(0x23_dbe0, 352)?,
                 legend: [t(0x23_da08, 48)?, t(0x23_da38, 48)?, t(0x23_da68, 48)?, t(0x23_da98, 48)?],
+                missed_legend: t(0x23_dda0, 16)?,
+                missed_rune: t(0x23_ddb8, 16)?,
+                missed_legend_idx: 0,
+                missed_rune_idx: 0,
                 ricochet_time: 0.0,
             },
             enemy_idx: vec![-1; 0x2d],
@@ -663,6 +682,89 @@ impl Game {
         let id = self.world_tab(&self.sounds.barrel, 1, 0);
         self.sfx3(id, pos, 0xe0, 0x55)
     }
+    /// AudioWorldInit 0x15c558's elevator part: for each elev_desc entry
+    /// the loop "S_ELV<desc><L>" and stop "S_ELV<desc>STP<L>" (a "B" suffix
+    /// when level_data +0x44 ≥ 0; "*ROCK": "S_ROCKROTATE" / "S_ROCKSTOP"),
+    /// L = LevelLetter; AudioFindSound over every bank.
+    pub(crate) fn audio_world_init_elevators(&mut self) {
+        const DESC: [&str; 6] = ["MET", "ROPE", "CHAIN", "ICE", "STONE", "*ROCK"];
+        let letter = super::bgmusic::level_letter(self.globals.cur_world);
+        let b = if self.level.len() < 0x48 || (self.level_u32(0x44) as i32) < 0 { "" } else { "B" };
+        let Some(rom) = self.sounds.rom.as_ref() else { return };
+        let mut elev = [(-1, -1); 6];
+        for (k, d) in DESC.iter().enumerate() {
+            let (lp, st) = match d.strip_prefix('*') {
+                Some(n) => (format!("S_{n}ROTATE"), format!("S_{n}STOP")),
+                None => (format!("S_ELV{d}{letter}{b}"), format!("S_ELV{d}STP{letter}{b}")),
+            };
+            let l = rom.find(&lp).unwrap_or(-1);
+            elev[k] = (l, if 0 <= l { rom.find(&st).unwrap_or(-1) } else { -1 });
+        }
+        self.sounds.elev = elev;
+    }
+
+    /// AudioElevator 0x160148(mode, position, index): mode < 0 kills the
+    /// elevator loop (the priority-0x73 track); else for elev_sound[index]
+    /// (index < 6, both sounds present) mode 0 — also forced during the
+    /// stage start/end — starts the loop once (AudioLOOP 0xe0/0x73; 2 when
+    /// started, 1 when running; the AudioTrackPan update is presentation),
+    /// and modes 1+ kill a running loop, mode 2+ then playing the stop sound
+    /// (AudioSFX 0xe0/0x44). Returns 0 otherwise.
+    pub(crate) fn audio_elevator(&mut self, mode: i32, pos: V3, index: i32) -> R<i32> {
+        if mode < 0 {
+            if let Some(id) = self.sounds.elev_loop.take() {
+                self.kill_sound(id);
+            }
+            return Ok(0);
+        }
+        let Some(&(lp, stop)) = usize::try_from(index).ok().and_then(|k| self.sounds.elev.get(k)) else { return Ok(0) };
+        if lp < 0 || stop < 0 {
+            return Ok(0);
+        }
+        let mode = if self.globals.start_of_stage != 0 || self.globals.end_of_stage != 0 { 0 } else { mode };
+        if mode == 0 {
+            if self.sounds.loops.contains(&lp) {
+                return Ok(1);
+            }
+            self.loop_sound(lp, Some(pos), 0xe0, 0x73)?;
+            self.sounds.elev_loop = Some(lp);
+            return Ok(2);
+        }
+        if !self.sounds.loops.contains(&lp) {
+            return Ok(0);
+        }
+        self.kill_sound(lp);
+        if self.sounds.elev_loop == Some(lp) {
+            self.sounds.elev_loop = None;
+        }
+        if 1 < mode {
+            self.sfx(stop, Some(pos), 0xe0, 0x44)?;
+        }
+        Ok(0)
+    }
+
+    /// AudioTrapSwitch 0x1607e0(position, row): snd.471[row × 14 + world]
+    /// (AudioSFX 0xe0/0x1e) outside the stage start/end on non-boss levels.
+    pub(crate) fn audio_trap_switch(&mut self, pos: V3, row: i32) -> R<()> {
+        if self.globals.start_of_stage != 0 || self.globals.end_of_stage != 0 || 0 <= self.globals.boss_type {
+            return Ok(());
+        }
+        let id = Self::tab(&self.sounds.trap_switch, (row.max(0) as usize) * 14 + self.globals.cur_world.max(0) as usize);
+        self.sfx(id, Some(pos), 0xe0, 0x1e)
+    }
+
+    /// AudioBridgeOpen 0x160860 / AudioBridgeClose 0x1608c8(position): the
+    /// world's sound (AudioSFX 0xe0, priority 0x1e / 0x44) outside the stage
+    /// start/end.
+    pub(crate) fn audio_bridge(&mut self, open: bool, pos: V3) -> R<()> {
+        if self.globals.start_of_stage != 0 || self.globals.end_of_stage != 0 {
+            return Ok(());
+        }
+        let (tab, pri) = if open { (&self.sounds.bridge_open, 0x1e) } else { (&self.sounds.bridge_close, 0x44) };
+        let id = self.world_tab(tab, 1, 0);
+        self.sfx(id, Some(pos), 0xe0, pri)
+    }
+
     /// AudioRotator 0x160020(mode, position): mode 0 keeps the world's loop
     /// running (AudioLOOP 0xe0/0x72; the AudioTrackPan update is
     /// presentation); otherwise kill it, and mode 2+ plays the stop sound.

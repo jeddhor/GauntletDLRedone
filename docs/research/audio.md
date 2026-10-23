@@ -184,6 +184,38 @@ toggle is dormant in this build and not ported. Remaining SPU differences
 not modelled: the SPU's 4-point Gaussian resampling and its 16-bit mix
 saturation.
 
+## Audio wrappers audit (2026-10-23)
+
+Every EE Audio* function was checked for a native counterpart (by name, or
+its sound request inlined at the native caller; scratch audit of the
+wrappers' decompiles, private/reports/ghidra-audio10/11/12). Found missing
+and ported from instructions:
+- DoWaveEndAudio 0x177848 (do_exit, after AudioPlayerExit): outside worlds
+  5 and 8 the level's quest item or rune nobody holds queues one of
+  Sumner's four lines (snd.566 0x23dda0 = 0x10057, 0x10045, 0x10058,
+  0x10047; snd.571 0x23ddb8 = 0x10055, 0x10046, 0x10056, 0x10048; indices
+  cycling, never reset): AudioVQueAdd4(−1, 0.5, line, 0xe0, 0x7f, 2).
+- PlayerProcessPowerups' AudioUnpojo 0x160580 (99) and AudioLevitatedown
+  0x1605e8 (0x59) when the pojo (+0x138 0x400) or levitation (1) wears off;
+  game_main's AudioUnshrink 0x1605d0 (0x55) when EnemyShrink grew back.
+- ProcessItemWobjs 0x154790's sounds: bridges (AudioBridgeOpen 0x160860 /
+  Close 0x1608c8, snd.475/479 per world), trap switches (AudioTrapSwitch
+  0x1607e0, snd.471 two rows of 14 worlds) and elevators (AudioElevator
+  0x160148: AudioWorldInit 0x15c558's loop/stop names "S_ELV<MET|ROPE|
+  CHAIN|ICE|STONE><L>[B]" / "…STP…" and "S_ROCKROTATE"/"S_ROCKSTOP"; the
+  loop at priority 0x73, killed when no elevator runs; its pan update is
+  presentation).
+- AudioMenuBurn 0x1606e8 (0x13) when a scroll box starts burning.
+Already present inline: AudioDeathShatter/Laugh, AudioEnemyWeaponHit,
+AudioWeaponHitBarrel, AudioEnemyShootArrow, AudioSuicideYell/Bomb,
+AudioTimeBomb, AudioTentacle, AudioSplash, AudioOpenChest, AudioPlayerExit.
+No-ops or not reachable: AudioGameVolume / AudioAttractVolume (empty),
+AudioEnabled (NO_AUDIO). Not yet: AudioPlayerXray (do_see_thru, the x-ray
+chest view, presentation not ported), the option menus' burn on close
+(end_optmenu → StartFireScroll; the native menus close without the fire
+scroll), bank management (AudioLoadBank/ReplaceBank/UnloadPart: the host
+loads banks on demand). Replays r51 = r50 (sounds are events).
+
 ## Not yet
 
 Tower coin sounds, an SPU-level output comparison (resampling filter and
