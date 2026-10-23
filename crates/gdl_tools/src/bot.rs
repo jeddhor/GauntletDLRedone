@@ -288,7 +288,7 @@ impl Nav {
     }
 
     /// Dijkstra from `from` to the first node `goal` accepts, avoiding `blocked` edges.
-    pub fn path(&self, from: usize, goal: &dyn Fn(usize) -> bool, blocked: &HashSet<(Place, Place)>) -> Option<Vec<usize>> {
+    pub fn path(&self, from: usize, goal: &dyn Fn(usize) -> bool, blocked: &HashSet<(Place, Place)>, avoid: &HashSet<usize>) -> Option<Vec<usize>> {
         #[derive(PartialEq)]
         struct S(f32, usize);
         impl Eq for S {}
@@ -326,6 +326,10 @@ impl Nav {
                 let k = if self.hard.contains(&(n, m)) { 4.0 } else { 1.0 };
                 // Drops lose height that may have taken lifts to gain.
                 let drop = if self.pts[m][1] < self.pts[n][1] - 2.0 { 15.0 } else { 0.0 };
+                let drop = drop + if avoid.contains(&m) { 25.0 } else { 0.0 };
+                // Clearance: a node missing neighbours lies by a wall or a
+                // ledge; the player (radius 1.5) slides there.
+                let drop = drop + (8usize.saturating_sub(self.adj[m].len())) as f32 * 0.6;
                 let nd = d + (dist_xz(self.pts[n], self.pts[m]) + (self.pts[m][1] - self.pts[n][1]).abs() * 0.5) * k + drop;
                 if dist.get(&m).is_none_or(|&b| nd < b) {
                     dist.insert(m, nd);
@@ -373,6 +377,9 @@ pub struct Bot {
     rebuilds: usize,
     force_rebuild: bool,
     last_y: f32,
+    /// Followers' (waypoint index, path) by player.
+    followers: [(usize, Vec<usize>); 4],
+    backoff: Option<(usize, V3)>,
     attack_at: Option<V3>,
     bad_nodes: HashSet<Place>,
     last_floor: Option<usize>,
@@ -413,6 +420,8 @@ impl Bot {
             rebuilds: 0,
             force_rebuild: false,
             last_y: f32::NAN,
+            followers: Default::default(),
+            backoff: None,
             attack_at: None,
             bad_nodes: HashSet::new(),
             last_floor: None,
@@ -508,8 +517,38 @@ impl Bot {
         self.path.clear();
     }
 
+    /// Graph nodes beside items that block the way (chests, barrels and
+    /// obstacles; gates while no key is held): routes avoid them when they can.
+    fn obstacle_nodes(&self, g: &Game) -> HashSet<usize> {
+        let keys = g.players[0].i32_(KEYS);
+        let mut out = HashSet::new();
+        for s in 0..g.items.records.len() {
+            let r = &g.items.records[s];
+            let (k, _) = item_kind(g, s);
+            if !r.active() || !(k == 2 || k == 10 || (k == 7 && keys < 1)) {
+                continue;
+            }
+            let q = r.v3(0x40);
+            let reach = r.f32_(0xe8).clamp(0.5, 4.0) + 1.0;
+            let c = key(q[0], q[2]);
+            let span = (reach / CELL).ceil() as i32;
+            for dx in -span..=span {
+                for dz in -span..=span {
+                    for &n in self.nav.cols.get(&(c.0 + dx, c.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
+                        let pn = self.nav.pts[n];
+                        if dist_xz(pn, q) < reach && (pn[1] - q[1]).abs() < 3.0 {
+                            out.insert(n);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// The next goal on the current graph; false when none is reachable.
     fn plan(&mut self, f: usize, g: &mut Game) -> bool {
+        let avoid = self.obstacle_nodes(g);
         let p = g.players[0].v3(0x50);
         let Some(here) = self.nav.locate_cached(p, &self.bad_nodes).or_else(|| self.nav.locate_cached(p, &HashSet::new())) else {
             return false;
@@ -528,14 +567,24 @@ impl Bot {
             .collect();
         let mut near: Vec<usize> = keys;
         near.extend(triggers);
-        for list in [exits, near] {
+        // The Tower (world 13): its crystals (kind 1 subtype 15) unlock the
+        // realm doors (UnlockLevel), so they come before its exits.
+        if g.globals.cur_world == 0xd {
+            let crystals = active(g, &|k, t| k == 1 && t == 15);
+            if !crystals.is_empty() {
+                near = crystals;
+            }
+        }
+        let tower_crystals = g.globals.cur_world == 0xd && !active(g, &|k, t| k == 1 && t == 15).is_empty();
+        let order = if tower_crystals { [near, Vec::new()] } else { [exits, near] };
+        for list in order {
             let list: Vec<usize> = list.into_iter().filter(|s| !self.given_up.contains(s)).collect();
             let targets = self.item_nodes(g, &list);
             if targets.is_empty() {
                 continue;
             }
             let goal_nodes: HashMap<usize, usize> = targets.iter().map(|&(s, n)| (n, s)).collect();
-            if let Some(path) = self.nav.path(here, &|n| goal_nodes.contains_key(&n), &self.blocked) {
+            if let Some(path) = self.nav.path(here, &|n| goal_nodes.contains_key(&n), &self.blocked, &avoid) {
                 let slot = goal_nodes[path.last().unwrap()];
                 self.goal = Some(Goal::Item(slot));
                 self.path = path;
@@ -547,8 +596,15 @@ impl Bot {
         // A boss or other critter alive: go to it (the attack logic fights it).
         let foes: Vec<V3> = g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40)).collect();
         if !foes.is_empty() {
-            let near = |n: usize| foes.iter().any(|q| dist_xz(self.nav.pts[n], *q) < 4.0);
-            if let Some(path) = self.nav.path(here, &near, &self.blocked) {
+            // Within 4 units of a foe, else the reachable node nearest to one.
+            let close = (0..self.nav.pts.len())
+                .filter(|&n| !self.nav.adj[n].is_empty())
+                .min_by(|&a, &b| {
+                    let d = |n: usize| foes.iter().map(|q| dist_xz(self.nav.pts[n], *q)).fold(f32::MAX, f32::min);
+                    d(a).total_cmp(&d(b))
+                });
+            let near = |n: usize| foes.iter().any(|q| dist_xz(self.nav.pts[n], *q) < 4.0) || Some(n) == close;
+            if let Some(path) = self.nav.path(here, &near, &self.blocked, &avoid) {
                 let n = *path.last().unwrap();
                 self.goal = Some(Goal::Explore(n));
                 self.path = path;
@@ -562,7 +618,7 @@ impl Bot {
             let q = self.nav.pts[n];
             !self.nav.adj[n].is_empty() && !self.visited_cols.contains(&key(q[0], q[2])) && 3.0 < dist_xz(q, p)
         };
-        if let Some(path) = self.nav.path(here, &unvisited, &self.blocked) {
+        if let Some(path) = self.nav.path(here, &unvisited, &self.blocked, &avoid) {
             let n = *path.last().unwrap();
             self.goal = Some(Goal::Explore(n));
             self.path = path;
@@ -579,11 +635,12 @@ impl Bot {
         for e in 4..8 {
             pad.entries[e] = [3, 0];
         }
-        if self.exit_update.is_none() && g.level_done.is_some() {
-            // The level ended (an exit portal, a treasure room's timer, a
-            // boss's auto exit): do_exit's destination wave is set.
+        if self.exit_update.is_none() && (g.level_done.is_some() || (g.players_done && g.exit_ready)) {
+            // The level ended: do_exit's destination wave (an exit portal, a
+            // treasure room's timer), or game_main's exit test after a boss's
+            // auto exit (do_players done, AudioStillPlaying clear → TowerWave).
             self.exit_update = Some(f);
-            self.exit_wave = g.level_done;
+            self.exit_wave = g.level_done.or(Some(gdl_core::game::boss::TOWER_WAVE));
         }
         if self.exit_update.is_some() || g.players[0].i32_(0xfc) != 1 {
             return pad;
@@ -603,7 +660,10 @@ impl Bot {
         match self.goal {
             Some(Goal::Item(s)) => {
                 let (k, _) = item_kind(g, s);
-                let reached = !g.items.records[s].active() || (k == 5 && dist_xz(g.players[0].v3(0x50), g.items.records[s].v3(0x40)) < 1.5);
+                // A trigger counts once the bot stands within 2.5 of it or the
+                // trigger reports a player on it (+0xe2).
+                let r = &g.items.records[s];
+                let reached = !r.active() || (k == 5 && (dist_xz(g.players[0].v3(0x50), r.v3(0x40)) < 2.5 || r.u8_(0xe2) & 1 != 0));
                 if reached {
                     self.log.push(serde_json::json!({"update": f, "reached": s, "keys": g.players[0].i32_(KEYS)}));
                     self.bad_nodes.clear();
@@ -672,6 +732,11 @@ impl Bot {
                     }
                 }
                 self.attack_until = f + 40;
+                // Back off briefly (away from the blocked waypoint) before the new route.
+                if let Some(&b) = self.path.get(self.at) {
+                    let q = self.nav.pts[b];
+                    self.backoff = Some((f + 10, [2.0 * p[0] - q[0], p[1], 2.0 * p[2] - q[2]]));
+                }
                 // A container or obstacle item in the way (barrels, chests:
                 // kinds 2 and 10): face it while attacking.
                 self.attack_at = (0..g.items.records.len())
@@ -710,6 +775,12 @@ impl Bot {
             self.progress = (f, p);
             return pad;
         }
+        if let Some((until, away)) = self.backoff {
+            if f < until {
+                return Self::steer(pad, g, p, away);
+            }
+            self.backoff = None;
+        }
         // Waypoint following.
         while let Some(&n) = self.path.get(self.at) {
             let w = self.nav.pts[n];
@@ -727,6 +798,16 @@ impl Bot {
         };
         // The nearest live enemy in range: face it and hold attack (cross,
         // DMotion 0xf, acts on the level); stuck: hold attack along the path.
+        // A boss (critter kind 4) in range: fight from a distance — hold
+        // attack facing it, step back inside 6 units.
+        let boss = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|b| g.critters.get(b)).and_then(Option::as_ref).filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40));
+        if let Some(bp) = boss.filter(|bp| dist_xz(*bp, p) < 18.0) {
+            pad.press(0xd);
+            if dist_xz(bp, p) < 6.0 && (f / 20).is_multiple_of(2) {
+                return Self::steer(pad, g, p, [2.0 * p[0] - bp[0], p[1], 2.0 * p[2] - bp[2]]);
+            }
+            return Self::steer(pad, g, p, bp);
+        }
         let enemy = Self::nearest_foe(g, p, ATTACK_RANGE);
         // Attack in windows (12 updates fighting, 12 moving): holding attack
         // keeps the player in its attack actions, and generators refill.
@@ -761,7 +842,12 @@ impl Bot {
             .filter(|e| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && (e.v3(0x40)[1] - p[1]).abs() < 3.0)
             .map(|e| (dist_xz(e.v3(0x40), p), e.v3(0x40)));
         let critters = g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| (dist_xz(c.rec.v3(0x40), p), c.rec.v3(0x40)));
-        enemies.chain(critters).filter(|(d, _)| *d < range).min_by(|a, b| a.0.total_cmp(&b.0))
+        // Generators (kind 3) feed the enemies: in reach up to 3 units
+        // further, and preferred (counted 3 units nearer).
+        let generators = (0..g.items.records.len())
+            .filter(|&s| g.items.records[s].active() && g.items.records[s].u8_(0xe1) == 0 && item_kind(g, s).0 == 3 && (g.items.records[s].v3(0x40)[1] - p[1]).abs() < 3.0)
+            .map(|s| (dist_xz(g.items.records[s].v3(0x40), p) - 3.0, g.items.records[s].v3(0x40)));
+        enemies.chain(critters).chain(generators).filter(|(d, _)| *d < range).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
     /// The left stick toward `t`: PlayerMotion's heading is the camera yaw
@@ -805,10 +891,29 @@ impl Bot {
             pad.press(0xd);
             return Self::steer(pad, g, p, at);
         }
-        if 5.0 < dist_xz(p, lead) {
-            return Self::steer(pad, g, p, lead);
+        if dist_xz(p, lead) <= 5.0 {
+            return pad;
         }
-        pad
+        // A path to the leader on the leader's graph, renewed every 30 updates.
+        let st = &mut self.followers[k];
+        if st.1.is_empty() || f.is_multiple_of(30) {
+            let none = HashSet::new();
+            let to = self.nav.locate_cached(lead, &none);
+            st.1 = match (self.nav.locate_cached(p, &none), to) {
+                (Some(a), Some(b)) => self.nav.path(a, &|n| n == b, &self.blocked, &HashSet::new()).unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            st.0 = 0;
+        }
+        while let Some(&n) = st.1.get(st.0) {
+            if dist_xz(p, self.nav.pts[n]) < 1.2 {
+                st.0 += 1;
+            } else {
+                break;
+            }
+        }
+        let t = st.1.get(st.0).map(|&n| self.nav.pts[n]).unwrap_or(lead);
+        Self::steer(pad, g, p, t)
     }
 
     /// All floors of the level at the current collision state (bot=2).

@@ -169,6 +169,9 @@ pub struct Controls {
     pub joy_assigned: [i32; 8],
     /// controller_lost 0x2107ac.
     pub controller_lost: u32,
+    /// 0x210820: joyGetStatus's count of polls a port answered with no pad.
+    #[serde(default)]
+    pub lost_polls: [i32; 8],
     pub soft_reset: [i32; 8],
     pub updated: bool,
     /// SpecialMoves (per player 13 × (step, count)).
@@ -198,6 +201,7 @@ impl Default for Controls {
             joy_remap: [-1; 4],
             joy_assigned: [-1; 8],
             controller_lost: 0,
+            lost_polls: [0; 8],
             soft_reset: [0; 8],
             updated: false,
             special_moves: [[[0; 2]; 13]; 4],
@@ -282,12 +286,36 @@ impl Controls {
         self.joy_remap[k] = port as i32;
         self.joy_assigned[port] = k as i32;
         self.controller_lost &= !(1 << k);
+        // HYPOTHESIS: the poll count restarts with the new assignment
+        // (joyGetStatus never clears 0x210820 itself).
+        self.lost_polls[port] = 0;
+    }
+
+    /// joyGetStatus 0x1063f8's no-pad path (scePadGetState 0): with no
+    /// multitap message pending (controller_lost & 0xf00), a port that has
+    /// answered with no pad for 0x3c polls loses its player: controller_lost
+    /// gains the player's bit and both mappings are released
+    /// (ControllerMessageBox, from DoOptions, then waits for START).
+    fn pad_missing(&mut self, port: usize) {
+        if self.controller_lost & 0xf00 != 0 {
+            return;
+        }
+        if self.lost_polls[port] < 0x3c {
+            self.lost_polls[port] += 1;
+            return;
+        }
+        if let Ok(k) = usize::try_from(self.joy_assigned[port]) {
+            self.controller_lost |= 1 << k;
+            self.joy_remap[k] = -1;
+            self.joy_assigned[port] = -1;
+        }
     }
 
     /// ControlsUpdate 0x104130 (one call per vblank batch; ctrls_initialized).
     pub fn controls_update(&mut self, pads: &[PadStatus; 8]) -> R<()> {
         for (port, pad) in pads.iter().enumerate() {
             if !pad.connected {
+                self.pad_missing(port);
                 continue;
             }
             let e = &pad.entries;

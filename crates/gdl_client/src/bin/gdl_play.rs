@@ -1445,6 +1445,8 @@ struct Sim {
     /// ScrollMessageBox: the game waits until the box is dismissed.
     /// ScrollMessageBox (modal; the simulation waits).
     message_box: Option<gdl_core::game::hud::ScrollBox>,
+    /// The message box is ControllerMessageBox's (closed by reassignment).
+    controller_box: bool,
     scroll_clock: f32,
     /// Sumner's hint pad asked for hint_menu.
     hint_menu: bool,
@@ -1945,6 +1947,11 @@ struct TestHarness {
     /// outside play (tally, shop, select screen, map, message boxes).
     menu_script: Option<Vec<(u64, u64, Vec<usize>)>>,
     menu_ticks: u64,
+    /// {"at": u, "disconnect": port, "reconnect_after": ticks}: the port
+    /// reports no device until `ticks` simulate ticks of the controller
+    /// message have passed, then START is held on it for a few ticks.
+    disconnect: Option<(usize, u64)>,
+    lost_ticks: u64,
 }
 
 impl TestHarness {
@@ -1954,7 +1961,7 @@ impl TestHarness {
         let state_out = std::env::var_os("GDL_STATE_OUT").map(std::path::PathBuf::from);
         let actions = std::env::var("GDL_TEST_ACTIONS").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         let menu_script = std::env::var("GDL_MENU_SCRIPT").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok());
-        Self { script, exit_after, state_out, hashes: Vec::new(), autostarted: false, actions, menu_script, menu_ticks: 0 }
+        Self { script, exit_after, state_out, hashes: Vec::new(), autostarted: false, actions, menu_script, menu_ticks: 0, disconnect: None, lost_ticks: 0 }
     }
 }
 
@@ -3395,6 +3402,10 @@ fn simulate(
             if let Some(h) = a["health"].as_f64() {
                 sim.game.players[0].set_f32(0x1a10, h as f32);
             }
+            if let Some(port) = a["disconnect"].as_u64() {
+                harness.disconnect = Some((port as usize, a["reconnect_after"].as_u64().unwrap_or(120)));
+                harness.lost_ticks = 0;
+            }
             if let Some(k) = a["save"].as_u64() {
                 // PlayerWriteSaveFile(0, k) as the select screen does it:
                 // player_store_in_save, the region to card file k, saved flag.
@@ -3410,6 +3421,8 @@ fn simulate(
             }
             if let (Some(label), Some(out)) = (a["dump"].as_str(), harness.state_out.as_ref()) {
                 let mut d = progress_dump(&sim.game, label, now);
+                d["controller_lost"] = serde_json::Value::from(sim.game.controls.controller_lost);
+                d["joy_remap"] = serde_json::json!(sim.game.controls.joy_remap);
                 // The client's status line (e.g. "save recovered from …").
                 d["last_event"] = serde_json::Value::from(sim.last_event.clone());
                 let path = out.with_extension(format!("{label}.json"));
@@ -3443,6 +3456,52 @@ fn simulate(
         }
         ports[0] = p;
         ports[1] = PadStatus::default();
+    }
+    // TEST: a port without its device, then back with START held.
+    if let Some((port, after)) = harness.disconnect
+        && let Some(pd) = ports.get_mut(port)
+    {
+        // Ticks count while the message is up, then until START is released.
+        if sim.game.controls.controller_lost & 0xf != 0 || after <= harness.lost_ticks {
+            harness.lost_ticks += 1;
+        }
+        if harness.lost_ticks < after {
+            pd.connected = false;
+        } else if harness.lost_ticks < after + 14 {
+            if after + 10 <= harness.lost_ticks {
+                pd.press(0x14);
+            }
+        } else {
+            harness.disconnect = None;
+        }
+    }
+    // DoOptions → ControllerMessageBox 0x128668 while a player's controller
+    // is lost: the game waits; ControlsUpdate keeps polling until START on
+    // an unassigned port claims the player (CONTROLLERMISSING from
+    // ENGLISH.ROM; the box layout is the scroll box's, not the original's).
+    if sim.game.controls.controller_lost & 0xf != 0 || sim.controller_box {
+        if let Err(e) = sim.game.update_controls(&ports) {
+            sim.error = Some(format!("controls: {}", e.0));
+        }
+        let lost = sim.game.controls.controller_lost & 0xf;
+        if lost != 0 && !sim.controller_box {
+            if let Some(e) = front.english.entry("CONTROLLERMISSING") {
+                let k = lost.trailing_zeros() + 1;
+                let text = e.lines.iter().map(|l| l.replace("%d", &k.to_string())).collect::<Vec<_>>().join("\n");
+                let mut sb = scroll_box(&sim.game, &front.english, e, vec![text], 0);
+                sb.no_prompt = true;
+                sim.message_box = Some(sb);
+            }
+            sim.controller_box = true;
+            sim.last_event = format!("controller removed (player {})", lost.trailing_zeros() + 1);
+        } else if lost == 0 && sim.controller_box {
+            sim.message_box = None;
+            sim.controller_box = false;
+            sim.last_event = "controller reassigned".into();
+        }
+        if lost != 0 || harness.disconnect.is_some() {
+            return;
+        }
     }
     // NATIVE recovery notice (M18): a slot loaded from its backup or a
     // leftover .tmp is reported once in a message box (the original has no
@@ -5391,7 +5450,7 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         let pdats = world.resource::<Session>().pdats.clone();
         select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
     }
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -5428,7 +5487,7 @@ fn start_flyby(world: &mut EcsWorld, idx: usize) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();

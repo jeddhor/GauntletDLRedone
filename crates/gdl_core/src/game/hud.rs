@@ -1054,9 +1054,11 @@ impl Hud {
             None => {
                 out.push(back);
                 out.extend(glyphs);
-                let tri = self.lookup("BUTTON_TRI");
-                out.push(self.make(tri, 0xdf, y + 8, 0x14, 0x14));
-                out.extend(self.glow_text(DONE_SCALE, -0x100, y + 8, DONE, sb.vb_counter));
+                if !sb.no_prompt {
+                    let tri = self.lookup("BUTTON_TRI");
+                    out.push(self.make(tri, 0xdf, y + 8, 0x14, 0x14));
+                    out.extend(self.glow_text(DONE_SCALE, -0x100, y + 8, DONE, sb.vb_counter));
+                }
             }
             Some(vb) => {
                 let frame = (vb >> 1).clamp(0, 0x14);
@@ -1136,11 +1138,14 @@ pub struct ScrollBox {
     /// The players whose triangle closes a page (ScrollMessageBox's mask;
     /// Game::scroll_box_pressed).
     pub mask: u32,
+    /// No triangle / "Press when done." prompt (a box closed by the game,
+    /// such as ControllerMessageBox's).
+    pub no_prompt: bool,
 }
 
 impl ScrollBox {
     pub fn new(pages: Vec<String>, font: usize, scale: f32, space: f32) -> Self {
-        Self { pages, font, scale, space, page: 0, wait: 15, burn: None, vb_counter: 0, mask: u32::MAX }
+        Self { pages, font, scale, space, page: 0, wait: 15, burn: None, vb_counter: 0, mask: u32::MAX, no_prompt: false }
     }
 
     /// One loop pass with `vb` vblanks elapsed and the close test

@@ -252,6 +252,20 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (GDL_NO_GAMEPADS). M03 closed with its scenario package
    (reference-baseline.md). Checks: r42 equal to r41 (= r35 + G1exit),
    Rust and Python suites, clippy.
+   2026-10-23: M04–M11 and M13 closed with evidence (coverage.md). Enemy
+   packages per level by GetEnemyDir (aux / numbered packages; E1's GENFX
+   divergence), ItemGenDesc generator trees, a wider replay seed search
+   (F1); D1/E1/F1/H1/I1/J1 new-game traces in the regression (r44/r45;
+   first divergences recorded for H1, I1, J1). Content coverage matrix v2
+   (61/61 levels sweep without unported paths, 23 replayed). Traversal bot
+   (gdl_tools bot.rs; playtest.md): batch b4 ends 14 of 61 levels (the
+   treasure rooms, B2, B5, and B6/D5/G5's bosses with the legend item as a
+   labelled precondition); co-op matrix c1 (S1, B6 with 1–4 players). It
+   found CritterDamage's breakable collision nodes, now ported. M18:
+   recovery notice in the client and GUI recovery scenarios (corrupt,
+   interrupt). M17: av-catalog (every cue/stream/world sound/movie resolves)
+   and five GUI menu flow tests (menu_flows.py, GDL_UI_TRACE). M12
+   acceptance report (research/m12-acceptance.md).
 
 ---
 

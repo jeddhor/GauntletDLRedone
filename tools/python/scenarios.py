@@ -88,6 +88,17 @@ SCENARIOS.update({
                               then=dict(load_slot=1, updates=300, actions=[{"at": 30, "dump": "loaded"}], menu=presses(TRIANGLE, 30, 12, 60)),
                               checks=[("loaded", "waves", "==", "saved.waves"), ("loaded", "exp", "==", "saved.exp"),
                                       ("loaded", "last_event", "contains", "recovered"), ("loaded", "world", "==", 13)]),
+    # M16: player 1's controller removed in G1 (the port reports no device):
+    # after 60 polls joyGetStatus marks the player lost, DoOptions'
+    # ControllerMessageBox holds the game, and START on the port (an
+    # unassigned controller now) gives player 1 back its port.
+    'controller-reconnect': dict(
+        level='G1', updates=700,
+        actions=[{"at": 5, "dump": "start"}, {"at": 150, "disconnect": 0, "reconnect_after": 600}, {"at": 160, "dump": "lost"},
+                 {"at": 600, "dump": "after"}],
+        menu=[],
+        checks=[("after", "controller_lost", "==", 0), ("after", "joy_remap", "==", [0, -1, -1, -1]),
+                ("after", "last_event", "contains", "reassigned"), ("lost", "update", "==", 160)]),
 })
 
 
