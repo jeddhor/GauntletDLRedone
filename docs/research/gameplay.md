@@ -203,7 +203,10 @@ hud.md.)
   triggered until +0xfc reaches ±+0xf8, then +0xd8 |= 0x1000; subtype 1 is a
   co-op camera target, presentation). The object's flag 1 is cleared so
   collision uses the full matrix. Rotated nodes compose through GetWorldMat's
-  MulMat4 chain (collision.md); no rotator has been traced yet.
+  MulMat4 chain (collision.md). Ported (item_runtime process_rotator); D3's
+  (subtype 0) and I2's (subtypes 0 and 2) rotators are in replayed levels
+  with every item word equal, but the traces do not record the rotating
+  node's matrix.
   AudioRotator 0x160020 (snd1_370 0x23d568 loop, snd2_371 0x23d5a0 stop).
 - Lookouts (game/lookouts.rs): kind-8/10 locators, at most 0x14, +0x30
   position, +0x70 next (locator +2), +0x72 parameter (locator +1). Actual
@@ -921,8 +924,9 @@ idle for 240 vblanks (--player --enemies; trace-<L>-start-v1). The native
 frame replay (replay-frame-<L>start, tools/regress.sh SWEEP; regression
 r70) equals the reference in every part over all 120 updates in 19 of the
 35 levels; in A2, A3, H2, H3, I3, S1, S3, S4, S6, S7 and S9 only the camera
-differs, in one update by a few ulp (the stage-start zoom step, or in the
-treasure rooms an early update; unknowns); B5 and C2 add one sound item's
+differs, in one update by a few ulp (the stage-start zoom step, which in
+the treasure rooms falls early in the trace; unknowns); B5 and C2 add one
+sound item's
 +0xfe, and D2, J4 and K4 carry the open items below. Load comparisons after the same number of native
 updates (compare_items.py --after-updates, compare-items-<L>-start-v2) have
 no definition mismatch in any level; what remains is the generators'

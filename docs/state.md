@@ -295,6 +295,17 @@ original (PCSX2 reference on Xvfb :191, private captures):
    compare_items' RandomItemNum derivation now subtracts ProcessItems'
    per-update +1. The replay regression is in the repo (tools/regress.sh);
    r65–r67 equal r64 on every earlier replay, with D3/I2/B2 added.
+   2026-10-23 (night): the level-start sweep — all 35 levels without a
+   reference replay warped, traced and replayed (gameplay.md "Level-start
+   sweep"; regression r70 runs 82 replays). Fixed from it: NumEnemies
+   (CAMS +0x34), WAR generator trees from the enemy package, the item node
+   w column; documented: D2's general target words (stack), sound item
+   +0xfe, J4's replay seeding, K4's 1-ulp locals, the zoom step in 17
+   levels. compare_items.py --after-updates compares items after native
+   updates. D1's ledge checked in the reference (bot graph, not game). The
+   fire breath compared with the reference. Bot: drop edges, generators,
+   idle reset (b26 ends B1 and A4); game_run --no-enemies (DEBUG) for
+   progression-only traversal.
 
 ---
 
