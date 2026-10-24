@@ -152,6 +152,29 @@ pub fn transmitter_before_table() -> Transmitter {
     Transmitter { flag: y9[0], radius: y9[1], word_02: 0, pos: [0.0; 3], pitch: 0.0, yaw: -100000.0, roll: 0.0, locator: u32::MAX, id: -1 }
 }
 
+/// Entries of the Transmitters table (0x234500, 0x100 × 0x40 bytes in
+/// .data). The ELF's initial bytes there are all zero.
+pub const TRANSMITTER_TABLE: usize = 0x100;
+
+impl Transmitter {
+    /// An entry no level has written yet (the ELF's zero bytes).
+    pub fn zeroed() -> Self {
+        Transmitter { flag: 0, radius: 0, word_02: 0, pos: [0.0; 3], pitch: 0.0, yaw: 0.0, roll: 0.0, locator: 0, id: 0 }
+    }
+}
+
+/// The Transmitters table after a level's AddLocatorInstList: the table is
+/// static and never cleared, so this level's AddTransmitter calls overwrite
+/// entries 0..count and the rest keep what earlier levels wrote (the B2
+/// capture w2l2-start-v1 holds B1's entries 42.. beyond its own 42).
+/// `prev` is the table as the previous level left it (empty: the boot state).
+pub fn transmitter_table(prev: &[Transmitter], list: &[Transmitter]) -> Vec<Transmitter> {
+    let mut table = prev.to_vec();
+    table.resize(TRANSMITTER_TABLE.max(list.len()), Transmitter::zeroed());
+    table[..list.len()].clone_from_slice(list);
+    table
+}
+
 /// AddLocatorInstList 0x150ac8's transmitter part: transmitters in list
 /// order, StartTransmitterList (by start id) and StartAttTransmitter.
 pub struct TransmitterSet {
@@ -300,6 +323,10 @@ pub struct Camera {
     pub zoom_frames: i32,
     pub reset_std: i32,
     pub transmitters: Vec<Transmitter>,
+    /// Transmitters[count..0x100]: earlier levels' entries, which a stale
+    /// Cur3DTransmitter/CurTransmitter (never reset) still reads.
+    #[serde(default)]
+    pub stale: Vec<Transmitter>,
     pub start_transmitter: Option<usize>,
     /// CAMS record of the level (bounds possibly derived from the world).
     pub min: V3,
@@ -536,6 +563,7 @@ impl Camera {
             zoom_frames: 0,
             reset_std: 0,
             transmitters: list,
+            stale: Vec::new(),
             // SetPlayerStartPos 0x150858 (start id 0 in single player).
             start_transmitter: start,
             min,
@@ -739,7 +767,7 @@ impl Camera {
         if self.cur3d < 0 {
             self.cur3d = best;
         } else {
-            let dc = d2(&self.transmitters[self.cur3d as usize])?;
+            let dc = d2(&self.table_entry(self.cur3d as usize)?)?;
             if best_d <= mul(dc, f32::from_bits(0x3ee3_8e39))? {
                 // MBTreeSetAlpha on the old arrow tree: presentation.
                 self.cur3d = best;
@@ -751,15 +779,26 @@ impl Camera {
 
     /// TransGetYawPitch 0x116268.
     /// The transmitter at an index (usize::MAX: Transmitters[-1]).
-    fn transmitter(&self, k: usize) -> Transmitter {
-        self.transmitters.get(k).cloned().unwrap_or_else(transmitter_before_table)
+    /// Index −1 (usize::MAX) reads the words before the table; an index at or
+    /// past this level's count reads an earlier level's entry (`stale`).
+    pub fn table_entry(&self, k: usize) -> R<Transmitter> {
+        if let Some(t) = self.transmitters.get(k) {
+            return Ok(t.clone());
+        }
+        if k == usize::MAX {
+            return Ok(transmitter_before_table());
+        }
+        if TRANSMITTER_TABLE <= k {
+            return unsupported("transmitter index past the Transmitters table");
+        }
+        Ok(self.stale.get(k - self.transmitters.len()).cloned().unwrap_or_else(Transmitter::zeroed))
     }
 
     fn trans_yaw_pitch(&self, t: Option<usize>, ctx: &CamCtx) -> R<(f32, f32)> {
         let (yaw, mut pitch) = match t {
             None => (0.0, 0.0),
             Some(k) => {
-                let tr = self.transmitter(k);
+                let tr = self.table_entry(k)?;
                 (wrap(sub(tr.yaw, PI)?)?, -tr.pitch)
             }
         };
@@ -1074,7 +1113,7 @@ impl Camera {
         let radius = if ctx.num_in_game_players == 1 && self.consts.perf_test == 0 {
             mul(self.dist_2c, self.consts.adjust_max_rad_1player)?
         } else {
-            match t.map(|k| self.transmitter(k).radius) {
+            match t.map(|k| self.table_entry(k)).transpose()?.map(|t| t.radius) {
                 Some(r) if r != 0 => r as f32,
                 _ => mul(self.radius_30, self.consts.adjust_max_rad)?,
             }
@@ -1108,7 +1147,7 @@ impl Camera {
         c.set_f32(o::YAW, yaw);
         c.set_f32(o::PITCH, pitch);
         if let Some(k) = t {
-            c.set_v3(o::EYE, self.transmitters[k].pos);
+            c.set_v3(o::EYE, self.table_entry(k)?.pos);
         }
         c.set_f32(o::MAX_RADIUS, self.radius_30);
         Self::look_in_dir(c, look)?;
@@ -1724,7 +1763,7 @@ impl BossCamera {
         if self.cur_transmitter < 0 {
             self.cur_transmitter = best;
         } else {
-            let dc = d(&cam.transmitters[self.cur_transmitter as usize])?;
+            let dc = d(&cam.table_entry(self.cur_transmitter as usize)?)?;
             if bd <= mul(dc, f32::from_bits(0x3f2a_c083))? {
                 self.cur_transmitter = best;
             }
@@ -1864,7 +1903,7 @@ impl BossCamera {
         let t = if *start_of_stage != 0 { cam.start_transmitter } else { self.transmitter_2d(cam, p)? };
         let (yaw, pitch) = match t {
             Some(k) => {
-                let tr = cam.transmitter(k);
+                let tr = cam.table_entry(k)?;
                 (wrap(sub(tr.yaw, PI)?)?, -tr.pitch)
             }
             None => (0.0, 0.0),
@@ -2489,7 +2528,7 @@ impl super::Game {
     }
 
     fn activate_transmitter_cam(&mut self, k: usize, delay: i32, wait: i32, hold: i32, wobj: Option<usize>) -> R<()> {
-        let Some(t) = self.std_camera.as_ref().map(|c| c.transmitter(k)) else { return Ok(()) };
+        let Some(t) = self.std_camera.as_ref().map(|c| c.table_entry(k)).transpose()? else { return Ok(()) };
         self.trigger_camera_activate(wobj, t.pos, [t.pitch, t.yaw], delay, wait, hold)
     }
 
@@ -2637,6 +2676,19 @@ mod tests {
         assert_eq!(inv[3], [5.0, -4.0, -3.0, 1.0]);
         let back = vu_apply(&inv, [3.0, 4.0, 5.0, 1.0]).unwrap();
         assert_eq!(&back[..3], &[0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn transmitter_table_keeps_earlier_levels_entries() {
+        // Synthetic: a level with three transmitters after one with five; the
+        // table keeps entries 3 and 4 of the first (B1 → B2 in w2l2-start-v1).
+        let t = |x: f32| Transmitter { pos: [x, 0.0, 0.0], ..Transmitter::zeroed() };
+        let first = transmitter_table(&[], &[t(1.0), t(2.0), t(3.0), t(4.0), t(5.0)]);
+        assert_eq!(first.len(), TRANSMITTER_TABLE);
+        assert_eq!(first[5].pos, [0.0; 3]);
+        let second = transmitter_table(&first, &[t(10.0), t(20.0), t(30.0)]);
+        let got: Vec<f32> = second[..6].iter().map(|e| e.pos[0]).collect();
+        assert_eq!(got, vec![10.0, 20.0, 30.0, 4.0, 5.0, 0.0]);
     }
 
     #[test]

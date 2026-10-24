@@ -242,6 +242,27 @@ Cur3DTransmitter 0x21f120 and CurTransmitter 0x21f11c are never reset
 (only GetTransmitter3D/GetTransmitter write them), so the previous level's
 index carries over (`Globals::cur3d_transmitter`, `cur_transmitter`).
 
+The Transmitters table itself (0x234500, 0x100 entries of 0x40 bytes, in
+.data with zero initial bytes) is static and never cleared: a level's
+AddTransmitter calls overwrite entries 0..count and the rest keep earlier
+levels' records. A carried index at or past the new level's count therefore
+reads an earlier level's transmitter — its distance in GetTransmitter3D's
+keep-or-switch test, and its yaw/pitch/radius while it stays current. The
+B2 capture w2l2-start-v1 holds Cur3DTransmitter 57 (the Tower's: B1 had been
+left before its stage start) against B2's 42 transmitters, with entries 42..
+still B1's and the Tower's (byte-identical to w2l1-newgame-v1's); the
+trace switches to 7 at the stage-start zoom (step 170). The Tower has 142
+transmitters, so any level with fewer (B1 35, B2 42, A6 56, B4 55, the boss
+and secret levels) can start with a stale index. Native had indexed only
+the level's own list and panicked there (index 57 of 42 in the B2 frame
+replay); it now keeps the table in `Globals::transmitter_table` (carried
+through gdl_play's session like Cur3DTransmitter), gives the camera the
+entries past its count (`Camera::stale`, `table_entry`), and game_run.py's
+replays read the table from the trace's capture. replay-frame-B2start:
+120/120 in every part, camera included. Start states exported before this
+(poison-fields-game-v6) carry no table, so game-run levels started from
+them see the boot state (zero entries) past the count.
+
 good_wiz_objgrp +0x40 (the wizard's attention point, set by DoGoodWizard's
 state 3) feeds the kind-2 view once the node exists. After BossDeath,
 BossCritInst still points at the freed instance and BossCamBossCalc keeps

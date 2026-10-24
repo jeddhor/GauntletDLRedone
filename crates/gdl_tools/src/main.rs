@@ -2149,6 +2149,33 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             game.sync_collision();
         }
+        // transmitter_table=FILE (game_run.py, from the trace's capture): the
+        // static Transmitters table (0x234500, 0x100 × 0x40 bytes) as the
+        // capture holds it; entries past this level's count are earlier
+        // levels' and feed a stale Cur3DTransmitter/CurTransmitter. Words read:
+        // +0 flag, +1 radius, +2, +0x10 position, +0x20/+0x24/+0x28 angles
+        // (locator/id are native bookkeeping, not table words: 0).
+        if let Some(tp) = opts.get("transmitter_table") {
+            let v: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(tp), 1024 * 1024)?)?;
+            let s = v["table"].as_str().ok_or("transmitter_table hex")?;
+            let b: Vec<u8> = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect::<Result<_, _>>()?;
+            if b.len() != gdl_core::game::camera::TRANSMITTER_TABLE * 0x40 {
+                return Err("transmitter_table size".into());
+            }
+            let fl = |o: usize| f32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+            let table: Vec<_> = (0..gdl_core::game::camera::TRANSMITTER_TABLE).map(|k| {
+                let o = 0x40 * k;
+                gdl_core::game::camera::Transmitter { flag: b[o], radius: b[o + 1], word_02: u16::from_le_bytes([b[o + 2], b[o + 3]]),
+                    pos: [fl(o + 0x10), fl(o + 0x14), fl(o + 0x18)], pitch: fl(o + 0x20), yaw: fl(o + 0x24), roll: fl(o + 0x28), locator: 0, id: 0 }
+            }).collect();
+            if let Some(cam) = game.std_camera.as_mut() {
+                let n = cam.transmitters.len();
+                cam.stale = table[n..].to_vec();
+                let mut t = cam.transmitters.clone();
+                t.extend_from_slice(&table[n..]);
+                game.globals.transmitter_table = t;
+            }
+        }
         if let Some(tp) = opts.get("enemy_replay") {
             // Per-update replay of a reference_trace --player --enemies trace
             // through the native do_enemies: each update starts from the
@@ -3466,6 +3493,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                         .map(|q| { let mut c = game.collision.clone(); let (top, len, rad) = if q.len() == 5 { (q[2], q[3], q[4]) } else { (r.v3(0x50)[1] + 60.0, 120.0, 0.0) }; let h = c.floor_collide(rad, 0.0, -len, [q[0], top, q[1]], true, 0).ok().and_then(|(c, _)| c.solid); serde_json::json!([q, h.map(|h| (h.object, h.position[1]))]) }).collect()).unwrap_or_default();
                     // itemw=SLOT,...: those item records' +0xd8, +0xde, +0xe1, +0xe2.
                     let itemw: Vec<_> = opts.get("itemw").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.items.records.len()).map(|o| { let ir = &game.items.records[o]; serde_json::json!([o, format!("{:#x}", ir.u16_(0xd8)), ir.i8_(0xde), ir.u8_(0xe1), ir.u8_(0xe2), ir.f32_(0xfc), ir.f32_(0xe8), ir.v3(0x60)]) }).collect()).unwrap_or_default();
+                    // itemrec=SLOT,...: those item records whole (hex; diagnostics).
+                    let itemrec: Vec<_> = opts.get("itemrec").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.items.records.len()).map(|o| serde_json::json!([o, game.items.records[o].0.iter().map(|b| format!("{b:02x}")).collect::<String>()])).collect()).unwrap_or_default();
                     let see_thru = serde_json::json!([game.see_thru[0].chest, game.see_thru[0].contents, format!("{:?}", game.see_thru[0].icon), r.u32_(0x138)]);
                     samples.push(serde_json::json!({"frame":f,"watch":watch,"probe":probe,"itemw":itemw,"pos":r.v3(0x50),"facing":r.f32_(0x86c),"action":r.u32_(0x1e0),"request":r.u32_(0x1e4),
                         "code":r.u32_(0x1dc),"seq":r.u16_(0xa2),"frame_anim":r.f32_(0xac),"health":r.f32_(0x1a10),"state":r.i32_(0xfc),"floor_y":r.f32_(0x88c),"water_y":r.f32_(0x8a4),
@@ -3479,6 +3508,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "others":(1..4).filter(|&k| game.globals.active_players >> k & 1 != 0).map(|k| serde_json::json!({"player":k,"pos":game.players[k].v3(0x50),"state":game.players[k].i32_(0xfc),"health":game.players[k].f32_(0x1a10)})).collect::<Vec<_>>()}));
                     if let Some(last) = samples.last_mut() {
                         last["see_thru"] = see_thru;
+                        if !itemrec.is_empty() {
+                            last["itemrec"] = serde_json::json!(itemrec);
+                        }
                         // do_show_path: stage_playtime, count, lost_timer1, flag, help shown.
                         last["show_path"] = serde_json::json!([game.stage_playtime, game.show_path.count, game.show_path.lost_timer, game.show_path.flag, game.hud.help.num, game.milestones.len(), game.hud.help.flag]);
                     }

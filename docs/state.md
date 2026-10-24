@@ -281,6 +281,20 @@ original (PCSX2 reference on Xvfb :191, private captures):
    yeti defeated from the reference's warp point, the bot ends D3, G1 and
    G3, the Tower is deterministic across render rates. Replays r60–r64
    unchanged.
+   2026-10-23 (evening): D3, I2 and B2 reached in the reference by
+   do_exit's wave skip (WARPED captures w4l3-start-v1, w4l3-leaf-v1,
+   w9l2-start-v1, w2l2-start-v1) and replayed update by update (every part
+   equal; D3's camera 119/120 at the stage-start zoom step, unknowns).
+   Item kinds 10:0x31 (falling leaves, from contact to deletion), 12:0,
+   12:2 and −1:6 (B2's random item) now compared (items.md). Found and
+   fixed: the Transmitters table is static across levels, so a stale
+   Cur3DTransmitter past the new level's count read the Tower's entries in
+   the original and panicked natively (camera.md; Tower → B1/B2 and every
+   level with fewer than 58 transmitters); unparented item translations
+   pass through a translation-only root (−0.0 → +0.0, I2 item 257);
+   compare_items' RandomItemNum derivation now subtracts ProcessItems'
+   per-update +1. The replay regression is in the repo (tools/regress.sh);
+   r65–r67 equal r64 on every earlier replay, with D3/I2/B2 added.
 
 ---
 

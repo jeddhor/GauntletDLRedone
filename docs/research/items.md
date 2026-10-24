@@ -247,3 +247,52 @@ links (carried_at_load): 38 of the 61 levels have such pairs (scratch
 scan). The whole-update replays seed their items from captures, so they
 were not affected by the missing port.
 
+
+## D3, I2 and B2 level starts (2026-10-23)
+
+Three WARPED captures reached through do_exit's wave skip from slot 3
+(player 0 written onto B1's exit; reference_warp.py): w4l3-start-v1 (D3),
+w9l2-start-v1 (I2), w2l2-start-v1 (B2), plus w4l3-leaf-v1 (D3 with player 0
+written to (31, 47.4, −64), under three falling leaves). Traces
+trace-D3-start-v1, trace-D3-leaf-v1, trace-I2-start-v1 and
+trace-B2-start-v1 (idle) replay through the whole update (game_run.py
+--frame-replay): items, players, effects, critters, world animation and the
+wizard equal in every update (D3 120/120 and 250/250, I2 120/120, B2
+120/120); the camera is 119/120 in D3 (the stage-start zoom step, unknowns
+"Stage-start zoom step"). In the leaf trace the three kind-10 subtype-0x31
+items (radius 15, height 20, definition +0xa bit 0: not placed) take +0xd8
+bit 0 at step 190, once the stage start ends, fall through the floor and
+are deleted (+0xd8 0xffff) at steps 438–442, every update equal; native
+plays AudioLeafFall for them (sound.rs). D3's kind 12 subtype 0 item (324)
+and I2's kind 12 items stay passive in the idle traces and equal.
+
+Load comparisons (compare_items.py → compare-items-D3-start-v3,
+-I2-start-v2, -B2-start-v2): 464/464, 599/599 and 198/198 slots, no
+definition mismatch. The remaining differences are play-time or post-load
+words the load-only `item-records` tool does not run: items on D3's and
+I2's rising platforms (y lower by the wobj's starty −9/−10/−20/−40 in the
+reference; the native game run's GetObjWorldMat puts them there, e.g. D3
+item 119 at y 55.31 from update 0), DoEnemyPickupItems' +0xe1/+0x102,
+LinkTriggerToCam's +0x102 on kind-5 triggers, kind 13 sound words, generator
+timers, play bits of +0xd8, and WorldPsysActivate's 0x800000 on particle
+objects (unknowns "Object flags at load").
+
+RandomItemNum: ProcessItems 0x154f50 adds 1 every update, so a capture taken
+U updates after the load holds vb_counter_at_load + 0x1b7 × calls + U. The
+comparator had subtracted only the RandItemIdx calls; B2's two random items
+(119 from definition 54's six choices, 149 from definition 100's four)
+then disagreed for 119 (native CHERRY, reference BANANNA). With
+--updates-since-load U the derived seed is final − 0x1b7 × calls − U; U = 5
+for B2 (and 6 for D3/I2) is vb_counter − final + 0x1b7 × calls, which holds
+when vb_counter advanced by 2 per update and not otherwise since
+AddItemInstList (HYPOTHESIS; it makes both B2 picks equal). RandItemIdx's
+index is the item slot ((record − Items) × 0xf0f0f0f1 >> 4, the inverse of
+17 for 0x110-byte records); do_see_thru calls it with advance 0.
+
+Unparented item translations: GetWorldMat of an item node without a floor
+parent goes through the item's own translation-only root (add.s), so a −0.0
+instance coordinate becomes +0.0 (I2 item 257, a generator at instance x
+−0.0, holds +0.0 in w9l2-start-v1). ProcessItems' matrix step now applies
+that add to the record translation (item_runtime.rs); before, native kept
+−0.0 for the whole level. D3's BRIDGEPAD 353 (matrix [1][0] −0.0 at load)
+is floor-parented and already became +0.0 through chain_world.

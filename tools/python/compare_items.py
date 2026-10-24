@@ -9,11 +9,17 @@ never silently masked. Presentation bytes (+0x70..+0xc7 render/anim nodes) and
 uninitialised stack word there), the presentation pointers +0xf8 of types 2
 and 13, or type-8 +0xda (drawn from rand, whose captured state is unknown).
 Pointers are converted to the native slot/object index + 1. Session globals are read from the
-fixture; RandomItemNum at load is derived as final - 0x1b7 * random calls.
+fixture; RandomItemNum at load is derived as final - 0x1b7 * random calls -
+the updates since load (ProcessItems 0x154f50 adds 1 per update;
+--updates-since-load, default 0). The report also gives vb_counter - final +
+0x1b7 * calls, which equals those updates when vb_counter advanced by 2 per
+update and not otherwise since AddItemInstList (HYPOTHESIS; it read 5 for the
+B2 capture w2l2-start-v1).
 """
 import argparse
 import collections
 import json
+import os
 import pathlib
 import struct
 import subprocess
@@ -31,7 +37,8 @@ SKIP = {2: {0xf8, 0xfa}, 13: {0xf8, 0xfa}, 8: {0xda}}
 
 def run(worlds, wdata, session, out, level=0):
     out.unlink(missing_ok=True)
-    subprocess.run(['target/release/gdl_tools', 'item-records', str(worlds), str(wdata), str(level), str(ELF),
+    # GDL_TOOLS: an alternate gdl_tools binary (as game_run.py).
+    subprocess.run([os.environ.get('GDL_TOOLS', 'target/release/gdl_tools'), 'item-records', str(worlds), str(wdata), str(level), str(ELF),
                     str(session), str(out)], check=True)
     return json.loads(out.read_text())
 
@@ -43,6 +50,8 @@ def main():
     parser.add_argument('--worlds', default='LEVELS/LEVELG1/WORLDS.PS2', help='WORLDS.PS2 package label')
     parser.add_argument('--wdata', default='WDATA/TOWN.WAD', help='WDATA package label')
     parser.add_argument('--level', type=int, default=0, help='LEVL record index')
+    parser.add_argument('--updates-since-load', type=int, default=0,
+                        help="ProcessItems updates between AddItemInstList and the capture (RandomItemNum += 1 each)")
     args = parser.parse_args()
     if args.report.exists():
         raise SystemExit(f'{args.report} exists')
@@ -60,8 +69,8 @@ def main():
     session_path = args.report.with_suffix('.session.json')
     session_path.write_text(json.dumps(session, indent=2) + '\n')
     native = run(worlds, wdata, session_path, scratch, args.level)
-    if native['random_calls']:
-        session['random_item_num'] = (final_random - 0x1b7 * native['random_calls']) & 0xffffffff
+    if native['random_calls'] or args.updates_since_load:
+        session['random_item_num'] = (final_random - 0x1b7 * native['random_calls'] - args.updates_since_load) & 0xffffffff
         session_path.write_text(json.dumps(session, indent=2) + '\n')
         native = run(worlds, wdata, session_path, scratch, args.level)
     items, count, defs, objs = u(ITEMS), u(NUM_ITEMS), u(DEFS), u(OBJECTS)
@@ -114,7 +123,7 @@ def main():
         ram = [u(base + 0x10), struct.unpack_from('<H', m, base + 0x14)[0], m[base + 0x16], m[base + 0x17]]
         if ram != words:
             object_diff.append(dict(object=k, ram=[hex(x) for x in ram], native=[hex(x) for x in words]))
-    report = dict(fixture=str(FIXTURE), session=session, native_report=str(scratch), ram_items=count,
+    report = dict(fixture=str(args.fixture), session=session, native_report=str(scratch), ram_items=count,
                   native_items=len(records), errors=[(k, o['error']) for k, o in enumerate(native['outcome']) if 'error' in o],
                   definition_mismatch=def_mismatch, exact_items=exact,
                   mismatch=[dict(kind=k, offset=hex(o), count=c, example=examples.get((k, o))) for (k, o), c in
@@ -122,7 +131,9 @@ def main():
                   wobjs=dict(ram=len(wobj_ram), native=len(native['wobjs']), differing=wobj_diff),
                   objects_differing=object_diff[:40], objects_differing_count=len(object_diff),
                   world_has_gates=dict(ram=i(0x23e1a0), native=native['world_has_gates']),
-                  max_level_coins=native['max_level_coins'], random_calls=native['random_calls'])
+                  max_level_coins=native['max_level_coins'], random_calls=native['random_calls'],
+                  updates_since_load=args.updates_since_load,
+                  vb_minus_final_plus_calls=(u(0x2a1c78) - final_random + 0x1b7 * native['random_calls']) & 0xffffffff)
     with args.report.open('x') as file:
         json.dump(report, file, indent=1)
         file.write('\n')

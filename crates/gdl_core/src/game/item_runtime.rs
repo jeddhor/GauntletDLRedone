@@ -765,10 +765,20 @@ impl Game {
             let mut r = r.clone();
             // GetObjWorldMat 0x103450: the record matrix from the node's world
             // matrix — under a moving floor parent GetWorldMat's MulMat4 chain
-            // from the node's local; otherwise the record's own.
+            // from the node's local; otherwise the node's local (the record's
+            // own matrix) under the item's own translation-only root, whose
+            // add.s turns a −0.0 translation into +0.0 (I2 item 257: instance
+            // x −0.0, +0.0 in w9l2-start-v1; items.md "Matrix chains").
             let node = match self.items.floor_parent.get(slot) {
                 Some(Some((o, local))) => Some(self.collision.chain_world(*local, Some(*o)).map_err(|e| super::Unsupported(format!("item world: {e:?}")))?),
-                _ => self.items.sound_anchor.get(slot).copied().flatten(),
+                _ => {
+                    let mut m: [[f32; 4]; 4] = self.items.sound_anchor.get(slot).copied().flatten()
+                        .unwrap_or_else(|| std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x10 + 0x10 * i + 4 * j))));
+                    for v in m[3].iter_mut().take(3) {
+                        *v = add(*v, 0.0)?;
+                    }
+                    Some(m)
+                }
             };
             if let Some(world) = node {
                 for (i, row) in world.iter().enumerate() {

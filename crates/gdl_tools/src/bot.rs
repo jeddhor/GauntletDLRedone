@@ -21,7 +21,10 @@
 //! exit portal the stick is released (DoExit counts only then). Stuck (less
 //! than half a unit in STUCK updates, or within DWELL units for 4 × STUCK
 //! without a new goal): the edge in use is blocked (not at a
-//! gate) and the bot throws for a while (barrels, enemies). Enemies within
+//! gate; on a drop, every drop edge nearby heading the same way) and the
+//! bot throws for a while (barrels, chests, generators, enemies). With no
+//! goal for 900 updates it forgets given-up goals, gate blocks and explored
+//! columns and regrows the graph. Enemies within
 //! ATTACK_RANGE are attacked with throws (cross) on alternate updates.
 //! Health assist (labelled DEBUG in the report): health is restored to its
 //! start value when it falls below 40 % of it.
@@ -472,6 +475,8 @@ pub struct Bot {
     riding: usize,
     still: usize,
     ride_from: f32,
+    /// The first update of the current stretch without a goal.
+    no_goal_since: Option<usize>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -534,6 +539,7 @@ impl Bot {
             riding: 0,
             still: 0,
             ride_from: 0.0,
+            no_goal_since: None,
         };
         b.rebuild(g);
         let exits: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9).collect();
@@ -643,6 +649,7 @@ impl Bot {
             self.rebuild(g);
         }
         if self.plan(f, g) {
+            self.no_goal_since = None;
             return;
         }
         // Nothing to do: regrow from here after objects moved (300 updates
@@ -664,6 +671,24 @@ impl Bot {
             self.blocked.clear();
             self.bad_nodes.clear();
             if self.plan(f, g) {
+                return;
+            }
+        }
+        // Still nothing for 900 updates: forget the given-up goals, gate
+        // blocks and explored columns and regrow the graph (H3 and D1 b10
+        // idled for 40,000 updates with every goal given up; enemies, doors
+        // and lifts have moved since).
+        let since = *self.no_goal_since.get_or_insert(f);
+        if 900 <= f - since {
+            self.no_goal_since = Some(f);
+            self.log.push(serde_json::json!({"update": f, "reset": self.given_up.len()}));
+            self.given_up.clear();
+            self.gate_blocked.clear();
+            self.visited_cols.clear();
+            self.visited_triggers.clear();
+            self.rebuild(g);
+            if self.plan(f, g) {
+                self.no_goal_since = None;
                 return;
             }
         }
@@ -933,6 +958,9 @@ impl Bot {
                 }
             }
         }
+        if self.goal.is_some() {
+            self.no_goal_since = None;
+        }
         let p = g.players[0].v3(0x50);
         self.visited_cols.insert(key(p[0], p[2]));
         if f.is_multiple_of(10) && self.trail.last().is_none_or(|q| 1.0 < dist_xz(*q, p) || 1.0 < (q[1] - p[1]).abs()) {
@@ -991,6 +1019,24 @@ impl Bot {
                         let (pn, pm) = (self.nav.place(n), self.nav.place(m));
                         self.blocked.insert((pn, pm));
                     }
+                    // A drop the player could not take (a railing or an edge
+                    // wall the graph's sweep misses, D1's walkway 1114 above
+                    // 1108): every drop edge within 3 units heading the same
+                    // way, not only the one in use (b10: 1474 stuck events).
+                    if qb[1] < qa[1] - STEP_UP {
+                        let drops: Vec<(usize, usize)> = (0..self.nav.pts.len())
+                            .filter(|&n| dist_xz(self.nav.pts[n], p) < 3.0 && (self.nav.pts[n][1] - p[1]).abs() < 1.5)
+                            .flat_map(|n| self.nav.adj[n].iter().map(move |&m| (n, m)))
+                            .filter(|&(n, m)| {
+                                let (u, v) = (self.nav.pts[n], self.nav.pts[m]);
+                                v[1] < u[1] - STEP_UP && 0.5 < ((v[0] - u[0]) * dir[0] + (v[2] - u[2]) * dir[1]) / (dist_xz(u, v) * (dir[0].hypot(dir[1])).max(1e-3))
+                            })
+                            .collect();
+                        for (n, m) in drops {
+                            let (pn, pm) = (self.nav.place(n), self.nav.place(m));
+                            self.blocked.insert((pn, pm));
+                        }
+                    }
                 }
                 self.attack_until = f + 40;
                 // Back off briefly (away from the blocked waypoint) before the new route.
@@ -998,10 +1044,11 @@ impl Bot {
                     let q = self.nav.pts[b];
                     self.backoff = Some((f + 10, [2.0 * p[0] - q[0], p[1], 2.0 * p[2] - q[2]]));
                 }
-                // A container or obstacle item in the way (barrels, chests:
-                // kinds 2 and 10): face it while attacking.
+                // A container, generator or obstacle item in the way (chests,
+                // generators, barrels and walls: kinds 2, 3 and 10): face it
+                // while attacking (K3 b23: goals given up beside generators).
                 self.attack_at = (0..g.items.records.len())
-                    .filter(|&s| g.items.records[s].active() && matches!(item_kind(g, s).0, 2 | 10) && dist_xz(g.items.records[s].v3(0x40), p) < 3.5)
+                    .filter(|&s| g.items.records[s].active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(g.items.records[s].v3(0x40), p) < 3.5)
                     .map(|s| g.items.records[s].v3(0x40))
                     .min_by(|a, b| dist_xz(*a, p).total_cmp(&dist_xz(*b, p)));
                 // No step taken from the located node: the node itself is out

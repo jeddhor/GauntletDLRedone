@@ -148,6 +148,11 @@ pub struct Globals {
     pub cur3d_transmitter: i32,
     #[serde(default = "minus_one")]
     pub cur_transmitter: i32,
+    /// Transmitters 0x234500 as the levels so far left it (camera.rs
+    /// `transmitter_table`): entries past a level's count are earlier levels'.
+    /// Empty: the boot state (the ELF's zero bytes).
+    #[serde(default)]
+    pub transmitter_table: Vec<camera::Transmitter>,
     #[serde(default)]
     pub welcome_flag: i32,
     #[serde(default)]

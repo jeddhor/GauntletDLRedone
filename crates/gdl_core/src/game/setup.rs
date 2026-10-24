@@ -725,6 +725,18 @@ impl Game {
             },
             log: FrameLog::default(),
         };
+        // AddLocatorInstList's AddTransmitter calls overwrite the static
+        // table's first entries; the camera keeps the rest for a stale
+        // Cur3DTransmitter/CurTransmitter.
+        let list = match game.std_camera.as_ref() {
+            Some(cam) => cam.transmitters.clone(),
+            None => super::camera::build_transmitters(&inp.world.locators, game.globals.cur_world).map_err(|e| format!("transmitters: {}", e.0))?.list,
+        };
+        let table = super::camera::transmitter_table(&game.globals.transmitter_table, &list);
+        if let Some(cam) = game.std_camera.as_mut() {
+            cam.stale = table[list.len()..].to_vec();
+        }
+        game.globals.transmitter_table = table;
         // AddItemInstList's ProcessItemWobjs node writes (fade objects).
         load_nodes.apply(&mut game);
         // AudioWorldInit: the elevator sounds by the level letter.

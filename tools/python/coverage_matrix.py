@@ -38,6 +38,7 @@ REPLAY_LEVEL = {
     'frame-B6kill': 'B6', 'frame-B6wiz2': 'B6', 'frame-B6wiz3': 'B6', 'frame-B6wiz4': 'B6', 'frame-G1exit': 'G1',
     'frame-C1water': 'C1', 'frame-C1water2': 'C1', 'frame-G1potion': 'G1', 'frame-G1xbow': 'G1', 'frame-A1trans': 'A1',
     'frame-D1new': 'D1', 'frame-E1new': 'E1', 'frame-F1new': 'F1', 'frame-H1new': 'H1', 'frame-I1new': 'I1', 'frame-J1new': 'J1',
+    'frame-D3start': 'D3', 'frame-D3leaf': 'D3', 'frame-I2start': 'I2', 'frame-B2start': 'B2',
 }
 
 

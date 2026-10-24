@@ -302,6 +302,9 @@ struct Session {
     /// LastFinishedWorld, LastFinishedLevel, Cur3DTransmitter,
     /// CurTransmitter, LastWorldPlayed, LastLevelPlayed.
     carried: [i32; 7],
+    /// The static Transmitters table as the last level left it (entries past
+    /// a level's count are earlier levels'; camera.rs `transmitter_table`).
+    transmitter_table: Vec<gdl_core::game::camera::Transmitter>,
 }
 
 #[derive(Component)]
@@ -3850,6 +3853,7 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
     start["globals"]["last_finished_level"] = Value::from(session.carried[2]);
     start["globals"]["cur3d_transmitter"] = Value::from(session.carried[3]);
     start["globals"]["cur_transmitter"] = Value::from(session.carried[4]);
+    start["globals"]["transmitter_table"] = serde_json::to_value(&session.transmitter_table)?;
     // LoadGauntWorldStart: LastWorldPlayed / LastLevelPlayed follow every
     // non-Tower level.
     let (lwp, llp) = if lv.world != 0xd { (lv.world, lv.index as i32) } else { (session.carried[5], session.carried[6]) };
@@ -6570,6 +6574,7 @@ fn session_for(front: &Front, record: &Record, controls: profile::ControlOptions
         pdats: front.pdats.clone(),
         heart_rate: front.heart_rate,
         carried: [0, -1, -1, -1, -1, 0xd, 0],
+        transmitter_table: Vec::new(),
     };
     let sources = Sources { players: [Some(pc), None, None, None], packages, monsters: level_monster_map(first), monster_packages: b.monster_packages.clone() };
     let mut records: [Record; 4] = std::array::from_fn(|_| Record::zeroed(record.0.len()));
@@ -8105,6 +8110,7 @@ fn advance_level(
     }
     let g = &sim.game.globals;
     session.carried = [g.tower_counter, g.last_finished_world, g.last_finished_level, g.cur3d_transmitter, g.cur_transmitter, g.last_world_played, g.last_level_played];
+    session.transmitter_table = g.transmitter_table.clone();
     let carry: [Record; 4] = sim.game.players.clone();
     let control_options = sim.game.control_options;
     let controls = sim.game.controls.clone();

@@ -7,9 +7,11 @@ LEVELS_HEX:UPDATES,... (e.g. 0:20,2000200:3 = idle 20 updates, attack 3).
 Reports are written once (new file) under private/reports/.
 """
 import argparse
+import hashlib
 import os
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -33,6 +35,26 @@ def level_index(wdata, code):
                 if wdata[off + 0x10c * k + 8: off + 0x10c * k + 12].split(b'\0')[0].decode() == code:
                     return k
     raise SystemExit(f'no LEVL record {code}')
+
+
+def transmitter_table(trace, report):
+    """The Transmitters table (0x234500, 0x100 x 0x40 bytes) of the capture the
+    trace started from (found by its fixture_sha256), written next to the
+    report: entries past the level's count are earlier levels' (a stale
+    Cur3DTransmitter reads them). None when no preserved capture matches."""
+    with open(trace, 'rb') as f:
+        head = f.read(4096).decode('utf-8', 'replace')
+    m = re.search(r'"fixture_sha256":\s*"([0-9a-f]{64})"', head)
+    if not m:
+        return None
+    for cap in sorted(pathlib.Path('private/reference/captures').glob('*.p2s')):
+        if hashlib.sha256(cap.read_bytes()).hexdigest() == m.group(1):
+            from reference_snapshot import frozen_memory
+            mem = frozen_memory(cap)
+            out = report.with_name(report.stem + '.transmitters.json')
+            out.write_text(json.dumps(dict(capture=cap.name, sha256=m.group(1), table=bytes(mem[0x234500:0x234500 + 0x4000]).hex())) + '\n')
+            return out
+    return None
 
 
 def main():
@@ -62,6 +84,7 @@ def main():
     ap.add_argument('--place0', action='store_true', help='DEBUG: place player 0 at the start locator through load_player_geo (placement comparisons)')
     ap.add_argument('--watch', help='collision objects OBJ,... whose matrix translations are sampled')
     ap.add_argument('--probe', help='X:Z;... points whose highest floor (object, y) is sampled')
+    ap.add_argument('--itemrec', help='item slots SLOT,... whose whole records are sampled (hex)')
     ap.add_argument('--itemw', help='item slots SLOT,... whose +0xd8/+0xde/+0xe1/+0xe2 are sampled')
     ap.add_argument('--vplayers', help='NumVirtualPlayers at the level load (co-op traces)')
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
@@ -150,6 +173,10 @@ def main():
             cmd += ['frame_replay=1']
     if a.items_seed:
         cmd += [f'items_seed={a.items_seed}']
+    if a.enemy_replay:
+        table = transmitter_table(a.enemy_replay, pathlib.Path(a.report))
+        if table:
+            cmd += [f'transmitter_table={table}']
     if a.load_players is not None:
         cmd += [f'load_players={a.load_players}']
     if a.potions:
@@ -168,6 +195,8 @@ def main():
         cmd += [f'probe={a.probe}']
     if a.itemw:
         cmd += [f'itemw={a.itemw}']
+    if a.itemrec:
+        cmd += [f'itemrec={a.itemrec}']
     if a.vplayers:
         cmd += [f'vplayers={a.vplayers}']
     if a.players:
