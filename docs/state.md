@@ -351,6 +351,19 @@ original (PCSX2 reference on Xvfb :191, private captures):
    level_map.py), a no-assist search (no_assist=1), opened gates counted as
    progress (they stay active records with +0xdc set), and the bot rides
    floors moving in any direction (I5's and K4's rafts).
+   2026-10-24 (later morning): I5 ends from its own start (raft pad no
+   longer culled); bit-level DAZ/round-toward-zero make the simulation
+   1.4× faster (identical replays: r80 = r79 = r78); reference audio
+   captures (PCSX2 Video Capture) compared with native: G1's music matches
+   the native ADS decode, the music/effects balance agrees within ~1 dB,
+   the whole reference output sits ~11 dB lower (open); the bot attacks a
+   blocking breakable item (three tries per item); a level counts as won
+   only with the player through it (state 5 or 4, not a death); the
+   traversal tools seek rune stones and legend items. Critical path
+   (bosses.md): every realm in WorldOrder, each boss with its legend item,
+   all thirteen runes before H4. Campaign chain t6 (campaign_chain.py:
+   52 levels, bot first, search fallback, --require; DEBUG health assist)
+   running.
 
 ---
 
