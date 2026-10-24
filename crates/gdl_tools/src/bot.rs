@@ -575,6 +575,10 @@ pub struct Bot {
     reopened_at: HashMap<usize, usize>,
     /// Steering at a closed gate's centre until the update (key held).
     gate_push: Option<(usize, V3)>,
+    /// Stuck events per next waypoint, and the waypoints routes no longer
+    /// enter (five or more: a thin wall the graph does not see).
+    stuck_waypoints: HashMap<Place, usize>,
+    dead_nodes: HashSet<Place>,
     visited_triggers: HashSet<usize>,
     /// Contacts per trigger (revisits are bounded) and the trigger now
     /// sought again (reached only on contact: its state stays set).
@@ -703,6 +707,8 @@ impl Bot {
             stuck_goal_counts: HashMap::new(),
             reopened_at: HashMap::new(),
             gate_push: None,
+            stuck_waypoints: HashMap::new(),
+            dead_nodes: HashSet::new(),
             visited_triggers: HashSet::new(),
             trigger_visits: HashMap::new(),
             revisiting: None,
@@ -843,6 +849,8 @@ impl Bot {
             self.log.push(serde_json::json!({"update": f, "reset": self.given_up.len()}));
             self.given_up.clear();
             self.gate_blocked.clear();
+            self.dead_nodes.clear();
+            self.stuck_waypoints.clear();
             self.visited_cols.clear();
             self.visited_triggers.clear();
             self.rebuild(g);
@@ -861,6 +869,13 @@ impl Bot {
     fn obstacle_nodes(&self, g: &Game) -> Avoid {
         let keys = g.players[0].i32_(KEYS);
         let mut out = Avoid::default();
+        if !self.dead_nodes.is_empty() {
+            for n in 0..self.nav.pts.len() {
+                if self.dead_nodes.contains(&self.nav.place(n)) {
+                    out.closed.insert(n);
+                }
+            }
+        }
         for s in 0..g.items.records.len() {
             let r = &g.items.records[s];
             let (k, _) = item_kind(g, s);
@@ -985,7 +1000,19 @@ impl Bot {
         };
         // At max_keys_per_player a key is not picked up (G4 in the campaign:
         // nine keys carried, 566 stuck events beside keys).
-        let keys = if g.globals.max_keys_per_player <= g.players[0].i32_(KEYS) { Vec::new() } else { active(g, &|k, t| k == 1 && t == 2) };
+        // One short of it a keyring gives a single key and stays (the pickup
+        // takes max − keys and keeps the rest: K2 with eight carried keys
+        // circled keyring 350).
+        let held = g.players[0].i32_(KEYS);
+        let max_keys = g.globals.max_keys_per_player;
+        let keys: Vec<usize> = if max_keys <= held {
+            Vec::new()
+        } else {
+            active(g, &|k, t| k == 1 && t == 2)
+                .into_iter()
+                .filter(|&s| held + 1 < max_keys || g.items.definitions[g.items.records[s].definition()].name() != b"KEYRING")
+                .collect()
+        };
         // Regular exits first; secret exits (subtype 0x32, to the treasure
         // rooms) only when no regular exit is reachable.
         let exits = active(g, &|k, t| k == 9 && t != 0x32);
@@ -1406,6 +1433,17 @@ impl Bot {
                     *n += 1;
                     if 40 < *n {
                         self.given_up.insert(s);
+                    }
+                }
+                // The same waypoint stuck at five times is closed to routes
+                // (K2 in the campaign: 2727 stuck events at one waypoint
+                // across a thin wall, each re-plan finding another edge to it).
+                if let Some(&w) = self.path.get(self.at) {
+                    let pl = self.nav.place(w);
+                    let n = self.stuck_waypoints.entry(pl).or_insert(0);
+                    *n += 1;
+                    if 5 <= *n && self.dead_nodes.insert(pl) {
+                        self.log.push(serde_json::json!({"update": f, "dead_node": self.nav.pts[w]}));
                     }
                 }
                 // An exploration target the bot is stuck short of counts as
