@@ -855,7 +855,16 @@ impl Bot {
         // item (subtype 0xd) before its exits: the campaign needs every rune
         // (H4 opens with all thirteen) and the bosses their legend item.
         let treasures = active(g, &|k, t| k == 1 && (t == 10 || t == 0xd));
-        let order = if tower_crystals { [near, Vec::new(), Vec::new(), Vec::new()] } else { [treasures, exits, near, secret] };
+        // While one is left and out of reach, keys and triggers come before
+        // the exits: a trigger may bring it within reach (A3's rune lies on
+        // the elevator A3ELEV3 that trigger 249 raises 7 units to the floor).
+        let order = if tower_crystals {
+            [near, Vec::new(), Vec::new(), Vec::new()]
+        } else if treasures.is_empty() {
+            [exits, near, secret, Vec::new()]
+        } else {
+            [treasures, near, exits, secret]
+        };
         for list in order {
             let list: Vec<usize> = list.into_iter().filter(|s| !self.given_up.contains(s)).collect();
             let targets = self.item_nodes(g, &list);
