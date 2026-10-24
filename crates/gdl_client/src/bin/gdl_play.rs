@@ -1023,11 +1023,6 @@ fn skin_image(libs: &Libraries, monsters: &[String], v: &gdl_core::game::skin::S
     }
 }
 
-/// Enemy and player trees' skins (MBTreeSetAltTex −4 → the skin image in
-/// the keep-A pass over the own textures, −3 → the skin image replacing
-/// them with setChrome's environment mapping) and ambient adds
-/// (MBTreeSetAmbientAdd / 255).
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 /// PlayerProcessPowerups' MBTreeSetAlpha(player node, v, 1) (recursive:
 /// the held weapon and the trees hung on the player go with it): 0x5f
 /// during action 0x92; with the invisibility powerup (+0x138 4) a shimmer
@@ -1071,6 +1066,11 @@ fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)
     }
 }
 
+/// Enemy and player trees' skins (MBTreeSetAltTex −4 → the skin image in
+/// the keep-A pass over the own textures, −3 → the skin image replacing
+/// them with setChrome's environment mapping) and ambient adds
+/// (MBTreeSetAmbientAdd / 255).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_skins(
     sim: Res<Sim>,
     session: Res<Session>,
