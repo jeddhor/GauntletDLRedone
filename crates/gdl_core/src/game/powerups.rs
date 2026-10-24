@@ -174,33 +174,32 @@ impl Game {
             super::skin::set_skin_fx(r, 0x7b4, 1.0, super::skin::SkinTex::Silver, 1, 1.0);
         }
         // The attached powerup tree (+0x768: POJO, the fire shield, PHOENIX,
-        // HEAD_BREATHE*, WINGS; drawn by the client) and AnimateATree's
-        // sequence: the pojo's by the current action (1 moving, 4 hit, 3
-        // ATTPWR, 5 death, 2 for PlayerMotion's attack signal +0x8d8
-        // 0x20000000, which this branch clears); otherwise 1 (ATTACK) while
-        // +0x8d8 0x10000000 is set and the short at +0x778 is ≥ 2.
-        // (Skipped with the player's node +0x80 unset, as the original's
-        // whole presentation part.)
-        let r138 = r.u32_(0x138);
-        let seq = if r.u32_(0x80) == 0 {
-            0
-        } else if r138 & 0x400 != 0 {
-            let mut s = match r.u32_(0x1e0) {
-                8 | 0x11..=0x14 | 0x16 | 0x19 | 0x1a => 1,
-                0x1b | 0x7f..=0x83 | 0x85 | 0x87 | 0x94 => 4,
-                0x6e => 3,
-                0x7e => 5,
-                _ => 0,
-            };
-            if r.u32_(0x8d8) & 0x2000_0000 != 0 {
-                s = 2;
+        // HEAD_BREATHE*, WINGS; drawn by the client) and the familiar: the
+        // pojo's sequence by the current action (1 moving; 4 hit, 3 ATTPWR,
+        // 5 death with uVar14 2) and PlayerMotion's attack signals —
+        // +0x8d8 0x10000000 (familiar ATTACK; the other trees' sequence 1
+        // when they have two) and the pojo's 0x20000000 (sequence 2, which
+        // this branch clears). Skipped with the player's node +0x80 unset,
+        // as the original's whole presentation part.
+        if r.u32_(0x80) != 0 {
+            let req = &mut self.tree_anim[p];
+            if r.u32_(0x8d8) & 0x1000_0000 != 0 {
+                req.attacks = req.attacks.wrapping_add(1);
             }
-            r.and_u32(0x8d8, !0x2000_0000);
-            s
-        } else {
-            u8::from(r.u32_(0x8d8) & 0x1000_0000 != 0 && 2 <= r.i16_(0x778))
-        };
-        self.powerup_tree_seq[p] = seq;
+            if r.u32_(0x138) & 0x400 != 0 {
+                (req.pojo_seq, req.pojo_now) = match r.u32_(0x1e0) {
+                    8 | 0x11..=0x14 | 0x16 | 0x19 | 0x1a => (1, false),
+                    0x1b | 0x7f..=0x83 | 0x85 | 0x87 | 0x94 => (4, true),
+                    0x6e => (3, true),
+                    0x7e => (5, true),
+                    _ => (0, false),
+                };
+                if r.u32_(0x8d8) & 0x2000_0000 != 0 {
+                    req.pojo_attacks = req.pojo_attacks.wrapping_add(1);
+                }
+                r.and_u32(0x8d8, !0x2000_0000);
+            }
+        }
         // PlayerProcessFamiliar: the familiar tree +0x720 exists from level
         // 30 (native marker 1; the tree itself is presentation).
         let r = &mut self.players[p];

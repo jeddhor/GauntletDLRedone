@@ -472,7 +472,8 @@ is set; otherwise shown and animated (AnimateATree(tree, +0x8d8 bit
 0x10000000, that ? 2 : 0)). Each SFX package's FAMILIAR trees are one OANIM
 node with READY (20 frames, repeat 1) and ATTACK (9) sequences. The
 simulation keeps +0x720 as a marker (powerups.rs); gdl_play draws the
-tree (present_familiars; READY looping on ATime is a HYPOTHESIS). Native
+tree (present_familiars; AnimateATree(tree, attack, attack ? 2 : 0): ATTACK
+plays through on the attack signal, READY otherwise, on a TreeClock). Native
 frames at levels 35 and 85 in G1: runs client-fam5-69700 / -280200. No
 reference capture.
 
@@ -496,9 +497,14 @@ a player node (+0x80). Sequences on the disc: POJO READY/RUN/ATTACK/
 ATTPWR/HIT/DEATH, PHOENIX READY/ATTACK, the breaths and the shield one
 looping ACTIVE, WINGS static.
 
-Native: the core clears the pojo signal and records the sequence
-(Game::powerup_tree_seq); gdl_play's present_powerup_trees draws the tree
-on its anchor (EffectTree with AnimateATree looping/hold semantics).
+Native: the core clears the pojo signal and records the requests per
+update (Game::tree_anim: the pojo's action sequence and uVar14, counters
+of the attack signals so no pulse is lost between rendered frames);
+gdl_play's present_powerup_trees and present_familiars run each tree on
+its own AnimateATree clock (TreeClock: animation_clock::select with the
+tree's clips at the game's ATime). HYPOTHESIS: the tree's AnimInfo sits at
++0x76c (+0x724 for the familiar), so +0x778 is its sequence count and
++0x77a its current sequence — mode 2 while that is 0, else uVar14.
 Seen in G1 (GDL_DEBUG_POWERUP 9:1 / 9:80 / 9:400, runs client-pw-1/-80/
 -400): the wings at the back, the phoenix and the pojo beside the player.
 The fire breath (9:10, a camera-facing no-shade object at the head) was

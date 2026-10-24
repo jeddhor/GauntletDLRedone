@@ -270,6 +270,20 @@ pub enum Event {
     PlayerTreeFlags { player: usize, flags: u32, set: bool },
 }
 
+/// What PlayerProcessPowerups / PlayerProcessFamiliar ask AnimateATree for,
+/// per player and update: the pojo's sequence by action with uVar14 (true:
+/// 2, the immediate switch), and counters of the updates that carried
+/// PlayerMotion's attack signals (+0x8d8 0x10000000 for the familiar and the
+/// phoenix-style trees, the pojo's 0x20000000) so a slower renderer sees
+/// every pulse.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TreeAnimRequest {
+    pub pojo_seq: u16,
+    pub pojo_now: bool,
+    pub attacks: u32,
+    pub pojo_attacks: u32,
+}
+
 pub struct Game {
     pub globals: Globals,
     /// LEVL record of the current level (level_data 0x23e158 points to it).
@@ -311,10 +325,10 @@ pub struct Game {
     pub item_trees: std::collections::HashMap<usize, String>,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
-    /// PlayerProcessPowerups' AnimateATree sequence for each player's
-    /// attached powerup tree (+0x768; presentation reads it, the tree
-    /// itself is the client's).
-    pub powerup_tree_seq: [u8; 4],
+    /// PlayerProcessPowerups' animation requests for each player's attached
+    /// powerup tree (+0x768) and familiar (+0x720); the trees and their
+    /// clocks are the client's.
+    pub tree_anim: [TreeAnimRequest; 4],
     /// DoRockFly / DidRockFly (DoWorldEffects counts boss 0x2a's rock
     /// launches; ProcessItems launches subtype-0x33 rocks on a change).
     /// ResetItems zeroes both at level start.

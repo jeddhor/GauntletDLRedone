@@ -2421,16 +2421,15 @@ fn present_hold_fx(
 /// PDAT +0x164..+0x16c (× 1.2 at level 99: the tree's +0x10 and its root
 /// node's +0x30..+0x38, the local matrix's translation row), hidden in play
 /// (game mode 0x4010) while +0x138 bit 0x80 is set, animated every update
-/// (AnimateATree; HYPOTHESIS: READY looping on ATime at its timing; the
-/// ATTACK sequence and AnimateATree's mode 2 for +0x8d8 bit 0x10000000 are
-/// not modelled).
+/// on its TreeClock: AnimateATree(tree, attack, attack ? 2 : 0) with the
+/// attack signal +0x8d8 0x10000000 (Game::tree_anim's counter).
 #[derive(Component)]
 struct Familiar {
     slot: usize,
     key: Option<&'static str>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn present_familiars(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -2439,10 +2438,10 @@ fn present_familiars(
     mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
     mut variants: ResMut<PartVariants>,
     mut pending: ResMut<PendingTreePsys>,
-    mut q: Query<(Entity, &mut Familiar, &mut Transform, &mut Visibility)>,
+    mut q: Query<(Entity, &mut Familiar, &mut Transform, &mut Visibility, Option<&mut TreeClock>, Option<&mut EffectTree>)>,
 ) {
     let g = &sim.game;
-    for (e, mut f, mut tf, mut vis) in &mut q {
+    for (e, mut f, mut tf, mut vis, clock, fx) in &mut q {
         let r = &g.players[f.slot];
         let level = r.i32_(0x2ac0);
         let key = if 80 <= level {
@@ -2454,7 +2453,7 @@ fn present_familiars(
         };
         if f.key != key {
             commands.entity(e).despawn_related::<Children>();
-            commands.entity(e).remove::<EffectTree>();
+            commands.entity(e).remove::<(EffectTree, TreeClock)>();
             if let (Some(label), Some(pc)) = (key, sources.players[f.slot].as_ref()) {
                 let parts = tree_parts(&sources, &libs, &pc.sfx_name, label);
                 if std::env::var("GDL_DEBUG_FX").is_ok() {
@@ -2462,12 +2461,22 @@ fn present_familiars(
                     eprintln!("Familiar {} {label} in {}: {} parts; trees {trees:?}", f.slot, pc.sfx_name, parts.len());
                 }
                 spawn_parts(&mut commands, e, parts, &mut materials, &mut variants, &mut pending);
-                let tree = sources.packages.get(&pc.sfx_name).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, a.trees[i].sequences.first().map_or(30, |q| q.timing_factor))));
-                if let Some((tree, timing)) = tree {
-                    commands.entity(e).insert(EffectTree { pkg: pc.sfx_name.clone(), tree, start: g.globals.atime, timing: timing.max(1), slot: usize::MAX, looping: true, seq: 0 });
+                let tree = sources.packages.get(&pc.sfx_name).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, gdl_core::game::setup::clips_of(a, i))));
+                if let Some((tree, clips)) = tree {
+                    commands.entity(e).insert((
+                        EffectTree { pkg: pc.sfx_name.clone(), tree, start: g.globals.atime, timing: 1, slot: usize::MAX, looping: true, seq: 0, fixed: Some((0, 0.0)) },
+                        TreeClock::new(clips, &g.tree_anim[f.slot]),
+                    ));
                 }
             }
             f.key = key;
+        } else if let (Some(mut c), Some(mut fx)) = (clock, fx) {
+            // PlayerProcessFamiliar: AnimateATree(tree, attack, attack ? 2 : 0)
+            // with the attack signal +0x8d8 0x10000000.
+            let req = &g.tree_anim[f.slot];
+            let attack = req.attacks != c.seen_attacks;
+            c.seen_attacks = req.attacks;
+            fx.fixed = c.step(u16::from(attack), if attack { 2 } else { 0 }, g).or(fx.fixed);
         }
         let raw = &g.classes[f.slot].raw;
         let at = |o: usize| raw.get(o..o + 4).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
@@ -2495,7 +2504,7 @@ enum PowerupAt {
 struct PowerupTree {
     slot: usize,
     at: PowerupAt,
-    key: Option<(&'static str, u8)>,
+    key: Option<&'static str>,
 }
 
 /// PlayerProcessPowerups 0x12d040's choice (InitPlayerMissiles' trees): the
@@ -2517,11 +2526,11 @@ fn powerup_tree_choice(r: &Record) -> Option<(&'static str, &'static str, Poweru
 }
 
 /// The attached powerup tree: spawned on the matching anchor, animated
-/// with the core's AnimateATree sequence (Game::powerup_tree_seq; a change
-/// restarts it), faded with MBTreeSetAlpha((1 − t) × 255) over the last
+/// on its own AnimateATree clock (TreeClock) from the core's requests
+/// (Game::tree_anim), faded with MBTreeSetAlpha((1 − t) × 255) over the last
 /// second of the longest such powerup (t: kind-6 0x200000 / kind-9 0x4f1
 /// slots' remaining time).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn present_powerup_trees(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -2531,35 +2540,48 @@ fn present_powerup_trees(
     mut variants: ResMut<PartVariants>,
     mut pending: ResMut<PendingTreePsys>,
     mut req: ResMut<MatRequests>,
-    mut q: Query<(Entity, &mut PowerupTree, &mut Visibility, Option<&Children>)>,
+    mut q: Query<(Entity, &mut PowerupTree, &mut Visibility, Option<&Children>, Option<&mut TreeClock>, Option<&mut EffectTree>)>,
 ) {
     let g = &sim.game;
-    for (e, mut t, mut vis, children) in &mut q {
+    for (e, mut t, mut vis, children, clock, fx) in &mut q {
         let r = &g.players[t.slot];
         let choice = powerup_tree_choice(r).filter(|c| c.2 == t.at);
-        let seq = g.powerup_tree_seq[t.slot];
-        let want = choice.map(|c| (c.1, seq));
+        let want = choice.map(|c| c.1);
         if t.key != want {
-            let same_tree = t.key.map(|k| k.0) == want.map(|k| k.0);
-            if !same_tree {
-                commands.entity(e).despawn_related::<Children>();
-                commands.entity(e).remove::<EffectTree>();
-            }
+            commands.entity(e).despawn_related::<Children>();
+            commands.entity(e).remove::<(EffectTree, TreeClock)>();
             if let Some((pkg, label, _)) = choice {
-                if !same_tree {
-                    let parts = tree_parts(&sources, &libs, pkg, label);
-                    spawn_parts(&mut commands, e, parts, &mut materials, &mut variants, &mut pending);
-                }
-                let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| {
-                    let i = a.trees.iter().position(|x| x.label == label)?;
-                    let s = usize::from(seq).min(a.trees[i].sequences.len().saturating_sub(1));
-                    Some((i, s, a.trees[i].sequences.get(s).map_or(30, |q| q.timing_factor)))
-                });
-                if let Some((tree, s, timing)) = tree {
-                    commands.entity(e).insert(EffectTree { pkg: pkg.to_string(), tree, start: g.globals.atime, timing: timing.max(1), slot: usize::MAX, looping: true, seq: s });
+                let parts = tree_parts(&sources, &libs, pkg, label);
+                spawn_parts(&mut commands, e, parts, &mut materials, &mut variants, &mut pending);
+                let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|x| x.label == label).map(|i| (i, gdl_core::game::setup::clips_of(a, i))));
+                if let Some((tree, clips)) = tree {
+                    commands.entity(e).insert((
+                        EffectTree { pkg: pkg.to_string(), tree, start: g.globals.atime, timing: 1, slot: usize::MAX, looping: true, seq: 0, fixed: Some((0, 0.0)) },
+                        TreeClock::new(clips, &g.tree_anim[t.slot]),
+                    ));
                 }
             }
             t.key = want;
+        } else if let (Some((_, label, _)), Some(mut c), Some(mut fx)) = (choice, clock, fx) {
+            // PlayerProcessPowerups' AnimateATree(+0x768, uVar7, uVar13):
+            // the pojo's sequence by action (2 on its attack signal), the
+            // others' 1 on the familiar signal when the tree has two
+            // sequences (+0x778, HYPOTHESIS: the AnimInfo at +0x76c, so +0x778
+            // its sequence count and +0x77a its current sequence); mode 2
+            // while the current sequence is 0, else uVar14.
+            let req = &g.tree_anim[t.slot];
+            let attack = req.attacks != c.seen_attacks;
+            let pojo_attack = req.pojo_attacks != c.seen_pojo;
+            (c.seen_attacks, c.seen_pojo) = (req.attacks, req.pojo_attacks);
+            let (seq, now) = if label == "POJO" {
+                if pojo_attack { (2, true) } else { (req.pojo_seq, req.pojo_now) }
+            } else if attack && 2 <= c.clips.len() {
+                (1, true)
+            } else {
+                (0, false)
+            };
+            let mode = if c.current != 0 && !now { 0 } else { 2 };
+            fx.fixed = c.step(seq, mode, g).or(fx.fixed);
         }
         *vis = if t.key.is_some() { Visibility::Inherited } else { Visibility::Hidden };
         // fVar18: the longest remaining time of the tree powerups.
@@ -4714,7 +4736,7 @@ fn present_world(
                         };
                         let key = format!("H{h}:{}:{}:{}", head.source, head.tree, node.start.to_bits());
                         if slot.key.as_deref() != Some(key.as_str()) {
-                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing, slot: slot.index, looping: false, seq: 0 });
+                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing, slot: slot.index, looping: false, seq: 0, fixed: None });
                         }
                         let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_index_parts(&sources, &libs, &pkg, head.tree));
                         (Some(key), parts, tf)
@@ -4974,7 +4996,7 @@ fn label_effect_tree(commands: &mut Commands, (entity, slot): (Entity, usize), s
     let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, a.trees[i].sequences.first().map_or(30, |q| q.timing_factor))));
     match tree {
         Some((tree, timing)) => {
-            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1), slot, looping: false, seq: 0 });
+            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1), slot, looping: false, seq: 0, fixed: None });
         }
         None => {
             commands.entity(entity).remove::<EffectTree>();
@@ -5008,6 +5030,41 @@ struct EffectTree {
     looping: bool,
     /// The sequence played (StartFXTree trees: 0).
     seq: usize,
+    /// A tree on its own AnimateATree clock (TreeClock): its sequence and
+    /// frame instead of the ATime-derived ones.
+    fixed: Option<(usize, f32)>,
+}
+
+/// An AnimateATree clock of a presentation tree (the familiar, the attached
+/// powerup tree): the original selection (animation_clock::select) with
+/// the tree's clips, fed once per frame with the core's requests.
+#[derive(Component)]
+struct TreeClock {
+    clock: gdl_core::animation_clock::ClockState,
+    current: u16,
+    clips: Vec<gdl_core::animation_clock::ClipTiming>,
+    seen_attacks: u32,
+    seen_pojo: u32,
+}
+
+impl TreeClock {
+    fn new(clips: Vec<gdl_core::animation_clock::ClipTiming>, req: &gdl_core::game::TreeAnimRequest) -> Self {
+        Self { clock: gdl_core::game::setup::fresh_clock(), current: 0, clips, seen_attacks: req.attacks, seen_pojo: req.pojo_attacks }
+    }
+
+    /// AnimateATree(tree, seq, mode) at the game's ATime; the sequence and
+    /// frame to pose.
+    fn step(&mut self, seq: u16, mode: i32, g: &Game) -> Option<(usize, f32)> {
+        let seq = seq.min(self.clips.len().saturating_sub(1) as u16);
+        let (current, requested) = (*self.clips.get(usize::from(self.current)).or(self.clips.get(usize::from(seq)))?, *self.clips.get(usize::from(seq))?);
+        let input = gdl_core::animation_clock::SelectionInput { sequence: seq, mode, start_frame: 0, blend_duration: 0.0, playback_scale: 1.0, now: g.globals.atime, anim_time_scale: g.globals.anim_time_scale };
+        let out = gdl_core::animation_clock::select(self.clock, current, requested, input).ok()?;
+        self.clock = out.state;
+        if out.return_flags & 1 != 0 {
+            self.current = seq;
+        }
+        Some((usize::from(self.clock.sequence.min(self.clips.len().saturating_sub(1) as u16)), self.clock.frame))
+    }
 }
 
 /// Pose effect trees' nodes (sequence 0) at the effect's current frame;
@@ -5031,14 +5088,17 @@ fn present_effect_trees(
         let Some(pkg) = sources.packages.get(&fx.pkg) else { continue };
         let Some(anim) = pkg.anim.as_ref() else { continue };
         let mut frame = ((atime - fx.start) * 900.0 / f32::from(fx.timing.max(1))).max(0.0);
-        let sequence = anim.trees.get(fx.tree).and_then(|t| t.sequences.get(fx.seq));
-        if fx.looping
+        let seq = fx.fixed.map_or(fx.seq, |f| f.0);
+        let sequence = anim.trees.get(fx.tree).and_then(|t| t.sequences.get(seq));
+        if let Some((_, f)) = fx.fixed {
+            frame = f;
+        } else if fx.looping
             && let Some(s) = sequence
         {
             let n = f32::from(s.frames.max(1));
             frame = if s.repeat != 0 { frame % n } else { frame.min(n - 1.0) };
         }
-        let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, fx.seq, frame, true) else { continue };
+        let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, seq, frame, true) else { continue };
         let index = object_frame(frame, sequence);
         let mut meshes = Vec::new();
         for child in children.iter() {
@@ -5047,7 +5107,7 @@ fn present_effect_trees(
                     *tf = Transform::from_matrix(*m);
                 }
                 if let Some(f) = of {
-                    show_oframe(f, 0, index, &mut v);
+                    show_oframe(f, seq as u16, index, &mut v);
                 }
                 meshes.push((e, idx.0));
             }
