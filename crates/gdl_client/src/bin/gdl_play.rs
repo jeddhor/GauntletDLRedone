@@ -1023,13 +1023,16 @@ fn skin_image(libs: &Libraries, monsters: &[String], v: &gdl_core::game::skin::S
     }
 }
 
+/// Nodes MBTreeSetAlpha skips (MB flag 0x10).
+type Flag10Query<'w, 's> = Query<'w, 's, (), Or<(With<HandObject>, With<ItSign>, With<HeldWeapon>)>>;
+
 /// PlayerProcessPowerups' MBTreeSetAlpha(player node, v, 1) (recursive:
 /// the held weapon and the trees hung on the player go with it): 0x5f
 /// during action 0x92; with the invisibility powerup (+0x138 4) a shimmer
 /// (int)(sin(2π t) × 16) + 0xa0, t the longest kind-9 flag-4 slot time —
 /// solid (0) on the even eighths of its last 3 s, a negative (unlimited)
 /// time shimmers; otherwise 0. Drawn alpha (255 − v) / 255 (setPrimAlpha).
-fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)>, children: Query<&Children>, flag10: Query<(), Or<(With<HandObject>, With<ItSign>, With<HeldWeapon>)>>, mut req: ResMut<MatRequests>) {
+fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)>, children: Query<&Children>, flag10: Flag10Query, mut req: ResMut<MatRequests>) {
     let g = &sim.game;
     for (root, kids) in &bodies {
         let r = &g.players[root.0];
