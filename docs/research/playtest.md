@@ -339,6 +339,29 @@ GDL_DEBUG_CAMERA):
   20×). Not ended by b34: A2 A4 C1–C4 D2–D4 E1 F1 G4 H1–H3 I1–I4 J1–J4 J6
   K1 K3 K4. The state search (e3: A2 C1–C4 D2 F1 G2 G4,
   600,000 updates each) ended none.
+- Shot switches: kind-5 subtype-0x1f triggers are hit by missiles
+  (WeaponCheckItemCollision), not walked on; the bot routes to a node
+  within 9 units (not above it) or on a clear level line within 30, faces
+  it and fires (D2's elevator call 405, 5 units above the floor).
+- The key cap: at max_keys_per_player keys are not picked up, and one key
+  short of it a keyring gives a single key and stays. A campaign carries
+  keys between levels (nine by G4): the bot had stood beside six keys in G4
+  and circled keyring 350 in K2.
+- A waypoint the bot is stuck at five times is closed to routes until the
+  idle reset; blockers count within their own radius (K2's barrels: 6); an
+  assisted bot stuck five times within 2000 updates fires at range
+  (enemies scale with the player's level).
+- Reaching any trigger reopens every given-up goal; triggers are revisited
+  after the exits also with no treasure left; switch-off pads are tried
+  last (two contacts).
+- Chained runs: the DEBUG assist's baseline is the larger of the start
+  health and 80 % of max_health(level) (B6 began at 86 after the search's
+  B5); the Tower shop's PlayersRestoreHealth is applied between levels
+  (tower_shop=1; it refills from the class entry, which PlayerSaveState
+  wrote, so health still carries over as in the game).
+- Campaign chains t8–t14: L1, the G, B and A realms in one campaign (G2 by
+  its secret exit to S7, B3 and B5 by the search, every rune and legend item
+  of those realms taken, the G5 lich, B6 dragon and A5 chimera killed).
 - puzzle.rs (plan=1, DEBUG): a breadth-first trigger/gate planner on state
   copies. Limited: G4's crossing is a bridge that cycles (floor 353 is
   absent at fixed settle times), G2 counted as solved at the start (its
