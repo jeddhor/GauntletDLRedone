@@ -1906,6 +1906,40 @@ fn run() -> Result<(), Box<dyn Error>> {
             effect_tables.add_item_package(1, &more);
             effect_tables.set_item_role(1, 1);
         }
+        // next_level=1 (chained runs from an end_state): init_next_level's
+        // record steps as gdl_play's build_game runs them — load_player_geo/
+        // load_player (profile::level_start) and PlayerSaveState (the Tower:
+        // without the backup; the Underworld 0xc: not called). The PDAT and
+        // InitActions map are player 0's class (pdata=, clips=); the save's
+        // control words are kept (+0x190c).
+        if opts.contains_key("next_level") {
+            use gdl_core::game::profile;
+            let pdat = gdl_formats::pdata::PlayerData::parse(&bounded_read(Path::new(opts.get("pdata").ok_or("next_level needs pdata=")?), 1024 * 1024)?)?.pdat;
+            let tables = gdl_core::player_class::ClassTables::from_elf(&elf)?;
+            let map = tables.action_map(&anim_of("clips")?);
+            let heart = elf.object("heart_rate")?.first().copied().unwrap_or(0);
+            // CurLevel of the level entered (world= sets it for other realms).
+            start.globals.cur_level = level as i32;
+            let (cw, cl) = (start.globals.cur_world, start.globals.cur_level);
+            for h in start.players.iter_mut() {
+                let mut r = gdl_core::game::record::Record((0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16)).collect::<Result<_, _>>()?);
+                if r.i32_(0xfc) == 0 {
+                    continue;
+                }
+                let class = r.u32_(0xc) as usize;
+                let mut list = vec![Vec::new(); class + 1];
+                list[class] = pdat.clone();
+                profile::level_start(&mut r, &profile::Pdats(list), &map, cw << 8 | cl, heart).map_err(|e| e.to_string())?;
+                if cw != 0xc {
+                    let controls = std::array::from_fn(|k| u32::from(r.u8_(0x190c + k)));
+                    profile::player_save_state(&mut r, cw != 0xd, cw, cl, &controls);
+                }
+                *h = r.0.iter().map(|b| format!("{b:02x}")).collect();
+            }
+        }
+        // A level entered through the start locator (later levels, other
+        // realms, chained runs) rather than the fixture's mid-play state.
+        let entered = 0 < level || opts.contains_key("world") || opts.contains_key("next_level");
         let start_rune_disp = start.globals.rune_disp_timer;
         // vplayers=N: NumVirtualPlayers at the level load (SetNumPlayers: the
         // active count — the players who entered; co-op traces).
@@ -1974,7 +2008,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             _ => None,
         };
-        if let (Some(d), true) = (driver.as_mut(), 0 < level || opts.contains_key("world")) {
+        if let (Some(d), true) = (driver.as_mut(), entered) {
             // Later levels: enter at the start locator (get_player_pos path).
             let loc = world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("no start locator")?;
             game.place_player_start(0, &mut d.sim, loc.position, loc.rotation[1]).map_err(|e| e.to_string())?;
@@ -1995,7 +2029,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         // A record-based (--pads) teleport moves the player inside the running
         // game, as reference_warp.py's position write; the interim driver's
         // teleport enters through the start-locator path.
-        if 0 < level || opts.contains_key("world") || (opts.contains_key("teleport") && !opts.contains_key("pads")) {
+        if entered || (opts.contains_key("teleport") && !opts.contains_key("pads")) {
             game.start_camera().map_err(|e| e.0)?;
         } else {
             game.start_camera_settled().map_err(|e| e.0)?;
@@ -2123,7 +2157,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             game.player_rigs[0] = Some(std::sync::Arc::new(gdl_core::game::teammove::PlayerRig { anim: gdl_formats::animation::Animations::parse(&clip_bytes)?, bytes: clip_bytes, dummy, rhand }));
             game.players[0].set_u32(0x6b4, dummy.map_or(0, |n| n as u32 + 1));
             game.controls.assign(0, 0);
-            if 0 < level || opts.contains_key("world") {
+            if entered {
                 let loc = world.locators.iter().find(|l| l.kind == 7 && l.id == 0).ok_or("no start locator")?;
                 game.place_player(0, loc.position, loc.rotation[1]).map_err(|e| e.0)?;
                 game.players[0].set_u32(0x1e0, 0);

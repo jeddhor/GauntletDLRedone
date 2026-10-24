@@ -8,8 +8,9 @@ For each level code in order (G1 G2 ...), game_run.py --explore (bot
 macros, nav=2) from the previous level's end state: the run's own replay of
 its pad script from the level load, written by --end-state as the start
 state of the next level (players' records and globals carried; the exit
-flow between levels — tally, shop, the Tower — is not simulated, game-run
-places the player at the next level's start locator). The chain stops at
+flow between levels — tally, shop, the Tower — is not simulated; game-run
+--next-level runs init_next_level's record steps and places the player at
+the next level's start locator). The chain stops at
 the first level the search does not end. Reports: private/reports/
 campaign-TAG-<L>.json (the game-run report), campaign-TAG-<L>-end.json
 (the end state) and campaign-TAG.json (the summary). --legend-bosses gives
@@ -53,7 +54,7 @@ def main():
         cmd = [sys.executable, 'tools/python/game_run.py', str(report), '--frames', '10', '--world', world, '--level', level,
                '--pads', '0:1', '--explore', str(a.budget), '--cells', str(a.cells), '--nav', '2', '--end-state', str(end)]
         if start:
-            cmd += ['--start', start]
+            cmd += ['--start', start, '--next-level']
         if a.legend_bosses and code in BOSSES:
             cmd += ['--legend']
         p = subprocess.run(cmd, cwd=ROOT, env=os.environ, capture_output=True, text=True)

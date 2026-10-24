@@ -750,3 +750,38 @@ their mean blue 35.6 → 27.6 (31.3); overall 36.7/27.1/11.6 → 35.9/26.0/10.6
 reference's halos still show sharper rays and its frame is softer. G1, H1
 and A1 at their reference cameras show no artifacts (client-addq-g1/-h1/-a1).
 
+
+## GS dump software replay (2026-10-24)
+
+tools/python/gs_replay.py replays a stock PCSX2 GS dump's GIF data in event
+order through a small GS model (PACKED/REGLIST/IMAGE tags and local copies,
+the vertex queue with ADC, STQ texturing with the TEX1 LOD and the
+bilinear/mipmap filters, PSMCT32/PSMCT16 CLUTs through TEXA, TFX, the alpha
+and destination-alpha tests, 24-bit depth, ALPHA_1 with COLCLAMP, DIMX
+dithering, FBA and FBMSK into a PSMCT16S frame). Textures come from the
+dump's own uploads kept linearly by DBP and PSM (no block swizzle), resident
+PSMT8/PSMCT32 textures from the frozen memory. Approximations: integer pixel
+sampling with a top-left rule, bilinear weights in floating point, per-pixel
+LOD. Research only.
+
+Tower dump (…20261020081101, two frames, 11,662 and 11,680 drawn
+triangles, every texture resolved; private/reports/gsreplay-tower-v2):
+against the dump's own screenshot (resampled to 640×448) the static part
+of the frame (x 312..628, y 200..340) differs by 2.9 per channel (resampling
+blur included), the whole frame's mean RGB is 31.0/23.5/10.7 against
+30.5/23.5/10.8, and the left fire bowl with its additive NICEGLOW (x
+160..240, y 110..200) has summed-RGB p99 640 against 647. The crystal
+region (x 0..200, y 40..200) does not align with the screenshot (error
+9.1): the crystals spin, and the screenshot is not one of the two replayed
+frames.
+
+The crystal brightness question (2026-10-23: native p99 500 against 441)
+is settled as phase spread, not a bias. Summed-RGB p99 and mean RGB in that
+region: reference frames — replay frame 0 504 (68.5/40.5/11.8), frame 1 472
+(61.5/38.0/11.1), the dump screenshot 446 (65.4/41.5/12.3), scene-tower-v3's
+reference 525 (56.0/36.6/11.6); native frames at the scene-tower-v3 camera
+(client-scenetower-v3: 12 s, the compared frame, 20 s) 456, 397, 461
+(62.9/39.4/11.8, 61.1/36.7/10.1, 62.2/38.8/11.4). The native values fall
+inside the reference's frame-to-frame range (the reference's own consecutive
+frames differ by 32). The dump and scene cameras are close but not
+identical (both the Tower start).
