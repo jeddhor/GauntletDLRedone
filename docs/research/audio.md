@@ -167,10 +167,28 @@ DCS.IRX: ghidra-dcs1/dcs2):
 ## SPU voice setup (2026-10-23)
 
 DCS.IRX (ghidra-dcs2/dcs4, instructions read): samplePlayOnVoice 0x3c7c
-sets every voice to ADSR1 0x000f (linear attack rate 0, decay rate 0,
-sustain level 0xf = maximum) and ADSR2 0x1fc0 (linear sustain rate 0x7f —
-no change — and linear release rate 0): an on/off rectangle, which the
-native mixer's plain sample playback equals. Pitch: VagParseHeader 0x3410
+sets every voice to ADSR1 0x000f (linear attack rate 0, decay shift 0,
+sustain level 0xf) and ADSR2 0x1fc0 (linear increasing sustain, shift 31,
+step 4; linear release shift 0) and keys it on (sceSdSetSwitch 0x1500);
+voicePlayNextSample calls it for every sample of a chain (0x4680), so
+each sample is keyed on afresh. Not the on/off rectangle once assumed
+here (corrected 2026-10-24): the attack reaches 0x7fff in three samples,
+then the decay takes ONE exponential step (−0x4000 × level >> 15) to
+0x3fff — at or below its target (SL + 1) << 11 = 0x8000 at once — and the
+voice sustains at half level, rising by 4 per step. The reference shows
+it: every sounding voice in its saved states (SPU2.bin, V_Core voice
+records, 2.6.3's layout read from the version-0xe freeze: voice stride
+160 bytes from core +488) sits in sustain (phase 3) at 0x3fff + 4n — the
+fixture's music voices 22/23 at 0x4197, fresh effects at 0x3fff, B4's
+loops at 0x4013. Native: gdl_core::dcs::Envelope (implemented from the
+SPU's documented ADSR mechanism and these observations; no emulator code
+or tables copied), applied per output sample in gdl_client's mixer to
+every voice and to the music (keyed on at the stream's start —
+HYPOTHESIS for the stream voices' key-on, consistent with their long
+sustain in the states). The sustain step period follows the reference
+emulator (a step every 0x8000 samples for shift 31; psx-spx documents
+2^(shift − 11) samples on hardware — unverified here, at most +1.6 dB
+over a ten-minute level). Pitch: VagParseHeader 0x3410
 converts the VAG rate to rate × 4096 / 48000 (the SPU's 0x1000 = 48 kHz)
 and samplePlayOnVoice shifts it by pitchSkew. Reverb: InitSpuParams 0x88a4
 sets only the cores' master volumes (params 0x980/0xa80 = 0x3fff); no DCS
@@ -231,12 +249,31 @@ the fixture's music is TOWN1 (correlation 0.966 left, 0.967 right over
 the AAC encoder), below 60 Hz the output DC filter takes up to 2.7 dB
 (private/reports/audio-compare-g1-TOWN1-v1.json).
 
-Level (open): volMusic is 128 in the captures (0x21f6c8) and G1's LEVL
-+0x94 factor is 1.0, so the stream volume word is 128 — AdsSetVolume gain
-(128 × 0x1fff >> 8) / 0x4000 = 0.25 of full scale, which the native mixer
-outputs — but the capture fits 0.0754 (the word 39's gain): the reference
-chain after AdsSetVolume carries a further ×0.30 (−10.4 dB) on the music
-that native lacks.
+Level (resolved 2026-10-24): volMusic is 128 in the captures (0x21f6c8)
+and G1's LEVL +0x94 factor is 1.0, so the stream volume word is 128 —
+AdsSetVolume gain (128 × 0x1fff >> 8) / 0x4000 = 0.25 — and the capture
+fits 0.0754 (×0.30, −10.4 dB). The reference's saved states account for
+it stage by stage (poison-fields-original.p2s, read only: SPU2.bin's
+V_Core records): the music voices 22/23 carry VOLL/VOLR 0xfff (0.25, as
+native), both cores' master volumes 0x3fff (unity: value 0x7ffe) and core
+1's external volume 0x7fff (unity), no effects volume — but the voices'
+envelope is 0x4197 (0.512; "SPU voice setup" above), which native lacked
+(−5.8 dB; fixed). The rest is the emulator's own output stage: PCSX2
+2.6.3 scales the final mix by 0x4fff / 0x8000 (Mixer.cpp spu2Mix,
+`ApplyVolume(Out, {0x4fff, 0x4fff})` before its DC filter; upstream
+reading of the v2.6.3 tag: commit ee4d0bf4b, 2023, "Lower final output
+volume" — a compatibility level for PCSX2's own earlier halving, not a
+PS2 stage; removed upstream in 58a4f1e5e, 2026-02). Predicted capture
+gain 0.25 × 0.512 × 0.625 = 0.080 against the fitted 0.0754: −0.5 dB
+left, within the interpolation's and the AAC encoder's high-frequency
+loss on a broadband fit. Native keeps the PS2 chain (envelope, voice and
+master volumes) and leaves out the emulator's 0x4fff stage; comparisons
+with these captures divide it out. B4 through the native mixer with the
+envelope (gdl_audio_render on replay-frame-B4start-audio-v1): every
+music and effects gain fitted against the capture doubles exactly
+against the previous render (the envelope's 0.5), so the earlier balance
+result stands and the effects now sit at ×0.57–0.59 of native, ×0.625
+expected.
 
 Music/effects balance (2026-10-24): a live 15.2 s capture of B4 from
 lvl-B4-start-v1 (no input: trace-B4-start-v1's schedule; private
@@ -250,7 +287,8 @@ native 0.25 at word 128 (×0.25); with it removed, the remaining effects
 (chiefly the looping item sound on slot 206, panned left) measure 0.0558 /
 0.0207 RMS against the native render's 0.190 / 0.073 (×0.29 / ×0.28). Music
 and effects are scaled alike, so the balance agrees within about 1 dB; the
-whole reference output sits about 11 dB below native (G1's music ×0.30).
+whole reference output then sat about 11 dB below native (G1's music
+×0.30; accounted for below).
 PCSX2 applies volume registers as (value << 1) × sample >> 15 (ADSR.cpp
 V_VolumeSlide::RegSet, Mixer.cpp ApplyVolume; upstream reading), so 0x3fff
 is unity there as in native's VOLL / 0x4000; the common factor's stage is
@@ -260,7 +298,6 @@ saved state keep their own phase.
 
 ## Not yet
 
-Tower coin sounds, the output level and music/effects balance against the
-reference capture (above), the SPU's interpolation filter (provenance:
+Tower coin sounds against the reference capture, the SPU's interpolation filter (provenance:
 unknowns.md), AudioLoadStage bank residency (the host loads banks on
 demand). Sound items follow their +0xf8 world node (process_sound_item).

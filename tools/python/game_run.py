@@ -178,9 +178,11 @@ def main():
         cmd += [f'clips={clips}', f'pads={a.pads}', f'sfx={sfx}']
         if a.bot:
             cmd += [f"bot={os.environ.get('GDL_BOT', '1')}"]
-            # Route hints (tools/bot-routes/<W><L>.json); GDL_BOT_HINTS=0 runs without.
-            hints = pathlib.Path('tools/bot-routes') / f'{a.world}{a.level}.json'
-            if hints.exists() and os.environ.get('GDL_BOT_HINTS') != '0':
+            # Route hints (tools/bot-routes/<W><L>.json); GDL_BOT_HINTS=0 runs
+            # without, GDL_BOT_HINTS=FILE with that file (experiments).
+            env_hints = os.environ.get('GDL_BOT_HINTS')
+            hints = pathlib.Path(env_hints) if env_hints not in (None, '0') else pathlib.Path('tools/bot-routes') / f'{a.world}{a.level}.json'
+            if hints.exists() and env_hints != '0':
                 cmd += [f'hints={hints}']
     if a.replay or a.enemy_replay:
         # The traced player's class SFX package (the fixture's sorceress,

@@ -6,9 +6,9 @@
 //! and voiceSetVolPan 0x39d4 (the SPU VOLL/VOLR words). Pure integer state;
 //! the host's mixer plays the samples and asks for each voice's volumes.
 //!
-//! Not modelled: the SPU envelope (ADSR 0x000f/0x1fc0 set by
-//! samplePlayOnVoice) — a voice counts as sounding until its chain ends or
-//! it is stopped — and sample residency (pool/SPU transfers).
+//! The SPU envelope that samplePlayOnVoice's ADSR words give a voice:
+//! [`Envelope`]. Not modelled: sample residency (pool/SPU transfers); a
+//! voice counts as in use until its chain ends or it is stopped.
 
 /// voiceFind and voiceDuck walk voices 0..11.
 pub const VOICES: usize = 12;
@@ -281,6 +281,97 @@ impl Dcs {
     }
 }
 
+/// samplePlayOnVoice 0x3c7c's ADSR1 / ADSR2 words (sceSdSetParam 0x300 /
+/// 0x400 before the KON switch 0x1500).
+pub const ADSR1: u16 = 0x000f;
+pub const ADSR2: u16 = 0x1fc0;
+
+/// A voice's SPU envelope level (0..0x7fff, the sample × level >> 15
+/// before VOLL/VOLR) from key-on, one step per 48 kHz output sample: the
+/// SPU2's ADSR (attack, exponential decay to (SL + 1) << 11, sustain until
+/// key-off, release). With DCS's words: attack rate 0 reaches 0x7fff in
+/// three samples, then ONE exponential decay step (shift 0: −0x4000 ×
+/// level >> 15) leaves 0x3fff, already at or below the decay target
+/// 0x8000, so the voice sustains at half level, rising by 4 every 0x8000
+/// samples (sustain shift 31, linear increase, step 4). Reference evidence:
+/// every sounding voice in the reference's saved states sits in sustain at
+/// 0x3fff + 4n (research/audio.md "Reference output capture"). The step
+/// timer follows the reference emulator (PCSX2 2.6.3 ADSR.cpp, upstream
+/// reading: a counter advancing 0x8000 >> (shift − 11) per sample, at least
+/// 1, a step at 0x8000); for shifts above 26 the documented hardware
+/// period is 2^(shift − 11) samples instead (psx-spx; no hardware
+/// recording here to settle it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Envelope {
+    adsr1: u16,
+    adsr2: u16,
+    /// 1 attack, 2 decay, 3 sustain, 4 release, 0 off.
+    phase: u8,
+    counter: u32,
+    level: i32,
+}
+
+impl Envelope {
+    /// KON: attack from level 0.
+    pub fn key_on(adsr1: u16, adsr2: u16) -> Self {
+        Self { adsr1, adsr2, phase: 1, counter: 0, level: 0 }
+    }
+
+    /// KOFF: release from the current level.
+    pub fn key_off(&mut self) {
+        if self.phase != 0 {
+            self.phase = 4;
+            self.counter = 0;
+        }
+    }
+
+    pub fn level(&self) -> i32 {
+        self.level
+    }
+
+    /// The envelope ended (released to 0).
+    pub fn off(&self) -> bool {
+        self.phase == 0
+    }
+
+    /// One output sample: the level after this sample's step (the SPU
+    /// steps the envelope before applying it).
+    pub fn tick(&mut self) -> i32 {
+        let (a1, a2) = (i32::from(self.adsr1), i32::from(self.adsr2));
+        // (decrease, exponential, shift, step, target)
+        let (decr, exp, shift, step, target) = match self.phase {
+            1 => (false, a1 >> 15 & 1 == 1, a1 >> 10 & 0x1f, 7 - (a1 >> 8 & 3), 0x7fff),
+            2 => (true, true, a1 >> 4 & 0xf, -8, ((a1 & 0xf) + 1) << 11),
+            3 => {
+                let d = a2 >> 14 & 1 == 1;
+                (d, a2 >> 15 & 1 == 1, a2 >> 8 & 0x1f, if d { -8 + (a2 >> 6 & 3) } else { 7 - (a2 >> 6 & 3) }, 0)
+            }
+            4 => (true, a2 >> 5 & 1 == 1, a2 & 0x1f, -8, 0),
+            _ => return 0,
+        };
+        let mut inc = 0x8000u32 >> (shift - 11).max(0);
+        if exp && !decr && 0x6000 < self.level {
+            inc >>= 2;
+        }
+        let mut delta = step << (11 - shift).max(0);
+        if exp && decr {
+            delta = ((delta * self.level) >> 15) as i16 as i32;
+        }
+        self.counter += inc.max(1);
+        if 0x8000 <= self.counter {
+            self.counter = 0;
+            self.level = (self.level + delta).clamp(0, 0x7fff);
+        }
+        if self.phase != 3 && ((!decr && target <= self.level) || (decr && self.level <= target)) {
+            self.phase += 1;
+            if 4 < self.phase {
+                self.phase = 0;
+            }
+        }
+        self.level
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,5 +449,22 @@ mod tests {
         d.voices[v].pan = 0x1fc;
         d.voice_pan(1 << v, 0x204);
         assert_eq!(d.voices[v].pan as i16, -0x1fc);
+    }
+
+    #[test]
+    fn dcs_envelope_sustains_at_half_level() {
+        let mut e = Envelope::key_on(ADSR1, ADSR2);
+        // Attack: 0x3800, 0x7000, 0x7fff; one decay step to 0x3fff.
+        assert_eq!([e.tick(), e.tick(), e.tick(), e.tick()], [0x3800, 0x7000, 0x7fff, 0x3fff]);
+        // Sustain: +4 every 0x8000 samples (the states' 0x3fff + 4n).
+        for _ in 0..0x7fff {
+            assert_eq!(e.tick(), 0x3fff);
+        }
+        assert_eq!(e.tick(), 0x4003);
+        // Release: linear, shift 0 (−0x4000 a sample) to off.
+        e.key_off();
+        assert_eq!(e.tick(), 3);
+        assert_eq!(e.tick(), 0);
+        assert!(e.off());
     }
 }

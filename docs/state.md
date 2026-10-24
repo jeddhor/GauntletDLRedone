@@ -364,6 +364,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    all thirteen runes before H4. Campaign chain t6 (campaign_chain.py:
    52 levels, bot first, search fallback, --require; DEBUG health assist)
    running.
+   2026-10-24 (midday): the 11 dB audio level difference is accounted for
+   (audio.md "Reference output capture"): the reference's saved states
+   (SPU2.bin voice records) show DCS's ADSR words leave every voice in
+   sustain at half level — native had no envelope; gdl_core::dcs::Envelope
+   now applies it to every voice and the music — and PCSX2 2.6.3 scales
+   its final mix by 0x4fff / 0x8000 (an emulator stage, removed upstream
+   after 2.6.3, not modelled); −0.5 dB remains (interpolation, codec).
+   Campaign chain t7 (bot binary f16) cleared L1 and is in G1's search
+   fallback (the bot took the rune but missed the exit in 60,000 updates).
 
 ---
 

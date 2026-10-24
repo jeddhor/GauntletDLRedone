@@ -8,12 +8,16 @@
 //! mono_flag's 0x7f) into the ported DCS voice model (gdl_core::dcs:
 //! BankPlay, voiceFind's 12 voices, ducking, VoiceVolume/VoicePan ramps,
 //! voiceSetVolPan's SPU volumes with the pan table read from IRX/DCS.IRX);
-//! each voice's output is its VOLL/VOLR word / 0x4000. Music: the decoded
-//! ADS stream, AdsSetVolume's per-channel word ((v × 0x1fff) >> 8) / 0x4000
-//! for AudioStreamSetVolume(v). Not modelled (presentation): the SPU's
-//! Gaussian resampling and its mix saturation (DCS sets an on/off envelope,
-//! no reverb, and its pitch skew is dormant: research/audio.md).
-use gdl_core::dcs::{Dcs, PanTable};
+//! each voice's output is its sample × the SPU envelope DCS's ADSR words
+//! give it (gdl_core::dcs::Envelope: half level in sustain, keyed on for
+//! every sample of a chain as samplePlayOnVoice does) × its VOLL/VOLR word
+//! / 0x4000. Music: the decoded ADS stream through the same envelope (keyed
+//! on at the stream's start: the reference's music voices sustain from
+//! there, research/audio.md), AdsSetVolume's per-channel word
+//! ((v × 0x1fff) >> 8) / 0x4000 for AudioStreamSetVolume(v). Not modelled
+//! (presentation): the SPU's Gaussian resampling and its mix saturation (no
+//! reverb, and DCS's pitch skew is dormant: research/audio.md).
+use gdl_core::dcs::{ADSR1, ADSR2, Dcs, Envelope, PanTable};
 use gdl_formats::audio::{Ads, AudioRom, Vbk};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -36,6 +40,8 @@ struct Voice {
     slot: usize,
     /// An owner's voice (DoItemSound's per-item track): updated in place.
     tag: Option<u32>,
+    /// The SPU envelope since the current sample's key-on.
+    env: Envelope,
 }
 
 /// The music channel: a stage stream (AudioStreamSetVolume word) or a
@@ -49,6 +55,7 @@ struct Music {
     loops: bool,
     /// Per-channel amplitude.
     gain: f32,
+    env: Envelope,
 }
 
 struct Mixer {
@@ -64,6 +71,8 @@ struct Mixer {
     /// mono_flag 0x21f6f4 (AudioSetStereo: GamePrefs word 2 == 0).
     mono: bool,
     out_rate: u32,
+    /// SPU samples (48 kHz) owed to the envelopes at the output rate.
+    env_clock: f64,
 }
 
 /// AdsSetVolume's SPU word for AudioStreamSetVolume(v) (the RPC's
@@ -74,13 +83,28 @@ fn stream_gain(v: i32) -> f32 {
 
 impl Mixer {
     fn new(pan_table: PanTable) -> Self {
-        Self { voices: Vec::new(), dcs: Dcs::default(), pan_table, music: None, music_vol: 0, vol_sfx: 128, mono: false, out_rate: OUT_RATE }
+        Self { voices: Vec::new(), dcs: Dcs::default(), pan_table, music: None, music_vol: 0, vol_sfx: 128, mono: false, out_rate: OUT_RATE, env_clock: 0.0 }
     }
 
     fn render(&mut self, out: &mut [f32], channels: usize) {
         out.fill(0.0);
         let frames = out.len() / channels.max(1);
         let out_rate = f64::from(self.out_rate.max(1));
+        // Envelope steps per output frame (one per frame at 48 kHz).
+        let ticks: Vec<u8> = (0..frames)
+            .map(|_| {
+                self.env_clock += f64::from(OUT_RATE) / out_rate;
+                let t = self.env_clock.floor();
+                self.env_clock -= t;
+                t as u8
+            })
+            .collect();
+        let step_env = |e: &mut Envelope, t: u8| -> f32 {
+            for _ in 0..t {
+                e.tick();
+            }
+            e.level() as f32 / 32768.0
+        };
         if let Some(m) = self.music.as_mut() {
             let ch = m.channels.max(1) as usize;
             let n = m.pcm.len() / ch;
@@ -90,8 +114,9 @@ impl Mixer {
             let (g, cross) = if self.mono { (m.gain * 181.0 / 256.0, true) } else { (m.gain, false) };
             for f in 0..frames {
                 let i = (m.pos as usize) % n.max(1);
-                let l = f32::from(m.pcm[i * ch]) / 32768.0;
-                let r = f32::from(m.pcm[i * ch + ch - 1]) / 32768.0;
+                let e = step_env(&mut m.env, ticks[f]);
+                let l = f32::from(m.pcm[i * ch]) / 32768.0 * e;
+                let r = f32::from(m.pcm[i * ch + ch - 1]) / 32768.0 * e;
                 let (ol, or) = if cross { ((l + r) * g, (l + r) * g) } else { (l * g, r * g) };
                 out[f * channels] += ol;
                 if 1 < channels {
@@ -128,9 +153,11 @@ impl Mixer {
                     {
                         v.part = start;
                     }
+                    // voicePlayNextSample → samplePlayOnVoice: KON again.
+                    v.env = Envelope::key_on(ADSR1, ADSR2);
                     continue;
                 }
-                let s = f32::from(pcm[i]) / 32768.0;
+                let s = f32::from(pcm[i]) / 32768.0 * step_env(&mut v.env, ticks[f]);
                 out[f * channels] += s * gain[0];
                 if 1 < channels {
                     out[f * channels + 1] += s * gain[1];
@@ -297,7 +324,7 @@ impl AudioOut {
         let slot = m.dcs.bank_play(request, priority as u32, cv, cd, cp)?;
         // A stomped voice's sound ends here.
         m.voices.retain(|v| v.slot != slot);
-        m.voices.push(Voice { id, chain, rates, loop_from: loop_from.or(Some(0)), loops: loops | force_loop, part: 0, pos: 0.0, slot, tag: None });
+        m.voices.push(Voice { id, chain, rates, loop_from: loop_from.or(Some(0)), loops: loops | force_loop, part: 0, pos: 0.0, slot, tag: None, env: Envelope::key_on(ADSR1, ADSR2) });
         Some(slot)
     }
 
@@ -342,7 +369,7 @@ impl AudioOut {
         let pcm = Arc::new(ads.decode(&bytes));
         if let Ok(mut m) = self.mixer.lock() {
             m.music_vol = volume;
-            m.music = Some(Music { pcm, rate: ads.rate, channels: ads.channels, pos: 0.0, loops: looping, gain: stream_gain(volume) });
+            m.music = Some(Music { pcm, rate: ads.rate, channels: ads.channels, pos: 0.0, loops: looping, gain: stream_gain(volume), env: Envelope::key_on(ADSR1, ADSR2) });
         }
         true
     }
@@ -353,7 +380,7 @@ impl AudioOut {
     pub fn play_pcm(&mut self, pcm: Vec<i16>, rate: u32, channels: u32, vol_music: i32) {
         if let Ok(mut m) = self.mixer.lock() {
             m.music_vol = vol_music;
-            m.music = Some(Music { pcm: Arc::new(pcm), rate, channels, pos: 0.0, loops: false, gain: stream_gain(vol_music) });
+            m.music = Some(Music { pcm: Arc::new(pcm), rate, channels, pos: 0.0, loops: false, gain: stream_gain(vol_music), env: Envelope::key_on(ADSR1, ADSR2) });
         }
     }
 
@@ -444,7 +471,7 @@ mod tests {
     /// A voice on DCS slot `slot` at full volume, pan 0 (left only).
     fn voice(m: &mut Mixer, pcm: Vec<i16>, rate: u32, loops: bool) -> usize {
         let slot = m.dcs.bank_play(0xff << 16, 1, 0x7f, 0, 0).unwrap();
-        m.voices.push(Voice { id: 1, chain: vec![Arc::new(pcm)], rates: vec![rate], loop_from: Some(0), loops, part: 0, pos: 0.0, slot, tag: None });
+        m.voices.push(Voice { id: 1, chain: vec![Arc::new(pcm)], rates: vec![rate], loop_from: Some(0), loops, part: 0, pos: 0.0, slot, tag: None, env: Envelope::key_on(ADSR1, ADSR2) });
         slot
     }
 
@@ -456,9 +483,11 @@ mod tests {
         let [l, r] = m.dcs.vol_pan(slot, &m.pan_table);
         let mut out = vec![0f32; 2 * 10];
         m.render(&mut out, 2);
-        assert_eq!(out[0], 0.5 * f32::from(l) / 16384.0);
+        // The envelope: 0x3800, 0x7000, 0x7fff, then 0x3fff in sustain.
+        let at = |e: i32| 0.5 * (e as f32 / 32768.0) * (f32::from(l) / 16384.0);
+        assert_eq!([out[0], out[2], out[4], out[6]], [at(0x3800), at(0x7000), at(0x7fff), at(0x3fff)]);
         assert_eq!((r, out[1]), (0, 0.0));
-        assert_eq!(out[14], out[0]);
+        assert_eq!(out[14], out[6]);
         assert_eq!(out[16], 0.0);
         assert!(m.voices.is_empty());
         assert!(!m.dcs.in_use(slot), "the DCS voice is free again");
