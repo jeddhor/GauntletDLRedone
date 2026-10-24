@@ -189,9 +189,16 @@ PlyrSfxDoDamage dispatch starts StartComboFX (two effects: ComboEffects[4]
 tinted by the partner's colour, then the player's) on the action's first
 frame; the frame replay builds the player rig (DUMMY node) and seeds the
 team links (+0x690/+0x694 as player index + 1, the team parent from status
-0x20). Left: the carried partner's rotation rows differ by 3 ulps and its
-position by 1 ulp on the first carried update (the DUMMY node's world:
-bone locals and their chain, the start blend not applied) — unknowns.md.
+0x20). trace-G1-team-v3 adds player 1's DUMMY chain (dummy_chain0: the
+DUMMY node, its parent and the player node — locals and +0x60 flags): the
+chain ends at the player's MB node as UpdatePlayerWorldMat last stored it,
+whose rotation lags the record's while the move turns the initiator
+(0x3f2e979f in the node, 0x3f2e97a2 in the record), so the tree node's
+world now composes on player_node rather than the record matrix. AddExp's
+tail (0x134b2c..0x134b48) gives a team partner (+0x690) the scaled amount
+again — AddExp(partner, n, −1), scaled a second time and not shared on
+(the kill at step 47: 5 to the initiator, 14 to the partner).
+replay-frame-G1team-v7: every part equal on all 103 updates.
 
 ## Unported (Unsupported when reached)
 

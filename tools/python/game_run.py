@@ -100,6 +100,8 @@ def main():
     ap.add_argument('--seed', type=int, help='--explore search seed')
     ap.add_argument('--cells', type=int, help='--explore archive cell limit')
     ap.add_argument('--nav', type=int, nargs='?', const=1, help='--explore macros: 1 graph-guided d-pad walks, 2 traversal-bot runs (bot.rs)')
+    ap.add_argument('--start', help='the start state JSON (default: the Poison Fields game start); e.g. a previous run\'s end_state')
+    ap.add_argument('--end-state', help='write the run\'s end as a start state JSON (new file; chained runs)')
     ap.add_argument('--padfile', help='with --pads: port 0 per update from an --explore JSON script (analog sticks included)')
     ap.add_argument('--assist', action='store_true', help='with --pads: the DEBUG health assist before each update (replaying an --explore script)')
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
@@ -140,7 +142,7 @@ def main():
     monsters = level_monsters(level, known)
     ia, wp, pw, clips, rom, pdata, *mons = resolve([items, 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2',
                                                     'AUDIO/AUDATPS2.ROM', 'PDATA/SOR.WAD'] + [f'{d}/ANIM.PS2' for _, _, d in monsters])
-    cmd = [TOOLS, 'game-run', str(w), str(wd), str(index), str(ELF), GAME_START, str(ia),
+    cmd = [TOOLS, 'game-run', str(w), str(wd), str(index), str(ELF), a.start or GAME_START, str(ia),
            str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}', f'pdata={pdata}']
     cmd += [f'{t}={path}:{p}' for (t, p, _), path in zip(monsters, mons)]
     [text] = resolve(['TEXT/ENGLISH.ROM'])
@@ -230,6 +232,8 @@ def main():
         cmd += [f'nav={a.nav}']
     if a.padfile:
         cmd += [f'padfile={a.padfile}']
+    if a.end_state:
+        cmd += [f'end_state={a.end_state}']
     if a.assist:
         cmd += ['assist=1']
     if a.players:

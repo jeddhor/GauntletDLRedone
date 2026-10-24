@@ -89,7 +89,10 @@ impl Game {
         let (seq, frame) = (u32::from(r.u16_(0xa2)), r.f32_(0xac));
         let locals = local_pose_where(&rig.anim, &rig.bytes, 0, seq, frame, &|i| chain.contains(&i)).map_err(|e| Unsupported(format!("player pose: {}", e.0)))?;
         let locals: Vec<Mat> = locals.into_iter().map(|m| m.unwrap_or(IDENTITY)).collect();
-        let m = record_matrix_of(r);
+        // GetWorldMat's chain ends at the player's MB node as
+        // UpdatePlayerWorldMat last stored it (trace-G1-team-v3: the record
+        // turns before the node does), not at the record matrix.
+        let m = self.player_node[k].unwrap_or_else(|| record_matrix_of(r));
         let root: Mat = std::array::from_fn(|i| m[i / 4][i % 4]);
         let w = node_world(&parents, &locals, root, n, None).map_err(|e| Unsupported(format!("player pose: {}", e.0)))?;
         Ok(std::array::from_fn(|i| std::array::from_fn(|j| w[i * 4 + j])))

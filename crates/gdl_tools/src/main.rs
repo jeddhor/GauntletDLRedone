@@ -3802,6 +3802,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
         report["check_num"] = serde_json::json!(game.collision.check_num());
+        // end_state=PATH: the start JSON again with the players' records and
+        // the globals at the end of the run (a next level's start state for
+        // chained runs; the level transition itself is not simulated here).
+        if let Some(path) = opts.get("end_state") {
+            let mut st: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[5]), 16 * 1024 * 1024)?)?;
+            st["players"] = serde_json::json!(game.players.iter().map(|r| r.0.iter().map(|b| format!("{b:02x}")).collect::<String>()).collect::<Vec<_>>());
+            st["globals"] = serde_json::to_value(&game.globals)?;
+            st["label"] = serde_json::json!(format!("end state of a native game-run (world {}, level {}); DEBUG tooling", game.globals.cur_world, game.globals.cur_level));
+            let mut file = fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+            serde_json::to_writer(&mut file, &st)?;
+        }
         if let Some(r) = explore_report {
             report["explore"] = r;
         }

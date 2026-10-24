@@ -76,6 +76,14 @@ impl Game {
                 self.events.push(Event::LevelUp { player: p, level: self.players[p].i32_(0x2ac0) });
             }
         }
+        // 0x134b2c..0x134b48: a team-move partner (+0x690, player index + 1)
+        // gets the scaled amount too — AddExp(partner, n, −1), which scales
+        // it again and shares no further (trace-G1-team-v3: 5 and 14).
+        if 0 <= kind
+            && let Some(q) = self.players[p].u32_(0x690).checked_sub(1).map(|v| v as usize).filter(|&q| q < 4)
+        {
+            self.add_exp(q, n, -1)?;
+        }
         Ok(changed)
     }
 

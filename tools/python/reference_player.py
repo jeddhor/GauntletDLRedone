@@ -87,6 +87,21 @@ def player_probe(memory):
             out['node'] = raw[:0x40].hex()
             out['node_parent'] = raw[0x74:0x78].hex()
             out['player_root_node'] = read(sym['PlayerRootNode'], 4).hex()
+        # Player 0's DUMMY node chain (+0x6b4, team moves carry the partner
+        # there): each node up to the player node — local matrix and +0x60
+        # flags — so GetWorldMat's chain can be recomputed.
+        dummy, = struct.unpack('<I', read(player + 0x6b4, 4))
+        top, = struct.unpack('<I', read(player + 0x80, 4))
+        chain = []
+        n = dummy
+        while n and n % 16 == 0 and n + 0x80 <= 32 * 1024 * 1024 and len(chain) < 32:
+            raw = read(n, 0x80)
+            chain.append({'node': f'{n:08x}', 'local': raw[:0x40].hex(), 'flags': raw[0x60:0x64].hex()})
+            if n == top:
+                break
+            n, = struct.unpack_from('<I', raw, 0x74)
+        if chain:
+            out['dummy_chain0'] = chain
         # The other players' nodes the same way (node1..node3), for co-op traces.
         for k in range(1, 4):
             node, = struct.unpack('<I', read(player + 0x2b00 * k + 0x80, 4))
