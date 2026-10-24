@@ -3609,7 +3609,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             let edges: Vec<[usize; 2]> = reach.iter().flat_map(|&a| nav.adj[a].iter().filter(move |&&b| a < b).map(move |&b| [a, b])).collect();
             let pts: Vec<[f32; 3]> = nav.pts.iter().map(|q| q.map(r1)).collect();
             let all: Vec<[f32; 3]> = nav.sample_all(&mut c, world.min, world.max).into_iter().map(|q| q.map(r1)).collect();
-            let v = serde_json::json!({"scope": "DEBUG bot graph (bot.rs Nav); not game data", "update": f, "start": p, "pts": pts, "reachable": reach, "edges": edges, "all_floors": all});
+            let mut hard: Vec<[usize; 2]> = Vec::new();
+            for &a in &reach {
+                for &b in &nav.adj[a] {
+                    if nav.is_hard(a, b) {
+                        hard.push([a, b]);
+                    }
+                }
+            }
+            let v = serde_json::json!({"scope": "DEBUG bot graph (bot.rs Nav); not game data", "update": f, "start": p, "pts": pts, "reachable": reach, "edges": edges, "hard": hard, "all_floors": all});
             let mut file = fs::OpenOptions::new().write(true).create_new(true).open(path)?;
             serde_json::to_writer(&mut file, &v)?;
             Ok(())

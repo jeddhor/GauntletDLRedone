@@ -42,6 +42,7 @@ const CELL: f32 = 1.5;
 const STEP_UP: f32 = 2.0;
 const HEADROOM: f32 = 3.0;
 const STRICT_RADIUS: f32 = 1.2;
+const HARD_COST: f32 = 20.0;
 const DROP: f32 = 12.0;
 const STUCK: usize = 45;
 const DWELL: f32 = 2.0;
@@ -156,6 +157,11 @@ impl Nav {
             }
         }
         best.map(|b| b.1)
+    }
+
+    /// The edge fails the player-like wall test (kept at a higher cost).
+    pub fn is_hard(&self, a: usize, b: usize) -> bool {
+        self.hard.contains(&(a, b))
     }
 
     /// `locate` over the columns already sampled (reachable graph nodes only).
@@ -385,7 +391,10 @@ impl Nav {
                 if avoid.closed.contains(&m) && !avoid.closed.contains(&n) && !goal(m) {
                     continue;
                 }
-                let k = if self.hard.contains(&(n, m)) { 4.0 } else { 1.0 };
+                // Edges the player-like test rejects: nearly closed (with
+                // the 1.2 radius they cross walls the player cannot, G2's
+                // stair wall); kept for gaps the sweep misjudges.
+                let k = if self.hard.contains(&(n, m)) { HARD_COST } else { 1.0 };
                 // Drops lose height that may have taken lifts to gain.
                 let drop = if self.pts[m][1] < self.pts[n][1] - 2.0 { 15.0 } else { 0.0 };
                 let drop = drop + if avoid.soft.contains(&m) { 25.0 } else if avoid.cheap.contains(&m) { 4.0 } else { 0.0 };
@@ -501,6 +510,8 @@ pub struct Bot {
     given_up: HashSet<usize>,
     /// Stuck events per item goal since it was last (re)opened.
     stuck_goal_counts: HashMap<usize, usize>,
+    /// When a given-up goal was last reopened for being near.
+    reopened_at: HashMap<usize, usize>,
     visited_triggers: HashSet<usize>,
     /// Contacts per trigger (revisits are bounded) and the trigger now
     /// sought again (reached only on contact: its state stays set).
@@ -627,6 +638,7 @@ impl Bot {
             idle_rebuild_at: 0,
             given_up: HashSet::new(),
             stuck_goal_counts: HashMap::new(),
+            reopened_at: HashMap::new(),
             visited_triggers: HashSet::new(),
             trigger_visits: HashMap::new(),
             revisiting: None,
@@ -819,6 +831,26 @@ impl Bot {
 
     /// The next goal on the current graph; false when none is reachable.
     fn plan(&mut self, f: usize, g: &mut Game) -> bool {
+        // A given-up goal the player has come near again gets another try
+        // (at most every 2000 updates): G2's regular exit, given up behind
+        // barrels at update 30,000, lay 15 units away at 42,500 and the bot
+        // took the secret exit beside it.
+        let p0 = g.players[0].v3(0x50);
+        let near: Vec<usize> = self
+            .given_up
+            .iter()
+            .copied()
+            .filter(|&s| {
+                let q = g.items.records[s].v3(0x40);
+                dist_xz(q, p0) < 25.0 && (q[1] - p0[1]).abs() < 6.0 && self.reopened_at.get(&s).is_none_or(|&u| u + 2000 <= f)
+            })
+            .collect();
+        for s in near {
+            self.given_up.remove(&s);
+            self.stuck_goal_counts.insert(s, 30);
+            self.reopened_at.insert(s, f);
+            self.log.push(serde_json::json!({"update": f, "reopened_near": s}));
+        }
         let avoid = self.obstacle_nodes(g);
         if 0 < g.players[0].i32_(KEYS) {
             self.gate_blocked.clear();
