@@ -113,18 +113,7 @@ impl Game {
     /// from the class entry (+0x9b0 + class × 0x18); Sumner's maximum.
     pub fn players_restore_health(&mut self) {
         for k in 0..4 {
-            let sumner = super::profile::is_sumner(&self.players[k]);
-            let r = &mut self.players[k];
-            if r.i32_(0xfc) == 8 {
-                r.set_i32(0xfc, 1);
-            }
-            if sumner {
-                r.set_f32(0x1a10, crate::player_class::max_health(r.i32_(0x2ac0)));
-                continue;
-            }
-            let c = r.u32_(0xc) as usize;
-            let v = r.u32_(0x9b0 + 0x18 * c);
-            r.set_u32(0x1a10, v);
+            restore_health(&mut self.players[k]);
         }
     }
 
@@ -707,4 +696,20 @@ impl Game {
         self.hud.push_temp(out);
         dismissed
     }
+}
+
+/// PlayersRestoreHealth's step for one player record (also used by tools
+/// that chain levels without the Tower in between).
+pub fn restore_health(r: &mut super::record::Record) {
+    let sumner = super::profile::is_sumner(r);
+    if r.i32_(0xfc) == 8 {
+        r.set_i32(0xfc, 1);
+    }
+    if sumner {
+        r.set_f32(0x1a10, crate::player_class::max_health(r.i32_(0x2ac0)));
+        return;
+    }
+    let c = r.u32_(0xc) as usize;
+    let v = r.u32_(0x9b0 + 0x18 * c);
+    r.set_u32(0x1a10, v);
 }

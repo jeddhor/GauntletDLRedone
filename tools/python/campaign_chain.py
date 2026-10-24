@@ -72,7 +72,9 @@ def main():
             raise SystemExit(f'{report} or its end state exists')
         common = []
         if start:
-            common += ['--start', start, '--next-level']
+            # The Tower between levels: its shop opened from the menu
+            # restores health (PlayersRestoreHealth); not simulated.
+            common += ['--start', start, '--next-level', '--tower-shop']
         if a.legend_bosses and code in BOSSES:
             common += ['--legend']
         if a.no_assist:

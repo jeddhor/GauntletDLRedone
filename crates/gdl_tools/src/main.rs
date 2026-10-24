@@ -1930,6 +1930,13 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let class = r.u32_(0xc) as usize;
                 let mut list = vec![Vec::new(); class + 1];
                 list[class] = pdat.clone();
+                // tower_shop=1: the health the Tower's shop restores when
+                // opened from its menu (init_shop → PlayersRestoreHealth),
+                // which a player passes between levels; chained runs do not
+                // simulate the Tower (labelled in the report).
+                if opts.contains_key("tower_shop") {
+                    gdl_core::game::shopflow::restore_health(&mut r);
+                }
                 profile::level_start(&mut r, &profile::Pdats(list), &map, cw << 8 | cl, heart).map_err(|e| e.to_string())?;
                 if cw != 0xc {
                     let controls = std::array::from_fn(|k| u32::from(r.u8_(0x190c + k)));
@@ -3588,7 +3595,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         // update of the pads= path.
         // no_assist=1: neither the search nor the replay gives health.
         let assist_on = (opts.contains_key("assist") || opts.contains_key("explore")) && !opts.contains_key("no_assist");
-        let start_health = game.players[0].f32_(0x1a10);
+        let start_health = bot::assist_baseline(&game);
         let mut explore_report = None;
         // padfile=PATH: port 0's pads per update from a JSON script
         // (explore.rs script_text; analog sticks included).
@@ -3892,7 +3899,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
             "potions_override":opts.get("potions"),"keys_override":opts.get("keys"),"crystals_override":opts.get("crystals"),
-            "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport")});
+            "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport"),"tower_shop_restore":opts.contains_key("tower_shop")});
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
         report["check_num"] = serde_json::json!(game.collision.check_num());

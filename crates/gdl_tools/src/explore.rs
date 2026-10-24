@@ -429,7 +429,7 @@ pub struct Outcome {
 pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u32, assist: bool, require: bool) -> Outcome {
     let mut rng = Rng(seed.max(1).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     // The assist rule's reference health; 0 disables it.
-    let start_health = if assist { start.players[0].f32_(HEALTH) } else { 0.0 };
+    let start_health = if assist { crate::bot::assist_baseline(start) } else { 0.0 };
     let prog = Progress { start_active: start.items.records.iter().map(|r| r.active()).collect() };
     let required: Vec<usize> = if require {
         (0..start.items.records.len()).filter(|&s| start.items.records[s].active() && matches!(item_kind(start, s), (1, 10) | (1, 0xd))).collect()

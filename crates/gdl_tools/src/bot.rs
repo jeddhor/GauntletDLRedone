@@ -451,6 +451,15 @@ pub struct Hint {
     pub wait: Option<usize>,
 }
 
+/// The DEBUG health assist's baseline: the health at the level's start, or
+/// 80 % of the class maximum for the player's level when that is more (a
+/// chained campaign carries health between levels: B6 began at 86, below a
+/// dragon breath, and the assist never fired).
+pub fn assist_baseline(g: &Game) -> f32 {
+    let r = &g.players[0];
+    r.f32_(HEALTH).max(0.8 * gdl_core::player_class::max_health(r.i32_(0x2ac0)))
+}
+
 /// Where to shoot a switch at `q` from: a reachable node near it (within
 /// SHOOT_RANGE, not above it: D2's 405 was hit from the floor 5 units below,
 /// missed from 4 above), else one at about its height within SHOT_FAR whose
@@ -701,7 +710,7 @@ impl Bot {
             progress: (0, start),
             dwell: (0, start),
             attack_until: 0,
-            start_health: g.players[0].f32_(HEALTH),
+            start_health: assist_baseline(g),
             start_level: g.players[0].i32_(0x2ac0),
             wait: None,
             assists: 0,
@@ -1183,10 +1192,18 @@ impl Bot {
                         // A trigger may bring a given-up rune or legend item
                         // within reach (B5's javelin: trigger 279 raises
                         // B5ELEV1 5 units to bridge the ditch before it).
-                        let reopened: Vec<usize> = self.given_up.iter().copied().filter(|&t| matches!(item_kind(g, t), (1, 10) | (1, 0xd))).collect();
+                        // Any other given-up goal too, with half the stuck
+                        // allowance: E1's doors open for a few seconds after
+                        // its pads, and goals given up behind them closed
+                        // stay out of reach until pressed again.
+                        let reopened: Vec<usize> = self.given_up.iter().copied().collect();
                         for t in reopened {
                             self.given_up.remove(&t);
-                            self.stuck_goal_counts.remove(&t);
+                            if matches!(item_kind(g, t), (1, 10) | (1, 0xd)) {
+                                self.stuck_goal_counts.remove(&t);
+                            } else {
+                                self.stuck_goal_counts.insert(t, 20);
+                            }
                             self.log.push(serde_json::json!({"update": f, "reopened": t, "after_trigger": s}));
                         }
                         self.wait = Some((f, g.players[0].v3(0x50), f));
