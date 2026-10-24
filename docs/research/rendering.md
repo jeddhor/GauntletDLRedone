@@ -710,5 +710,14 @@ and loses them with Front (runs client-cull-back / -front / -none;
 GDL_CULL_FACE overrides). The crystals' brightness gap is unchanged by it
 (rows 40..200, x 0..200, summed-RGB p99 537 without culling, 558 with,
 against 441 in the reference; the opaque sheen core already hides the
-bodies' back halves): still open.
+bodies' back halves): still open. Without point lights
+(TEST switch GDL_NO_POINT_LIGHTS, run client-cull-nopl) the region is the
+same (p99 541, 7503 pixels above 250 against 7983 with and 4916 in the
+reference), so the lights native gives the crystals (the dump's crystal
+vertices are all 128) are not the cause either. What remains visible at
+4× zoom: native additive tips and halos saturate to yellow-white where the
+reference stays orange — consistent with the GS truncating each blended
+write to its 16-bit frame (unknowns.md "GS per-draw truncation", not
+modelled for blended and additive draws) — and the native frame is
+rendered at 1280×768 and downsampled, sharper than the reference.
 

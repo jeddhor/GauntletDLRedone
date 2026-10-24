@@ -1405,6 +1405,10 @@ fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, mut mater
         lights.sort_by(|a, b| (Vec3::new(a[0], a[1], a[2]) - eye).length_squared().total_cmp(&(Vec3::new(b[0], b[1], b[2]) - eye).length_squared()));
     }
     lights.truncate(8);
+    // TEST switch: no point lights (renderer comparisons).
+    if std::env::var_os("GDL_NO_POINT_LIGHTS").is_some() {
+        lights.clear();
+    }
     if *last == lights {
         return;
     }
