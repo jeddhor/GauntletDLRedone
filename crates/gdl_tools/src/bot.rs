@@ -487,6 +487,9 @@ pub struct Bot {
     riding: usize,
     still: usize,
     ride_from: V3,
+    /// Updates held riding while pursuing this goal (a platform that never
+    /// stops — G1's ferry near (16, 41.4, −320) — held the bot 26,000).
+    ride_holds: (Option<Goal>, usize),
     /// The first update of the current stretch without a goal.
     no_goal_since: Option<usize>,
     /// The DEBUG health assist (explore.rs applies its own).
@@ -587,6 +590,7 @@ impl Bot {
             riding: 0,
             still: 0,
             ride_from: [0.0; 3],
+            ride_holds: (None, 0),
             no_goal_since: None,
             assist_enabled: true,
             break_tries: HashMap::new(),
@@ -1210,10 +1214,29 @@ impl Bot {
             self.riding = 0;
         }
         if riding && 1.5 < dist3(fy, self.ride_from) && self.riding < 300 {
-            self.progress = (f, p);
-            self.dwell = (f, p);
-            self.holds[2] += 1;
-            return pad;
+            if self.ride_holds.0 != self.goal {
+                self.ride_holds = (self.goal, 0);
+            }
+            self.ride_holds.1 += 1;
+            if self.ride_holds.1 <= 1800 {
+                self.progress = (f, p);
+                self.dwell = (f, p);
+                self.holds[2] += 1;
+                return pad;
+            }
+            // Ridden long enough for this goal: give it up and steer.
+            self.log.push(serde_json::json!({"update": f, "ride_giveup": format!("{:?}", self.goal), "floor": floor}));
+            match self.goal {
+                Some(Goal::Explore(n)) => {
+                    let q = self.nav.pts[n];
+                    self.visited_cols.insert(key(q[0], q[2]));
+                }
+                Some(Goal::Item(s)) => *self.stuck_goal_counts.entry(s).or_insert(0) += 10,
+                _ => {}
+            }
+            self.ride_holds = (None, 0);
+            self.riding = 300;
+            self.choose(f, g);
         }
         if let Some((until, away)) = self.backoff {
             if f < until {
