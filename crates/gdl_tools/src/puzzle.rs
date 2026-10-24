@@ -21,11 +21,11 @@
 use crate::bot::{Hint, item_nodes};
 use crate::explore::{Pad, build_nav, step};
 use gdl_core::game::Game;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, BinaryHeap};
 
-const SETTLE: usize = 900;
+const SETTLE: usize = 300;
 const MAX_DEPTH: usize = 5;
-const MAX_PROBES: usize = 160;
+const MAX_PROBES: usize = 400;
 const HEALTH: usize = 0x1a10;
 const KEYS: usize = 0x1a14;
 
@@ -41,11 +41,13 @@ fn interesting(g: &Game, s: usize) -> bool {
     r.active() && r.u8_(0xe1) == 0 && matches!(item_kind(g, s), (9, _) | (1, 2) | (1, 10) | (1, 0xd) | (5, _) | (7, _))
 }
 
-/// A trigger the player can fire: not switch-off only (bit 0), not
-/// untouchable (0x200, ItemCollSub skips it), not fired yet.
+/// A trigger the player can fire: not untouchable (0x200, ItemCollSub
+/// skips it). Switch-off pads (+0xf4 bit 0) and pads already fired count:
+/// combination locks (K1's pads 40, 41, 66 and 67 switch objects 876,
+/// 880, 881, 1029 and 1968 on and off) need presses in some order.
 fn fresh_trigger(g: &Game, s: usize) -> bool {
     let r = &g.items.records[s];
-    item_kind(g, s).0 == 5 && r.u16_(0xf4) & 0x201 == 0 && r.i8_(0xde) == 0 && r.u8_(0xe2) == 0
+    item_kind(g, s).0 == 5 && r.u16_(0xf4) & 0x200 == 0
 }
 
 /// A gate a held key would open (state +0xdc 0: closed).
@@ -92,6 +94,34 @@ fn solved(g: &Game, r: &BTreeSet<usize>) -> bool {
     exit && treasures.into_iter().all(|t| r.contains(&t))
 }
 
+/// The puzzle state: every trigger's state and the collision objects'
+/// run-time flags (a toggled bridge changes them).
+fn signature(g: &Game) -> Vec<u32> {
+    let mut v: Vec<u32> = (0..g.items.records.len()).filter(|&s| item_kind(g, s).0 == 5).map(|s| g.items.records[s].u8_(0xde) as u32).collect();
+    v.extend(g.collision.runtime_flags.iter().copied());
+    v
+}
+
+/// A queued node with its rank (items within reach, inverse length).
+struct Ranked(usize, usize, Node);
+
+impl PartialEq for Ranked {
+    fn eq(&self, o: &Self) -> bool {
+        (self.0, self.1) == (o.0, o.1)
+    }
+}
+impl Eq for Ranked {}
+impl PartialOrd for Ranked {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for Ranked {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        (self.0, self.1).cmp(&(o.0, o.1))
+    }
+}
+
 struct Node {
     game: Box<Game>,
     seq: Vec<usize>,
@@ -108,11 +138,13 @@ pub fn plan(start: &Game) -> (Vec<Hint>, serde_json::Value) {
         return (Vec::new(), serde_json::json!({"scope": "DEBUG trigger planner (puzzle.rs)", "solved_at_start": true}));
     }
     let start_reach: Vec<serde_json::Value> = r0.iter().map(|&s| serde_json::json!([s, item_kind(start, s)])).collect();
-    let mut queue = VecDeque::from([Node { game: Box::new(start.clone()), seq: Vec::new(), reach: r0 }]);
+    // Best first: the most items within reach, then the shortest sequence.
+    let mut queue = BinaryHeap::from([Ranked(r0.len(), usize::MAX, Node { game: Box::new(start.clone()), seq: Vec::new(), reach: r0 })]);
     let mut seen: BTreeSet<Vec<usize>> = BTreeSet::new();
+    let mut states: std::collections::HashSet<Vec<u32>> = std::collections::HashSet::from([signature(start)]);
     let mut probes = 0;
     let mut best: Option<(usize, Vec<usize>)> = None;
-    while let Some(node) = queue.pop_front() {
+    while let Some(Ranked(_, _, node)) = queue.pop() {
         if MAX_DEPTH <= node.seq.len() {
             continue;
         }
@@ -127,15 +159,15 @@ pub fn plan(start: &Game) -> (Vec<Hint>, serde_json::Value) {
             .reach
             .iter()
             .copied()
-            .filter(|&s| (fresh_trigger(&node.game, s) || (0 < held && closed_gate(&node.game, s))) && !node.seq.contains(&s))
+            .filter(|&s| (fresh_trigger(&node.game, s) || (0 < held && closed_gate(&node.game, s))) && node.seq.last() != Some(&s))
             .collect();
         for t in candidates {
             if MAX_PROBES <= probes {
                 break;
             }
+            // Orders matter for toggles: the sequence itself is the key.
             let mut key = node.seq.clone();
             key.push(t);
-            key.sort_unstable();
             if !seen.insert(key) {
                 continue;
             }
@@ -144,7 +176,7 @@ pub fn plan(start: &Game) -> (Vec<Hint>, serde_json::Value) {
             if !visit(&mut g, t, SETTLE, health) {
                 continue;
             }
-            let fired = !fresh_trigger(&g, t) && !closed_gate(&g, t);
+            let fired = g.items.records[t].i8_(0xde) != 0 || g.items.records[t].u8_(0xe2) != 0 || (item_kind(&g, t).0 == 7 && !closed_gate(&g, t));
             let pad = g.players[0].v3(0x50);
             let r = reach(&g, &[home]);
             let gained: Vec<usize> = r.difference(&node.reach).copied().collect();
@@ -155,15 +187,22 @@ pub fn plan(start: &Game) -> (Vec<Hint>, serde_json::Value) {
                 let hints = seq.iter().map(|&s| Hint { item: Some(s), goto: None, radius: None, wait: None }).collect();
                 return (hints, serde_json::json!({"scope": "DEBUG trigger planner (puzzle.rs)", "plan": seq, "probes": probes, "start_reach": start_reach, "log": log}));
             }
-            if !gained.is_empty() {
-                if best.as_ref().is_none_or(|b| b.0 < gained.len()) {
-                    best = Some((gained.len(), seq.clone()));
-                }
+            // A new puzzle state opens a branch even without a gain: a
+            // combination lock opens only at its last press.
+            let new_state = states.insert(signature(&g));
+            if !gained.is_empty() || new_state {
                 let mut union = node.reach.clone();
-                union.extend(r);
-                queue.push_back(Node { game: g, seq, reach: union });
+                union.extend(r.iter().copied());
+                if best.as_ref().is_none_or(|b| b.0 < union.len()) {
+                    best = Some((union.len(), seq.clone()));
+                }
+                let rank = (union.len(), usize::MAX - seq.len());
+                queue.push(Ranked(rank.0, rank.1, Node { game: g, seq, reach: union }));
             }
         }
     }
-    (Vec::new(), serde_json::json!({"scope": "DEBUG trigger planner (puzzle.rs)", "plan": null, "probes": probes, "best_partial": best.map(|b| b.1), "start_reach": start_reach, "log": log}))
+    // No full plan: the sequence that brought the most within reach, as
+    // hints (the bot's own goals take over after it).
+    let hints = best.as_ref().map(|b| b.1.iter().map(|&s| Hint { item: Some(s), goto: None, radius: None, wait: None }).collect()).unwrap_or_default();
+    (hints, serde_json::json!({"scope": "DEBUG trigger planner (puzzle.rs)", "plan": null, "probes": probes, "best_partial": best.map(|b| b.1), "start_reach": start_reach, "log": log}))
 }

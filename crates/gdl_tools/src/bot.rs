@@ -1031,6 +1031,18 @@ impl Bot {
                 .filter(|&s| self.visited_triggers.contains(&s) && touchable(s) && self.trigger_visits.get(&s).copied().unwrap_or(0) < 3)
                 .collect()
         };
+        // Last of all, switch-off triggers (+0xf4 bit 0) the player can touch,
+        // two contacts each: combination pads (K1's 67 switches objects 880,
+        // 881 and 1968 back off; 40, 41 and 66 alone left the way closed).
+        let offs: Vec<usize> = if tower_crystals {
+            Vec::new()
+        } else {
+            active(g, &|k, _| k == 5)
+                .into_iter()
+                .filter(|&s| g.items.records[s].u16_(0xf4) & 0x201 == 1 && self.trigger_visits.get(&s).copied().unwrap_or(0) < 2)
+                .collect()
+        };
+        revisit.extend(offs);
         let goals_left: Vec<usize> = if treasures.is_empty() { exits.clone() } else { treasures.clone() };
         let to_goal = |s: usize| goals_left.iter().map(|&t| dist3(g.items.records[s].v3(0x40), g.items.records[t].v3(0x40))).fold(f32::MAX, f32::min);
         revisit.sort_by(|&a, &b| to_goal(a).total_cmp(&to_goal(b)));
