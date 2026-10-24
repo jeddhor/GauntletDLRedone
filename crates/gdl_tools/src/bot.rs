@@ -1311,8 +1311,14 @@ impl Bot {
                 // It goes when destroyed (C1's corridor generator 231, radius
                 // 2, stopped the bot at its edge): attack longer and keep the
                 // edge open instead of routing away.
+                // Within the item's own radius (+0xe8) + 2: K2's barrels 7
+                // and 58 have radius 6 and stopped the player 5 units off
+                // (2999 stuck events with the 3.5 limit).
                 let blocker = (0..g.items.records.len())
-                    .filter(|&s| g.items.records[s].active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(g.items.records[s].v3(0x40), p) < 3.5)
+                    .filter(|&s| {
+                        let r = &g.items.records[s];
+                        r.active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(r.v3(0x40), p) < (r.f32_(0xe8) + 2.0).max(3.5)
+                    })
                     .min_by(|&a, &b| dist_xz(g.items.records[a].v3(0x40), p).total_cmp(&dist_xz(g.items.records[b].v3(0x40), p)));
                 self.attack_at = blocker.map(|s| g.items.records[s].v3(0x40));
                 // At most three long attacks per item: one that does not
@@ -1539,7 +1545,11 @@ impl Bot {
         // ranged fire two of three survived 60,000 updates, health 308 and
         // 403 of 483), but the fights cost assisted runs their progress
         // (b32: B5 and A3 no longer ended within 60,000 updates).
-        let ranged = !self.assist_enabled;
+        // Also when stuck again and again (five stuck events within 2000
+        // updates): enemies scale with the player's level, and in the
+        // campaign (level 25 by K2) a crowd by K2's barrels held the bot.
+        let recent = self.log.iter().rev().take_while(|e| e["update"].as_u64().is_some_and(|u| u + 2000 >= f as u64)).filter(|e| e.get("stuck").is_some()).count();
+        let ranged = !self.assist_enabled || 5 <= recent;
         let near = Self::nearest_foe(g, p, ATTACK_RANGE);
         let enemy = if ranged { near.or_else(|| Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE)) } else { near };
         let fighting = (f / 12).is_multiple_of(2) || (ranged && near.is_some());
