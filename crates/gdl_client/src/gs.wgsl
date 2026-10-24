@@ -69,12 +69,17 @@ fn point_lights(n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
 // stage"): clamp(c + DM[y & 3][x & 3], 0, 255) >> 3, read back as v << 3,
 // at the fragment's PS2 pixel (the viewport is the 640×384 3-D area).
 fn gs_write(c: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
+    let d = gs_dither(frag);
+    let v = clamp(floor(min(c, vec3(1.0)) * 255.0 + 0.001) + d, vec3(0.0), vec3(255.0));
+    return floor(v / 8.0) * 8.0 / 255.0;
+}
+
+// DIMX at the fragment's PS2 pixel.
+fn gs_dither(frag: vec2<f32>) -> f32 {
     var dm = array<f32, 16>(-4.0, 2.0, -3.0, 3.0, 0.0, -2.0, 1.0, -1.0, -3.0, 3.0, -4.0, 2.0, 1.0, -1.0, 0.0, -2.0);
     let uv = (frag - view.viewport.xy) / view.viewport.zw;
     let p = vec2<u32>(clamp(floor(uv * vec2(640.0, 384.0)), vec2(0.0), vec2(639.0, 383.0)));
-    let d = dm[(p.y & 3u) * 4u + (p.x & 3u)];
-    let v = clamp(floor(min(c, vec3(1.0)) * 255.0 + 0.001) + d, vec3(0.0), vec3(255.0));
-    return floor(v / 8.0) * 8.0 / 255.0;
+    return dm[(p.y & 3u) * 4u + (p.x & 3u)];
 }
 
 // TFX MODULATE on the GS: (Cv × Ct) >> 7 per channel in integers — the
@@ -182,7 +187,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // (2.0), the sum saturating (COLCLAMP) — premultiplied, blended One/One.
     let cs = floor(min(rgb, vec3(1.0)) * 255.0 + 0.5);
     let as_ = min(floor(alpha * 128.0), 255.0);
-    return vec4(min(floor(cs * as_ / 128.0), vec3(255.0)) / 255.0, 1.0);
+    let v = min(floor(cs * as_ / 128.0), vec3(255.0));
+    if params.extra.w > 0.5 {
+        // Each GS write stores clamp(Cd + v + DM) >> 3 in the PSMCT16S
+        // frame, and Cd is already a multiple of 8, so the draw adds
+        // floor((v + DM) / 8) × 8 (−8 where v + DM < 0). The final pass
+        // quantises the frame below once (Cd's own write), so emitting that
+        // step here gives the GS value for any stack of additive layers.
+        return vec4(floor((v + gs_dither(in.position.xy)) / 8.0) * 8.0 / 255.0, 1.0);
+    }
+    return vec4(v / 255.0, 1.0);
 #else
     // Display values: the frame is converted once by DisplayToLinear.
     return vec4(min(rgb, vec3(1.0)), min(alpha, 1.0));

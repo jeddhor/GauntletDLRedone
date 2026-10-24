@@ -721,3 +721,22 @@ write to its 16-bit frame (unknowns.md "GS per-draw truncation", not
 modelled for blended and additive draws) — and the native frame is
 rendered at 1280×768 and downsampled, sharper than the reference.
 
+## Additive writes (2026-10-23)
+
+Each GS write stores clamp(C + DM[y & 3][x & 3], 0, 255) >> 3 in the
+PSMCT16S frame (DTHE 1). For an additive draw over a frame value Cd that is
+already a multiple of 8, the result is Cd + floor((v + DM) / 8) × 8 with v =
+Cs·As >> 7 — a step that depends only on the draw (−8 where v + DM < 0;
+the clamps at 0 and 248 agree). gs.wgsl emits that step for additive draws
+(GsParams.extra.w, object parts and psys sprites; GDL_NO_DITHER turns it
+off) into the HDR target and the final pass quantises the frame below once,
+so any stack of additive layers over a written frame gets the GS value.
+Alpha-blended draws (0x44) cannot be done this way: their step depends on
+Cd. Tower at the reference camera (run client-addq-a against client-cull-
+back): crystal region (rows 40..200, x 0..200) summed-RGB p90 376 → 355 and
+p99 558 → 500 (reference 290 / 441), bright pixels 7983 → 7139 (4916),
+their mean blue 35.6 → 27.6 (31.3); overall 36.7/27.1/11.6 → 35.9/26.0/10.6
+(33.5/24.5/10.3). Halos turn orange where they were yellow-white; the
+reference's halos still show sharper rays and its frame is softer. G1, H1
+and A1 at their reference cameras show no artifacts (client-addq-g1/-h1/-a1).
+

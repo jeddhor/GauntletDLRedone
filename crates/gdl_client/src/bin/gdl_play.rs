@@ -3274,7 +3274,12 @@ fn present_particles(
             let blend = em.psys.blend();
             let (no_depth_write, depth_always) = em.psys.depth_flags();
             let m = gdl_client::GsMaterial {
-                params: gdl_client::GsParams { tint: Vec4::ONE, options: Vec4::new(if named.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0), ..default() },
+                params: gdl_client::GsParams {
+                    tint: Vec4::ONE,
+                    options: Vec4::new(if named.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0),
+                    extra: Vec4::new(0.0, 0.0, 0.0, gdl_client::frame_writes()),
+                    ..default()
+                },
                 lit: false,
                 base: named,
                 lightmap: None,

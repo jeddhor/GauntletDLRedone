@@ -574,8 +574,9 @@ fn mip_image(width: u16, height: u16, levels: Vec<Vec<u8>>, sampler: ImageSample
     image
 }
 
-/// 1 unless GDL_NO_DITHER is set: GsParams.extra.w.
-fn frame_writes() -> f32 {
+/// 1 unless GDL_NO_DITHER is set: GsParams.extra.w (per-write frame
+/// quantisation of lightmapped bases and additive draws).
+pub fn frame_writes() -> f32 {
     if std::env::var_os("GDL_NO_DITHER").is_some() { 0.0 } else { 1.0 }
 }
 
