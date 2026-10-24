@@ -609,10 +609,13 @@ Gouraud interpolation of integer vertex colours, additive glow passes).
   of render time, item and world texmod lists from their first run. Two G1
   captures (GDL_DEBUG_LEVEL=G1, autostart, the scene-g1-v1 camera, update
   600; runs client-g1fz-a/-b) are bit-identical. Two Tower captures at
-  update 400 (client-towerfreeze-e/-f) still differ in the crystals' spin
-  and the player's area: the simulation itself differs there between runs
-  (the simulate system and the message box run on the 30 Hz fixed clock;
-  the source is not found).
+  update 400 (client-towerfreeze-e/-f) still differed in the crystals' spin
+  and the player's area. Rechecked 2026-10-23 on build de90493: two
+  frozen Tower captures at update 400 (client-tfz2-a/-b) are bit-identical,
+  and the per-update simulation hashes of two Tower runs (GDL_EXIT_AFTER
+  600, uncapped and GDL_RENDER_FPS 9; tdet-a/-b) are equal at all 600
+  updates. The earlier difference does not reproduce; its cause was not
+  identified.
 
 ## Weapon trails and the held weapon's flags (2026-10-23)
 
