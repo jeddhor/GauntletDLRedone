@@ -3807,8 +3807,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         // chained runs; the level transition itself is not simulated here).
         if let Some(path) = opts.get("end_state") {
             let mut st: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[5]), 16 * 1024 * 1024)?)?;
+            // Leaving the Tower runs EndTower (as gdl_play's level change).
+            if game.globals.cur_world == 0xd {
+                game.end_tower();
+            }
             st["players"] = serde_json::json!(game.players.iter().map(|r| r.0.iter().map(|b| format!("{b:02x}")).collect::<String>()).collect::<Vec<_>>());
-            st["globals"] = serde_json::to_value(&game.globals)?;
+            // The session globals gdl_play carries into the next level; the
+            // rest stay the start's (a level end's exit state must not).
+            let g = serde_json::to_value(&game.globals)?;
+            for k in ["tower_counter", "last_finished_world", "last_finished_level", "cur3d_transmitter", "cur_transmitter", "last_world_played", "last_level_played", "transmitter_table"] {
+                st["globals"][k] = g[k].clone();
+            }
+            st["globals"]["check_num"] = serde_json::json!(game.collision.check_num());
             st["label"] = serde_json::json!(format!("end state of a native game-run (world {}, level {}); DEBUG tooling", game.globals.cur_world, game.globals.cur_level));
             let mut file = fs::OpenOptions::new().write(true).create_new(true).open(path)?;
             serde_json::to_writer(&mut file, &st)?;
