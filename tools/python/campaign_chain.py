@@ -79,9 +79,12 @@ def main():
                 br = json.loads(bot_report.read_text())
                 b = br.get('bot') or {}
                 missed = [t for t in br.get('treasures', []) if not t['taken']]
-                step['bot'] = {'exit_update': b.get('exit_update'), 'exit_wave': b.get('exit_wave'), 'assists': b.get('health_assists'),
-                               'treasures': br.get('treasures')}
-                if b.get('exit_update') is not None and bot_end.exists() and not (a.require and missed):
+                step['bot'] = {'exit_update': b.get('exit_update'), 'exit_wave': b.get('exit_wave'), 'exit_state': b.get('exit_state'),
+                               'assists': b.get('health_assists'), 'treasures': br.get('treasures')}
+                # Through the level (state 5 exited, 4 a boss's auto exit), not
+                # ended by a death.
+                won = b.get('exit_update') is not None and b.get('exit_state') in (4, 5)
+                if won and bot_end.exists() and not (a.require and missed):
                     step.update(ended=True, by='bot', replay_level_end=b['exit_update'], assists=b.get('health_assists'),
                                 legend_debug=a.legend_bosses and code in BOSSES)
                     steps.append(step)

@@ -159,6 +159,13 @@ pub fn level_ended(g: &Game) -> bool {
     g.level_done.is_some() || (g.players_done && g.exit_ready)
 }
 
+/// The level ended with player 0 through it: state 5 (exited by a portal)
+/// or 4 (a boss level's auto exit) — a death also ends the level
+/// (PlayersSetWaveDied → TowerWave) and does not count.
+pub fn level_won(g: &Game) -> bool {
+    level_ended(g) && matches!(g.players[0].i32_(0xfc), 4 | 5)
+}
+
 /// The labelled DEBUG health assist (as bot.rs): applied before an update.
 pub fn assist(g: &mut Game, start_health: f32) -> bool {
     if g.players[0].i32_(0xfc) == 1 && g.players[0].f32_(HEALTH) < start_health * 0.4 {
@@ -426,7 +433,7 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
     } else {
         Vec::new()
     };
-    let ends = |g: &Game| level_ended(g) && required.iter().all(|&s| !g.items.records[s].active());
+    let ends = |g: &Game| level_won(g) && required.iter().all(|&s| !g.items.records[s].active());
     let rss0 = vm_rss_kib();
     let mut assists = 0usize;
     // The stage-start sequence and camera waits hold the player: the search
@@ -545,7 +552,7 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
                 break;
             }
             if level_ended(&state) {
-                // Ended without a required item: not filed.
+                // Ended by a death or without a required item: not filed.
                 continue;
             }
             if state.players[0].i32_(0xfc) != 1 {

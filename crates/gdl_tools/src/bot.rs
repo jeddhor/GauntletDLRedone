@@ -445,6 +445,7 @@ pub struct Bot {
     pub log: Vec<serde_json::Value>,
     pub exit_update: Option<usize>,
     pub exit_wave: Option<i32>,
+    pub exit_state: Option<i32>,
     pub static_exit_reachable: bool,
     pub start: V3,
     replans: usize,
@@ -484,6 +485,8 @@ pub struct Bot {
     no_goal_since: Option<usize>,
     /// The DEBUG health assist (explore.rs applies its own).
     pub assist_enabled: bool,
+    /// Long attacks spent on each blocking item (slot).
+    break_tries: HashMap<usize, u32>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -551,6 +554,7 @@ impl Bot {
             log: Vec::new(),
             exit_update: None,
             exit_wave: None,
+            exit_state: None,
             static_exit_reachable: false,
             start,
             replans: 0,
@@ -576,6 +580,7 @@ impl Bot {
             ride_from: [0.0; 3],
             no_goal_since: None,
             assist_enabled: true,
+            break_tries: HashMap::new(),
         }
     }
 
@@ -919,6 +924,9 @@ impl Bot {
             // auto exit (do_players done, AudioStillPlaying clear → TowerWave).
             self.exit_update = Some(f);
             self.exit_wave = g.level_done.or(Some(gdl_core::game::boss::TOWER_WAVE));
+            // 5 exited, 4 a boss level's auto exit; a dying state means the
+            // level ended by a death (PlayersSetWaveDied → TowerWave).
+            self.exit_state = Some(g.players[0].i32_(0xfc));
         }
         if self.exit_update.is_some() || g.players[0].i32_(0xfc) != 1 {
             return pad;
@@ -1043,11 +1051,18 @@ impl Bot {
                 // It goes when destroyed (C1's corridor generator 231, radius
                 // 2, stopped the bot at its edge): attack longer and keep the
                 // edge open instead of routing away.
-                self.attack_at = (0..g.items.records.len())
+                let blocker = (0..g.items.records.len())
                     .filter(|&s| g.items.records[s].active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(g.items.records[s].v3(0x40), p) < 3.5)
-                    .map(|s| g.items.records[s].v3(0x40))
-                    .min_by(|a, b| dist_xz(*a, p).total_cmp(&dist_xz(*b, p)));
-                let breakable = self.attack_at.is_some();
+                    .min_by(|&a, &b| dist_xz(g.items.records[a].v3(0x40), p).total_cmp(&dist_xz(g.items.records[b].v3(0x40), p)));
+                self.attack_at = blocker.map(|s| g.items.records[s].v3(0x40));
+                // At most three long attacks per item: one that does not
+                // break (statues, rocks, a respawning generator) is then
+                // routed around as before (b27: A3's 1285 stuck events).
+                let breakable = blocker.is_some_and(|s| {
+                    let n = self.break_tries.entry(s).or_insert(0);
+                    *n += 1;
+                    *n <= 3
+                });
                 if !at_gate
                     && !breakable
                     && let (Some(&a), Some(&b)) = (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at))
@@ -1396,7 +1411,7 @@ impl Bot {
             "critters": g.critters.iter().flatten().map(|c| serde_json::json!({"pos": c.rec.v3(0x40), "state": c.rec.i32_(8), "health": c.rec.f32_(0x4f4)})).collect::<Vec<_>>(),
             "scope": "TRAVERSAL BOT (gdl_tools bot.rs): port 0 driven through the ordinary pad path; health assist is a DEBUG shortcut",
             "start": self.start, "start_level": self.start_level, "player_radius": g.players[0].f32_(0x828), "collision_offset": g.players[0].f32_(0x820), "collision_height": g.players[0].f32_(0x82c), "nav_nodes": self.nav.pts.len(), "reachable_nodes": self.nav.reached,
-            "static_exit_reachable": self.static_exit_reachable, "exit_update": self.exit_update, "exit_wave": self.exit_wave.map(|w| format!("{w:#x}")),
+            "static_exit_reachable": self.static_exit_reachable, "exit_update": self.exit_update, "exit_wave": self.exit_wave.map(|w| format!("{w:#x}")), "exit_state": self.exit_state,
             "health_assists": self.assists, "hints": self.hints.len(), "hints_done": self.hint_at, "replans": self.replans, "rebuilds": self.rebuilds, "holds": {"stage_or_camera": self.holds[0], "exit_portal": self.holds[1], "riding": self.holds[2], "cam_wait_now": g.globals.cam_wait, "start_of_stage_now": g.globals.start_of_stage}, "given_up": self.given_up.iter().collect::<Vec<_>>(),
             "log": self.log,
         })
