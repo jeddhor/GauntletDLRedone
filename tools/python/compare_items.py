@@ -50,6 +50,10 @@ def main():
     parser.add_argument('--worlds', default='LEVELS/LEVELG1/WORLDS.PS2', help='WORLDS.PS2 package label')
     parser.add_argument('--wdata', default='WDATA/TOWN.WAD', help='WDATA package label')
     parser.add_argument('--level', type=int, default=0, help='LEVL record index')
+    parser.add_argument('--after-updates', type=int,
+                        help='compare with a native game run of this many updates (game_run.py --itemdump, seeded with the derived '
+                             'RandomItemNum) instead of the load alone; needs --level-name')
+    parser.add_argument('--level-name', help="the level's name (e.g. A2) for --after-updates")
     parser.add_argument('--updates-since-load', type=int, default=0,
                         help="ProcessItems updates between AddItemInstList and the capture (RandomItemNum += 1 each)")
     args = parser.parse_args()
@@ -73,6 +77,20 @@ def main():
         session['random_item_num'] = (final_random - 0x1b7 * native['random_calls'] - args.updates_since_load) & 0xffffffff
         session_path.write_text(json.dumps(session, indent=2) + '\n')
         native = run(worlds, wdata, session_path, scratch, args.level)
+    load_native = native
+    if args.after_updates is not None:
+        # The same level run natively for N updates from its start (record-
+        # based player 0, idle pad) with the derived seed; its items replace
+        # the load-only records (ProcessItems' matrices, DoEnemyPickupItems,
+        # LinkTriggerToCam, ProcessItemWobjs and the per-update words apply).
+        run_path = args.report.with_suffix('.run.json')
+        n = args.after_updates
+        subprocess.run([sys.executable, 'tools/python/game_run.py', str(run_path), '--world', args.level_name[0],
+                        '--level', args.level_name[1:], '--frames', str(n), '--pads', f'0:{n}', '--itemdump',
+                        '--random-item-num', str(session['random_item_num'])], check=True, stdout=subprocess.DEVNULL)
+        dump = json.loads(run_path.read_text())['item_dump']
+        native = dict(load_native, records=dump['records'], objects=dump['objects'], wobjs=dump['wobjs'],
+                      world_has_gates=dump['world_has_gates'])
     items, count, defs, objs = u(ITEMS), u(NUM_ITEMS), u(DEFS), u(OBJECTS)
     records = [bytes.fromhex(r) for r in native['records']]
     mismatch = collections.Counter()
@@ -132,7 +150,7 @@ def main():
                   objects_differing=object_diff[:40], objects_differing_count=len(object_diff),
                   world_has_gates=dict(ram=i(0x23e1a0), native=native['world_has_gates']),
                   max_level_coins=native['max_level_coins'], random_calls=native['random_calls'],
-                  updates_since_load=args.updates_since_load,
+                  updates_since_load=args.updates_since_load, after_updates=args.after_updates,
                   vb_minus_final_plus_calls=(u(0x2a1c78) - final_random + 0x1b7 * native['random_calls']) & 0xffffffff)
     with args.report.open('x') as file:
         json.dump(report, file, indent=1)

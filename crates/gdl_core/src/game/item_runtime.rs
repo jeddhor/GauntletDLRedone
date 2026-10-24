@@ -780,12 +780,24 @@ impl Game {
                     Some(m)
                 }
             };
-            if let Some(world) = node {
+            if let Some(mut world) = node {
+                if self.items.node_w.get(slot).copied().unwrap_or(false) {
+                    for row in world.iter_mut().take(3) {
+                        row[3] = 0.0;
+                    }
+                    world[3][3] = 1.0;
+                }
                 for (i, row) in world.iter().enumerate() {
                     for (j, v) in row.iter().enumerate() {
                         r.set_f32(0x10 + 0x10 * i + 4 * j, *v);
                     }
                 }
+            }
+            if r.u8_(0xe1) == 0 {
+                if self.items.node_w.len() <= slot {
+                    self.items.node_w.resize(slot + 1, false);
+                }
+                self.items.node_w[slot] = true;
             }
             crate::items::ItemWorld::update_offsets(&mut r)?;
             self.items.records[slot] = r.clone();

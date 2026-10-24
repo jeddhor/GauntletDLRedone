@@ -279,6 +279,21 @@ Found by the bot and fixed in the game logic: J4 (and any level starting on
 a moving platform) left the player behind (player.md "Level start on a
 moving floor").
 
+Rules added for b26 (2026-10-23), from the b10–b23 logs:
+- D1's walkway (object 1114, y 21.3) borders ground 9 units below (1108);
+  the graph's drop edges pass its sweeps, but the player cannot step off
+  (b10: 1,474 stuck events at one corner). The reference behaves the same
+  (trace-D1-ledge-v1 from the WARPED capture w4l1-ledge-v1, player 0 at
+  (39.8, 21.4, −78.5): Left, which points at the drop, slides along +z to
+  (39.4, 20.1, −70.7) as natively), so it is the graph, not the game. A
+  stuck drop edge now blocks every drop edge within 3 units heading the
+  same way.
+- Stuck beside a generator (kind 3) the bot attacks it like a barrel or
+  chest (only when stuck within 3.5 units; b7 had made generators goals).
+- With no goal for 900 updates (H3 and D1 idled ~40,000 updates with every
+  goal given up) the bot forgets given-up goals, gate blocks, used triggers
+  and explored columns and regrows the graph.
+
 
 ## Menu flow tests (M17, 2026-10-23)
 

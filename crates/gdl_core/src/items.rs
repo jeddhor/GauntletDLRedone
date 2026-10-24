@@ -283,6 +283,14 @@ pub struct ItemWorld {
     /// strncpy 16; else the definition's +0x28 name is used). The model
     /// lookup (ItemFindMBObjectL1) uses it when the definition has no tree.
     pub geo_name: Vec<Option<String>>,
+    /// The item's render node holds the w column (0, 0, 0, 1): set once the
+    /// item has been shown (+0xe1 0) through an update. Until then the node
+    /// keeps UpdateObjWorldMat's CopyMat4 of the record, whose +0x4c is
+    /// NewItem's stack word (trace-B3-start-v1: 0x01fffba0 in every record
+    /// after the load, 1.0 from the next update in exactly the shown items;
+    /// the writer is outside ProcessItems and not identified — HYPOTHESIS:
+    /// the tree draw, which skips hidden trees).
+    pub node_w: Vec<bool>,
 }
 
 /// WPitchMat3/WYawMat3/WRollMat3 0x1d5228/0x1d5178/0x1d52d8 on rows 0..2.
@@ -364,6 +372,7 @@ impl ItemWorld {
             floor_parent: Vec::new(),
             sound_node: Vec::new(),
             sound_anchor: Vec::new(),
+            node_w: Vec::new(),
             geo: Vec::new(),
             statue_tree: Vec::new(),
             geo_name: Vec::new(),

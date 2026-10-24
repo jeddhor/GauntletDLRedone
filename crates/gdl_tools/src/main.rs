@@ -222,6 +222,12 @@ impl ReferenceItems {
             }
             new[0xe6..0xe8].copy_from_slice(&rec.0[0xe6..0xe8]);
             rec.0 = new;
+            // A capture is at least one update past its load, so a shown item's
+            // node already holds the w column (items.rs node_w).
+            if game.items.node_w.len() <= slot {
+                game.items.node_w.resize(slot + 1, false);
+            }
+            game.items.node_w[slot] = raw[0xe1] == 0;
             // SetItemGeo ran when the traced atree (+0x80) is set; a slot
             // holding another definition natively, or with another geometry
             // decision, takes its tree's clock.
@@ -1881,6 +1887,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         // active count — the players who entered; co-op traces).
         if let Some(v) = opts.get("vplayers") {
             start.globals.num_virtual_players = v.parse()?;
+        }
+        // random_item_num=N: vb_counter at the load, AddItemInstList's
+        // RandomItemNum (load comparisons against a capture's derived seed).
+        if let Some(v) = opts.get("random_item_num") {
+            start.extra.vb_counter = v.parse()?;
         }
         let mut game = gdl_core::game::Game::new_level(gdl_core::game::setup::LevelInputs {
             world: &world, wdata: &wdata, level, elf: &elf, start, enemy_anims, item_anims, item_anim_nodes, effect_tables,
@@ -3574,7 +3585,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             .filter(|(n, _)| !n.is_empty() && !game.item_anim_lib.contains_key(n))
             .map(|(n, k)| format!("{n} kind {k}"))
             .collect();
-        let report = serde_json::json!({"carried_at_load":carried_at_load,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
+        let mut report = serde_json::json!({"carried_at_load":carried_at_load,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
             "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
                 "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
@@ -3585,6 +3596,19 @@ fn run() -> Result<(), Box<dyn Error>> {
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
             "potions_override":opts.get("potions"),"crystals_override":opts.get("crystals"),
             "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport")});
+        // itemdump=1: the item records, definitions, wobjs and item-world
+        // object words at the end of the run (compare_items.py --after-updates).
+        if opts.contains_key("itemdump") {
+            let w = &game.items;
+            let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+            report["item_dump"] = serde_json::json!({
+                "records":w.records.iter().map(|r| hex(&r.0)).collect::<Vec<_>>(),
+                "definitions":w.definitions.iter().map(|d| hex(&d.0)).collect::<Vec<_>>(),
+                "wobjs":w.wobjs.iter().map(|o| serde_json::json!({"object":o.object,"inity":o.inity.to_bits(),"y":o.y.to_bits(),
+                    "starty":o.starty.to_bits(),"endy":o.endy.to_bits(),"snd":o.snd.to_bits()})).collect::<Vec<_>>(),
+                "objects":w.objects.iter().map(|o| [o.flags_10, u32::from(o.word_14), u32::from(o.byte_16), u32::from(o.byte_17)]).collect::<Vec<_>>(),
+                "world_has_gates":w.world_has_gates});
+        }
         let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[8])?;
         serde_json::to_writer_pretty(&mut file, &report)?;
         file.write_all(b"\n")?;
