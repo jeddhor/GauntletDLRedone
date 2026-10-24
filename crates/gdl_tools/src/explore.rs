@@ -606,13 +606,36 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
         }
     }
     let max_progress = archive.values().map(|c| c.progress).max().unwrap_or(0);
+    // The frontier (diagnosis of a level not ended): the best cell's place
+    // and the progress items it has and has not done, and the box the cells
+    // at the highest progress span.
+    let frontier = archive.values().max_by(|a, b| a.progress.cmp(&b.progress).then(b.updates.cmp(&a.updates))).map(|c| {
+        let g = &c.state;
+        let mut done = Vec::new();
+        let mut left = Vec::new();
+        for s in 0..g.items.records.len().min(prog.start_active.len()) {
+            let r = &g.items.records[s];
+            let (kind, sub) = item_kind(g, s);
+            if !matches!((kind, sub), (5, _) | (7, _) | (1, 2) | (1, 0xd) | (9, _)) || !prog.start_active[s] {
+                continue;
+            }
+            let gone = !r.active() || (kind == 5 && (r.i8_(0xde) != 0 || r.u8_(0xe2) != 0));
+            let row = serde_json::json!([s, kind, sub, r.v3(0x40).map(|v| (v * 10.0).round() / 10.0)]);
+            if gone && kind != 9 { done.push(row) } else { left.push(row) }
+        }
+        let at_max: Vec<V3> = archive.values().filter(|x| x.progress == max_progress).map(|x| x.state.players[0].v3(0x50)).collect();
+        let lo = (0..3).map(|i| at_max.iter().map(|p| p[i]).fold(f32::INFINITY, f32::min)).collect::<Vec<_>>();
+        let hi = (0..3).map(|i| at_max.iter().map(|p| p[i]).fold(f32::NEG_INFINITY, f32::max)).collect::<Vec<_>>();
+        serde_json::json!({"pos": g.players[0].v3(0x50), "keys": g.players[0].i32_(KEYS), "progress": c.progress, "updates": c.updates,
+            "done": done, "left": left, "cells_at_max": at_max.len(), "box_at_max": [lo, hi]})
+    });
     let report = serde_json::json!({
         "scope": "DEBUG state search (explore.rs): Go-Explore over native Game clones, pad macros (random, graph-guided or bot), health assist; tooling, not a fidelity input",
         "mode": mode, "budget": budget, "seed": seed, "updates_used": used, "iterations": iterations, "cells": archive.len(), "evicted": evicted,
         "ended": found.is_some(), "ended_at": ended_at, "start_prefix": prefix, "script_updates": script.len(), "macros": chain.len(),
         "max_progress": max_progress, "start_progress": k0.4, "assists_in_search": assists,
         "nav": {"builds": nav_builds, "macros": nav_macros, "reached": nav_reached, "bot_macros": bot_macros, "nodes": nav.as_ref().map(|n| n.0.pts.len()), "blocked_edges": blocked.values().map(|b| b.len()).sum::<usize>()},
-        "rss_kib": [rss0, vm_rss_kib()], "timeline": timeline,
+        "rss_kib": [rss0, vm_rss_kib()], "timeline": timeline, "frontier": frontier,
     });
     Outcome { script, report }
 }

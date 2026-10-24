@@ -1,12 +1,13 @@
 //! Native game construction and the per-frame step.
 //!
-//! INTERIM START (labelled): player records and session globals come from the
-//! user's save (export_game_state.py v3); items are loaded fresh with the
-//! verified AddItemInstList port; the enemy array starts empty. The frame
-//! order follows game_main's 0x4010 path: world_update (SetupDynGrid),
-//! do_items, do_enemies, do_players. Player motion still uses the interim
-//! PlayerSim until the full PlayerMotion port lands; its pickups use the
-//! ported PlayerCollideItems/PlayerItemCollision/GrabPowerup chain.
+//! INTERIM START (labelled): the session globals not carried by the client
+//! (and fixture runs' player records) come from a start state exported from
+//! a preserved save (export_game_state.py v6 / export_start_state.py); the
+//! client builds player records natively (game::profile) and carries the
+//! session globals between levels. Items load fresh through the verified
+//! AddItemInstList port and enemies through the per-level loading. The
+//! frame order follows game_main's 0x4010 path: world_update (SetupDynGrid),
+//! do_items, do_enemies, do_players (the ported PlayerMotion chain).
 use super::enemy_ai::{init_actions, EnemyAnim, EnemyAnimData};
 use super::pickups::ClassData;
 use super::record::{Record, PLAYER};
