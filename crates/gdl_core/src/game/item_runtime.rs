@@ -206,10 +206,11 @@ impl Game {
             return Ok(());
         }
         // SetItem's generator case (0x152410..0x15242c): ItemGenDesc then
-        // AtreeMatchAnyHeader, passed to SetItemGeo — "GEN_SPECIAL<level>"
-        // for E's and F's special generators (trees in ITEMS/levelE/F; no
-        // GEN_<prefix><level> tree exists on the disc); without a match
-        // SetItemGeo falls back to the definition's tree.
+        // AtreeMatchAnyHeader(desc, 1), passed to SetItemGeo —
+        // "GEN_SPECIAL<level>" for E's and F's special generators (trees in
+        // ITEMS/levelE/F) and GEN_WAR<level> from MONSTERS/WAR (J3, J4; the
+        // only enemy package with GEN_ trees, setup add_generator_trees);
+        // without a match SetItemGeo falls back to the definition's tree.
         let generator_tree = (self.items.definitions[r.definition()].kind() == 3).then(|| self.item_gen_desc(slot)).filter(|n| self.item_anim_lib.contains_key(n));
         let name = match (self.items.statue_tree.get(slot).copied().flatten(), generator_tree) {
             (Some(t), _) => t.to_string(),
@@ -943,7 +944,7 @@ impl Game {
 
     /// ProcessItems' find_enemy_slot(0, -1) probe: only sets no_enemy_slot.
     fn find_enemy_slot_probe(&mut self) -> R<()> {
-        if self.enemies.iter().any(|r| r.i32_(e::STATE) == 0) {
+        if self.enemies.iter().take(self.num_enemies()).any(|r| r.i32_(e::STATE) == 0) {
             return Ok(());
         }
         self.no_enemy_slot = true;
@@ -1569,7 +1570,7 @@ impl Game {
                 return 2;
             }
         }
-        if enemies && self.enemies.iter().any(|e| e.i32_(e::STATE) == 1 && e.u32_(0x2ac) == o as u32 + 1) {
+        if enemies && self.enemies.iter().take(self.num_enemies()).any(|e| e.i32_(e::STATE) == 1 && e.u32_(0x2ac) == o as u32 + 1) {
             return 1;
         }
         0

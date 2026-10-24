@@ -921,7 +921,8 @@ impl Game {
                 let class = self.classes[p].clone();
                 self.add_powerup(0.0, 5.0, p, 9, 4, &class)?;
             }
-            for e in &mut self.enemies {
+            let n = self.num_enemies();
+            for e in self.enemies.iter_mut().take(n) {
                 e.set_i32(0x340, 0);
             }
             let end = self.globals.end_of_stage;

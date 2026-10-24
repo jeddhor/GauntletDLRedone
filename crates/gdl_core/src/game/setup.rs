@@ -113,6 +113,9 @@ pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animat
         if tree.label.contains("STATUE") {
             data.statue_trees.insert((t, tree.label.clone()), (clips_of(anim, k), tree.nodes.iter().any(|n| n.node_type == 1), tree.nodes.len() as i32));
         }
+        if tree.label.starts_with("GEN_") {
+            data.gen_trees.insert((t, tree.label.clone()), (clips_of(anim, k), tree.nodes.iter().any(|n| n.node_type == 1), tree.nodes.len() as i32));
+        }
     }
     for (k, tree) in anim.trees.iter().enumerate() {
         let Some(level) = (1..=7).find(|&l| enemy_desc(prefix, l) == tree.label) else { continue };
@@ -125,6 +128,24 @@ pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animat
         data.tree_nodes.insert((t, level), tree.nodes.len() as i32);
         if tree.nodes.iter().any(|n| n.node_type == 1) {
             data.tree_animated.insert((t, level));
+        }
+    }
+}
+
+/// AtreeMatchAnyHeader 0x14fa60(desc, 1) — SetItem's, DamageItem's and
+/// HealItem's generator trees (ItemGenDesc "GEN_<prefix><level>"): after
+/// item_anim, powerup_anim and item_anim2 it tries enemy_anim[0..0x2c] in
+/// order, so an enemy package's GEN_ tree (MONSTERS/WAR: GEN_WAR0..3, in J3
+/// and J4) joins the item tree library behind the item packages, the lowest
+/// enemy type first.
+fn add_generator_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32)>, enemy: &EnemyAnimData) {
+    type Entry<'a> = (&'a (i32, String), &'a (Vec<ClipTiming>, bool, i32));
+    let mut found: Vec<Entry> = enemy.gen_trees.iter().filter(|((t, _), _)| (0..=0x2c).contains(t)).collect();
+    found.sort_by_key(|((t, label), _)| (*t, label.clone()));
+    for ((_, label), (clips, animated, n)) in found {
+        if !lib.contains_key(label) {
+            lib.insert(label.clone(), clips.clone());
+            nodes.insert(label.clone(), (*animated, *n));
         }
     }
 }
@@ -497,6 +518,7 @@ impl Game {
         globals.boss_type = level.boss_type;
         let (mut item_lib, mut item_nodes) = (inp.item_anims.clone(), inp.item_anim_nodes.clone());
         add_statue_trees(&mut item_lib, &mut item_nodes, &inp.enemy_anims, &inp.critters);
+        add_generator_trees(&mut item_lib, &mut item_nodes, &inp.enemy_anims);
         let mut game = Game {
             globals,
             level: level_raw.clone(),
@@ -724,6 +746,12 @@ impl Game {
                 super::sound::SoundTables::new(inp.elf, inp.audio_rom, &slots, level.boss_type, super::bgmusic::level_letter(g.cur_world), &snds, stage)?
             },
             log: FrameLog::default(),
+        };
+        // ResetEnemies: NumEnemies = LEVL +0x8e; init_game_cam then the CAMS
+        // record's +0x34 (the value in play).
+        game.globals.num_enemies = match inp.wdata.cameras.get(level.camera_index as usize).and_then(|c| c.raw.get(0x34..0x36)) {
+            Some(b) => i32::from(i16::from_le_bytes([b[0], b[1]])),
+            None => i32::from(i16::from_le_bytes([level_raw[0x8e], level_raw[0x8f]])),
         };
         // AddLocatorInstList's AddTransmitter calls overwrite the static
         // table's first entries; the camera keeps the rest for a stale

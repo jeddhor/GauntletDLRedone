@@ -40,6 +40,9 @@ REPLAY_LEVEL = {
     'frame-D1new': 'D1', 'frame-E1new': 'E1', 'frame-F1new': 'F1', 'frame-H1new': 'H1', 'frame-I1new': 'I1', 'frame-J1new': 'J1',
     'frame-D3start': 'D3', 'frame-D3leaf': 'D3', 'frame-I2start': 'I2', 'frame-B2start': 'B2',
 }
+# The level-start sweep (tools/regress.sh SWEEP).
+REPLAY_LEVEL.update({f'frame-{L}start': L for L in
+                     'A2 A3 A4 A6 B3 B4 B5 C2 C3 C4 D2 D4 G2 G3 G4 H2 H3 I3 I4 J2 J3 J4 J6 K1 K3 K4 S1 S2 S3 S4 S5 S6 S7 S8 S9'.split()})
 
 
 def sweep(paths):

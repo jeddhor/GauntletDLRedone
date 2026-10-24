@@ -525,7 +525,7 @@ impl Game {
         let mut best = 0f32;
         let mut best_slot = 0usize;
         let mut best_visible = 1i16;
-        for (k, rec) in self.enemies.iter().enumerate() {
+        for (k, rec) in self.enemies.iter().enumerate().take(self.num_enemies()) {
             if rec.i32_(e::STATE) == 0 {
                 return Ok(k as i32);
             }
@@ -1091,7 +1091,7 @@ impl Game {
     /// CreateDynobjGrid next.
     pub fn setup_dyn_grid(&mut self) -> R<()> {
         self.grid.place_items(&mut self.items)?;
-        for k in 0..self.enemies.len() {
+        for k in 0..self.num_enemies() {
             if self.enemies[k].i32_(e::STATE) == 0 {
                 continue;
             }

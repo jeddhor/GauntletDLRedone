@@ -1654,7 +1654,7 @@ impl Game {
                     if level == 0 {
                         let ty = i32::from(self.items.records[slot].i16_(0xf0));
                         self.audio_generator_dies(at, ty)?;
-                        for k in 0..self.enemies.len() {
+                        for k in 0..self.num_enemies() {
                             if self.enemies[k].u32_(e::GENERATOR) == slot as u32 + 1 {
                                 self.enemies[k].set_u32(e::GENERATOR, 0);
                             }

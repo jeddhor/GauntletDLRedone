@@ -90,7 +90,10 @@ which could not be opened; scene comparison private/reports/scene-b1-v2-*).
 
 SetItem 0x151878 picks the geometry name: the instance's own (+8, strncpy
 16) when it has one, else the definition's +0x28; generators take
-ItemGenDesc ("GEN_<prefix><level>", AtreeMatchAnyHeader for a tree); rocks
+ItemGenDesc ("GEN_<prefix><level>", AtreeMatchAnyHeader(desc, 1) for a
+tree: item_anim, powerup_anim, item_anim2, then enemy_anim[0..0x2c] —
+MONSTERS/WAR's GEN_WAR0..3 are the only generator trees there, used in J3
+and J4; gameplay.md "Level-start sweep"); rocks
 (kind 10 type 0x29) "%s%d" of the definition name and +0xf2 (the stage, so
 SAFEROCK3 at full health; SetSafeRock restages, −1 hides). SetItemGeo uses
 the definition's tree (+0x4c) when there is one, else ItemFindMBObjectL1

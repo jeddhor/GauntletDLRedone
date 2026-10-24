@@ -185,6 +185,10 @@ pub struct EnemyAnimData {
     /// statue trees (SetItem's AtreeMatch: GOL_STATUE in enemy_anim[0x1d],
     /// DEATHSTATUE1/2 in enemy_anim[0x1e]).
     pub statue_trees: std::collections::HashMap<(i32, String), (Vec<crate::animation_clock::ClipTiming>, bool, i32)>,
+    /// (type, label) → clips, a type-1 node, node count of the package's
+    /// generator trees ("GEN_…": MONSTERS/WAR's GEN_WAR0..3), which
+    /// AtreeMatchAnyHeader(desc, 1) reaches through enemy_anim[0..0x2c].
+    pub gen_trees: std::collections::HashMap<(i32, String), (Vec<crate::animation_clock::ClipTiming>, bool, i32)>,
 }
 
 /// InitActions: action names (EE 0x23f8c8 list) → sequence index and +0x20 word.
@@ -508,7 +512,7 @@ impl Game {
     /// near the camera (+0x2f0) running or about to run (action 4 at +0xe0
     /// or +0xe4); unchanged when there is none.
     fn set_suicide_bomber_index(&mut self) {
-        if let Some(k) = self.enemies.iter().position(|r| {
+        if let Some(k) = self.enemies.iter().take(self.num_enemies()).position(|r| {
             r.i32_(e::STATE) == 1 && r.i16_(e::LOGIC) == 0x12 && r.i16_(0x2f0) != 0 && (r.i32_(0xe0) == 4 || r.i32_(0xe4) == 4)
         }) {
             self.suicide_bomber_index = k as i32;
@@ -2721,7 +2725,7 @@ impl Game {
             if self.globals.start_of_stage != 0 {
                 // Stage start: live non-boss enemies play their idle action
                 // (type 0x1d → 1, type 0 → 3, else 0) without AI.
-                for k in 0..self.enemies.len() {
+                for k in 0..self.num_enemies() {
                     let t = self.enemies[k].i32_(e::TYPE);
                     if self.enemies[k].i32_(e::STATE) != 1 || t == self.globals.boss_type {
                         continue;
@@ -2754,7 +2758,7 @@ impl Game {
         }
         self.set_suicide_bomber_index();
         self.globals.num_visible_enemies = 0;
-        for k in 0..self.enemies.len() {
+        for k in 0..self.num_enemies() {
             if self.enemies[k].i32_(e::STATE) != 0 {
                 let (v, near) = visible(self, k);
                 self.enemies[k].set_i16(0x2ee, i16::from(v));
@@ -2764,7 +2768,7 @@ impl Game {
                 }
             }
         }
-        for k in 0..self.enemies.len() {
+        for k in 0..self.num_enemies() {
             let logic = self.enemies[k].i16_(e::LOGIC);
             {
                 let rec = &mut self.enemies[k];

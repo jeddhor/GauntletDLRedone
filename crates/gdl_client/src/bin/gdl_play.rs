@@ -3878,8 +3878,9 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
     let item_pkgs = lv.items.iter().map(|p| anim(p)).collect::<Result<Vec<_>, _>>()?;
     // AtreeMatchAnyHeader 0x14fa60 (an item definition's tree, +0x4c):
     // item_anim (the realm's package, first in lv.items when loaded),
-    // powerup_anim, then item_anim2 (the level's own). Generators would then
-    // try the enemy packages (not modelled; no G1 generator needs it).
+    // powerup_anim, then item_anim2 (the level's own). Generators then try
+    // the enemy packages (setup::add_generator_trees: MONSTERS/WAR's GEN_WAR
+    // trees for J3 and J4's generators).
     let realm = format!("ITEMS_{}", lv.name.get(..1).unwrap_or(""));
     let mut order: Vec<&Animations> = item_pkgs.iter().collect();
     order.insert(usize::from(lv.items.first().is_some_and(|p| *p == realm)), &powerups);

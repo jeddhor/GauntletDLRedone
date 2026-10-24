@@ -153,6 +153,14 @@ pub struct Globals {
     /// Empty: the boot state (the ELF's zero bytes).
     #[serde(default)]
     pub transmitter_table: Vec<camera::Transmitter>,
+    /// NumEnemies 0x233590: the enemy slots in use. ResetEnemies sets it to
+    /// LEVL +0x8e, init_game_cam (and InitCamera) to the level's CAMS
+    /// record +0x34 — 25 in most levels, 20 in J4 and J6 (their captures).
+    /// do_enemies, find_enemy_slot, SetupDynGrid, DamageItem's generator
+    /// links, OnWobj, activate_player and set_suicide_bomber_index loop to
+    /// it. 0 (older start states): all records.
+    #[serde(default)]
+    pub num_enemies: i32,
     #[serde(default)]
     pub welcome_flag: i32,
     #[serde(default)]
@@ -590,6 +598,13 @@ pub struct Game {
 }
 
 impl Game {
+    /// NumEnemies (Globals::num_enemies), at most the 25 records.
+    pub(crate) fn num_enemies(&self) -> usize {
+        match usize::try_from(self.globals.num_enemies) {
+            Ok(n) if 0 < n => n.min(self.enemies.len()),
+            _ => self.enemies.len(),
+        }
+    }
     pub fn level_f32(&self, o: usize) -> f32 {
         f32::from_le_bytes(self.level[o..o + 4].try_into().unwrap())
     }

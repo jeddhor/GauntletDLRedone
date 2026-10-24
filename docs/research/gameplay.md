@@ -909,3 +909,45 @@ Left (first divergences):
   world rows from step 1 (z −1 ulp constant, y −4..+5 ulps varying), and
   enemy 19's floor height +0x2a8 differs at step 245 (7.40 natively,
   −47.33 in the original).
+
+## Level-start sweep (2026-10-23, actual disc, WARPED captures)
+
+Every level without another reference replay — A2 A3 A4 A6 B3 B4 B5 C2 C3
+C4 D2 D4 G2 G3 G4 H2 H3 I3 I4 J2 J3 J4 J6 K1 K3 K4 and S1–S9 — was
+reached in the reference from slot 3 (B1's new game, player 0 written onto
+B1's exit, do_exit's wave skip 0x10000 + wave), saved as
+lvl-<L>-start-v1.p2s (J4 and J6 reuse w10l4/w10l3-start-v1), and traced
+idle for 240 vblanks (--player --enemies; trace-<L>-start-v1). The native
+frame replay (replay-frame-<L>start, tools/regress.sh SWEEP; regression
+r70) equals the reference in every part over all 120 updates in 19 of the
+35 levels; in A2, A3, H2, H3, I3, S1, S3, S4, S6, S7 and S9 only the camera
+differs, in one update by a few ulp (the stage-start zoom step, or in the
+treasure rooms an early update; unknowns); B5 and C2 add one sound item's
++0xfe, and D2, J4 and K4 carry the open items below. Load comparisons after the same number of native
+updates (compare_items.py --after-updates, compare-items-<L>-start-v2) have
+no definition mismatch in any level; what remains is the generators'
+start-time countdown (+0xda), items on world-animated nodes (sound items,
+S3's falling treasure) by animation phase, and the categories in items.md.
+
+Fixed on the way (each first seen in this sweep):
+- B3 (captured one update after its load): the item node w column
+  (items.md "node_w").
+- J3, J4: SetItem's generator trees come from AtreeMatchAnyHeader(desc, 1),
+  which after the item packages searches enemy_anim[0..0x2c]; MONSTERS/WAR
+  holds GEN_WAR0..3 (the only enemy package with generator trees), so J3's
+  and J4's warlock generators animate (+0xb4 and the clock words) where
+  native had none (setup add_generator_trees).
+- J4, J6: NumEnemies 0x233590 is 20 there. ResetEnemies sets it to LEVL
+  +0x8e and init_game_cam (also InitCamera) to the level's CAMS record
+  +0x34, which is 25 in the other levels; do_enemies, find_enemy_slot,
+  SetupDynGrid, DamageItem's generator unlinking, OnWobj, activate_player
+  and set_suicide_bomber_index loop to it (numenemies-refs-v1.tsv). Native
+  had looped over all 25 records (enemy +0x380, the idle counter, advanced
+  in slots 20–24 the reference leaves alone). Globals::num_enemies.
+
+Open from the sweep (unknowns.md): D2's general inserts an out-of-range
+target whose unwritten words are stack contents; B5's and C2's sound items'
++0xfe (audio driver queue ids); J4's item on J4BLOCK2's post diverges in
+the replay only (the platform's animation start is not seeded); K4's two
+items under a tilted parent (object 9 under 0x1858280) carry a 1-ulp
+difference in the local translation z from UnparentMatrix/MulMat4 rounding.
