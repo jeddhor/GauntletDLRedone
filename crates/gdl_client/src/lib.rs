@@ -316,6 +316,12 @@ pub struct GsDraw {
     /// Sorted before every translucent draw, the depth-only window
     /// included: the contents' icon of an X-ray view.
     pub sort_first: bool,
+    /// An object part drawn by pbDrawObject's VU1 programs, which give
+    /// back-facing strip triangles ADC (the screen-space cross product
+    /// times the strip header's direction and the vertex parity; header
+    /// word 1.z, pbDebugMode, is 0 in play): only front faces reach the
+    /// GS (research/rendering.md "Back-face culling").
+    pub cull: bool,
 }
 
 impl From<&GsMaterial> for GsDraw {
@@ -340,6 +346,7 @@ impl GsDraw {
             depth_only: false,
             sort_late: false,
             sort_first: false,
+            cull: true,
         }
     }
 }
@@ -398,6 +405,16 @@ impl GsMaterial {
     }
 }
 
+/// The face object parts drop (TEST switch GDL_CULL_FACE).
+fn cull_face() -> Option<bevy::render::render_resource::Face> {
+    use bevy::render::render_resource::Face;
+    match std::env::var("GDL_CULL_FACE").as_deref() {
+        Ok("none") => None,
+        Ok("front") => Some(Face::Front),
+        _ => Some(Face::Back),
+    }
+}
+
 impl Material for GsMaterial {
     fn fragment_shader() -> ShaderRef {
         "embedded://gdl_client/gs.wgsl".into()
@@ -438,7 +455,10 @@ impl Material for GsMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         let draw = key.bind_group_data;
-        descriptor.primitive.cull_mode = None;
+        // Object parts keep the VU's front faces; the render root mirrors x,
+        // which reverses screen winding (GDL_CULL_FACE=front|back|none
+        // overrides for comparisons).
+        descriptor.primitive.cull_mode = if draw.cull { cull_face() } else { None };
         if draw.depth_only {
             if let Some(depth) = descriptor.depth_stencil.as_mut() {
                 depth.depth_write_enabled = true;
@@ -642,7 +662,7 @@ pub fn materials_for(
                     lightmap: None,
                 overlay: None,
                     alpha_mode: AlphaMode::Blend,
-                    draw: GsDraw::default(),
+                    draw: GsDraw { cull: true, ..default() },
                 }),
             );
             continue;
@@ -680,11 +700,13 @@ pub fn materials_for(
                 lightmap: None,
                 overlay: None,
                 alpha_mode,
-                draw: GsDraw::default(),
+                draw: GsDraw { cull: true, ..default() },
             }),
         );
     }
-    let unknown = materials.add(GsMaterial::solid(Color::srgb(1.0, 0.0, 0.8), AlphaMode::Opaque));
+    let mut unknown = GsMaterial::solid(Color::srgb(1.0, 0.0, 0.8), AlphaMode::Opaque);
+    unknown.draw.cull = true;
+    let unknown = materials.add(unknown);
     MaterialSet { base, labels, label_index, record_images, lightmaps, mipmapped, unknown, unresolved }
 }
 

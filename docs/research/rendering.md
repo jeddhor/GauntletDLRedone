@@ -675,3 +675,40 @@ modelled. Native capture: private/runs/client-xray-g1f (GDL_DEBUG_POWERUP=
 9:2:120 with GDL_DEBUG_TELEPORT next to chest 43). The contents differ by
 moment: random contents resolve through RandItemIdx without advancing, so
 they follow the item random state, in both.
+
+## Back-face culling (2026-10-23)
+
+VU1 programs A and B (vu1-tower-disasm-v1) keep the last three screen
+positions (pairs 537..539 / 915..917), and for a vertex whose clip flags
+(FCGET, pair 530) are clear take the cross product of the two edges from
+the oldest vertex (OPMULA/OPMSUB, pairs 562..563 / 940..941), multiply its
+z by vf08.z and test its sign (MUL.z, then FMAND with 32, the z sign bit;
+pairs 567..572). vf08 is the packet's first quadword (LQ 0(vi12), pair 409):
+z is the strip header's direction (±1.0 at +8, the parser's
+`Strip::direction`) and w alternates it per vertex (MULw.z, pair 549). The
+store (pairs 742..758) chooses between w = 0x7fff (vi14) and ADC 0x8000
+(vi13) from the clip flags, that sign bit and the input's w; the exact
+path that leaves ADC on a back-facing triangle runs through the in-place
+vertex buffer and is not traced (HYPOTHESIS: the output word starts with
+ADC and the sign bit clears it). The evidence that back faces never reach
+the GS is the dump check below.
+Header word 1.z (bits 8/16/32/64: zero, flip or freeze the sign, pairs
+429..446) is pb_obj_info +0x78, pbSetDORegs' pbDebugMode() — 0 in play, so
+the test always runs.
+
+Dump check (tools/python/gs_cull.py, on-screen triangles 1740..2350 ×
+1840..2250): per strip tag, drawn and ADC-suppressed triangles have
+opposite windings in 323 tags and the same in 14 (the Tower,
+…20261020081101); G1 (…20261012144427) 48 against 8. Tags joining
+several strips restart the parity and count as mixed.
+
+Client: GsDraw::cull for object parts (material_set's base materials and
+from_node_flags; psys sprites and missile streaks keep both faces) with
+wgpu cull_mode Back — the render root's x mirror reverses screen winding,
+and the Tower at the reference camera keeps its floor and walls with Back
+and loses them with Front (runs client-cull-back / -front / -none;
+GDL_CULL_FACE overrides). The crystals' brightness gap is unchanged by it
+(rows 40..200, x 0..200, summed-RGB p99 537 without culling, 558 with,
+against 441 in the reference; the opaque sheen core already hides the
+bodies' back halves): still open.
+

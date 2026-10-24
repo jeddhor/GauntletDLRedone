@@ -3046,6 +3046,7 @@ fn present_streaks(
                 depth_only: false,
                 sort_late: true,
                 sort_first: false,
+                cull: false,
             },
         });
         let mesh = meshes.add(Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default()));
@@ -3285,6 +3286,7 @@ fn present_particles(
                     depth_only: false,
                     sort_late: false,
                     sort_first: false,
+                    cull: false,
                 },
             };
             let handle = materials.add(m);

@@ -87,4 +87,6 @@ have no repeats at all. The 67 left (ITEMS/levelC 32, WEAPONS 25,
 MONSTERS/SKY 6, LICH, DJINN, TRE and LEVELS/levelB3 one each) count some of
 their same-winding repeats; the count is authoring metadata no runtime path
 draws from (the VU draws the strips), so the residue is recorded, not
-modelled. The native meshes draw every emitted triangle, as the GS does.
+modelled. The native meshes hold every emitted triangle; the VU1 programs
+drop back faces (research/rendering.md "Back-face culling"), and so does
+the client for object parts.
