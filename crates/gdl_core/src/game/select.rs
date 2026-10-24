@@ -263,11 +263,11 @@ impl Hud {
     /// shop_topy/shop_boty, prices at shop_rx − 0x40 (font 6 × 0.5),
     /// descriptions centred on shop_cx, the selection drawn with
     /// DrawGlowText, and MORE_UP/MORE_DOWN when items are cut off.
-    /// NATIVE: no scroll animation (items sit at their target y), no
-    /// highlight timers or class skip list.
+    /// Stateless here (the front end's preview): items sit at their target
+    /// y; the in-game shop passes its ShopList (write_shop_menu's scroll).
     pub fn shop_blits(&self, items: &[super::powerups::ShopItem], players: &[super::record::Record; 4], player: usize, selected: usize, frames: i32) -> Vec<Blit> {
         let mut out = self.shop_panel_blits(players);
-        out.extend(self.shop_list_blits(items, player, selected, frames));
+        out.extend(self.shop_list_blits(items, player, selected, frames, None).0);
         out
     }
 
@@ -300,9 +300,16 @@ impl Hud {
     }
 
     /// draw_shop_screen / write_shop_menu for `player`'s column.
-    pub fn shop_list_blits(&self, items: &[super::powerups::ShopItem], player: usize, selected: usize, frames: i32) -> Vec<Blit> {
+    /// With `list` (the shop's state, write_shop_menu's speed argument and
+    /// vb_elapsed): each item's icon blit moves from its current y towards
+    /// its target by speed × vb (speed 1 → 2; negative, or the first draw,
+    /// places it), and its price and description follow the current y;
+    /// a visible skipped item draws at alpha 0xa0, one whose highlight timer
+    /// runs in red (0xff0000; the timer counts vb down). Returns the blits
+    /// and whether anything still moved (scroll_flag: the speed, else 0).
+    pub fn shop_list_blits(&self, items: &[super::powerups::ShopItem], player: usize, selected: usize, frames: i32, mut list: Option<(&mut ShopList, i32, i32)>) -> (Vec<Blit>, i32) {
         let mut out = Vec::new();
-        let Some(t) = self.tables.as_ref() else { return out };
+        let Some(t) = self.tables.as_ref() else { return (out, 0) };
         let font = 6;
         let p = player.min(3);
         let lx = t.shop_lx.get(p).copied().unwrap_or(0);
@@ -349,20 +356,55 @@ impl Hud {
             base = bot - last;
         }
         let (mut above, mut below) = (false, false);
+        let mut moved = false;
+        let speed = match list.as_mut() {
+            Some((l, s, _)) if l.y.len() == items.len() => if *s == 1 { 2 } else { *s },
+            Some((l, _, _)) => {
+                l.y = vec![0; items.len()];
+                -1
+            }
+            None => -1,
+        };
         for (k, it) in items.iter().enumerate() {
-            let y0 = base + ypos[k];
+            let target = base + ypos[k];
+            let mut y0 = target;
+            let (mut skipped, mut colour) = (false, 0);
+            if let Some((l, _, vb)) = list.as_mut() {
+                let cur = l.y[k];
+                y0 = if 2 < (cur - target + 1) as u32 {
+                    if speed < 0 {
+                        target
+                    } else {
+                        moved = true;
+                        if target < cur { (cur - speed * *vb).max(target) } else { (cur + speed * *vb).min(target) }
+                    }
+                } else {
+                    cur
+                };
+                l.y[k] = y0;
+                skipped = l.skip.get(k).copied().unwrap_or(false);
+                if let Some(h) = l.highlight.get_mut(k)
+                    && 0 < *h
+                {
+                    *h = (*h - *vb).max(0);
+                    colour = 0xff0000;
+                }
+            }
+            // Skipped items cut off do not raise MORE_UP / MORE_DOWN.
             let fade = if y0 < top - dim {
-                above = true;
+                above |= !skipped;
                 0x100
             } else if y0 < top {
-                above = true;
+                above |= !skipped;
                 ((top - y0) * 0x1fe / dim.max(1)).min(0xff)
             } else if bot + dim < y0 {
-                below = true;
+                below |= !skipped;
                 0x100
             } else if bot < y0 {
-                below = true;
+                below |= !skipped;
                 ((y0 - bot) * 0x1fe / dim.max(1)).min(0xff)
+            } else if skipped {
+                0xa0
             } else {
                 0
             };
@@ -381,7 +423,7 @@ impl Hud {
                 let s = it.price.to_string();
                 if chosen {
                     out.extend(self.glow_text(0.5, rx - 0x40, y0 + 0xc, &s, frames as u32));
-                } else if let Some(m) = self.message_pub(0.5, 0.5, rx - 0x40, y0 + 0xc, font, 0, a, 0.25, 0, &s) {
+                } else if let Some(m) = self.message_pub(0.5, 0.5, rx - 0x40, y0 + 0xc, font, colour, a, 0.25, 0, &s) {
                     out.extend(self.glyphs(&m));
                 }
             }
@@ -391,7 +433,7 @@ impl Hud {
             for line in it.text.split('\n').filter(|l| !l.is_empty()) {
                 if chosen {
                     out.extend(self.glow_text(scale, -cx, y, line, frames as u32));
-                } else if let Some(m) = self.message_pub(scale, scale, -cx, y, font, 0, a, 0.25, 0, line) {
+                } else if let Some(m) = self.message_pub(scale, scale, -cx, y, font, colour, a, 0.25, 0, line) {
                     out.extend(self.glyphs(&m));
                 }
                 y += fh;
@@ -403,6 +445,16 @@ impl Hud {
         if below {
             out.push(self.make_pub(self.lookup("MORE_DOWN"), cx - 0x20, bot + 0x38, -1, -1));
         }
-        out
+        (out, if 0 < speed && moved { speed } else { 0 })
     }
+}
+
+/// write_shop_menu's per-player state: shop_item_blits' current y (empty
+/// until the first draw places them — shop_setup's shopitem_ypos −1),
+/// highlight_timer (vblanks, set to 0x1e on a purchase) and skipitem_flag.
+#[derive(Clone, Debug, Default)]
+pub struct ShopList {
+    pub y: Vec<i32>,
+    pub highlight: Vec<i32>,
+    pub skip: Vec<bool>,
 }

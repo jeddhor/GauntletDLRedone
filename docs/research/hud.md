@@ -387,9 +387,19 @@ calc_shop_ypos stacks them (icon 0x18, description lines at scale × 0.5
 + 0x10) relative to the selection; write_shop_menu fades items within
 shop_dim_dy 64 of shop_topy 72 / shop_boty 224, prints prices at shop_rx −
 0x40 (font 6 × 0.5) and descriptions centred on shop_cx, the selection
-with DrawGlowText, MORE_UP/MORE_DOWN when cut off. NATIVE: items jump to
-their places (no scroll speed), no skip list / highlight timers, the
-stats/level panels (shop_show_*) are not drawn.
+with DrawGlowText, MORE_UP/MORE_DOWN when cut off. Scrolling (2026-10-23,
+write_shop_menu / do_shopping): each item's icon blit moves from its
+current y towards the target by speed × vb_elapsed (speed 2; a press while
+the list moves raises do_shopping's argument to scroll_flag + 1; a wrap,
+back, or the first draw — shopitem_ypos[0] −1 after shop_setup — places
+it), the price and text follow the icon's current y, and write_shop_menu
+returns the speed while anything moved (scroll_flag), during which accept
+is ignored. A visible skipped item draws at alpha 0xa0 and raises no MORE
+arrow; a bought item's highlight_timer (0x1e vblanks) turns its text red
+(0xff0000). Native: ShopFlow::lists / scroll, Hud::shop_list_blits;
+HYPOTHESIS: a purchase that steps the cursor back places the list (top_y
+and recalc_afford_idx are not modelled). GUI menu-flows-m17-v21
+shop-scroll (gold set by GDL_TEST_ACTIONS) shows the list mid-scroll.
 
 ## Returning to the Tower: the shop (game mode 0x4012)
 

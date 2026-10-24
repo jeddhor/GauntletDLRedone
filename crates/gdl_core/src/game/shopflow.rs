@@ -37,6 +37,10 @@ pub struct ShopFlow {
     pub players: [ShopPlayer; 4],
     /// vb counter for the glow pulses.
     pub frames: u32,
+    /// write_shop_menu's item list per player (positions, highlight
+    /// timers, skip flags) and scroll_flag (the speed while it moves).
+    pub lists: [super::select::ShopList; 4],
+    pub scroll: [i32; 4],
 }
 
 /// Per player: pile_type/pile_cury/pile_maxy/pile_val (by display slot),
@@ -383,9 +387,13 @@ impl Game {
     }
 
     /// do_shopping: up/down move the cursor (+0x984) over affordable,
-    /// unskipped items (wrapping at the afford count), accept buys, back
-    /// returns to entry 0; the list is drawn around the cursor. True when
-    /// entry 0 (leave) was accepted.
+    /// unskipped items (wrapping at the afford count), accept buys (only
+    /// while the list is still: scroll_flag 0), back returns to entry 0;
+    /// the list scrolls towards the cursor at write_shop_menu's speed (1,
+    /// or scroll_flag + 1 for a press while it moves; a wrap, back or
+    /// a purchase stepping the cursor back places it at once — the last
+    /// HYPOTHESIS: top_y is not modelled). True when entry 0 (leave) was
+    /// accepted.
     fn do_shopping(&mut self, flow: &mut ShopFlow, p: usize, items: &[ShopItem]) -> R<bool> {
         if items.is_empty() {
             return Ok(true);
@@ -396,19 +404,26 @@ impl Game {
         let skip = self.shop_skiplist(p, items)?;
         let valid = |k: usize| items.get(k).is_some_and(|it| it.price <= gold) && !skip.get(k).copied().unwrap_or(false);
         let mut cur = self.players[p].i32_(0x984).max(0) as usize;
+        let mut speed = if flow.scroll[p] != 0 { flow.scroll[p] } else { 1 };
+        let mut jump = false;
         if down || up {
             self.audio_click2(p, i32::from(up));
+            if flow.scroll[p] != 0 {
+                speed = flow.scroll[p] + 1;
+            }
             let afford = flow.players[p].afford.max(1) as usize;
             for _ in 0..=items.len() {
                 if down {
                     cur += 1;
                     if afford <= cur {
                         cur = 0;
+                        jump = true;
                     }
                 } else if cur == 0 {
                     // recalc_afford_idx: the last affordable entry.
                     cur = items.iter().rposition(|it| it.price <= gold).unwrap_or(0);
                     flow.players[p].afford = cur as i32 + 1;
+                    jump = true;
                 } else {
                     cur -= 1;
                 }
@@ -419,28 +434,42 @@ impl Game {
             self.players[p].set_i32(0x984, cur as i32);
         }
         let mut leave = false;
-        if edges & 0x200_0000 != 0 {
+        if edges & 0x200_0000 != 0 && flow.scroll[p] == 0 {
             match self.shop_buy(p, items, cur)? {
                 Purchase::Leave => leave = true,
                 Purchase::Bought => {
                     flow.players[p].bought += 1;
                     self.audio_pickup(p);
                     let gold = self.players[p].i32_(0x1a20);
-                    // The cursor steps back to an affordable, unskipped entry.
+                    // highlight_timer of the bought entry; the cursor steps
+                    // back to an affordable, unskipped entry.
+                    if let Some(h) = flow.lists[p].highlight.get_mut(cur) {
+                        *h = 0x1e;
+                    }
                     let skip = self.shop_skiplist(p, items)?;
+                    let before = cur;
                     while 0 < cur && (gold < items[cur].price || skip.get(cur).copied().unwrap_or(false)) {
                         cur -= 1;
                     }
+                    jump |= cur != before;
                     self.players[p].set_i32(0x984, cur as i32);
                 }
                 Purchase::Refused => self.audio_buzzer(),
             }
         } else if edges & 0x800_0000 != 0 && cur != 0 {
             cur = 0;
+            jump = true;
             self.players[p].set_i32(0x984, 0);
         }
-        let list = self.hud.shop_list_blits(items, p, cur, flow.frames as i32);
-        self.hud.push_temp(list);
+        let list = &mut flow.lists[p];
+        list.skip = self.shop_skiplist(p, items)?;
+        if list.highlight.len() != items.len() {
+            list.highlight = vec![0; items.len()];
+        }
+        let vb = self.globals.vb_elapsed;
+        let (blits, scroll) = self.hud.shop_list_blits(items, p, cur, flow.frames as i32, Some((list, if jump { -1 } else { speed }, vb)));
+        flow.scroll[p] = scroll;
+        self.hud.push_temp(blits);
         let cx = self.hud.tables.as_ref().and_then(|t| t.shop_cx.get(p).copied()).unwrap_or(0);
         self.hud.draw_text(TITLE_SCALE, -cx, 8, 6, 0, "Shop");
         Ok(leave)

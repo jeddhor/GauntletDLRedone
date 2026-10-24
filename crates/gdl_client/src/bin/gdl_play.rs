@@ -1993,7 +1993,7 @@ struct TestHarness {
     hashes: Vec<String>,
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
-    /// {"at": u, "health": h} | {"at": u, "dump": "label"} |
+    /// {"at": u, "health": h} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
     /// {"at": u, "save": card file}] for player 1.
     actions: Vec<serde_json::Value>,
     /// GDL_MENU_SCRIPT: like GDL_INPUT_SCRIPT, indexed by the ticks spent
@@ -3871,6 +3871,9 @@ fn simulate(
             }
             if let Some(h) = a["health"].as_f64() {
                 sim.game.players[0].set_f32(0x1a10, h as f32);
+            }
+            if let Some(gold) = a["gold"].as_i64() {
+                sim.game.players[0].set_i32(0x1a20, gold as i32);
             }
             if let Some(port) = a["disconnect"].as_u64() {
                 harness.disconnect = Some((port as usize, a["reconnect_after"].as_u64().unwrap_or(120)));

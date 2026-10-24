@@ -81,6 +81,15 @@ FLOWS = {
         env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1', GDL_DEBUG_TELEPORT='118.28,86.30,-472.5'),
         steps=[["wait", 32], ["shot", "h1"], ["wait", 0.6], ["shot", "h2"], ["wait", 0.6], ["shot", "h3"], ["wait", 0.6], ["shot", "h4"]],
         expect=[r'playing .*world 7 level 0', r'shop']),
+        # The shop list's scroll (write_shop_menu): G1's exit → the tally →
+    # X through the piles → the shop; Down moves the cursor and the list
+    # scrolls towards it (frames 0.1 s apart).
+    'shop-scroll': dict(
+        env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1', GDL_DEBUG_TELEPORT='118.28,86.30,-472.5'),
+        actions=[{"at": 300, "gold": 5000}],
+        steps=[["wait", 32], ["shot", "tally"]] + k('space', 1, gap=2.0) + [["shot", "list"]] + k('Down', 3, gap=0.6) + k('Down', 1, gap=0.03)
+        + [["shot", "s1"], ["wait", 0.1], ["shot", "s2"], ["wait", 0.1], ["shot", "s3"], ["wait", 1], ["shot", "settled"]],
+        expect=[r'playing .*world 7 level 0', r'shop']),
         # Soft reset (CheckSoftReset): START + SELECT (Enter + Tab) held past
     # 0x78 control passes in G1 → the title screen.
     'soft-reset': dict(
@@ -133,6 +142,10 @@ def run(tag, name, flow):
     steps.write_text(json.dumps(flow['steps'] + [["quit"]]))
     trace = d / 'ui.txt'
     env = dict(os.environ, GDL_UI_TRACE=str(trace), **flow.get('env', {}))
+    if 'actions' in flow:
+        actions = d / 'actions.json'
+        actions.write_text(json.dumps(flow['actions']))
+        env['GDL_TEST_ACTIONS'] = str(actions)
     subprocess.run([sys.executable, str(ROOT / 'tools/python/client_driver.py'), 'serve', run_tag, str(steps)], cwd=ROOT, env=env, timeout=1200)
     lines = trace.read_text().splitlines() if trace.exists() else []
     at, matched = 0, []
