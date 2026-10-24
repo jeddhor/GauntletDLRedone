@@ -62,3 +62,14 @@ An idle player at that point never creates the boss instance (activation
 needs the approach). With this every boss level's fight and end have run
 natively; I5's on-foot route to the arena is still not shown.
 
+I5 from the level start (2026-10-24): the arena is reached by the raft
+(object 111) that trigger 40 (flags 0x50a: only while every player stands
+on the raft) sends across in ~180 updates. The pad had stayed culled
+because native's culling view took the StdCam record's eye under the boss
+camera (items.md "Item culling under the boss and trigger cameras"); with
+the window's eye the traversal bot (legend item held, --pexp 30, labelled
+preconditions as above; 64 health assists) touches the pad, rides the
+raft, fights the yeti from 5000 to 0 and the auto exit ends the level at
+update 30812 → 0xd00 (private/reports/game-run-I5-bot-start-v1.json). All
+eleven boss levels now end from their own start.
+
