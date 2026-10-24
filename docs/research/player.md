@@ -510,3 +510,15 @@ Seen in G1 (GDL_DEBUG_POWERUP 9:1 / 9:80 / 9:400, runs client-pw-1/-80/
 The fire breath (9:10, a camera-facing no-shade object at the head) was
 not visible in those frames — not confirmed. No reference capture.
 
+## Player translucency (PlayerProcessPowerups, 2026-10-23)
+
+MBTreeSetAlpha(player node +0x80, v, 1) each update: v = 0x5f while the
+current action (+0x1e0) is 0x92; with the invisibility powerup (+0x138
+bit 4) v = (int)(sinf(2π t) × 16) + 0xa0, where t is the longest kind-9
+flag-4 slot time (a negative, unlimited time counts) — except on the even
+eighths of the last 3 s (0 ≤ t ≤ 3 and (int)(8t) even), where v = 0 (the
+blink back); otherwise v = 0. The call is recursive, so the held weapon
+and the trees hung on the player fade with it. gdl_play present_player_alpha
+(drawn alpha (255 − v) / 255); seen in G1 with GDL_DEBUG_POWERUP 9:4
+(run client-pw-4). No reference capture.
+

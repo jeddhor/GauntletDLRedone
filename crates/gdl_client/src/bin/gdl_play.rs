@@ -1028,6 +1028,49 @@ fn skin_image(libs: &Libraries, monsters: &[String], v: &gdl_core::game::skin::S
 /// them with setChrome's environment mapping) and ambient adds
 /// (MBTreeSetAmbientAdd / 255).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+/// PlayerProcessPowerups' MBTreeSetAlpha(player node, v, 1) (recursive:
+/// the held weapon and the trees hung on the player go with it): 0x5f
+/// during action 0x92; with the invisibility powerup (+0x138 4) a shimmer
+/// (int)(sin(2π t) × 16) + 0xa0, t the longest kind-9 flag-4 slot time —
+/// solid (0) on the even eighths of its last 3 s, a negative (unlimited)
+/// time shimmers; otherwise 0. Drawn alpha (255 − v) / 255 (setPrimAlpha).
+fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)>, children: Query<&Children>, mut req: ResMut<MatRequests>) {
+    let g = &sim.game;
+    for (root, kids) in &bodies {
+        let r = &g.players[root.0];
+        let v = if r.u32_(0x1e0) == 0x92 {
+            0x5f
+        } else if r.u32_(0x138) & 4 != 0 {
+            let mut t = 0.0f32;
+            for k in 0..8 {
+                let o = 0x144 + 16 * k;
+                let (time, kind, flags) = (r.f32_(o), r.i32_(o + 4), r.u32_(o + 12));
+                if time != 0.0 && kind == 9 && flags & 4 != 0 && (time < 0.0 || t < time) {
+                    t = time;
+                }
+            }
+            if !(0.0..=3.0).contains(&t) || ((t * 8.0) as i32) & 1 != 0 {
+                ((t * std::f32::consts::TAU).sin() * 16.0) as i32 + 0xa0
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        if v == 0 {
+            continue;
+        }
+        let a = (255 - v.clamp(0, 255)) as f32 / 255.0;
+        let mut stack: Vec<Entity> = kids.iter().collect();
+        while let Some(e) = stack.pop() {
+            req.alpha(e, a);
+            if let Ok(c) = children.get(e) {
+                stack.extend(c.iter());
+            }
+        }
+    }
+}
+
 fn present_skins(
     sim: Res<Sim>,
     session: Res<Session>,
@@ -7575,7 +7618,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
