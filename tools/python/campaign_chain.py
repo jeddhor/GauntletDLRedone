@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 
@@ -90,13 +91,21 @@ def main():
             # The tries run side by side; the first (lowest delay) that wins counts.
             err_path = bot_report.with_suffix('.err')
             with open(err_path, 'x') as err_file:
-                tries.append((t, bot_report, bot_end, err_path, subprocess.Popen(cmd, cwd=ROOT, env=os.environ, stdout=subprocess.DEVNULL, stderr=err_file)))
+                tries.append((t, bot_report, bot_end, err_path, subprocess.Popen(cmd, cwd=ROOT, env=os.environ, stdout=subprocess.DEVNULL, stderr=err_file,
+                                                                                 start_new_session=True)))
         for t, bot_report, bot_end, err_path, proc in tries:
+            if won_by_bot:
+                # A lower try won: the rest are stopped (their reports are
+                # partial and not read).
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+                continue
             proc.wait()
             err = err_path.read_text(errors='replace')
             key = 'bot' if t == 0 else f'bot{t + 1}'
-            if won_by_bot:
-                continue
             if bot_report.exists():
                 br = json.loads(bot_report.read_text())
                 b = br.get('bot') or {}
