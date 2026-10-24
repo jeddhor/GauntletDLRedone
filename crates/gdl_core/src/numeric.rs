@@ -21,6 +21,7 @@ impl Error for UnsupportedNumericDomain {}
 /// Verified for normal finite operands and zero in the SLUS-20047 animation
 /// fixture, using PCSX2 2.6.3 with FPU.Roundmode=3. Exceptional domains are
 /// explicitly rejected until their original consumers and behavior are tested.
+#[inline]
 pub fn add_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     let (a, b) = (daz(a)?, daz(b)?);
     let mut words = [a.to_bits(), b.to_bits()];
@@ -44,34 +45,42 @@ pub fn add_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 }
 
 /// DAZ: a subnormal operand reads as zero of its sign; infinities and NaNs
-/// are refused.
+/// are refused. (Bit form of the reference implementation kept in the
+/// tests, `reference::daz`; compared over random and boundary operands.)
+#[inline]
 fn daz(v: f32) -> Result<f32, UnsupportedNumericDomain> {
-    if !v.is_finite() {
-        return Err(UnsupportedNumericDomain);
+    let bits = v.to_bits();
+    match bits & 0x7f80_0000 {
+        0x7f80_0000 => Err(UnsupportedNumericDomain),
+        0 => Ok(f32::from_bits(bits & 0x8000_0000)),
+        _ => Ok(v),
     }
-    Ok(if v != 0.0 && !v.is_normal() { 0.0f32.copysign(v) } else { v })
 }
 
+/// Rounding toward zero of an f64 to f32 with FTZ: the significand
+/// truncated to 23 bits (round toward zero for a normal result); results
+/// below the smallest normal flush to signed zero; beyond f32::MAX, infinite
+/// or NaN refused. Equal to `reference::round_rz` (nearest conversion
+/// stepped back one ulp when it overshoots), which the tests compare.
+#[inline]
 fn round_rz(exact: f64) -> Result<f32, UnsupportedNumericDomain> {
-    if !exact.is_finite() || exact.abs() > f64::from(f32::MAX) {
-        return Err(UnsupportedNumericDomain);
-    }
-    if exact.abs() < f64::from(f32::MIN_POSITIVE) {
+    let bits = exact.to_bits();
+    let sign = ((bits >> 32) as u32) & 0x8000_0000;
+    let e64 = ((bits >> 52) & 0x7ff) as i32;
+    let e32 = e64 - (1023 - 127);
+    if e32 <= 0 {
         // FTZ (round toward zero first, then flush): signed zero.
-        return Ok(if exact.is_sign_negative() { -0.0 } else { 0.0 });
+        return Ok(f32::from_bits(sign));
     }
-    let rounded = exact as f32;
-    let result = if f64::from(rounded).abs() > exact.abs() {
-        f32::from_bits(rounded.to_bits() - 1)
-    } else {
-        rounded
-    };
-    if result != 0.0 && !result.is_normal() {
+    let mant = bits & 0x000f_ffff_ffff_ffff;
+    let top = (mant >> 29) as u32;
+    if 255 <= e32 || (e32 == 254 && top == 0x7f_ffff && mant & 0x1fff_ffff != 0) {
         return Err(UnsupportedNumericDomain);
     }
-    Ok(result)
+    Ok(f32::from_bits(sign | (e32 as u32) << 23 | top))
 }
 
+#[inline]
 pub fn sub_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     add_guarded_rz(a, -b)
 }
@@ -79,6 +88,7 @@ pub fn sub_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 /// Finite ordinary addition rounded toward zero, without the scalar EE alignment
 /// mask. Qualified against configured PCSX2 VU SSE arithmetic and a controlled
 /// live-bone GetWorldMat probe. General/exceptional domains remain unsupported.
+#[inline]
 pub fn add_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     let (a, b) = (daz(a)?, daz(b)?);
     if a != 0.0 && b != 0.0 {
@@ -99,6 +109,7 @@ pub fn add_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
 
 /// The configured reference's finite scalar multiply path, rounded toward zero.
 /// This is not certification of the real hardware's multiplier corner cases.
+#[inline]
 pub fn mul_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     let (a, b) = (daz(a)?, daz(b)?);
     // Two 24-bit significands have an exact product in f64.
@@ -154,6 +165,7 @@ pub fn sqrt_rz(a: f32) -> Result<f32, UnsupportedNumericDomain> {
 }
 
 /// Ordinary VU subtraction rounded toward zero (`add_rz` of the negation).
+#[inline]
 pub fn sub_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
     add_rz(a, -b)
 }
@@ -185,6 +197,94 @@ pub fn sqrt_rn(a: f32) -> Result<f32, UnsupportedNumericDomain> {
     // f64 sqrt of an f32 is correctly rounded; rounding again to f32 is
     // innocuous for square roots (53 >= 2*24 + 2).
     Ok(f64::from(a).sqrt() as f32)
+}
+
+#[cfg(test)]
+mod reference {
+    //! The original (pre-2026-10-24) forms of daz and round_rz, kept as the
+    //! oracle for the bit forms above.
+    use super::UnsupportedNumericDomain;
+
+    pub fn daz(v: f32) -> Result<f32, UnsupportedNumericDomain> {
+        if !v.is_finite() {
+            return Err(UnsupportedNumericDomain);
+        }
+        Ok(if v != 0.0 && !v.is_normal() { 0.0f32.copysign(v) } else { v })
+    }
+
+    pub fn round_rz(exact: f64) -> Result<f32, UnsupportedNumericDomain> {
+        if !exact.is_finite() || exact.abs() > f64::from(f32::MAX) {
+            return Err(UnsupportedNumericDomain);
+        }
+        if exact.abs() < f64::from(f32::MIN_POSITIVE) {
+            return Ok(if exact.is_sign_negative() { -0.0 } else { 0.0 });
+        }
+        let rounded = exact as f32;
+        let result = if f64::from(rounded).abs() > exact.abs() {
+            f32::from_bits(rounded.to_bits() - 1)
+        } else {
+            rounded
+        };
+        if result != 0.0 && !result.is_normal() {
+            return Err(UnsupportedNumericDomain);
+        }
+        Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod bit_forms {
+    use super::reference;
+
+    fn same(a: Result<f32, super::UnsupportedNumericDomain>, b: Result<f32, super::UnsupportedNumericDomain>) -> bool {
+        match (a, b) {
+            (Ok(x), Ok(y)) => x.to_bits() == y.to_bits(),
+            (Err(_), Err(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// Synthetic: the bit forms of daz and round_rz equal the reference
+    /// forms on boundary values and four million random operands (random
+    /// words, nearby exponents, f64 sums, products and quotients).
+    #[test]
+    fn bit_forms_equal_the_reference_forms() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            x.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        };
+        let specials: Vec<f32> = vec![0.0, -0.0, 1.0, -1.0, f32::MAX, -f32::MAX, f32::MIN_POSITIVE, -f32::MIN_POSITIVE,
+            f32::from_bits(1), f32::from_bits(0x807f_ffff), f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 0.5, 3.0e-39, 1.0e38];
+        for &v in &specials {
+            assert!(same(super::daz(v), reference::daz(v)), "daz {v:?}");
+        }
+        let f64_specials: Vec<f64> = vec![0.0, -0.0, f64::from(f32::MAX), -f64::from(f32::MAX), f64::from(f32::MAX) * (1.0 + f64::EPSILON),
+            f64::from(f32::MIN_POSITIVE), f64::from(f32::MIN_POSITIVE) * (1.0 - f64::EPSILON), 1.0e-50, 1.0e300, f64::INFINITY, f64::NAN,
+            f64::from(f32::MAX) + 1.0e20, 2.0f64.powi(128), 2.0f64.powi(128) * (1.0 - f64::EPSILON)];
+        for &e in &f64_specials {
+            assert!(same(super::round_rz(e), reference::round_rz(e)), "round_rz {e:?}");
+            assert!(same(super::round_rz(-e), reference::round_rz(-e)), "round_rz {:?}", -e);
+        }
+        for _ in 0..4_000_000 {
+            let r = next();
+            let a = f32::from_bits(r as u32);
+            // b: random, or a's exponent ± a few (cancellation and alignment).
+            let b = if r >> 62 == 0 {
+                f32::from_bits((r >> 32) as u32)
+            } else {
+                let ea = (a.to_bits() >> 23) & 255;
+                let eb = (ea as i32 + ((r >> 40) % 9) as i32 - 4).clamp(0, 255) as u32;
+                f32::from_bits(((r >> 33) as u32 & 0x807f_ffff) | eb << 23)
+            };
+            assert!(same(super::daz(a), reference::daz(a)), "daz {a:?}");
+            for e in [f64::from(a) + f64::from(b), f64::from(a) * f64::from(b), f64::from(a) / f64::from(b), f64::from(a).abs().sqrt(), f64::from_bits(next())] {
+                assert!(same(super::round_rz(e), reference::round_rz(e)), "round_rz {e:?} ({a:?}, {b:?})");
+            }
+        }
+    }
 }
 
 #[cfg(test)]
