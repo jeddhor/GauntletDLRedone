@@ -348,11 +348,12 @@ impl AudioOut {
     }
 
     /// A movie's soundtrack (the PSS private stream) on the music channel,
-    /// once. Its level (audioDec* reads volMusic) is not ported: 0.5,
-    /// APPROXIMATE.
-    pub fn play_pcm(&mut self, pcm: Vec<i16>, rate: u32, channels: u32) {
+    /// once, at audioDecResume 0x1de4e8's aud_stream_play(volMusic, …): the
+    /// stream volume word of `vol_music` as for AudioStreamPlay.
+    pub fn play_pcm(&mut self, pcm: Vec<i16>, rate: u32, channels: u32, vol_music: i32) {
         if let Ok(mut m) = self.mixer.lock() {
-            m.music = Some(Music { pcm: Arc::new(pcm), rate, channels, pos: 0.0, loops: false, gain: 0.5 });
+            m.music_vol = vol_music;
+            m.music = Some(Music { pcm: Arc::new(pcm), rate, channels, pos: 0.0, loops: false, gain: stream_gain(vol_music) });
         }
     }
 

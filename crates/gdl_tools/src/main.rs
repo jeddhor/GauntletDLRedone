@@ -3529,7 +3529,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             (Some(b), Some("2")) => Some(b.floors(&game, world.min, world.max)),
             _ => None,
         };
-        let report = serde_json::json!({"bot":traversal.as_ref().map(|b| b.report(&game)),"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
+        // Active items whose definition name has no tree in the item and
+        // powerup packages (AtreeMatchAnyHeader's later enemy-package search).
+        let missing_trees: std::collections::BTreeSet<String> = game.items.records.iter()
+            .filter(|r| r.active())
+            .map(|r| (String::from_utf8_lossy(game.items.definitions[r.definition()].name()).into_owned(), game.items.definitions[r.definition()].kind()))
+            .filter(|(n, _)| !n.is_empty() && !game.item_anim_lib.contains_key(n))
+            .map(|(n, k)| format!("{n} kind {k}"))
+            .collect();
+        let report = serde_json::json!({"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
             "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
                 "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),

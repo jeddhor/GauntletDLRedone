@@ -162,7 +162,7 @@ DCS.IRX: ghidra-dcs1/dcs2):
 - Evidence: synthetic tests (gdl_core dcs, gdl_client audio) and the
   actual-disc table (dcs-pan-v1: identity and the words for representative
   pans); no SPU capture compares the mixed output.
-- Approximate: movie soundtrack level (audioDec* reads volMusic; 0.5).
+- Movie soundtrack level: audioDecResume 0x1de4e8 starts the stream with aud_stream_play(volMusic, 0, 1, buffer), so the soundtrack takes AudioStreamPlay's volume word of volMusic (native: AudioOut::play_pcm, 2026-10-23).
 
 ## SPU voice setup (2026-10-23)
 

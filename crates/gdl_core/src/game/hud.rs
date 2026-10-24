@@ -348,7 +348,8 @@ pub struct Hud {
     pub optmenu_active: i32,
     pub full_screen_inventory: i32,
     pub num_live_players: i32,
-    /// button_x_tex / button_tri_tex (set by ResetModels; not ported: None).
+    /// button_x_tex / button_tri_tex (ResetModels: MBOX_FindTexture of
+    /// BUTTON_X / BUTTON_TRI; set with the HUD's textures).
     pub button_x: Option<TexRef>,
     pub button_tri: Option<TexRef>,
     /// Texture names MBOX_FindTexture did not resolve.
@@ -419,6 +420,10 @@ impl Hud {
             }
         }
         self.textures = textures;
+        // ResetModels 0x1261f8: button_x_tex / button_tri_tex =
+        // MBOX_FindTexture("BUTTON_X" / "BUTTON_TRI").
+        self.button_x = self.lookup("BUTTON_X");
+        self.button_tri = self.lookup("BUTTON_TRI");
         let names = self.tables.as_ref().map(|t| t.font_desc.clone()).unwrap_or_default();
         let space = self.tables.as_ref().map(|t| t.font_space.clone()).unwrap_or_default();
         self.fonts = fonts

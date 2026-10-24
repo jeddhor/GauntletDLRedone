@@ -6,9 +6,12 @@
 //! 0x177070, PlayerWaves 0x177658).
 //!
 //! Player progress lives in the class record (+0xcf0 + class × 0xb4) and the
-//! wave bytes (+0x182c + class × 0xe + world). Not modelled: the secret
-//! Sumner character (player_sumner_desc 0x220ed0 is a runtime pointer; every
-//! player is treated as not Sumner), DemoMode and exit model swaps.
+//! wave bytes (+0x182c + class × 0xe + world). A player whose descriptor
+//! (+0x104) is player_sumner_desc (the secret Sumner character, set by
+//! change_player type 0x10) has every wave, crystal and gargoyle item, all
+//! shards and runes at EnterTower, and is left out of TowerCheckMessages'
+//! deliveries and SumnerLevelSpeechStart. Not modelled: DemoMode and exit
+//! model swaps.
 //! TowerCheckMessages 0x175e88 drives Sumner's level/shard/rune speeches
 //! (SumnerDoSpeech, SumnerSpeechEnd, the sumner_event_flag steps).
 use super::pickups::p;
@@ -155,8 +158,18 @@ impl Game {
         bits & want & 0xffff == want & 0xffff
     }
 
-    /// PlayerWaves(player, world): the completed-level bits of that world.
+    /// Player k's descriptor is player_sumner_desc (the Tower's test; the
+    /// profile's also checks class 2).
+    fn is_sumner_desc(&self, k: usize) -> bool {
+        self.players[k].u32_(0x104) == super::pselect::SUMNER_DESC
+    }
+
+    /// PlayerWaves(player, world): the completed-level bits of that world
+    /// (Sumner: every level, 0xffffffff).
     fn player_waves(&self, k: usize, world: usize) -> u32 {
+        if self.is_sumner_desc(k) {
+            return 0xffff_ffff;
+        }
         u32::from(self.players[k].u8_(0x182c + 0xe * self.players[k].u32_(p::CHARACTER) as usize + world))
     }
 
@@ -178,6 +191,10 @@ impl Game {
     fn player_has_all(&self, k: usize, n: usize, garg: bool) -> i32 {
         if self.players[k].i32_(0xfc) == 0 {
             return 0;
+        }
+        // Sumner has delivered everything.
+        if self.is_sumner_desc(k) {
+            return 2;
         }
         let (o, table) = if garg { (0xd04, &self.items.tables.max_garg_items) } else { (0xd0a, &self.items.tables.max_crystals) };
         let c = i32::from(self.players[k].i16_(self.class_at(k, o) + 2 * n));
@@ -203,7 +220,7 @@ impl Game {
 
     /// WorldOpen(world): Temple/Hell/Battle need shards (Hell also all
     /// runes), the Tower is open, the rest need their crystals.
-    pub(crate) fn world_open(&self, world: i32) -> bool {
+    pub fn world_open(&self, world: i32) -> bool {
         match world {
             6 => self.players_have_shards(0x3fe) && self.player_has_rune(-1, 0xfff),
             5 => self.players_have_shards(0x1fe),
@@ -285,11 +302,16 @@ impl Game {
         }
         // The delivered shards (class backup +0x1d7c, bits 1..=8) stand in
         // the window (SHARD<n> at L1WINDOWFRAME); without all eight the
-        // light ray is hidden: MBTreeSetFlags(L1XPLIGHTRAY01, 2, 0).
+        // light ray is hidden: MBTreeSetFlags(L1XPLIGHTRAY01, 2, 0). A
+        // Sumner player replaces the bits so far with 0x7fe.
         let mut shards = 0u16;
         for k in 0..4 {
             if self.players[k].i32_(0xfc) != 0 {
-                shards |= self.players[k].u16_(self.class_at(k, 0x1d7c));
+                if self.is_sumner_desc(k) {
+                    shards = 0x7fe;
+                } else {
+                    shards |= self.players[k].u16_(self.class_at(k, 0x1d7c));
+                }
             }
         }
         if shards != 0
@@ -305,11 +327,16 @@ impl Game {
             self.world_node_set_flags("L1XPLIGHTRAY01", 2);
         }
         // Runes (class backup +0x1d7e): the all-runes door (0xff) with rune
-        // 13, runes 1..=12 at L1RUNEPLACE, rune 13 at L1RUNE13.
+        // 13, runes 1..=12 at L1RUNEPLACE, rune 13 at L1RUNE13 (Sumner:
+        // 0x1fff, as for the shards).
         let mut runes = 0u16;
         for k in 0..4 {
             if self.players[k].i32_(0xfc) != 0 {
-                runes |= self.players[k].u16_(self.class_at(k, 0x1d7e));
+                if self.is_sumner_desc(k) {
+                    runes = 0x1fff;
+                } else {
+                    runes |= self.players[k].u16_(self.class_at(k, 0x1d7e));
+                }
             }
         }
         if runes != 0 {
@@ -1154,7 +1181,7 @@ impl Game {
             let mut olds = [0u32; 2];
             for (j, (live, rec, backup)) in [(0x1a24, 0xcf0, 0x1d7c), (0x1a26, 0xcf2, 0x1d7e)].into_iter().enumerate() {
                 for k in 0..4 {
-                    if self.players[k].i32_(0xfc) == 0 {
+                    if self.players[k].i32_(0xfc) == 0 || self.is_sumner_desc(k) {
                         continue;
                     }
                     let c = self.class_at(k, 0);
@@ -1203,7 +1230,7 @@ impl Game {
                 }
                 let mut best = 0i32;
                 for k in 0..4 {
-                    if self.players[k].i32_(0xfc) == 0 {
+                    if self.players[k].i32_(0xfc) == 0 || self.is_sumner_desc(k) {
                         continue;
                     }
                     let v = i32::from(self.players[k].i16_(self.class_at(k, rec) + 2 * n));
@@ -1244,7 +1271,7 @@ impl Game {
         let mut n = 0;
         for k in 0..4 {
             self.tower.plyr_newlevel[k] = 0;
-            if self.players[k].i32_(0xfc) == 0 {
+            if self.players[k].i32_(0xfc) == 0 || self.is_sumner_desc(k) {
                 continue;
             }
             let c = self.players[k].u32_(0xc) as usize;

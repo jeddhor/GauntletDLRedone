@@ -64,8 +64,7 @@ The per-class record ends exactly where the wave bytes begin (0xcec + 16 ×
 
 ## Character records (gdl_core::game::profile)
 
-Ported without the Sumner branches (player_sumner_desc is a runtime pointer):
-`init_players`, `clear_player` (its class is `def_char_type(9)` — the loop
+Ported (with the Sumner branches below): `init_players`, `clear_player` (its class is `def_char_type(9)` — the loop
 counter — so always 6, as the original does), `init_player_powerups`,
 `set_player_default_atts`, `PlayerUpdateAtts` (attribute = min(base +
 (level − 1) × 5, cap) + bonus, at most 999; PDAT pairs +0x28/+0x2c,
@@ -75,6 +74,24 @@ the original), `save_player_atts`, `player_store_in_save`,
 `player_get_from_save`, `change_player`, `new_player`, `PlayerSaveState`,
 `PlayerRestoreState` and the record part of `init_next_level` /
 `load_player_geo` 0x130d40 / `load_player` 0x12f748 (`level_start`).
+
+Sumner (change_player type 0x10: class 2 with +0x104 = player_sumner_desc,
+whose value is the "sum" string 0x2a6c00; ghidra-sumnerchar1):
+`player_get_from_save` copies the save region to the backup (+0x1a28),
+sets colour 0, attributes 999.0, level 99 with LevelToExp(99), full
+health, 5000 gold, nine potions and keys, shards 0x7fe and runes 0x1fff and
+clears the powerups; `PlayerUpdateAtts` keeps the 999s. `player_store_in_save`
+copies the backup over the region, reloads the saved character with the
+descriptor cleared (`player_get_from_save(−1)`, PlayerControl included),
+restores the descriptor and stores with the class read on entry (2), so
+class entry 2 takes the saved character's gold, potions, keys, shards,
+runes and powerups (an original quirk, kept). `PlayerSaveState` skips
+Sumner; `PlayerRestoreState` and `PlayersRestoreHealth` set his maximum
+health. Tower: `PlayerWaves` is 0xffffffff, `PlayerHasAllCrystals` /
+`PlayerHasAllGargItems` 2, EnterTower's shard and rune masks 0x7fe /
+0x1fff (replacing the bits so far), and TowerCheckMessages' deliveries and
+SumnerLevelSpeechStart skip him (those tests compare the descriptor only).
+Synthetic test: `sumner_plays_and_keeps_the_saved_character`.
 
 Class data: PDATA/<TAG>.WAD (LoadPlyrData 0x14d9f0) holds SFXX, DAMG and
 PDAT chunks; the PDAT chunk is 0x180 bytes in all sixteen files. Model

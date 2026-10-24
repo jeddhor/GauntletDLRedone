@@ -698,13 +698,15 @@ impl Game {
     /// entry loaded; the model swap is the host's (Event::PlayerModel).
     fn change_player(&mut self, p: usize, ty: i32, pdats: &Pdats) -> R<()> {
         let controls = self.control_options[p];
-        profile::player_store_in_save(&mut self.players[p], &controls);
+        let t = self.class_tables.clone();
+        if let Some(c) = profile::player_store_in_save(&mut self.players[p], &controls, pdats, &t)? {
+            self.control_options[p] = c;
+        }
         let (class, desc) = if ty == 0x10 { (2, SUMNER_DESC) } else { (ty, 0) };
         let r = &mut self.players[p];
         r.set_u32(o::DESC, desc);
         r.set_i32(o::CLASS, class);
         r.set_i32(o::CLASS8, if 7 < class { class - 8 } else { class });
-        let t = self.class_tables.clone();
         profile::player_get_from_save(&mut self.players[p], Some(class as u32), pdats, &t)?;
         self.events.push(super::Event::PlayerModel { player: p });
         Ok(())
@@ -1065,7 +1067,10 @@ impl Game {
             if self.players[k].i32_(o::STATE) == 1 {
                 self.players[k].set_i32(o::STATE, 3);
                 let controls = self.control_options[k];
-                profile::player_store_in_save(&mut self.players[k], &controls);
+                let t = self.class_tables.clone();
+                if let Some(c) = profile::player_store_in_save(&mut self.players[k], &controls, pdats, &t)? {
+                    self.control_options[k] = c;
+                }
             }
         }
         if mode != 0 {
@@ -1566,7 +1571,7 @@ impl Game {
                     set(self, o::SUB, sub + 1);
                 } else if sub == 3 {
                     let k = self.pr(p).i32_(o::FILE);
-                    let ok = self.player_write_save_file(p, k, cx);
+                    let ok = self.player_write_save_file(p, k, cx)?;
                     set(self, o::SUB, if ok { 4 } else { -1 });
                     if ok {
                         ps.dir = cx.card.directory().to_vec();
@@ -1714,16 +1719,19 @@ impl Game {
     }
 
     /// PlayerWriteSaveFile(p, k): player_store_in_save, the region to file k.
-    fn player_write_save_file(&mut self, p: usize, k: i32, cx: &mut SelectCtx) -> bool {
+    fn player_write_save_file(&mut self, p: usize, k: i32, cx: &mut SelectCtx) -> R<bool> {
         self.players[p].set_i32(o::FILE2, k);
         let controls = self.control_options[p];
-        profile::player_store_in_save(&mut self.players[p], &controls);
+        let t = self.class_tables.clone();
+        if let Some(c) = profile::player_store_in_save(&mut self.players[p], &controls, cx.pdats, &t)? {
+            self.control_options[p] = c;
+        }
         let region = self.players[p].0[o::NAME..o::NAME + SAVE_LEN].to_vec();
         let ok = usize::try_from(k).is_ok_and(|k| cx.card.save(k, &region));
         if ok {
             self.players[p].set_u8(o::SAVED, 1);
         }
-        ok
+        Ok(ok)
     }
 
     /// State 4: class and colour (do_optmenu non-vertical: 3/4 step the

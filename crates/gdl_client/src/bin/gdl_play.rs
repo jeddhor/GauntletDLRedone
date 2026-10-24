@@ -1628,6 +1628,7 @@ fn present_movie(
     mut showing: Local<bool>,
 ) {
     let mut note = None;
+    let vol_music = sim.game.vol_music;
     let Some(run) = sim.movie.as_mut() else {
         if std::mem::take(&mut *showing) {
             hide_movie(&mut quad);
@@ -1652,7 +1653,7 @@ fn present_movie(
         if let (Some(p), Some(a)) = (run.player.as_mut(), audio.as_mut())
             && let Some((pcm, rate, ch)) = p.audio.take()
         {
-            a.play_pcm(pcm, rate, ch);
+            a.play_pcm(pcm, rate, ch, vol_music);
         }
     }
     let frame = run.player.as_mut().and_then(|p| p.advance(f64::from(time.delta_secs())));
@@ -1834,7 +1835,8 @@ fn run_attract(
                 if let (Some(p), Some(a)) = (player.as_mut(), audio.as_mut())
                     && let Some((pcm, rate, ch)) = p.audio.take()
                 {
-                    a.play_pcm(pcm, rate, ch);
+                    // OptionsSetup's AudioSetVolMusic(GamePrefs word 1).
+                    a.play_pcm(pcm, rate, ch, i32::from(front.menu.music));
                 }
             }
             match player.as_mut() {
@@ -3461,7 +3463,8 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
     {
         // EnterTower: SetPlayerStartPos(GetWorldOrder(LastWorldPlayed)) puts
         // a returning player at that realm's wing (WorldOrder 0x23f4c8);
-        // WorldOpen's check is not ported (HYPOTHESIS: the start is open).
+        // SetPlayerStartPos 0x150858 falls back to start 0 when
+        // WorldOpen 0x177778(WorldOrder[id]) is false.
         let mut id = 0;
         if lv.world == 0xd
             && let Ok(order) = elf.object("WorldOrder")
@@ -3470,6 +3473,9 @@ fn build_game(session: &Session, idx: usize, slots: &[Option<SlotStart>; 4], ret
             id = order.iter().position(|&w| w == session.last_world).unwrap_or(0) as i16;
             if let Some(t) = session.tower_start {
                 id = t;
+            }
+            if !order.get(id.max(0) as usize).is_some_and(|&w| game.world_open(w)) {
+                id = 0;
             }
         }
         let loc = session
@@ -3677,7 +3683,11 @@ fn simulate(
                 // player_store_in_save, the region to card file k, saved flag.
                 use gdl_core::game::pselect::SaveCard;
                 let controls = sim.game.control_options[0];
-                profile::player_store_in_save(&mut sim.game.players[0], &controls);
+                match profile::player_store_in_save(&mut sim.game.players[0], &controls, &front.pdats, &front.tables) {
+                    Ok(Some(c)) => sim.game.control_options[0] = c,
+                    Ok(None) => {}
+                    Err(e) => sim.error = Some(format!("TEST save: {e}")),
+                }
                 let region = sim.game.players[0].0[profile::SAVE_START..profile::SAVE_START + profile::SAVE_LEN].to_vec();
                 if (NativeCard { store: &front.store }).save(k as usize, &region) {
                     sim.game.players[0].set_u8(0x9a7, 1);

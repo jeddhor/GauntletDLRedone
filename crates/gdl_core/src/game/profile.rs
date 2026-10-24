@@ -100,6 +100,12 @@ pub fn init_player(k: usize) -> Record {
     r
 }
 
+/// The record plays Sumner (change_player(k, 0x10)): class 2 (+0xc) with
+/// player_sumner_desc in +0x104 (its value: the "sum" string 0x2a6c00).
+pub fn is_sumner(r: &Record) -> bool {
+    r.u32_(0xc) == 2 && r.u32_(0x104) == super::pselect::SUMNER_DESC
+}
+
 /// init_player_powerups: 8 × 16 powerup bytes at +0x144, +0x1c4 and +0x138.
 pub fn init_player_powerups(r: &mut Record) {
     r.0[0x144..0x1c4].fill(0);
@@ -111,6 +117,13 @@ pub fn init_player_powerups(r: &mut Record) {
 /// (level − 1) × 5, cap) + bonus, at most 999 (PDAT pairs +0x28/+0x2c fight,
 /// +0x38/+0x3c armor, +0x40/+0x44 magic, +0x30/+0x34 speed).
 pub fn player_update_atts(r: &mut Record, class: u32, pdats: &Pdats) -> R<()> {
+    // Sumner: every attribute 999.0.
+    if is_sumner(r) {
+        for o in [0x108, 0x10c, 0x110, 0x114] {
+            r.set_f32(o, 999.0);
+        }
+        return Ok(());
+    }
     let bonus = CLASS_ATTS + 0x18 * class as usize;
     let step = ((r.i32_(0x2ac0) - 1) * 5) as f32;
     for (k, (base, cap)) in [(0x28, 0x2c), (0x38, 0x3c), (0x40, 0x44), (0x30, 0x34)].into_iter().enumerate() {
@@ -197,11 +210,31 @@ pub fn clear_player(r: &mut Record, wipe: bool, demo: bool, pdats: &Pdats) -> R<
     player_update_atts(r, class_of(r), pdats)
 }
 
-/// player_store_in_save (not Sumner): the record's live values into the
-/// save region.
-pub fn player_store_in_save(r: &mut Record, controls: &ControlOptions) {
+/// player_store_in_save: the record's live values into the save region.
+/// Sumner: the backup (the region as loaded, +0x1a28) goes back over the
+/// region, the saved character reloads with the descriptor cleared
+/// (player_get_from_save(−1), which also sets PlayerControl) and the
+/// descriptor returns; the store then runs with the class read on entry
+/// (2), so class entry 2 takes the reloaded character's gold, potions,
+/// keys, shards, runes and powerups. Sumner's own play is never kept.
+/// Returns the reloaded controller options (Sumner only).
+pub fn player_store_in_save(r: &mut Record, controls: &ControlOptions, pdats: &Pdats, t: &ClassTables) -> R<Option<ControlOptions>> {
+    let class = class_of(r);
+    let mut reloaded = None;
+    if is_sumner(r) {
+        r.0.copy_within(SAVE_BACKUP..SAVE_BACKUP + SAVE_LEN, SAVE_START);
+        r.set_u32(0x104, 0);
+        reloaded = Some(player_get_from_save(r, None, pdats, t)?);
+        r.set_u32(0x104, super::pselect::SUMNER_DESC);
+    }
+    store_live(r, class, reloaded.as_ref().unwrap_or(controls));
+    Ok(reloaded)
+}
+
+/// player_store_in_save's store for class entry `class`.
+fn store_live(r: &mut Record, class: u32, controls: &ControlOptions) {
     save_player_atts(r);
-    let c = CLASS_RECORD + CLASS_STRIDE * class_of(r) as usize;
+    let c = CLASS_RECORD + CLASS_STRIDE * class as usize;
     r.set_u32(c + 0x30, r.u32_(0x1a20));
     r.set_u16(c, r.u16_(0x1a18));
     r.set_u16(c + 2, r.u16_(0x1a14));
@@ -220,9 +253,30 @@ pub fn player_store_in_save(r: &mut Record, controls: &ControlOptions) {
     }
 }
 
-/// player_get_from_save(player, class) (not Sumner; `class` None = the
-/// saved class +0x9a4). Returns the restored controller options.
+/// player_get_from_save(player, class) (`class` None = the saved class
+/// +0x9a4). Returns the restored controller options. Sumner: the region is
+/// kept as the backup (+0x1a28), colour 0, attributes 999, level 99 with
+/// its experience, full health, 5000 gold, nine keys and potions, every
+/// shard (0x7fe) and rune (0x1fff), no powerups.
 pub fn player_get_from_save(r: &mut Record, class: Option<u32>, pdats: &Pdats, t: &ClassTables) -> R<ControlOptions> {
+    if is_sumner(r) {
+        r.0.copy_within(SAVE_START..SAVE_START + SAVE_LEN, SAVE_BACKUP);
+        r.set_u32(4, 0);
+        for o in [0x108, 0x10c, 0x110, 0x114] {
+            r.set_f32(o, 999.0);
+        }
+        check_player_atts(r, pdats, t)?;
+        r.set_i32(0x2ac0, 99);
+        r.set_i32(0x1a1c, crate::player_class::level_to_exp(99));
+        r.set_f32(0x1a10, crate::player_class::max_health(99));
+        r.set_i32(0x1a20, 5000);
+        r.set_i32(0x1a18, 9);
+        r.set_i32(0x1a14, 9);
+        r.set_u16(0x1a24, 0x7fe);
+        r.set_u16(0x1a26, 0x1fff);
+        init_player_powerups(r);
+        return Ok(std::array::from_fn(|k| u32::from(r.u8_(0x190c + k))));
+    }
     let class = class.unwrap_or(r.i16_(0x9a4) as u32);
     r.set_u32(0xc, class);
     r.set_i32(4, i32::from(r.i8_(0x9a6)));
@@ -247,7 +301,7 @@ pub fn player_get_from_save(r: &mut Record, class: Option<u32>, pdats: &Pdats, t
 /// change_player(k, class) (not Sumner): store the record, switch class,
 /// restore that class from the region.
 pub fn change_player(r: &mut Record, class: u32, controls: &ControlOptions, pdats: &Pdats, t: &ClassTables) -> R<ControlOptions> {
-    player_store_in_save(r, controls);
+    player_store_in_save(r, controls, pdats, t)?;
     r.set_u32(0xc, class);
     r.set_u32(8, if class < 8 { class } else { class - 8 });
     player_get_from_save(r, Some(class), pdats, t)
@@ -298,10 +352,10 @@ pub fn load_character(k: usize, region: &[u8], pdats: &Pdats, t: &ClassTables) -
     Ok((r, controls))
 }
 
-/// The save region of a record after player_store_in_save.
+/// The save region of a (not Sumner) record after player_store_in_save.
 pub fn save_region(r: &Record, controls: &ControlOptions) -> Vec<u8> {
     let mut c = r.clone();
-    player_store_in_save(&mut c, controls);
+    store_live(&mut c, class_of(r), controls);
     c.0[SAVE_START..SAVE_START + SAVE_LEN].to_vec()
 }
 
@@ -386,20 +440,29 @@ pub fn level_start(r: &mut Record, pdats: &Pdats, action_map: &[[i64; 2]], game_
     Ok(())
 }
 
-/// PlayerSaveState(k, backup) (not Sumner): player_store_in_save, the
+/// PlayerSaveState(k, backup) (skipped for Sumner): player_store_in_save, the
 /// backup copy unless (CurWorld, CurLevel) is (5, 1) or (6, 1), and the
 /// saved flag +0x9a7 = 0.
 pub fn player_save_state(r: &mut Record, backup: bool, cur_world: i32, cur_level: i32, controls: &ControlOptions) {
-    player_store_in_save(r, controls);
+    // Sumner keeps no state.
+    if is_sumner(r) {
+        return;
+    }
+    store_live(r, class_of(r), controls);
     if backup && !(cur_world == 5 && cur_level == 1) && !(cur_world == 6 && cur_level == 1) {
         r.0.copy_within(SAVE_START..SAVE_START + SAVE_LEN, SAVE_BACKUP);
     }
     r.set_u8(0x9a7, 0);
 }
 
-/// PlayerRestoreState(k) (not Sumner): the backup region back, then
-/// player_get_from_save.
+/// PlayerRestoreState(k): the backup region back, then
+/// player_get_from_save (Sumner: health to the maximum only).
 pub fn player_restore_state(r: &mut Record, pdats: &Pdats, t: &ClassTables) -> R<ControlOptions> {
+    // Sumner: only the health back to its maximum.
+    if is_sumner(r) {
+        r.set_f32(0x1a10, crate::player_class::max_health(r.i32_(0x2ac0)));
+        return Ok(std::array::from_fn(|k| u32::from(r.u8_(0x190c + k))));
+    }
     r.0.copy_within(SAVE_BACKUP..SAVE_BACKUP + SAVE_LEN, SAVE_START);
     player_get_from_save(r, None, pdats, t)
 }
@@ -484,6 +547,42 @@ mod tests {
         let differ: Vec<usize> = (0..SAVE_LEN).filter(|&k| back.0[SAVE_START + k] != region[k]).map(|k| SAVE_START + k).collect();
         assert_eq!(differ, vec![0x9a7]);
         assert_eq!(back.u8_(0x9a7), 1);
+    }
+
+    #[test]
+    fn sumner_plays_and_keeps_the_saved_character() {
+        let (p, t) = (pdats(), tables());
+        let mut r = new_character(1, "pele", 6, 0, &p, &t).unwrap();
+        r.set_i32(0x1a20, 1234);
+        // change_player(1, 0x10): store, class 2 with player_sumner_desc, load.
+        assert_eq!(player_store_in_save(&mut r, &[1, 0, 1, 0], &p, &t).unwrap(), None);
+        r.set_u32(0x104, super::super::pselect::SUMNER_DESC);
+        r.set_u32(0xc, 2);
+        r.set_u32(8, 2);
+        player_get_from_save(&mut r, Some(2), &p, &t).unwrap();
+        assert!(is_sumner(&r));
+        assert_eq!((r.i32_(0x2ac0), r.i32_(0x1a20), r.i32_(0x1a18), r.i32_(0x1a14)), (99, 5000, 9, 9));
+        assert_eq!((r.u16_(0x1a24), r.u16_(0x1a26), r.f32_(0x1a10), r.f32_(0x108), r.f32_(0x114)), (0x7fe, 0x1fff, 9999.0, 999.0, 999.0));
+        // Play changes nothing: the store reloads the saved character
+        // (class 6) and writes its values into class entry 2 as well.
+        r.set_i32(0x1a20, 7);
+        let controls = player_store_in_save(&mut r, &[0, 0, 0, 0], &p, &t).unwrap();
+        assert_eq!(controls, Some([1, 0, 1, 0]));
+        assert_eq!((r.u32_(0xc), r.i32_(0x1a20), r.u32_(0x104)), (6, 1234, super::super::pselect::SUMNER_DESC));
+        assert!(!is_sumner(&r));
+        let s = summary(&r.0[SAVE_START..SAVE_START + SAVE_LEN]).unwrap();
+        assert_eq!((s.name.as_str(), s.class, s.gold), ("PELE", 6, 1234));
+        assert_eq!(r.i32_(CLASS_RECORD + CLASS_STRIDE * 2 + 0x30), 1234);
+        // PlayerSaveState keeps nothing for Sumner; PlayerRestoreState only
+        // refills the health.
+        let mut q = r.clone();
+        q.set_u32(0xc, 2);
+        q.set_f32(0x1a10, 1.0);
+        let before = q.clone();
+        player_save_state(&mut q, true, 1, 0, &[0; 4]);
+        assert_eq!(q.0, before.0);
+        player_restore_state(&mut q, &p, &t).unwrap();
+        assert_eq!(q.f32_(0x1a10), crate::player_class::max_health(q.i32_(0x2ac0)));
     }
 
     #[test]

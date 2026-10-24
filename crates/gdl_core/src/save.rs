@@ -566,7 +566,7 @@ mod tests {
         let jake = region(b"JAKE", 0);
         let level_sum = summary(&jake).unwrap().level_sum as u32;
         let opts = [0x80u8; GAME_OPTS_LEN];
-        let image = card(&[jake.clone()], &dirinfo(&[(level_sum, 6, b"JAKE")]), &opts);
+        let image = card(std::slice::from_ref(&jake), &dirinfo(&[(level_sum, 6, b"JAKE")]), &opts);
         let r = s.import_card(&image).unwrap();
         assert_eq!(r.saves.len(), CARD_SAVES as usize);
         assert_eq!((r.saves[0].slot, r.saves[0].dirinfo_agrees), (Some(1), Some(true)));
@@ -584,7 +584,7 @@ mod tests {
         // Another character in an occupied number goes to the next free slot;
         // a DirInfo that disagrees with the region is reported.
         let pele = region(b"PELE", 3);
-        let other = card(&[pele.clone()], &dirinfo(&[(1, 2, b"PELE")]), &opts);
+        let other = card(std::slice::from_ref(&pele), &dirinfo(&[(1, 2, b"PELE")]), &opts);
         let r = s.import_card(&other).unwrap();
         assert_eq!((r.saves[0].slot, r.saves[0].dirinfo_agrees), (Some(2), Some(false)));
         assert_eq!(s.load(2).unwrap().save.region().unwrap(), pele);

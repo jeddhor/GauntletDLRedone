@@ -106,12 +106,17 @@ impl Game {
     }
 
     /// PlayersRestoreHealth 0x130a60: dying players (8) back to 1, health
-    /// from the class entry (+0x9b0 + class × 0x18).
+    /// from the class entry (+0x9b0 + class × 0x18); Sumner's maximum.
     pub fn players_restore_health(&mut self) {
         for k in 0..4 {
+            let sumner = super::profile::is_sumner(&self.players[k]);
             let r = &mut self.players[k];
             if r.i32_(0xfc) == 8 {
                 r.set_i32(0xfc, 1);
+            }
+            if sumner {
+                r.set_f32(0x1a10, crate::player_class::max_health(r.i32_(0x2ac0)));
+                continue;
             }
             let c = r.u32_(0xc) as usize;
             let v = r.u32_(0x9b0 + 0x18 * c);
