@@ -517,8 +517,10 @@ current action (+0x1e0) is 0x92; with the invisibility powerup (+0x138
 bit 4) v = (int)(sinf(2π t) × 16) + 0xa0, where t is the longest kind-9
 flag-4 slot time (a negative, unlimited time counts) — except on the even
 eighths of the last 3 s (0 ≤ t ≤ 3 and (int)(8t) even), where v = 0 (the
-blink back); otherwise v = 0. The call is recursive, so the held weapon
-and the trees hung on the player fade with it. gdl_play present_player_alpha
+blink back); otherwise v = 0. The call is recursive (+0x78 first child,
++0x7c siblings), so the held weapon and the trees hung on the player fade
+with it — except nodes with MB flag 0x10 and their subtrees (the attached
+objects, IT_SIGN), which MBTreeSetAlpha skips. gdl_play present_player_alpha
 (drawn alpha (255 − v) / 255); seen in G1 with GDL_DEBUG_POWERUP 9:4
 (run client-pw-4). No reference capture.
 

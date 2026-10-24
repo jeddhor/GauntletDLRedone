@@ -1029,7 +1029,7 @@ fn skin_image(libs: &Libraries, monsters: &[String], v: &gdl_core::game::skin::S
 /// (int)(sin(2π t) × 16) + 0xa0, t the longest kind-9 flag-4 slot time —
 /// solid (0) on the even eighths of its last 3 s, a negative (unlimited)
 /// time shimmers; otherwise 0. Drawn alpha (255 − v) / 255 (setPrimAlpha).
-fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)>, children: Query<&Children>, mut req: ResMut<MatRequests>) {
+fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)>, children: Query<&Children>, flag10: Query<(), Or<(With<HandObject>, With<ItSign>, With<HeldWeapon>)>>, mut req: ResMut<MatRequests>) {
     let g = &sim.game;
     for (root, kids) in &bodies {
         let r = &g.players[root.0];
@@ -1056,7 +1056,11 @@ fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)
             continue;
         }
         let a = (255 - v.clamp(0, 255)) as f32 / 255.0;
-        let mut stack: Vec<Entity> = kids.iter().collect();
+        // MBTreeSetAlpha's recursion skips nodes with MB flag 0x10 and their
+        // subtrees: the attached objects (MBNewObject flags 0x810 / 0x9010 /
+        // 0x10), IT_SIGN and the held weapon (load_player's 0x810) keep
+        // their alpha.
+        let mut stack: Vec<Entity> = kids.iter().filter(|e| !flag10.contains(*e)).collect();
         while let Some(e) = stack.pop() {
             req.alpha(e, a);
             if let Ok(c) = children.get(e) {
