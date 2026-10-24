@@ -372,6 +372,16 @@ impl AudioOut {
         }
     }
 
+    /// Offline rendering (research comparisons): `frames` stereo frames of
+    /// the mix at the output rate, as the ALSA thread would take them.
+    pub fn render_offline(&mut self, frames: usize) -> Vec<f32> {
+        let mut out = vec![0f32; frames * 2];
+        if let Ok(mut m) = self.mixer.lock() {
+            m.render(&mut out, 2);
+        }
+        out
+    }
+
     /// AudioStreamStop.
     pub fn stream_stop(&mut self) {
         if let Ok(mut m) = self.mixer.lock() {

@@ -236,8 +236,27 @@ Level (open): volMusic is 128 in the captures (0x21f6c8) and G1's LEVL
 (128 × 0x1fff >> 8) / 0x4000 = 0.25 of full scale, which the native mixer
 outputs — but the capture fits 0.0754 (the word 39's gain): the reference
 chain after AdsSetVolume carries a further ×0.30 (−10.4 dB) on the music
-that native lacks. Whether the voices see the same factor (the
-music/effects balance) needs an effects measurement; not yet done.
+that native lacks.
+
+Music/effects balance (2026-10-24): a live 15.2 s capture of B4 from
+lvl-B4-start-v1 (no input: trace-B4-start-v1's schedule; private
+ref-audio-b4-start-v1.mp4) against the native frame replay of that trace
+with its per-update events (GDL_REPLAY_EVENTS) rendered offline through the
+native mixer (crates/gdl_client/src/bin/gdl_audio_render.rs: play_audio's
+dispatch, one update = 2 × 48000 / 59.94 frames; music and effects rendered
+apart; volSFX 128 as the reference's 0x21f6c4). The music (MOUNT4, located
+at 3.62 s by cross-correlation) fits gains 0.062 / 0.064 against the
+native 0.25 at word 128 (×0.25); with it removed, the remaining effects
+(chiefly the looping item sound on slot 206, panned left) measure 0.0558 /
+0.0207 RMS against the native render's 0.190 / 0.073 (×0.29 / ×0.28). Music
+and effects are scaled alike, so the balance agrees within about 1 dB; the
+whole reference output sits about 11 dB below native (G1's music ×0.30).
+PCSX2 applies volume registers as (value << 1) × sample >> 15 (ADSR.cpp
+V_VolumeSlide::RegSet, Mixer.cpp ApplyVolume; upstream reading), so 0x3fff
+is unity there as in native's VOLL / 0x4000; the common factor's stage is
+not identified (open; a hardware recording would settle it). Waveform-level
+fits of the effects are not meaningful here: the looping voices of the
+saved state keep their own phase.
 
 ## Not yet
 
