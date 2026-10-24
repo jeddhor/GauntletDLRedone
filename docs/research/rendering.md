@@ -504,9 +504,16 @@ code. Two programs light vertices:
   UNPACK V3-32 at 0x3e, so these are n̂·axis); header word 1.y bit 0x40
   warps both to 0.6 t + 0.4 t³; then uv = uv × mem[15].xy + mem[16].xy, the
   per-object UV scale and offset from the object header (pairs 131..157;
-  the init program sets 256 / 0, i.e. ITOF15 UVs / 128). The values the EE
-  writes there for chrome draws are not traced (gdl_play adds the camera
-  angles as the offset at scale 1).
+  the init program sets 256 / 0, i.e. ITOF15 UVs / 128). For chrome draws
+  setTexShift 0x1beac0 (instructions read with the ELF's pb_debug_chrome
+  block at 0x2721f0: +0x14 0, +0x18 1, +0x2c/+0x30 1.0, +0x34/+0x38 −1.0;
+  texsh_def.13 [1, 0, 1, 0]) writes scale (−0.5, −0.5) and offset
+  (−0.5 + yaw/2π, −0.5 + pitch/π), the angles setChrome left in the camera
+  block (+0x54 → u, +0x50 → v). Since the normals arrive as 7.5 × n̂, t =
+  N·axis is the unit dot product. gdl_play (2026-10-23): unit axes and
+  uv = −0.5 t − 0.5 + angle; before, the axes kept the 1/7.5 against unit
+  normals and the scale was 1, so the chrome was nearly flat. The warp's
+  header bit 0x40 (pbSetDORegs from pbg +0x1c +0xa4) is not traced.
 - gdl_play: lit materials min(min(ambient + N·L light, 1) + Σ, 255/128);
   vertex-coloured materials min(min(colour × (1 + add), 1) + Σ, 255/128).
   HYPOTHESIS: vf12 of program B is MBLightmapMod/MBNoShadeMod's 1 + add

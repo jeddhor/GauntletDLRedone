@@ -1162,15 +1162,17 @@ fn present_skins(
 /// +0x1c, +0x20 set, +0x24 clear): e = camera − object (camera block +0x20,
 /// object matrix +0x30), u = e × up (camera block +0x40, (0, 1, 0) from
 /// pbInitCamera), v = u × e, taken into the object's frame, normalised and
-/// scaled by 0.13333334; the camera block gets atan(e.y / |e.xz|) / π
-/// (+0x50) and atan2(e.x, e.z) / 2π (+0x54). Computed in MB space (the
-/// render root mirrors x) and returned in render space; the dot product
-/// with a world normal equals the object-frame one for rotations.
-/// HYPOTHESIS: the offsets pair as (+0x54 → u, +0x50 → v).
+/// scaled by 0.13333334 — which the VU's normals (ITOF4 − 7.5, i.e. 7.5 ×
+/// the unit normal) cancel, so unit axes here; the camera block gets
+/// atan(e.y / |e.xz|) / π (+0x50) and atan2(e.x, e.z) / 2π (+0x54), which
+/// setTexShift 0x1beac0 adds to the v and u offsets (+0x2c, +0x28).
+/// Computed in MB space (the render root mirrors x) and returned in render
+/// space; the dot product with a world normal equals the object-frame one
+/// for rotations.
 fn chrome_axes(eye: Vec3, object: Vec3) -> (Vec4, Vec4) {
     let e = (eye - object) * MIRROR;
-    let u = e.cross(Vec3::Y).normalize_or_zero() * f32::from_bits(0x3e08_8889);
-    let v = e.cross(Vec3::Y).cross(e).normalize_or_zero() * f32::from_bits(0x3e08_8889);
+    let u = e.cross(Vec3::Y).normalize_or_zero();
+    let v = e.cross(Vec3::Y).cross(e).normalize_or_zero();
     let el = (e.y / (e.x * e.x + e.z * e.z).sqrt()).atan() * std::f32::consts::FRAC_1_PI;
     let az = e.x.atan2(e.z) * (0.5 * std::f32::consts::FRAC_1_PI);
     ((u * MIRROR).extend(az), (v * MIRROR).extend(el))
