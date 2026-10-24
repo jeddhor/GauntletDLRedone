@@ -294,6 +294,56 @@ Rules added for b26 (2026-10-23), from the b10–b23 logs:
   goal given up) the bot forgets given-up goals, gate blocks, used triggers
   and explored columns and regrows the graph.
 
+Rules added 2026-10-24 (batches b31–b34, single levels from their starts,
+DEBUG health assist; each found in a stalled log, then checked by a
+--teleport/--itemw/--watch experiment or a native render under
+GDL_DEBUG_CAMERA):
+- Triggers with +0xf4 bit 0x200 are skipped: ItemCollSub never lets a
+  player touch them (another trigger's chain fires them). A4's BRIDGEPAD 231
+  and G2's 408 had cost ~40 stuck events each run.
+- Used triggers are revisited (three contacts, nearest the treasure first,
+  reached only on contact) while a rune or legend item is out of reach, and
+  a given-up treasure reopens after any trigger: B5's javelin lies past a
+  ditch that trigger 279 bridges (B5ELEV1 rises 5 units, checked by
+  standing on 279), and the way down is lift 275, already ridden — the bot
+  now takes the javelin and exits (update 31108).
+- A goal held riding for 1800 updates is given up (G1's ferry near
+  (16, 41.4, −320) re-armed the riding hold for 26,000 updates).
+- A generator attack that raised +0xfc no longer spends one of the three
+  tries (A4's generator 128 broke over separate fights: 0.29, 0.5, 0.79,
+  0.86); spent generators are soft obstacles.
+- Graph: a floor under another with less than 3 units between their tops is
+  no node (G2's stairs over its ground floor); the strict wall test uses a
+  1.2 radius (the player's 1.5) and its failures cost 20× (with 0.3 and 4×
+  the route left G2's building through the wall beside its stairs: a render
+  from a pinned camera showed the railed staircase); after a failed drop
+  every drop edge off the same object within 12 units is blocked; drops
+  failing the wall test at the upper floor are no edges; barrels (kind 10,
+  43–45) cost less than other obstacles.
+- A given-up goal the player comes within 25 units of again is retried
+  (G2's exit, given up behind barrels, lay 15 units away later; the bot had
+  taken the secret exit beside it). G2 now ends through its regular exit
+  (update 33095); G4 ends with 150,000 updates (81482, rune taken).
+- Without the health assist the bot fires every update at enemies within
+  ATTACK_RANGE and in windows at those within twice that; below 60 % health
+  it seeks food (not BADMEAT). No-assist G1: three delays all died by update
+  11714 before, two of three survived 60,000 updates after (health 308 and
+  403 of 483). With the assist the old windows stay (the fights cost
+  progress: b32 lost B5 and A3).
+- campaign_chain.py --bot-tries N runs the bot side by side with different
+  idle delays after the stage start (bot_delay=N; the simulation is
+  deterministic, so a retry needs different input) and keeps the first that
+  wins.
+- Batches: b31 27 of 61 levels ended (60,000 updates), b33 32 (B3 D1 G3 I5
+  K2 K4 gained, E2 lost), b34 34 (B1 E2 G2 gained, K4 lost; hard edges
+  20×). Not ended by b34: A2 A4 C1–C4 D2–D4 E1 F1 G4 H1–H3 I1–I4 J1–J4 J6
+  K1 K3 K4. The state search (e3: A2 C1–C4 D2 F1 G2 G4,
+  600,000 updates each) ended none.
+- puzzle.rs (plan=1, DEBUG): a breadth-first trigger/gate planner on state
+  copies. Limited: G4's crossing is a bridge that cycles (floor 353 is
+  absent at fixed settle times), G2 counted as solved at the start (its
+  obstacle was the graph, not a trigger).
+
 
 ## State search (M14/M15 tooling, 2026-10-24)
 
