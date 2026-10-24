@@ -60,7 +60,10 @@ run $R/replay-frame-B2start-$V.json --world B --level 2 --enemy-replay $R/trace-
 # lvl-<L>-start-v1, w10l4-start-v1 for J4, w10l3-start-v1 for J6), idle.
 SWEEP="A2 A3 A4 A6 B3 B4 B5 C2 C3 C4 D2 D4 G2 G3 G4 H2 H3 I3 I4 J2 J3 J4 J6 K1 K3 K4 S1 S2 S3 S4 S5 S6 S7 S8 S9"
 for L in $SWEEP; do run $R/replay-frame-${L}start-$V.json --world ${L:0:1} --level ${L:1} --enemy-replay $R/trace-$L-start-v1 --frame-replay; done
-for f in frame-fight-g1 frame-combat-g1 frame-varied-g1 frame-tower enemies-g1 enemies-fight-g1 player-g1 player-combat-g1 player-fight-g1 frame-a1 frame-b1 frame-k2 frame-g1new frame-b6 frame-g5 frame-C5 frame-D5 frame-I5 frame-J5 frame-K5 frame-E2 frame-F2 frame-H4 frame-A5 frame-A1statue frame-A1golem frame-A1death frame-B6kill frame-B6wiz2 frame-B6wiz3 frame-B6wiz4 frame-G1exit frame-C1water frame-C1water2 frame-G1potion frame-G1xbow frame-A1trans frame-D1new frame-E1new frame-F1new frame-H1new frame-I1new frame-J1new frame-D3start frame-D3leaf frame-I2start frame-B2start $(for L in $SWEEP; do echo frame-${L}start; done); do
+# The combat sweep (2026-10-23 night): from lvl-<L>-play-v1 (the start
+# capture 210 vblanks on), 600 vblanks of attacks while turning.
+for L in $SWEEP; do run $R/replay-frame-${L}combat-$V.json --world ${L:0:1} --level ${L:1} --enemy-replay $R/trace-$L-combat-v1 --frame-replay; done
+for f in frame-fight-g1 frame-combat-g1 frame-varied-g1 frame-tower enemies-g1 enemies-fight-g1 player-g1 player-combat-g1 player-fight-g1 frame-a1 frame-b1 frame-k2 frame-g1new frame-b6 frame-g5 frame-C5 frame-D5 frame-I5 frame-J5 frame-K5 frame-E2 frame-F2 frame-H4 frame-A5 frame-A1statue frame-A1golem frame-A1death frame-B6kill frame-B6wiz2 frame-B6wiz3 frame-B6wiz4 frame-G1exit frame-C1water frame-C1water2 frame-G1potion frame-G1xbow frame-A1trans frame-D1new frame-E1new frame-F1new frame-H1new frame-I1new frame-J1new frame-D3start frame-D3leaf frame-I2start frame-B2start $(for L in $SWEEP; do echo frame-${L}start; done) $(for L in $SWEEP; do echo frame-${L}combat; done); do
 python3 -c "
 import json, pathlib
 p = pathlib.Path('$R/replay-$f-$V.json')

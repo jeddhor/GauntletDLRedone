@@ -955,3 +955,31 @@ target whose unwritten words are stack contents; B5's and C2's sound items'
 the replay only (the platform's animation start is not seeded); K4's two
 items under a tilted parent (object 9 under 0x1858280) carry a 1-ulp
 difference in the local translation z from UnparentMatrix/MulMat4 rounding.
+
+## Combat sweep (2026-10-23 night, actual disc, WARPED lineage)
+
+For the same 35 levels the start capture was run on 210 vblanks
+(lvl-<L>-play-v1, past the stage start) and traced for 600 vblanks with
+attack held while turning (trace-<L>-combat-v1: throws, generator spawns,
+hits, kills, drops, barrels; tools/regress.sh). Found and fixed:
+- DamageItem breaking a wood barrel (kind 2 subtype 0x2b) calls
+  NewHelp(0x1b, −1, the barrel's point) after AudioWoodBarrel
+  (0x15aaa8..0x15aab8); native had only queued a presentation event, so the
+  help's state (help_displayed bits +0x1910 + id, the help timer and pause)
+  never changed and the GUI never showed it (A2 step 509).
+- do_enemy_collide: when EnemyCollideFloor fails, the second FloorCollide's
+  result replaces it (0x143700), so +0x2b0 takes that object's flags; native
+  kept 0 (J4 step 317: an enemy blocked on J4ELEV1's top 625 keeps
+  0x0100b006).
+- Harness: FirstEmptyItem is seeded as the lowest free slot (A2's barrel
+  BANANNA into slot 78); the item_wobjs table and the node heights it gives
+  are traced and seeded (J4's elevator item); WorldCollide's CheckNum and
+  triangle stamps are seeded from the trace's capture and restored before
+  every seed-solving attempt (they had advanced once per attempt).
+With the stamps in step, native's CheckNum equals the reference's after
+every one of J6's 300 updates (traces with CheckNum, from J6 on): native
+issues exactly the original's collision queries. The spawn floors that had
+differed (D4, I4, J6, B5: init_enemy's FloorPos returning WldBtm under a
+generator) are the original skipping a triangle whose stale stamp equals the
+query's CheckNum — reproduced natively once the stamps are seeded.
+Results (regression r71): see coverage.md; open items in unknowns.md.

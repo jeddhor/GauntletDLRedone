@@ -432,6 +432,9 @@ impl Game {
             },
         };
         let mut collision = CollisionWorld::from_world(inp.world)?;
+        // CheckNum carries over from the previous level (never reset); the
+        // load's own queries continue from it. The stamps are a fresh array.
+        collision.seed_check(s.globals.check_num, &[]);
         let mut world_anims = match &inp.world.anims {
             Some(a) => super::world_anim::WorldAnimSet::new(inp.world.bytes.clone(), a),
             None => Default::default(),

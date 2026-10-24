@@ -43,6 +43,8 @@ REPLAY_LEVEL = {
 # The level-start sweep (tools/regress.sh SWEEP).
 REPLAY_LEVEL.update({f'frame-{L}start': L for L in
                      'A2 A3 A4 A6 B3 B4 B5 C2 C3 C4 D2 D4 G2 G3 G4 H2 H3 I3 I4 J2 J3 J4 J6 K1 K3 K4 S1 S2 S3 S4 S5 S6 S7 S8 S9'.split()})
+REPLAY_LEVEL.update({f'frame-{L}combat': L for L in
+                     'A2 A3 A4 A6 B3 B4 B5 C2 C3 C4 D2 D4 G2 G3 G4 H2 H3 I3 I4 J2 J3 J4 J6 K1 K3 K4 S1 S2 S3 S4 S5 S6 S7 S8 S9'.split()})
 
 
 def sweep(paths):

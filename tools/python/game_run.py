@@ -12,6 +12,7 @@ import os
 import json
 import pathlib
 import re
+import struct
 import subprocess
 import sys
 
@@ -52,7 +53,12 @@ def transmitter_table(trace, report):
             from reference_snapshot import frozen_memory
             mem = frozen_memory(cap)
             out = report.with_name(report.stem + '.transmitters.json')
-            out.write_text(json.dumps(dict(capture=cap.name, sha256=m.group(1), table=bytes(mem[0x234500:0x234500 + 0x4000]).hex())) + '\n')
+            # CheckNum 0x21f698 and the triangle stamps (*0x21f3b4; the native
+            # world takes as many as it has triangles).
+            stamps_at = struct.unpack_from('<I', mem, 0x21f3b4)[0]
+            stamps = bytes(mem[stamps_at:stamps_at + 0x10000]).hex() if 0x100000 <= stamps_at < 0x1ff0000 else ''
+            out.write_text(json.dumps(dict(capture=cap.name, sha256=m.group(1), table=bytes(mem[0x234500:0x234500 + 0x4000]).hex(),
+                                           checknum=mem[0x21f698], stamps=stamps)) + '\n')
             return out
     return None
 

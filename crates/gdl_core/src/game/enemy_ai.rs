@@ -2021,6 +2021,11 @@ impl Game {
             }
             let floor = self.enemy_collide_floor(r, speed, i, pos, &mut mv, wall)?;
             self.enemies[i].set_v3(0x224, mv);
+            // The object +0x2b0's flags come from: EnemyCollideFloor's, or
+            // when that fails the second FloorCollide's (0x143700: its result
+            // replaces the first; trace-J4-combat-v1 step 317, an enemy
+            // blocked on J4ELEV1's top 625 keeps 0x0100b006).
+            let mut found = floor;
             if floor == 0 {
                 if !(floor_obj.is_some() && on_moving) {
                     let rec = &mut self.enemies[i];
@@ -2031,6 +2036,7 @@ impl Game {
                     if let Some(h) = c2.solid {
                         let y = add(h.position[1], self.ef(i, 0x230))?;
                         self.enemies[i].set_f32(0x2a8, y);
+                        found = h.object as u32 + 1;
                     }
                 }
             } else {
@@ -2043,7 +2049,7 @@ impl Game {
                     wall = 2;
                 }
             }
-            let flags = floor.checked_sub(1).map_or(0, |o| self.items.objects[o as usize].flags_10);
+            let flags = found.checked_sub(1).map_or(0, |o| self.items.objects[o as usize].flags_10);
             self.enemies[i].set_u32(0x2b0, flags);
             let rec = &self.enemies[i];
             if fqdist(rec.f32_(0x224), rec.f32_(0x22c))?.0 < 0.01 {

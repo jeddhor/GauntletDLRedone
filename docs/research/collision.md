@@ -140,7 +140,14 @@ A5GEOMETRY, whose node holds y −0.0703; the chimera's floor was 9/128 high).
 The dyngrid cells themselves (NextDynGrid order: a dynamic object reached
 through two cells is tested once per query via +0x42, so only the candidate
 order could differ). The CheckNum wrap after 255 queries is reproduced
-per native world, but its original value depends on every caller.
+per native world, but its original value depends on every caller. Replays
+seed CheckNum and the triangle stamps (*0x21f3b4) from the trace's capture;
+native's counter then equals the reference's after every update of
+trace-J6-combat-v1 (300/300), and the original's stale-stamp skips (a
+triangle stamped 255 queries earlier with the current value) recur
+natively (gameplay.md "Combat sweep"). Native play from a level load starts
+from zero stamps and counter; the original's values at a level load (a
+fresh stamp array? CheckNum carried over?) have not been checked.
 
 ## Water (2026-10-23, actual reference)
 

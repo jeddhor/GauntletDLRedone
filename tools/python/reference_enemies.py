@@ -19,7 +19,10 @@ from reference_player import elf_symbols
 
 ENEMY_GLOBALS = ['BossIndex', 'SuicideBomberIndex', 'CurWorld', 'level_data', 'Items', 'WorldBase', 'frame_main',
                  'sfx_ene_bloodidx', 'help_flag', 'help_num', 'help_player', 'help_time', 'help_interval',
-                 'help_interval_idx', 'help_lv', 'help_testflag', 'RuneDispTimer', 'DoRockFly', 'DidRockFly']
+                 'help_interval_idx', 'help_lv', 'help_testflag', 'RuneDispTimer', 'DoRockFly', 'DidRockFly',
+                 # WorldCollide's query counter (byte; the word read includes its
+                 # neighbours): compared with native's to check the query count.
+                 'CheckNum']
 # Critter globals (name: bytes): CritterETypes[9][6] TYPE pointers, the id
 # and frame counters, the target bookkeeping and the boss state.
 CRITTER_GLOBALS = {'CritterETypes': 9 * 6 * 4, 'CritterNewID': 4, 'CritterCounter': 4, 'CritterNActivePlayers': 4,
@@ -27,13 +30,17 @@ CRITTER_GLOBALS = {'CritterETypes': 9 * 6 * 4, 'CritterNewID': 4, 'CritterCounte
                    'EnemyRootNode': 4,
                    # ProcessSpewItems' list: 0x20 × {item pointer, velocity}.
                    'NumSpewItems': 4, 'SpewItems': 0x20 * 0x10}
+# ProcessItemWobjs' table (num_item_wobjs entries, ≤ 0x95): the object
+# pointers and the per-wobj floats/words (items.md "AddItemWobj").
+WOBJ_ARRAYS = ['item_wobj_inity', 'item_wobj_y', 'item_wobj_starty', 'item_wobj_endy', 'item_wobj_snd']
 ENEMY_SIZE = 0x3b0
 ENEMY_COUNT = 25
 
 
 def enemy_probe(memory):
     sym = elf_symbols({'enemies', '_impure_ptr', 'WorldInfo', 'NumItems', 'Effects', 'NumEffects', 'SfxId', 'CritterInsts',
-                       'NumCritterInsts', 'BossCritInst'} | set(ENEMY_GLOBALS) | set(CRITTER_GLOBALS))
+                       'NumCritterInsts', 'BossCritInst'} | set(ENEMY_GLOBALS) | set(CRITTER_GLOBALS) | set(WOBJ_ARRAYS)
+                      | {'item_wobjs', 'num_item_wobjs'})
     base, impure = sym['enemies'], sym['_impure_ptr']
     reent, = struct.unpack_from('<I', memory, impure)
     if not 0x100000 <= reent < 0x2000000 or reent % 4:
@@ -146,6 +153,10 @@ def enemy_probe(memory):
                     t = chunks(read, table, 0x28 * count)
                     nodes[str(k)]['tree_nodes'] = b''.join(t[0x28 * n:0x28 * n + 4] for n in range(count)).hex()
         out['critter_nodes'] = nodes
+        n_wobj = struct.unpack('<i', read(sym['num_item_wobjs'], 4))[0]
+        if 0 < n_wobj <= 0x95:
+            out['item_wobjs'] = {'count': n_wobj, 'objects': chunks(read, sym['item_wobjs'], 4 * n_wobj).hex(),
+                                 **{name: chunks(read, sym[name], 4 * n_wobj).hex() for name in WOBJ_ARRAYS}}
         out['BossCritInst'] = read(sym['BossCritInst'], 4).hex()
         out['critter_globals'] = {k: read(sym[k], n).hex() for k, n in CRITTER_GLOBALS.items()}
         return out

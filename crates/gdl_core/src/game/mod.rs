@@ -161,6 +161,12 @@ pub struct Globals {
     /// it. 0 (older start states): all records.
     #[serde(default)]
     pub num_enemies: i32,
+    /// CheckNum 0x21f698 (WorldCollide's and ItemObjectCol's query counter)
+    /// as the previous level left it: never reset, so it carries over (the
+    /// sweep's captures, all reached from B1's exit, sit at native's load
+    /// count + 2). The triangle stamps are a fresh array per level.
+    #[serde(default)]
+    pub check_num: u8,
     #[serde(default)]
     pub welcome_flag: i32,
     #[serde(default)]

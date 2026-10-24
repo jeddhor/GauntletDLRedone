@@ -258,6 +258,29 @@ impl CollisionWorld {
         })
     }
 
+    /// CheckNum 0x21f698 and the per-triangle stamps (*0x21f3b4) as a
+    /// capture holds them (replays): a stamp equal to the query's CheckNum
+    /// skips the triangle, so their history decides rare misses.
+    /// CheckNum and the stamps (a replay's attempt restores them).
+    pub fn check_state(&self) -> (u32, Vec<i8>) {
+        (self.check_counter, self.check.clone())
+    }
+    pub fn set_check_state(&mut self, state: (u32, Vec<i8>)) {
+        (self.check_counter, self.check) = state;
+    }
+
+    /// The current CheckNum (the last query's).
+    pub fn check_num(&self) -> u8 {
+        self.check_counter as u8
+    }
+
+    pub fn seed_check(&mut self, counter: u8, stamps: &[u8]) {
+        self.check_counter = u32::from(counter);
+        for (s, &b) in self.check.iter_mut().zip(stamps) {
+            *s = b as i8;
+        }
+    }
+
     /// PlayerCollideWalls increments the hit triangle's CheckNum stamp so the
     /// following query (whose counter is one higher) skips that triangle.
     pub fn bump_check(&mut self, triangle: usize) {

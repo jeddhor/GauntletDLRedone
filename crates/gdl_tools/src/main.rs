@@ -244,6 +244,11 @@ impl ReferenceItems {
                 an.current = an.clock.sequence;
             }
         }
+        // FirstEmptyItem is not traced; every slot below it is in use
+        // (NewItemPtr leaves it past the slot it fills, DeleteItem lowers it),
+        // so the lowest free slot gives NewItemPtr the reference's choice
+        // (trace-A2-combat-v1 step 509: the barrel's BANANNA into slot 78).
+        game.items.first_empty = game.items.records.iter().position(|r| !r.active()).unwrap_or(game.items.records.len());
         Ok(())
     }
 
@@ -2205,6 +2210,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 gdl_core::game::camera::Transmitter { flag: b[o], radius: b[o + 1], word_02: u16::from_le_bytes([b[o + 2], b[o + 3]]),
                     pos: [fl(o + 0x10), fl(o + 0x14), fl(o + 0x18)], pitch: fl(o + 0x20), yaw: fl(o + 0x24), roll: fl(o + 0x28), locator: 0, id: 0 }
             }).collect();
+            // CheckNum and the triangle stamps from the same capture.
+            if let (Some(c), Some(st)) = (v["checknum"].as_u64(), v["stamps"].as_str()) {
+                let stamps: Vec<u8> = (0..st.len()).step_by(2).map(|i| u8::from_str_radix(&st[i..i + 2], 16)).collect::<Result<_, _>>()?;
+                game.collision.seed_check(c as u8, &stamps);
+            }
             if let Some(cam) = game.std_camera.as_mut() {
                 let n = cam.transmitters.len();
                 cam.stale = table[n..].to_vec();
@@ -2729,12 +2739,54 @@ fn run() -> Result<(), Box<dyn Error>> {
                         // world_update's DoWorldAnimation from the traced
                         // entries (+6 flags, +8 frame) and object words (traces
                         // from trace-fight-g1-v6): the moving floors' matrices.
+                        // ProcessItemWobjs' table (traces with item_wobjs, from
+                        // 2026-10-23): the elevators' y and targets.
+                        if let Some(w) = b["enemies"].get("item_wobjs") {
+                            let n = w["count"].as_u64().unwrap_or(0) as usize;
+                            let objs = hexb(&w["objects"])?;
+                            let arr = |name: &str| hexb(&w[name]);
+                            let (inity, y, starty, endy, snd) = (arr("item_wobj_inity")?, arr("item_wobj_y")?, arr("item_wobj_starty")?, arr("item_wobj_endy")?, arr("item_wobj_snd")?);
+                            let mut misplaced = 0;
+                            for k in 0..n.min(game.items.wobjs.len()) {
+                                let ptr = word(&objs[4 * k..]);
+                                let o = (world_base <= ptr && (ptr - world_base).is_multiple_of(0x3c)).then(|| ((ptr - world_base) / 0x3c) as usize);
+                                if o != Some(game.items.wobjs[k].object) {
+                                    misplaced += 1;
+                                    continue;
+                                }
+                                let wb = &mut game.items.wobjs[k];
+                                wb.inity = fl(&inity[4 * k..]);
+                                wb.y = fl(&y[4 * k..]);
+                                wb.starty = fl(&starty[4 * k..]);
+                                wb.endy = fl(&endy[4 * k..]);
+                                wb.snd = fl(&snd[4 * k..]);
+                                // The node height the previous update's
+                                // ProcessItemWobjs left (inity + y) for the
+                                // objects it moves (no world animation flag).
+                                let (o, iy, yy) = (wb.object, wb.inity, wb.y);
+                                if game.items.objects.get(o).is_some_and(|ob| ob.flags_10 & 0x200_0000 == 0) {
+                                    game.items.object_node_y[o] = gdl_core::numeric::add_guarded_rz(iy, yy).map_err(|e| format!("{e:?}"))?;
+                                }
+                            }
+                            game.sync_collision();
+                            if misplaced != 0 || n != game.items.wobjs.len() {
+                                game.log.note("wobj seed", &gdl_core::game::Unsupported(format!("{misplaced} wobjs on another object, {n} traced against {} native", game.items.wobjs.len())));
+                            }
+                        }
                         if let Some(wa) = b["enemies"].get("world_anims") {
                             let raw = hexb(wa)?;
                             obj_b.seed(game);
+                            let mut misplaced = 0;
                             for (k, e) in game.world_anims.entries.iter_mut().enumerate().take(raw.len() / 16) {
                                 e.flags = u16::from_le_bytes([raw[16 * k + 6], raw[16 * k + 7]]);
                                 e.frame = fl(&raw[16 * k + 8..]);
+                                // +0: the entry's object; the native entry must drive the same one.
+                                if e.active && e.object != usize::from(u16::from_le_bytes([raw[16 * k], raw[16 * k + 1]])) {
+                                    misplaced += 1;
+                                }
+                            }
+                            if misplaced != 0 {
+                                game.log.note("world animation seed", &gdl_core::game::Unsupported(format!("{misplaced} entries drive another object natively")));
                             }
                             game.sync_collision();
                             game.do_world_animation().map_err(|e| e.0)?;
@@ -2781,7 +2833,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // The EE voice queue (AudioQueUpdate's state).
                     game.audio_que.clone(),
                 );
+                // WorldCollide's CheckNum and stamps: one query sequence per update.
+                let check_before = game.collision.check_state();
                 let attempt = |game: &mut gdl_core::game::Game, seed: u32| -> Result<Result<(), gdl_core::game::Unsupported>, Box<dyn Error>> {
+                    game.collision.set_check_state(check_before.clone());
                     if b["enemies"].get("help_flag").is_none() {
                         game.hud.help = help_before.clone();
                     }
@@ -3126,7 +3181,20 @@ fn run() -> Result<(), Box<dyn Error>> {
                     *by_item_offset.entry(d["offset"].as_str().unwrap_or("?").to_string()).or_default() += 1;
                     *by_item_slot.entry(d["item"].as_u64().unwrap_or(u64::MAX)).or_default() += 1;
                 }
-                updates.push(serde_json::json!({"step":a["step"],"seed_solved":solved,"alt_seed":alt_seed,"error":res.err().map(|e| e.0),
+                // GDL_REPLAY_EVENTS=1 (diagnostics): the native events of each
+                // update (taken, so each update lists its own).
+                let events = std::env::var_os("GDL_REPLAY_EVENTS").map(|_| std::mem::take(&mut game.events));
+                // GDL_REPLAY_WATCH=OBJ,... (diagnostics): those collision objects'
+                // matrices after the update, and their cached dyngrid pose.
+                let watch = std::env::var("GDL_REPLAY_WATCH").ok().map(|w| {
+                    w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.collision.objects.len())
+                        .map(|o| serde_json::json!([o, game.collision.object_matrix(o).ok(), game.collision.dyn_matrix[o], game.items.objects[o].flags_10, game.collision.objects[o].parent, game.collision.runtime_exclusion[o], game.items.object_exclusion[o]]))
+                        .collect::<Vec<_>>()
+                });
+                // CheckNum (traces from 2026-10-23 night): native's counter
+                // after the update against the reference's.
+                let checknum = a["enemies"].get("CheckNum").and_then(|v| hexb(v).ok()).map(|b| serde_json::json!([game.collision.check_num(), b[0]]));
+                updates.push(serde_json::json!({"step":a["step"],"seed_solved":solved,"alt_seed":alt_seed,"error":res.err().map(|e| e.0),"events":events,"checknum":checknum,"watch":watch,
                     "words_differing":diffs.len(),"diffs":diffs.iter().take(60).collect::<Vec<_>>(),
                     "item_words_differing":item_diffs.len(),"item_diffs":item_diffs.iter().take(60).collect::<Vec<_>>(),
                     "player_words_differing":player_diffs.len(),"player_diffs":player_diffs.iter().take(40).collect::<Vec<_>>(),
@@ -3624,6 +3692,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport")});
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
+        report["check_num"] = serde_json::json!(game.collision.check_num());
         if opts.contains_key("no_enemies") {
             report["no_enemies"] = serde_json::json!("DEBUG: generators, placed enemies and statues deleted at the start; enemies cleared");
         }

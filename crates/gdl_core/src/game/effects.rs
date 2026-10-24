@@ -1579,8 +1579,11 @@ impl Game {
                         self.items.records[slot].or_u16(0xd8, 1);
                         self.open_chest(slot, None)?;
                         if st == 0x2b {
+                            // AudioWoodBarrel, then NewHelp(0x1b, −1, the
+                            // barrel's point) (0x15aaa8..0x15aab8): the help's
+                            // state (help_displayed bits, the help timer).
                             self.audio_wood_barrel(at)?;
-                            self.events.push(Event::Help { id: 0x1b, player: usize::MAX });
+                            self.help_at(0x1b, usize::MAX, Some(at));
                         }
                     }
                 } else if flags & 0x400 != 0 && 5.0 <= dmg {
