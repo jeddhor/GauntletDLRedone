@@ -295,6 +295,28 @@ Rules added for b26 (2026-10-23), from the b10–b23 logs:
   and explored columns and regrows the graph.
 
 
+## State search (M14/M15 tooling, 2026-10-24)
+
+crates/gdl_tools/src/explore.rs (game-run explore=BUDGET [nav=1|2]
+cells=N seed=S; game_run.py --explore --nav --cells): a Go-Explore search
+over native Game clones (Game derives Clone; collision objects, triangles,
+grid and item definitions are Arc-shared and the run-time node matrices
+sparse, about 1.6 MB per A1 state). Cells are player 0's 4 × 3 × 4 box,
+keys held and a progress count (keys picked up, gates opened, triggers
+set); each iteration restores a cell and plays a macro — random d-pad
+presses, a graph-guided d-pad walk (bot.rs's Nav, stuck edges learnt as
+blocked), or (nav=2) the traversal bot itself on the shared graph with a
+random first route hint, filed every 150 updates. Inputs go through the
+ordinary pad path (ReadControls → PlayerControls → do_players); the DEBUG
+health assist is the bot's rule (restore below 40 % of the start health),
+applied identically by the search and by the replay (assist=1). The result
+is a pad script — pads= runs for digital pads, padfile= JSON with the
+analog stick for bot macros — which game-run replays from a fresh load at
+the end of the same run: A1's guided search (x5) ended its replay at
+exactly the searched state's position (57.248, −7.023, 18.911), so the
+clones carry the whole simulation state. Like the bot, a level the search
+does not finish is not evidence that it cannot be finished.
+
 ## Menu flow tests (M17, 2026-10-23)
 
 tools/python/menu_flows.py runs gdl_play on the private Xvfb through

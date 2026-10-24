@@ -17,8 +17,9 @@
 //!   reachable node within EXPLORE_RADIUS, walked with the d-pad, edges it
 //!   gets stuck on learnt as blocked;
 //! - bot (nav=2): the traversal bot itself (bot.rs, on the shared graph) for
-//!   BOT_LEN updates with a random first route hint (an item of interest or
-//!   a reachable node), its states filed every BOT_FILE updates.
+//!   BOT_LEN updates, with no hint (the bot's own goals from the restored
+//!   state) or a random first route hint (an item of interest or a reachable
+//!   node), its states filed every BOT_FILE updates.
 //!
 //! A cell at the highest progress is chosen PROGRESS_BIAS times as often as
 //! one a step below, and less the more it has been chosen. On an exit portal
@@ -54,7 +55,7 @@ const STUCK_GAIN: f32 = 0.5;
 /// Random walk goals lie within this distance.
 const EXPLORE_RADIUS: f32 = 40.0;
 /// Bot macros: length and filing interval.
-const BOT_LEN: u32 = 1500;
+const BOT_LEN: u32 = 3000;
 const BOT_FILE: u32 = 150;
 
 type V3 = [f32; 3];
@@ -358,16 +359,19 @@ fn nav_walk(g: &mut Game, nav: &Nav, blocked: &mut Blocked, rng: &mut Rng, start
 /// A bot macro (see the module note): the segments filed on the way.
 fn bot_walk(g: &mut Game, shared: &mut (Nav, u64), rng: &mut Rng, start_health: f32, assists: &mut usize) -> Vec<Segment> {
     let items = interest_items(g);
-    let hint = if !items.is_empty() && rng.unit() < 0.6 {
-        Hint { item: Some(items[rng.below(items.len() as u32) as usize]), goto: None, radius: None, wait: None }
+    let x = rng.unit();
+    let hints = if x < 0.4 {
+        Vec::new()
+    } else if !items.is_empty() && x < 0.75 {
+        vec![Hint { item: Some(items[rng.below(items.len() as u32) as usize]), goto: None, radius: None, wait: None }]
     } else {
         let p = g.players[0].v3(0x50);
         let nav = &shared.0;
         let live: Vec<usize> = (0..nav.pts.len()).filter(|&k| !nav.adj[k].is_empty() && dist_xz(nav.pts[k], p) < EXPLORE_RADIUS).collect();
         let at = if live.is_empty() { p } else { nav.pts[live[rng.below(live.len() as u32) as usize]] };
-        Hint { item: None, goto: Some(at), radius: Some(2.0), wait: None }
+        vec![Hint { item: None, goto: Some(at), radius: Some(2.0), wait: None }]
     };
-    let mut bot = Bot::with_nav(g, shared.0.clone(), shared.1).with_hints(vec![hint]);
+    let mut bot = Bot::with_nav(g, shared.0.clone(), shared.1).with_hints(hints);
     bot.assist_enabled = false;
     let mut out = Vec::new();
     let mut runs: Runs = Vec::new();
@@ -548,9 +552,14 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
                 }
                 None => {
                     if max_cells <= archive.len() {
-                        // Evict the most chosen cell of the lowest progress (not the start).
-                        let low = archive.values().map(|c| c.progress).min().unwrap_or(0);
-                        if let Some(v) = archive.iter().filter(|(kk, c)| c.progress == low && **kk != k0).max_by_key(|(_, c)| c.chosen).map(|(kk, _)| *kk) {
+                        // Evict the most chosen cell of the lowest progress
+                        // that has one besides the start.
+                        let victim = archive
+                            .iter()
+                            .filter(|(kk, _)| **kk != k0)
+                            .min_by(|(_, a), (_, b)| a.progress.cmp(&b.progress).then(b.chosen.cmp(&a.chosen)))
+                            .map(|(kk, _)| *kk);
+                        if let Some(v) = victim {
                             archive.remove(&v);
                             evicted += 1;
                         }

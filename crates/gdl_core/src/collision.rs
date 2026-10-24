@@ -97,7 +97,7 @@ pub struct CollisionWorld {
     /// WorldObjCollide (a3 at 0x11fd70), so the dynamic pass tests those
     /// objects at the pose of the last grid build (world_update after
     /// SetupDynGrid; GauntWorldInit after AddItemInstList).
-    pub dyn_matrix: Vec<Option<[[f32; 4]; 4]>>,
+    pub dyn_matrix: crate::sparse::Sparse<[[f32; 4]; 4]>,
     /// Runtime +0x10 flags and +0x35 exclusion bytes, kept by the game.
     pub runtime_flags: Vec<u32>,
     pub runtime_exclusion: Vec<i8>,
@@ -105,12 +105,12 @@ pub struct CollisionWorld {
     pub node_y: Vec<Option<f32>>,
     /// Node rotation rows 0..2 changed at run time (rotators' YawMat3);
     /// None = the identity rest rotation.
-    pub node_rot: Vec<Option<[V3; 3]>>,
+    pub node_rot: crate::sparse::Sparse<[V3; 3]>,
     /// Node local matrix written by a world animation (DoWorldAnimSub):
     /// rows 0..2 rotation, row 3 translation (the object's +0x1c position
     /// plus the animated offset); the scale channel is kept separately.
-    pub node_local: Vec<Option<[[f32; 4]; 4]>>,
-    pub node_scale: Vec<Option<V3>>,
+    pub node_local: crate::sparse::Sparse<[[f32; 4]; 4]>,
+    pub node_scale: crate::sparse::Sparse<V3>,
     grid: std::sync::Arc<CollisionGrid>,
     dyn_grid: DynGrid,
     min_x: f32,
@@ -254,10 +254,10 @@ impl CollisionWorld {
         let runtime_flags = objects.iter().map(|o| o.flags).collect();
         let runtime_exclusion = objects.iter().map(|o| o.exclusion).collect();
         let node_y = vec![None; objects.len()];
-        let node_rot = vec![None; objects.len()];
-        let node_local = vec![None; objects.len()];
-        let node_scale = vec![None; objects.len()];
-        let dyn_matrix = vec![None; objects.len()];
+        let node_rot = crate::sparse::Sparse::new(objects.len());
+        let node_local = crate::sparse::Sparse::new(objects.len());
+        let node_scale = crate::sparse::Sparse::new(objects.len());
+        let dyn_matrix = crate::sparse::Sparse::new(objects.len());
         // InitDynobjGrid: trunc((max − min) / dyngrid_width) + 1 per axis
         // (WorldInfo +0x18..+0x2c, the header bounds).
         let span = |a: usize| -> R<i32> { Ok(trunc(div_rn(sub(world.max[a], world.min[a])?, w(DYN_WIDTH))?) + 1) };

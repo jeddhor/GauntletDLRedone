@@ -585,12 +585,12 @@ impl Bot {
         for v in &c.node_y {
             v.map(f32::to_bits).hash(&mut h);
         }
-        for v in &c.node_rot {
-            v.map(|m| m.map(|r| r.map(f32::to_bits))).hash(&mut h);
+        for (k, m) in c.node_rot.values() {
+            (k, m.map(|r| r.map(f32::to_bits))).hash(&mut h);
         }
         // World animations' node matrices (doors, rotating platforms).
-        for v in &c.node_local {
-            v.map(|m| m.map(|r| r.map(f32::to_bits))).hash(&mut h);
+        for (k, m) in c.node_local.values() {
+            (k, m.map(|r| r.map(f32::to_bits))).hash(&mut h);
         }
         h.finish()
     }
