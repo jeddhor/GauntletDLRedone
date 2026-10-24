@@ -373,6 +373,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    after 2.6.3, not modelled); −0.5 dB remains (interpolation, codec).
    Campaign chain t7 (bot binary f16) cleared L1 and is in G1's search
    fallback (the bot took the rune but missed the exit in 60,000 updates).
+   2026-10-24 (afternoon): traversal work (playtest.md "Rules added
+   2026-10-24"): untouchable triggers skipped, trigger revisits, generator
+   damage progress, riding bound, graph headroom and player-like strict
+   test, near-goal reopening, gates approached head-on, subtype-31 switches
+   shot (WeaponCheckItemCollision), the key cap, ranged fire and food
+   without the assist, retries with start delays in the chain. Chain t11
+   (from t10's G3 end state; t8 G1, t10 G2/G3) has ended G4 G5 B1 B2 B3 B4;
+   D2 and I1 now end by the bot (b36). Not yet ended by any batch: C1 C3 C4
+   D3 D4 E1 F1 H1–H3 I2–I4 J1–J4 J6 K1.
 
 ---
 
