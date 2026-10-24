@@ -43,8 +43,10 @@ const STEP_UP: f32 = 2.0;
 const HEADROOM: f32 = 3.0;
 const STRICT_RADIUS: f32 = 1.2;
 const HARD_COST: f32 = 20.0;
-/// Shot switches are fired at from within this distance.
+/// Shot switches are fired at from within this distance, or along a clear
+/// level line from within SHOT_FAR.
 const SHOOT_RANGE: f32 = 9.0;
+const SHOT_FAR: f32 = 30.0;
 const DROP: f32 = 12.0;
 const STUCK: usize = 45;
 const DWELL: f32 = 2.0;
@@ -449,6 +451,45 @@ pub struct Hint {
     pub wait: Option<usize>,
 }
 
+/// Where to shoot a switch at `q` from: a reachable node near it (within
+/// SHOOT_RANGE, not above it: D2's 405 was hit from the floor 5 units below,
+/// missed from 4 above), else one at about its height within SHOT_FAR whose
+/// level line to it is clear for a missile (WeaponWallCollide's query, mask
+/// 0x23e). A switch counts only while visible (+0xd8 0x4000, the camera's
+/// view): D2's 406, 6 units under the walkway beside it, was not hit from
+/// the corridor's far end 58 units away.
+fn shot_node(nav: &Nav, g: &Game, q: V3) -> Option<usize> {
+    let score = |n: usize| dist_xz(nav.pts[n], q) + if q[1] < nav.pts[n][1] { 20.0 } else { 0.0 };
+    let near = (0..nav.pts.len())
+        .filter(|&n| !nav.adj[n].is_empty() && dist_xz(nav.pts[n], q) < SHOOT_RANGE && (q[1] - nav.pts[n][1]).abs() < 8.0)
+        .min_by(|&a, &c| score(a).total_cmp(&score(c)));
+    if near.is_some_and(|n| nav.pts[n][1] <= q[1] + 1.0) {
+        return near;
+    }
+    let mut far: Vec<usize> = (0..nav.pts.len())
+        .filter(|&n| !nav.adj[n].is_empty() && dist_xz(nav.pts[n], q) < SHOT_FAR && 3.0 < dist_xz(nav.pts[n], q) && (nav.pts[n][1] + 1.5 - q[1]).abs() < 2.0)
+        .collect();
+    far.sort_by(|&a, &c| dist_xz(nav.pts[a], q).total_cmp(&dist_xz(nav.pts[c], q)));
+    let mut c = g.collision.clone();
+    for n in far.into_iter().take(40) {
+        let from = [nav.pts[n][0], q[1], nav.pts[n][2]];
+        let hit = c.world_collide(Query {
+            radius: 0.3,
+            first: from,
+            last: q,
+            check_flags: 7,
+            min_normal_y: -2.0,
+            max_normal_y: 2.0,
+            object_mask: 0x23e,
+            exclusion_mask: 4,
+        });
+        if matches!(hit, Ok((ref w, _)) if w.solid.is_none()) {
+            return Some(n);
+        }
+    }
+    near
+}
+
 /// Reachable graph nodes within 2 units of each item (slot, node).
 pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
@@ -477,13 +518,7 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
         // missiles hit it; D2's elevator call 405 sits 5 units above the
         // floor): any reachable node within SHOOT_RANGE, nearest first.
         if item_kind(g, s) == (5, 0x1f) {
-            // Not from above it: the shots fly level (D2's 405 was hit from
-            // the floor 5 units below, missed from the one 4 units above).
-            let score = |n: usize| dist_xz(nav.pts[n], q) + if q[1] < nav.pts[n][1] { 20.0 } else { 0.0 };
-            let best = (0..nav.pts.len())
-                .filter(|&n| !nav.adj[n].is_empty() && dist_xz(nav.pts[n], q) < SHOOT_RANGE && (q[1] - nav.pts[n][1]).abs() < 8.0)
-                .min_by(|&a, &c| score(a).total_cmp(&score(c)));
-            if let Some(n) = best {
+            if let Some(n) = shot_node(nav, g, q) {
                 out.push((s, n));
             }
             continue;
@@ -1399,7 +1434,7 @@ impl Bot {
         }
         if let Some(Goal::Item(s)) = self.goal
             && item_kind(g, s) == (5, 0x1f)
-            && dist_xz(g.items.records[s].v3(0x40), p) < SHOOT_RANGE
+            && dist_xz(g.items.records[s].v3(0x40), p) < SHOT_FAR
             && (self.at + 2 >= self.path.len())
         {
             if (f / 6).is_multiple_of(2) {
