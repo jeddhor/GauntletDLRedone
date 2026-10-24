@@ -804,6 +804,20 @@ impl ReferenceCritters {
     }
 }
 
+/// A seeded player record's team words: +0x690/+0x694 (the partner and
+/// the pending partner, `players` 0x221550 records of 0x2b00 bytes) as the
+/// player index + 1, +0x6b4 the rig's DUMMY node as load_player set it
+/// natively.
+fn team_links(r: &mut gdl_core::game::record::Record, dummy: u32) {
+    const PLAYERS: u32 = 0x221550;
+    for o in [0x690, 0x694] {
+        let v = r.u32_(o);
+        let k = (PLAYERS <= v && (v - PLAYERS).is_multiple_of(0x2b00) && (v - PLAYERS) / 0x2b00 < 4).then(|| (v - PLAYERS) / 0x2b00 + 1);
+        r.set_u32(o, k.unwrap_or(0));
+    }
+    r.set_u32(0x6b4, dummy);
+}
+
 fn texdef_export(
     source: &Path,
     textures: Option<&Path>,
@@ -2247,6 +2261,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             let samples = trace["samples"].as_array().ok_or("trace samples")?;
             let clips = anim_of("clips")?;
             game.player_clips[0] = gdl_core::game::setup::clips_of(&clips, 0);
+            // The player's rig as load_player keeps it (tree 0's DUMMY node for
+            // team moves, the right hand), as in the pads= path.
+            {
+                let clip_bytes = bounded_read(Path::new(opts.get("clips").ok_or("clips=PATH required")?), 64 * 1024 * 1024)?;
+                let dummy = clips.trees.first().and_then(|t| t.nodes.iter().position(|n| n.label == "DUMMY"));
+                let label = gdl_core::game::teammove::player_rhand_label(&elf, game.players[0].u32_(0xc).min(16));
+                let rhand = gdl_core::game::teammove::tree_node_by_label(&clips, label.as_deref());
+                game.player_rigs[0] = Some(std::sync::Arc::new(gdl_core::game::teammove::PlayerRig { anim: gdl_formats::animation::Animations::parse(&clip_bytes)?, bytes: clip_bytes, dummy, rhand }));
+            }
             // A co-op trace (player1 recorded): player 1 in play with player 0's
             // class tables, clips and rig (the trace's second Sorceress; other
             // classes would need their packages).
@@ -2645,10 +2668,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                         for &k in coop.iter().filter(|&&k| bp.get(format!("player{k}")).is_some()) {
                             let v = game.players[k].u32_(0x89c);
                             let fo = (v != 0 && world_base <= v && (v - world_base).is_multiple_of(0x3c)).then(|| ((v - world_base) / 0x3c) as usize);
+                            let dummy = game.player_rigs[k].as_ref().and_then(|g| g.dummy).map_or(0, |n| n as u32 + 1);
                             let r = &mut game.players[k];
                             let links = [0x880, 0x884, 0x888].map(|o| (o, r.u32_(o)));
                             r.set_u32(0x89c, fo.map_or(0, |o| o as u32 + 1));
-                            for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
+                            team_links(r, dummy);
+                            for o in [0x880, 0x884, 0x888, 0x8a0, 0x6b8] {
                                 r.set_u32(o, 0);
                             }
                             for (o, item) in links {
@@ -2674,13 +2699,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                         };
                         {
                             let floor = floor_obj.map_or(0, |o| o as u32 + 1);
+                            let dummy = game.player_rigs[0].as_ref().and_then(|g| g.dummy).map_or(0, |n| n as u32 + 1);
                             let r = &mut game.players[0];
                             // The item links (+0x880 the item stood on, +0x884 the
                             // exit/transporter touched, +0x888 the pickup to grab)
                             // become the slot + 1.
                             let links = [0x880, 0x884, 0x888].map(|o| (o, r.u32_(o)));
                             r.set_u32(0x89c, floor);
-                            for o in [0x880, 0x884, 0x888, 0x8a0, 0x690, 0x694, 0x6b4, 0x6b8] {
+                            team_links(r, dummy);
+                            for o in [0x880, 0x884, 0x888, 0x8a0, 0x6b8] {
                                 r.set_u32(o, 0);
                             }
                             for (o, item) in links {
@@ -2701,6 +2728,14 @@ fn run() -> Result<(), Box<dyn Error>> {
                             }
                             None => None,
                         };
+                        // PlayerSetParent's team parent: a player with status
+                        // 0x20 hangs from its partner's (+0x690) DUMMY node.
+                        for k in 0..4 {
+                            game.player_team_parent[k] = (game.players[k].u16_(0x93c) & 0x20 != 0)
+                                .then(|| game.players[k].u32_(0x690).checked_sub(1).map(|v| v as usize))
+                                .flatten()
+                                .filter(|&q| q < 4 && q != k);
+                        }
                         let gl = &mut game.globals;
                         gl.aux_levels = word(&g("AuxLevels")?);
                         gl.skip_wave = word(&g("skip_wave")?) as i32;
@@ -3509,17 +3544,28 @@ fn run() -> Result<(), Box<dyn Error>> {
         let assist_on = opts.contains_key("assist") || opts.contains_key("explore");
         let start_health = game.players[0].f32_(0x1a10);
         let mut explore_report = None;
+        // padfile=PATH: port 0's pads per update from a JSON script
+        // (explore.rs script_text; analog sticks included).
+        let mut pad_full: Option<Vec<explore::Pad>> = match opts.get("padfile") {
+            Some(f) => Some(explore::parse_padfile(&String::from_utf8(bounded_read(Path::new(f), 64 * 1024 * 1024)?)?)?),
+            None => None,
+        };
         let frames = match opts.get("explore").filter(|_| opts.contains_key("pads")) {
             Some(b) => {
                 let budget: usize = b.parse()?;
                 let seed: u64 = opts.get("seed").map(|s| s.parse()).transpose()?.unwrap_or(1);
                 let cells: usize = opts.get("cells").map(|s| s.parse()).transpose()?.unwrap_or(4000);
-                let out = explore::explore(&game, budget, seed, cells, opts.contains_key("nav"));
+                // nav=1: graph-guided macros; nav=2: bot macros.
+                let mode: u32 = opts.get("nav").map(|s| s.parse()).transpose()?.unwrap_or(0);
+                let out = explore::explore(&game, budget, seed, cells, mode);
                 let mut r = out.report;
-                r["script"] = serde_json::json!(explore::script_string(&out.script));
+                let (digital, text) = explore::script_text(&out.script);
+                r["script_format"] = serde_json::json!(if digital { "pads" } else { "padfile" });
+                r["script"] = serde_json::json!(text);
                 explore_report = Some(r);
-                pad_script = out.script;
-                pad_script.len() + 150
+                let n = out.script.len();
+                pad_full = Some(out.script);
+                n + 150
             }
             None => frames,
         };
@@ -3596,10 +3642,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                 for (k, pd) in pads.iter_mut().enumerate().take(4).skip(1) {
                     pd.connected = game.globals.active_players >> k & 1 != 0;
                 }
-                let m = pad_script.get(f).copied().unwrap_or(0);
-                for i in 0..0x16 {
-                    if m >> i & 1 != 0 {
-                        pads[0].press(i);
+                match pad_full.as_ref() {
+                    Some(v) => pads[0] = v.get(f).copied().unwrap_or(explore::Pad::digital(0)).status(),
+                    None => {
+                        let m = pad_script.get(f).copied().unwrap_or(0);
+                        for i in 0..0x16 {
+                            if m >> i & 1 != 0 {
+                                pads[0].press(i);
+                            }
+                        }
                     }
                 }
                 if let Some(b) = traversal.as_mut() {

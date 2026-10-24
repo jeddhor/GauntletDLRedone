@@ -35,7 +35,7 @@ REPLAY_LEVEL = {
     'frame-b1': 'B1', 'frame-k2': 'K2', 'frame-g1new': 'G1', 'frame-b6': 'B6', 'frame-g5': 'G5', 'frame-C5': 'C5',
     'frame-D5': 'D5', 'frame-I5': 'I5', 'frame-J5': 'J5', 'frame-K5': 'K5', 'frame-E2': 'E2', 'frame-F2': 'F2',
     'frame-H4': 'H4', 'frame-A5': 'A5', 'frame-A1statue': 'A1', 'frame-A1golem': 'A1', 'frame-A1death': 'A1',
-    'frame-B6kill': 'B6', 'frame-B6two': 'B6', 'frame-B6wiz2': 'B6', 'frame-B6wiz3': 'B6', 'frame-B6wiz4': 'B6', 'frame-G1exit': 'G1',
+    'frame-B6kill': 'B6', 'frame-B6two': 'B6', 'frame-tower2p': 'L1', 'frame-G12p': 'G1', 'frame-tower4p': 'L1', 'frame-G14p': 'G1', 'frame-G1team': 'G1', 'frame-B6wiz2': 'B6', 'frame-B6wiz3': 'B6', 'frame-B6wiz4': 'B6', 'frame-G1exit': 'G1',
     'frame-C1water': 'C1', 'frame-C1water2': 'C1', 'frame-G1potion': 'G1', 'frame-G1xbow': 'G1', 'frame-A1trans': 'A1',
     'frame-D1new': 'D1', 'frame-E1new': 'E1', 'frame-F1new': 'F1', 'frame-H1new': 'H1', 'frame-I1new': 'I1', 'frame-J1new': 'J1',
     'frame-D3start': 'D3', 'frame-D3leaf': 'D3', 'frame-I2start': 'I2', 'frame-B2start': 'B2',

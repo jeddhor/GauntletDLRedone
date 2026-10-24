@@ -326,6 +326,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    grid and item definitions are Arc-shared (clone cost); explore.rs (DEBUG
    state search, random or graph-guided d-pad macros) is in game-run
    (explore=, nav=1), not yet finishing levels.
+   2026-10-24 (co-op): the Tower and G1 with two and four players replay
+   equal (regression r76: tower2p/4p need load_players 0, as the
+   one-player Tower); a team move traced in the reference (WARPED
+   w7l0-2p-team-v1, L2) replays equal except the carried partner's
+   rotation (3 ulps): PlayerMotion's carried branch re-reads the world
+   (GetObjWorldMat), the 0x58 start runs StartComboFX, the frame replay
+   builds the player rig and seeds team links. explore.rs gains bot
+   macros (nav=2: bot.rs on a shared graph, random first hint) and
+   analog pad scripts (padfile=).
 
 ---
 

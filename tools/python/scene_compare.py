@@ -42,6 +42,7 @@ def main():
     parser.add_argument('source')
     parser.add_argument('tag')
     parser.add_argument('--steps', type=int, default=400)
+    parser.add_argument('--triangle', type=int, default=0, help='triangle (I) presses before the shots (message boxes)')
     args = parser.parse_args()
     if not args.tag.replace('-', '').isalnum():
         raise SystemExit('tag must be alphanumeric')
@@ -59,7 +60,10 @@ def main():
         shutil.rmtree(out)
     out.mkdir(parents=True)
     steps = out / 'steps.json'
-    steps.write_text(json.dumps(STEPS))
+    plan = list(STEPS)
+    at = plan.index(["shot", "t12"])
+    plan[at:at] = [step for _ in range(args.triangle) for step in (["key", "i", 0.6], ["wait", 4])]
+    steps.write_text(json.dumps(plan))
     env = dict(os.environ, GDL_DEBUG_LEVEL=args.level, GDL_DEBUG_CAMERA=str(cam))
     run(PY, 'tools/python/client_driver.py', 'serve', tag, str(steps), env=env)
     frame = out / '002-native.png'

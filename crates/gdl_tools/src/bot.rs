@@ -34,7 +34,7 @@ use gdl_core::game::pad::PadStatus;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 type V3 = [f32; 3];
-type Place = (i32, i32, i32);
+pub type Place = (i32, i32, i32);
 
 const CELL: f32 = 1.5;
 const STEP_UP: f32 = 2.0;
@@ -53,6 +53,7 @@ const NODE_LIMIT: usize = 400_000;
 const HEALTH: usize = 0x1a10;
 const KEYS: usize = 0x1a14;
 
+#[derive(Clone)]
 pub struct Nav {
     pub pts: Vec<V3>,
     /// The collision object each node's floor belongs to.
@@ -477,6 +478,8 @@ pub struct Bot {
     ride_from: f32,
     /// The first update of the current stretch without a goal.
     no_goal_since: Option<usize>,
+    /// The DEBUG health assist (explore.rs applies its own).
+    pub assist_enabled: bool,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -493,8 +496,36 @@ impl Bot {
     }
 
     pub fn new(g: &Game) -> Bot {
+        let mut b = Self::blank(g);
+        b.rebuild(g);
+        let exits: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9).collect();
+        let targets = b.item_nodes(g, &exits);
+        b.static_exit_reachable = !targets.is_empty();
+        b
+    }
+
+    /// A bot on an already built graph (explore.rs: the state search
+    /// shares one graph between its bot macros); it rebuilds as usual when
+    /// the collision state has changed since.
+    pub fn with_nav(g: &Game, nav: Nav, built_on: u64) -> Bot {
+        let mut b = Self::blank(g);
+        b.nav = nav;
+        b.collision_at_build = built_on;
+        b
+    }
+
+    /// The graph and the collision state it was built on.
+    pub fn nav_state(&self) -> (&Nav, u64) {
+        (&self.nav, self.collision_at_build)
+    }
+
+    pub fn collision_fingerprint(g: &Game) -> u64 {
+        Self::collision_state(g)
+    }
+
+    fn blank(g: &Game) -> Bot {
         let start = g.players[0].v3(0x50);
-        let mut b = Bot {
+        Bot {
             nav: Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top: 0.0, bottom: 0.0, radius: 0.0, reached: 0 },
             collision_at_build: 0,
             path: Vec::new(),
@@ -540,12 +571,8 @@ impl Bot {
             still: 0,
             ride_from: 0.0,
             no_goal_since: None,
-        };
-        b.rebuild(g);
-        let exits: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9).collect();
-        let targets = b.item_nodes(g, &exits);
-        b.static_exit_reachable = !targets.is_empty();
-        b
+            assist_enabled: true,
+        }
     }
 
     /// A fingerprint of the collision state that moves floors: runtime
@@ -889,7 +916,7 @@ impl Bot {
             return pad;
         }
         let health = g.players[0].f32_(HEALTH);
-        if health < self.start_health * 0.4 {
+        if self.assist_enabled && health < self.start_health * 0.4 {
             g.players[0].set_f32(HEALTH, self.start_health);
             self.assists += 1;
         }

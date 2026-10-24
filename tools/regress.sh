@@ -69,9 +69,18 @@ for L in $SWEEP; do t=$R/trace-$L-start-v1; [ $L = J4 ] && t=$R/trace-J4-start-v
 # K4's and J4's v2 add the enemy node parents (enemies riding moving floors).
 for L in $SWEEP; do t=$R/trace-$L-combat-v1; case $L in B5|J4|K4) t=$R/trace-$L-combat-v2;; esac
   run $R/replay-frame-${L}combat-$V.json --world ${L:0:1} --level ${L:1} --enemy-replay $t --frame-replay; done
+# Co-op: the Tower with two players (tower-2p-v2 after the select screen) and G1
+# loaded for two (WARPED w7l0-2p-v6: both written onto the Poison Fields portal).
+run $R/replay-frame-tower2p-$V.json --world L --level 1 --enemy-replay $R/trace-tower-2p-v1 --frame-replay --vplayers 2 --load-players 0
+run $R/replay-frame-G12p-$V.json --world G --level 1 --enemy-replay $R/trace-G1-2p-v2 --frame-replay --vplayers 2
+# Four players (multitap reference): the Tower and G1.
+run $R/replay-frame-tower4p-$V.json --world L --level 1 --enemy-replay $R/trace-tower-4p-v2 --frame-replay --vplayers 4 --load-players 0
+run $R/replay-frame-G14p-$V.json --world G --level 1 --enemy-replay $R/trace-G1-4p-v1 --frame-replay --vplayers 4
+# A team move (WARPED w7l0-2p-team-v1: player 2 written ahead of player 1; L2).
+run $R/replay-frame-G1team-$V.json --world G --level 1 --enemy-replay $R/trace-G1-team-v2 --frame-replay --vplayers 2
 # Two players at B6's boss (WARPED w2l6-2p-v1: tower-2p-v2 warped by the wave skip, 500 vblanks of both players' moves and attacks).
 run $R/replay-frame-B6two-$V.json --world B --level 6 --enemy-replay $R/trace-B6-2p-v1 --frame-replay --vplayers 2
-for f in frame-fight-g1 frame-combat-g1 frame-varied-g1 frame-tower enemies-g1 enemies-fight-g1 player-g1 player-combat-g1 player-fight-g1 frame-a1 frame-b1 frame-k2 frame-g1new frame-b6 frame-g5 frame-C5 frame-D5 frame-I5 frame-J5 frame-K5 frame-E2 frame-F2 frame-H4 frame-A5 frame-A1statue frame-A1golem frame-A1death frame-B6kill frame-B6wiz2 frame-B6wiz3 frame-B6wiz4 frame-G1exit frame-C1water frame-C1water2 frame-G1potion frame-G1xbow frame-A1trans frame-D1new frame-E1new frame-F1new frame-H1new frame-I1new frame-J1new frame-D3start frame-D3leaf frame-I2start frame-B2start $(for L in $SWEEP; do echo frame-${L}start; done) $(for L in $SWEEP; do echo frame-${L}combat; done) frame-B6two; do
+for f in frame-fight-g1 frame-combat-g1 frame-varied-g1 frame-tower enemies-g1 enemies-fight-g1 player-g1 player-combat-g1 player-fight-g1 frame-a1 frame-b1 frame-k2 frame-g1new frame-b6 frame-g5 frame-C5 frame-D5 frame-I5 frame-J5 frame-K5 frame-E2 frame-F2 frame-H4 frame-A5 frame-A1statue frame-A1golem frame-A1death frame-B6kill frame-B6wiz2 frame-B6wiz3 frame-B6wiz4 frame-G1exit frame-C1water frame-C1water2 frame-G1potion frame-G1xbow frame-A1trans frame-D1new frame-E1new frame-F1new frame-H1new frame-I1new frame-J1new frame-D3start frame-D3leaf frame-I2start frame-B2start $(for L in $SWEEP; do echo frame-${L}start; done) $(for L in $SWEEP; do echo frame-${L}combat; done) frame-B6two frame-tower2p frame-G12p frame-tower4p frame-G14p frame-G1team; do
 python3 -c "
 import json, pathlib
 p = pathlib.Path('$R/replay-$f-$V.json')

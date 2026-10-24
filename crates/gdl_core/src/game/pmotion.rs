@@ -467,8 +467,14 @@ impl Game {
             }
             self.players[p].set_u32(0x8e4, 0);
         } else {
-            // GetObjWorldMat of the grabbing node (critter_hits keeps it).
-            if let Some(at) = self.grabbed_position(p)? {
+            // 0x14889c..0x1488b0: GetObjWorldMat(+0x20, +0x81c, +0x810) from
+            // the node's parent — a team partner's DUMMY node (posed at its
+            // clock as do_player left it this update, so the carried player
+            // follows the partner's animation at once: trace-G1-team-v2), or
+            // the grabbing critter's node (critter_hits keeps it).
+            if self.player_team_parent[p].is_some() {
+                self.get_obj_world_mat(p)?;
+            } else if let Some(at) = self.grabbed_position(p)? {
                 self.players[p].set_v3(0x50, at);
             }
             self.do_auto_exit_player(p);
@@ -1735,8 +1741,26 @@ impl Game {
         let prev = self.players[p].f32_(0x974);
         let frame = self.players[p].f32_(0xac);
         let partner = ptr(self.players[p].u32_(0x690));
-        // 0x58: StartComboFX at the partner (presentation) when the action
-        // starts (+0x974 < 0, frame ≥ 0).
+        // 0x14c974..0x14ca00: the team move (0x58, PlayerData +0x1c) starts
+        // with StartComboFX(at, colour +4, the partner's colour +4) when
+        // the action starts (+0x974 < 0, frame ≥ 0) — at +0x60, or for the
+        // dwarf and jester (classes 4, 7) at +0xe4 + +0x810 (FPU adds). Its
+        // two effects take effect slots (trace-G1-team-v2 step 1).
+        if off[0] == 0x1c
+            && 0.0 <= frame
+            && prev < 0.0
+            && let Some(q) = partner
+        {
+            let r = &self.players[p];
+            let at = if matches!(r.u32_(8), 4 | 7) {
+                let (a, b) = (r.v3(0xe4), r.v3(0x810));
+                [add(a[0], b[0])?, add(a[1], b[1])?, add(a[2], b[2])?]
+            } else {
+                r.v3(0x60)
+            };
+            let (ca, cb) = (r.i32_(4), self.players[q].i32_(4));
+            self.start_combo_fx(at, ca, cb)?;
+        }
         for o in off.into_iter().filter(|&o| o != 0) {
             let d = self.class_sfx(k, o);
             if 0 <= d {

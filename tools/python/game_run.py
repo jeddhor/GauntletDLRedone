@@ -99,7 +99,8 @@ def main():
     ap.add_argument('--explore', type=int, help='with --pads: DEBUG state search (explore.rs) for at most this many updates, then its script replayed')
     ap.add_argument('--seed', type=int, help='--explore search seed')
     ap.add_argument('--cells', type=int, help='--explore archive cell limit')
-    ap.add_argument('--nav', action='store_true', help='--explore with graph-guided macros (bot.rs Nav)')
+    ap.add_argument('--nav', type=int, nargs='?', const=1, help='--explore macros: 1 graph-guided d-pad walks, 2 traversal-bot runs (bot.rs)')
+    ap.add_argument('--padfile', help='with --pads: port 0 per update from an --explore JSON script (analog sticks included)')
     ap.add_argument('--assist', action='store_true', help='with --pads: the DEBUG health assist before each update (replaying an --explore script)')
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
     ap.add_argument('--fall', help='DEBUG: player 0 drops below the world bottom at this update')
@@ -226,7 +227,9 @@ def main():
     if a.cells:
         cmd += [f'cells={a.cells}']
     if a.nav:
-        cmd += ['nav=1']
+        cmd += [f'nav={a.nav}']
+    if a.padfile:
+        cmd += [f'padfile={a.padfile}']
     if a.assist:
         cmd += ['assist=1']
     if a.players:

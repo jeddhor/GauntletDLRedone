@@ -171,7 +171,27 @@ matrix the last MBEndFrame left; no blend). Headless (actual disc, two
 Sorceresses in G1, game-run front=1 turbo=100, R2):
 game-run-team-G1-sor-v1.json — the partner plays 0x92 parented for the
 90 frames of 0x58 and is released with its kept position; no unported
-path. Other classes not exercised; no reference comparison.
+path. Other classes not exercised.
+
+Reference comparison (2026-10-24, actual disc, WARPED w7l0-2p-team-v1:
+player 2 written 2.5 units ahead of player 1 in G1, player 1's turbo 62.4
+as captured; L2 is key '1', R2 '3' gives the 0x77..0x79 special instead):
+trace-G1-team-v2 — player 1 enters 0x58 on the first update with the link
+(+0x690 both ways, partner status 0x1030, turbo 62.4 → 12.5), carries the
+partner for about 180 vblanks and releases it. replay-frame-G1team-v5:
+enemies, items, effects, world animation, camera, critters and the good
+wizard equal on all 103 updates; players 13/103. Found and fixed on the
+way: PlayerMotion's carried branch (0x14889c..0x1488b0) re-reads a
+team-parented player's world with GetObjWorldMat during its own update, so
+it follows the partner's animation as advanced this update (native had
+kept the start-of-update world, one update behind); the 0x58 case of the
+PlyrSfxDoDamage dispatch starts StartComboFX (two effects: ComboEffects[4]
+tinted by the partner's colour, then the player's) on the action's first
+frame; the frame replay builds the player rig (DUMMY node) and seeds the
+team links (+0x690/+0x694 as player index + 1, the team parent from status
+0x20). Left: the carried partner's rotation rows differ by 3 ulps and its
+position by 1 ulp on the first carried update (the DUMMY node's world:
+bone locals and their chain, the start blend not applied) — unknowns.md.
 
 ## Unported (Unsupported when reached)
 
