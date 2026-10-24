@@ -507,8 +507,11 @@ tree's clips at the game's ATime). HYPOTHESIS: the tree's AnimInfo sits at
 +0x77a its current sequence — mode 2 while that is 0, else uVar14.
 Seen in G1 (GDL_DEBUG_POWERUP 9:1 / 9:80 / 9:400, runs client-pw-1/-80/
 -400): the wings at the back, the phoenix and the pojo beside the player.
-The fire breath (9:10, a camera-facing no-shade object at the head) was
-not visible in those frames — not confirmed. No reference capture.
+The fire breath (9:10) spawns its one part (HEAD_BREATHEFFF, node flags
+0x1001000: camera-facing, unshaded; a single static key at (0, 0.896,
+0.086) on HEAD; ACTIVE 15 frames repeating) but showed nothing visible in
+G1 frames (runs client-pw4-10, -pw5-10) — not confirmed; its texture
+modifiers or facing may be the cause. No reference capture.
 
 ## Player translucency (PlayerProcessPowerups, 2026-10-23)
 

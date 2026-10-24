@@ -2659,6 +2659,9 @@ fn present_powerup_trees(
             commands.entity(e).remove::<(EffectTree, TreeClock)>();
             if let Some((pkg, label, _)) = choice {
                 let parts = tree_parts(&sources, &libs, pkg, label);
+                if std::env::var("GDL_DEBUG_FX").is_ok() {
+                    eprintln!("PowerupTree {} {:?} {label} in {pkg}: {} parts {:?}", t.slot, t.at, parts.len(), parts.iter().map(|p| (p.3, p.2, p.1.len(), p.0)).collect::<Vec<_>>());
+                }
                 spawn_parts(&mut commands, e, parts, &mut materials, &mut variants, &mut pending);
                 let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|x| x.label == label).map(|i| (i, gdl_core::game::setup::clips_of(a, i))));
                 if let Some((tree, clips)) = tree {
