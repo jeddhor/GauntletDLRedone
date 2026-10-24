@@ -109,6 +109,7 @@ def main():
     ap.add_argument('--next-level', action='store_true', help='enter the level from --start as init_next_level does (level_start and PlayerSaveState on the carried records, start locator); needs --pads')
     ap.add_argument('--padfile', help='with --pads: port 0 per update from an --explore JSON script (analog sticks included)')
     ap.add_argument('--require', action='store_true', help='with --explore: a level end counts only with its rune stone and legend item taken')
+    ap.add_argument('--bot-delay', type=int, help='with --bot: stand idle N updates after the stage start (a variation for retries)')
     ap.add_argument('--no-assist', action='store_true', help='with --explore: no DEBUG health assist in the search or its replay')
     ap.add_argument('--assist', action='store_true', help='with --pads: the DEBUG health assist before each update (replaying an --explore script)')
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
@@ -259,6 +260,8 @@ def main():
         cmd += ['assist=1']
     if a.no_assist:
         cmd += ['no_assist=1']
+    if a.bot_delay:
+        cmd += [f'bot_delay={a.bot_delay}']
     if a.require:
         cmd += ['require=1']
     if a.players:

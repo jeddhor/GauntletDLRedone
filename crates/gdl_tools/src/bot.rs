@@ -494,8 +494,12 @@ pub struct Bot {
     no_goal_since: Option<usize>,
     /// The DEBUG health assist (explore.rs applies its own).
     pub assist_enabled: bool,
+    /// Updates to stand idle after the stage start (bot_delay=N: a
+    /// variation of the same start for retries; the simulation is
+    /// deterministic, so a retry needs a different input).
+    pub delay: usize,
     /// Long attacks spent on each blocking item (slot).
-    break_tries: HashMap<usize, u32>,
+    break_tries: HashMap<usize, (u32, f32)>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -594,6 +598,7 @@ impl Bot {
             no_goal_since: None,
             assist_enabled: true,
             break_tries: HashMap::new(),
+            delay: 0,
         }
     }
 
@@ -754,7 +759,9 @@ impl Bot {
         for s in 0..g.items.records.len() {
             let r = &g.items.records[s];
             let (k, _) = item_kind(g, s);
-            if !r.active() || !(k == 2 || k == 10 || (k == 7 && keys < 1)) {
+            // Generators (kind 3) once three attacks did not damage them.
+            let spent = k == 3 && self.break_tries.get(&s).is_some_and(|&(n, _)| 3 <= n);
+            if !r.active() || !(k == 2 || k == 10 || spent || (k == 7 && keys < 1)) {
                 continue;
             }
             let q = r.v3(0x40);
@@ -848,10 +855,13 @@ impl Bot {
         let exits = active(g, &|k, t| k == 9 && t != 0x32);
         let secret = active(g, &|k, t| k == 9 && t == 0x32);
         // Triggers that switch their bound object on (+0xf4 bit 0 only
-        // switches it off) and were not used yet.
+        // switches it off) and were not used yet. Bit 0x200: no player can
+        // touch it (ItemCollSub skips it; another trigger's chain fires it —
+        // A4's BRIDGEPAD 231, G2's 408).
+        let touchable = |s: usize| g.items.records[s].u16_(0xf4) & 0x201 == 0;
         let triggers: Vec<usize> = active(g, &|k, _| k == 5)
             .into_iter()
-            .filter(|&s| !self.visited_triggers.contains(&s) && g.items.records[s].u16_(0xf4) & 1 == 0)
+            .filter(|&s| !self.visited_triggers.contains(&s) && touchable(s))
             .collect();
         let mut near: Vec<usize> = keys;
         near.extend(triggers);
@@ -879,7 +889,7 @@ impl Bot {
         } else {
             active(g, &|k, _| k == 5)
                 .into_iter()
-                .filter(|&s| self.visited_triggers.contains(&s) && g.items.records[s].u16_(0xf4) & 1 == 0 && self.trigger_visits.get(&s).copied().unwrap_or(0) < 3)
+                .filter(|&s| self.visited_triggers.contains(&s) && touchable(s) && self.trigger_visits.get(&s).copied().unwrap_or(0) < 3)
                 .collect()
         };
         let to_treasure = |s: usize| treasures.iter().map(|&t| dist3(g.items.records[s].v3(0x40), g.items.records[t].v3(0x40))).fold(f32::MAX, f32::min);
@@ -986,6 +996,11 @@ impl Bot {
         if g.globals.start_of_stage != 0 || g.globals.cam_wait != 0 {
             self.progress = (f, g.players[0].v3(0x50));
             self.holds[0] += 1;
+            return pad;
+        }
+        if 0 < self.delay {
+            self.delay -= 1;
+            self.progress = (f, g.players[0].v3(0x50));
             return pad;
         }
         // On an exit portal (contact item +0x884, kind 9): DoExit counts only
@@ -1114,8 +1129,16 @@ impl Bot {
                 // At most three long attacks per item: one that does not
                 // break (statues, rocks, a respawning generator) is then
                 // routed around as before (b27: A3's 1285 stuck events).
+                // A try that damaged it (+0xfc rising: A4's generator 128
+                // took 0.29, 0.5, 0.79, 0.86, then broke, over separate
+                // fights) does not count against it.
                 let breakable = blocker.is_some_and(|s| {
-                    let n = self.break_tries.entry(s).or_insert(0);
+                    let hit = g.items.records[s].f32_(0xfc);
+                    let (n, last) = self.break_tries.entry(s).or_insert((0, hit));
+                    if item_kind(g, s).0 == 3 && *last + 0.01 < hit {
+                        *n = 0;
+                    }
+                    *last = hit;
                     *n += 1;
                     *n <= 3
                 });

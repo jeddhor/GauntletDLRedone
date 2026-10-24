@@ -3643,6 +3643,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let mut b = bot::Bot::new(&game);
                     // no_assist=1: the bot plays without the DEBUG health assist.
                     b.assist_enabled = !opts.contains_key("no_assist");
+                    if let Some(d) = opts.get("bot_delay") {
+                        b.delay = d.parse()?;
+                    }
                     if let Some(h) = opts.get("hints") {
                         let hints: Vec<bot::Hint> = serde_json::from_slice(&bounded_read(Path::new(h), 1024 * 1024)?)?;
                         b = b.with_hints(hints);
