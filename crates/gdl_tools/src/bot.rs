@@ -974,7 +974,9 @@ impl Bot {
             // +0xe1: items for more players than are in the game (ProcessItems skips them).
             (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && g.items.records[s].u8_(0xe1) == 0 && { let (k, t) = item_kind(g, s); want(k, t) }).collect()
         };
-        let keys = active(g, &|k, t| k == 1 && t == 2);
+        // At max_keys_per_player a key is not picked up (G4 in the campaign:
+        // nine keys carried, 566 stuck events beside keys).
+        let keys = if g.globals.max_keys_per_player <= g.players[0].i32_(KEYS) { Vec::new() } else { active(g, &|k, t| k == 1 && t == 2) };
         // Regular exits first; secret exits (subtype 0x32, to the treasure
         // rooms) only when no regular exit is reachable.
         let exits = active(g, &|k, t| k == 9 && t != 0x32);

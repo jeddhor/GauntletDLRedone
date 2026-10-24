@@ -288,6 +288,8 @@ fn interest_items(g: &Game) -> Vec<usize> {
             continue;
         }
         let n = match item_kind(g, s) {
+            // At max_keys_per_player keys are not picked up.
+            (1, 2) if g.globals.max_keys_per_player <= keys => 0,
             (1, 2) | (2, _) => 1,
             (5, _) if r.i8_(0xde) == 0 && r.u8_(0xe2) == 0 => 1,
             (7, _) if 0 < keys && r.i8_(0xdc) == 0 => 1,
