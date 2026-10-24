@@ -303,6 +303,7 @@ pub struct TreeAnimRequest {
     pub pojo_attacks: u32,
 }
 
+#[derive(Clone)]
 pub struct Game {
     pub globals: Globals,
     /// LEVL record of the current level (level_data 0x23e158 points to it).

@@ -61,6 +61,26 @@ pub struct Triangle {
     pub uv: [f32; 4],
 }
 
+/// dyngrid_width 0x21f6a8 and dyngrid_invwidth 0x21f6ac: ELF initial data
+/// (10.0 and 0x3dcccccd, the values in the B5 capture), the dyngrid's own
+/// cell size rather than the static grid's.
+const DYN_WIDTH: u32 = 0x4120_0000;
+const DYN_INV: u32 = 0x3dcc_cccd;
+
+/// The dynamic-object grid (InitDynobjGrid 0x11f4e8, CreateDynobjGrid
+/// 0x11f5f8): num_dyngridx × num_dyngridz cells of dyngrid_width, each a u16
+/// head into dyngrid_list's (dynobj index, next) links, link 0 = none; the
+/// dynobj entries' +0x42 stamps against ObjCheckNum 0x21f6b0.
+#[derive(Clone)]
+struct DynGrid {
+    nx: i32,
+    nz: i32,
+    heads: Vec<u16>,
+    links: Vec<(u16, u16)>,
+    stamps: Vec<u16>,
+    check: u32,
+}
+
 #[derive(Clone)]
 pub struct CollisionWorld {
     pub objects: Vec<CollisionObject>,
@@ -91,6 +111,7 @@ pub struct CollisionWorld {
     pub node_local: Vec<Option<[[f32; 4]; 4]>>,
     pub node_scale: Vec<Option<V3>>,
     grid: CollisionGrid,
+    dyn_grid: DynGrid,
     min_x: f32,
     min_z: f32,
     inv_cell: f32,
@@ -236,7 +257,23 @@ impl CollisionWorld {
         let node_local = vec![None; objects.len()];
         let node_scale = vec![None; objects.len()];
         let dyn_matrix = vec![None; objects.len()];
+        // InitDynobjGrid: trunc((max − min) / dyngrid_width) + 1 per axis
+        // (WorldInfo +0x18..+0x2c, the header bounds).
+        let span = |a: usize| -> R<i32> { Ok(trunc(div_rn(sub(world.max[a], world.min[a])?, w(DYN_WIDTH))?) + 1) };
+        let (nx, nz) = (span(0)?, span(2)?);
+        if !(1..=4096).contains(&nx) || !(1..=4096).contains(&nz) {
+            return Err(UnsupportedCollision("dyngrid dimensions"));
+        }
+        let dyn_grid = DynGrid {
+            nx,
+            nz,
+            heads: vec![0; (nx * nz) as usize],
+            links: vec![(0, 0)],
+            stamps: vec![0; objects.len()],
+            check: 0,
+        };
         Ok(Self {
+            dyn_grid,
             dyn_matrix,
             node_rot,
             node_local,
@@ -405,6 +442,7 @@ impl CollisionWorld {
             check_num: self.check_counter as u8 as i8,
         };
         let mut found = Collision { solid: None, water: None };
+        let mut done = false;
         if !outside {
             let gx0 = trunc(mul(sub(start_x, min_x)?, self.inv_cell)?);
             let gz0 = trunc(mul(sub(start_z, min_z)?, self.inv_cell)?);
@@ -429,14 +467,22 @@ impl CollisionWorld {
                             self.object_collide(&ctx, index, &list, &mut found)?;
                             offset += 6 + (count as usize - 1) * 2;
                         }
+                        // 0x11e828: a CheckFlags 0x20 query stops at its first solid hit.
+                        if any_hit_done(&ctx, &found) {
+                            done = true;
+                            break;
+                        }
                     }
                 }
-                if !next_grid(&ctx, self, dx, dz, slope, r, &mut gx, &mut gz)? {
+                if done || !next_grid(&ctx, self, dx, dz, slope, r, &mut gx, &mut gz)? {
                     break;
                 }
             }
         }
-        self.dyn_collide(&ctx, &mut found)?;
+        // 0x11e900: and then skips WorldDynCollide.
+        if !done {
+            self.dyn_collide(&ctx, dx, dz, slope, &mut found)?;
+        }
         Ok((found, state))
     }
 
@@ -610,29 +656,113 @@ impl CollisionWorld {
         yaw_mat3(m, a)
     }
 
-    /// CreateDynobjGrid: cache each 0x1000000 dynamic object's world matrix
-    /// (the cells themselves are not modelled; see dyn_collide).
+    /// CreateDynobjGrid 0x11f5f8: each dynobj's GetWorldMat (0x1000000
+    /// objects), its +0x42 stamp cleared, and a link in every cell its
+    /// circle overlaps — centre the matrix translation (0x1000000), the node
+    /// translation +0x30 (0x1000: the local one, also under a parent) or
+    /// the static +0x1c, radius +0x30 — pushed at the cell's head, so a cell
+    /// lists its objects newest (highest dynobj index) first.
     pub fn create_dynobj_grid(&mut self) -> R<()> {
+        let g = &mut self.dyn_grid;
+        g.heads.fill(0);
+        g.links.truncate(1);
+        let inv = w(DYN_INV);
         for k in 0..self.dynamic.len() {
             let o = self.dynamic[k];
-            self.dyn_matrix[o] = if self.runtime_flags[o] & 0x100_0000 != 0 { Some(self.object_matrix(o)?) } else { None };
+            let flags = self.runtime_flags[o];
+            self.dyn_matrix[o] = if flags & 0x100_0000 != 0 { Some(self.object_matrix(o)?) } else { None };
+            self.dyn_grid.stamps[k] = 0;
+            let p = match self.dyn_matrix[o] {
+                Some(m) => [m[3][0], m[3][1], m[3][2]],
+                None if flags & 0x1000 != 0 => {
+                    let m = self.node_matrix(o);
+                    [m[3][0], m[3][1], m[3][2]]
+                }
+                None => self.objects[o].position,
+            };
+            let r = self.objects[o].radius;
+            let g = &mut self.dyn_grid;
+            let cell = |v: f32, min: f32, n: i32| -> R<i32> {
+                let c = trunc(mul(sub(v, min)?, inv)?);
+                Ok(if c < 0 { 0 } else { c.min(n - 1) })
+            };
+            let (x0, x1) = (cell(sub(p[0], r)?, self.min_x, g.nx)?, cell(add(p[0], r)?, self.min_x, g.nx)?);
+            let (z0, z1) = (cell(sub(p[2], r)?, self.min_z, g.nz)?, cell(add(p[2], r)?, self.min_z, g.nz)?);
+            for z in z0..=z1 {
+                for x in x0..=x1 {
+                    let at = (z * g.nx + x) as usize;
+                    if g.links.len() > 0xffff {
+                        return Err(UnsupportedCollision("dyngrid link count"));
+                    }
+                    g.links.push((k as u16, g.heads[at]));
+                    g.heads[at] = (g.links.len() - 1) as u16;
+                }
+            }
         }
         Ok(())
     }
 
-    /// WorldDynCollide/WorldObjCollide for dynamic objects. Candidates are all
-    /// dynamic objects instead of the dyngrid cells; WorldObjCollide's own
-    /// segment-sphere rejection is applied as in the original.
-    fn dyn_collide(&mut self, c: &Ctx, found: &mut Collision) -> R<()> {
-        for k in 0..self.dynamic.len() {
-            let o = self.dynamic[k];
+    /// WorldDynCollide 0x11fbe8: ObjCheckNum + 1 (1 after 0xfa00), the
+    /// walk from the clipped start's dyngrid cell with NextDynGrid, each
+    /// cell's links tested once per query (+0x42), and the CheckFlags 0x20
+    /// stop after a solid hit (0x11e128).
+    fn dyn_collide(&mut self, c: &Ctx, dx: f32, dz: f32, slope: f32, found: &mut Collision) -> R<()> {
+        let g = &mut self.dyn_grid;
+        g.check += 1;
+        if g.check > 0xfa00 {
+            g.check = 1;
+        }
+        let inv = w(DYN_INV);
+        let clamp = |v: i32, n: i32| if v < 0 { 0 } else { v.min(n - 1) };
+        let mut gx = clamp(trunc(mul(sub(c.start_x, self.min_x)?, inv)?), g.nx);
+        let mut gz = clamp(trunc(mul(sub(c.start_z, self.min_z)?, inv)?), g.nz);
+        // NextDynGrid takes the bounds as ints (cvt.w.s at 0x11fcf4..0x11fd04)
+        // and its end-z argument is the truncated end x (t1 = s2 at 0x11fe30).
+        let (sx, ex, sz) = (trunc(c.start_x), trunc(c.end_x), trunc(c.start_z));
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            if steps > 1 << 16 {
+                return Err(UnsupportedCollision("dyngrid walk policy exceeded"));
+            }
+            let mut link = self.dyn_grid.heads[(gz * self.dyn_grid.nx + gx) as usize];
+            while link != 0 {
+                let (k, next) = self.dyn_grid.links[link as usize];
+                link = next;
+                let k = usize::from(k);
+                let stamp = self.dyn_grid.check as u16;
+                if self.dyn_grid.stamps[k] == stamp {
+                    continue;
+                }
+                self.dyn_grid.stamps[k] = stamp;
+                self.dyn_object_collide(c, self.dynamic[k], found)?;
+                if any_hit_done(c, found) {
+                    return Ok(());
+                }
+            }
+            let bounds = (self.min_x, self.min_z, self.dyn_grid.nx, self.dyn_grid.nz);
+            if any_hit_done(c, found) || !next_dyn_grid(bounds, [sx, ex, sz, ex], dx, dz, slope, c.q.radius, &mut gx, &mut gz)? {
+                return Ok(());
+            }
+        }
+    }
+
+    /// WorldDynCollide's per-object filter (+0x10 mask, +0x35 exclusion with
+    /// the parent's, 0x10000000, +0x38 < 0) and WorldObjCollide with the
+    /// dynobj entry as the matrix.
+    fn dyn_object_collide(&mut self, c: &Ctx, o: usize, found: &mut Collision) -> R<()> {
+        {
             let flags = self.runtime_flags[o];
             let mut excl = self.runtime_exclusion[o];
             if let Some(p) = self.objects[o].parent {
                 excl |= self.runtime_exclusion[p];
             }
-            if c.q.object_mask & flags == 0 || i32::from(excl) & c.q.exclusion_mask != 0 || flags & 0x1000_0000 != 0 {
-                continue;
+            if c.q.object_mask & flags == 0
+                || i32::from(excl) & c.q.exclusion_mask != 0
+                || flags & 0x1000_0000 != 0
+                || self.objects[o].first_triangle < 0
+            {
+                return Ok(());
             }
             // 0x1000000: the grid build's matrix (fresh GetWorldMat only
             // before any build); 0x1000 roots: the live node.
@@ -647,7 +777,7 @@ impl CollisionWorld {
             let t = add(add(mul(d[0], c.dir[0])?, mul(d[1], c.dir[1])?)?, mul(d[2], c.dir[2])?)?;
             let rr = add(c.q.radius, self.objects[o].radius)?;
             if add(rr, c.length)? < t || t < -rr {
-                continue;
+                return Ok(());
             }
             let e = [
                 sub(p[0], add(mul(t, c.dir[0])?, first[0])?)?,
@@ -655,7 +785,7 @@ impl CollisionWorld {
                 sub(p[2], add(mul(t, c.dir[2])?, first[2])?)?,
             ];
             if mul(rr, rr)? <= add(add(mul(e[0], e[0])?, mul(e[1], e[1])?)?, mul(e[2], e[2])?)? {
-                continue;
+                return Ok(());
             }
             let body = |v: V3| -> R<V3> {
                 let q = [sub(v[0], m[3][0])?, sub(v[1], m[3][1])?, sub(v[2], m[3][2])?];
@@ -685,7 +815,7 @@ impl CollisionWorld {
                 flags & 0x40 != 0,
             )?;
             if distance < 0.0 {
-                continue;
+                return Ok(());
             }
             let (triangle, local) = hit.ok_or(UnsupportedCollision("hit without triangle"))?;
             // WorldCollide's tail turns the local hit into the output struct
@@ -842,6 +972,74 @@ struct Ctx {
     end_x: f32,
     end_z: f32,
     check_num: i8,
+}
+
+/// 0x11e128: CheckFlags 0x20 and col_dist 0x2bcfa4 == 0 (a TriLineCol hit).
+fn any_hit_done(c: &Ctx, found: &Collision) -> bool {
+    c.q.check_flags & 0x20 != 0 && found.solid.is_some_and(|h| h.distance == 0.0)
+}
+
+/// NextDynGrid 0x11f8f8: NextGrid's step over the dyngrid, its bounds the
+/// integers WorldDynCollide passes (start x, end x, start z, and end x again
+/// as the end z).
+/// `bounds` = (world min x, min z, num_dyngridx, num_dyngridz); `b` = the
+/// integer start x, end x, start z, end z.
+#[allow(clippy::too_many_arguments)]
+fn next_dyn_grid(bounds: (f32, f32, i32, i32), b: [i32; 4], dx: f32, dz: f32, slope: f32, r: f32, gx: &mut i32, gz: &mut i32) -> R<bool> {
+    let (width, inv) = (w(DYN_WIDTH), w(DYN_INV));
+    let (min_x, min_z, nx, nz) = bounds;
+    let [sx, ex, sz, ez] = b.map(|v| v as f32);
+    let positive = if dx == 0.0 { 0.0 <= dz } else { 0.0 <= slope };
+    let offset = if positive { r } else { -r };
+    let z = *gz + if positive { 1 } else { -1 };
+    let edge = add(mul((*gx + 1) as f32, width)?, min_x)?;
+    let along = if dx == 0.0 { dz } else { mul(sub(edge, sx)?, slope)? };
+    if 0 <= z && z < nz {
+        let mut reach = add(add(sz, along)?, add(offset, offset)?)?;
+        let row = if positive {
+            if ez < reach {
+                reach = ez;
+            }
+            trunc(mul(sub(reach, min_z)?, inv)?) < z
+        } else {
+            if reach < ez {
+                reach = ez;
+            }
+            z < trunc(mul(sub(reach, min_z)?, inv)?)
+        };
+        if !row {
+            *gz = z;
+            return Ok(true);
+        }
+    }
+    if ex < edge {
+        return Ok(false);
+    }
+    let x = *gx + 1;
+    if nx <= x {
+        return Ok(false);
+    }
+    let mut zz = sz;
+    if dx != 0.0 && sub(edge, sx)? >= add(r, r)? {
+        let past = sub(add(edge, width)?, add(sx, add(r, r)?)?)?;
+        if 0.0 < past {
+            zz = add(sz, mul(past, slope)?)?;
+        }
+    }
+    if positive {
+        if ez < zz {
+            zz = ez;
+        }
+    } else if zz < ez {
+        zz = ez;
+    }
+    let v = trunc(mul(sub(zz, min_z)?, inv)?);
+    if nz <= v || v < 0 {
+        return Ok(false);
+    }
+    *gx = x;
+    *gz = v;
+    Ok(true)
 }
 
 /// CVT.W.S truncation for the bounded grid coordinates used here.
@@ -1406,6 +1604,32 @@ pub fn roll_mat3(m: &mut [V3; 3], a: f32) -> R<()> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn next_dyn_grid_clamps_rows_with_the_truncated_end_x() {
+        // Synthetic: B5's dyngrid (min x −99.8359375, min z −245.953125,
+        // 19 × 25) and a wall query moving −x and −z whose clipped bounds are
+        // x −0.8199 .. 4.7037, z −29.8828 .. −35.4297 (dz < 0). WorldDynCollide
+        // passes trunc(end x) = 4 as the end z, so the walk leaves cell (9, 21)
+        // for row 24 instead of the segment's cell (10, 21).
+        let bounds = (f32::from_bits(0xc2c7_ac00), f32::from_bits(0xc375_f400), 19, 25);
+        let (sx, ex, sz) = (-0.819_919_7f32 as i32, 4.703_744f32 as i32, -29.882_803f32 as i32);
+        let (dx, dz) = (2.003_744_4 - 1.880_080_1f32, -32.729_67 - -32.582_8f32);
+        let slope = super::div_rn(dz, dx).unwrap();
+        let (mut gx, mut gz) = (9, 21);
+        let mut cells = vec![(gx, gz)];
+        while super::next_dyn_grid(bounds, [sx, ex, sz, ex], dx, dz, slope, 2.7, &mut gx, &mut gz).unwrap() {
+            cells.push((gx, gz));
+        }
+        assert_eq!(cells, [(9, 21), (10, 24)]);
+        // With the true end z the same walk reaches (10, 21).
+        let (mut gx, mut gz) = (9, 21);
+        let mut real = vec![(gx, gz)];
+        while super::next_dyn_grid(bounds, [sx, ex, sz, -35.429_67f32 as i32], dx, dz, slope, 2.7, &mut gx, &mut gz).unwrap() {
+            real.push((gx, gz));
+        }
+        assert!(real.contains(&(10, 21)), "{real:?}");
+    }
 
     #[test]
     fn yaw_mat3_rotates_rows_zero_and_two() {

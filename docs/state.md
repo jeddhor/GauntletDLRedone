@@ -306,6 +306,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    fire breath compared with the reference. Bot: drop edges, generators,
    idle reset (b26 ends B1 and A4); game_run --no-enemies (DEBUG) for
    progression-only traversal.
+   2026-10-24: the dyngrid is native (collision.md "Dyngrid": cells of
+   dyngrid_width 10, links, ObjCheckNum stamps, NextDynGrid's integer
+   bounds with the end x as its end z) and CheckFlags 0x20 queries stop at
+   their first solid hit — B5's combat kill (a lava ball the original's
+   walk never reaches) is gone; two players at B6's boss equal the
+   reference on all 250 updates (critter target-slot stack residue masked
+   in all four slots); regression r72 (118 replays: 115 unchanged, 2
+   improved, the new two-player one equal). traversal-v6: 36 of 61 levels
+   ended by the bot. Game is Clone (state search tooling).
 
 ---
 

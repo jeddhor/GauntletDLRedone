@@ -566,15 +566,19 @@ impl ReferenceCritters {
     }
 
     /// Stack residue: CritterGetSingleTargetPlayer copies its 0x30-byte
-    /// target struct into +0x140, and CritterCalcTarget never writes the
-    /// struct's +0x14/+0x18/+0x1c/+0x2c (no critter code reads them back;
-    /// the 0x15c loads in CritterDamage/CritterDamagePlayer/CritterGolemAI
-    /// are the global 0x22015c).
+    /// target struct into +0x140, CritterGetTargetPlayers' CritterInsertTarget
+    /// 0x19ad38 copies its stack record (sp+0x10) into any of the four slots
+    /// +0x140 + 0x30 k, and CritterCalcTarget never writes the struct's
+    /// +0x14/+0x18/+0x1c/+0x2c (no critter code reads them back; the 0x15c
+    /// loads in CritterDamage/CritterDamagePlayer/CritterGolemAI are the
+    /// global 0x22015c). trace-B6-2p-v1: both players' slots carry the same
+    /// residue (+0x2c 0x5a000000 or 0).
     /// +0x6c: the w of MulVec4Mat3's VU0 result (vmaddz with dest xyz, then
     /// sqc2 of the whole register) — register residue. +0xf8: the skin's
     /// texture word, an MBOX texture handle when CritterInitSfx's FindTexMod
     /// fails (trace-B6-bosskill-v1: LAVA00 0x000b0007).
-    const RESIDUE: [usize; 6] = [0x154, 0x158, 0x15c, 0x16c, 0x6c, 0xf8];
+    const RESIDUE: [usize; 18] = [0x154, 0x158, 0x15c, 0x16c, 0x184, 0x188, 0x18c, 0x19c, 0x1b4, 0x1b8, 0x1bc, 0x1cc, 0x1e4, 0x1e8,
+                                  0x1ec, 0x1fc, 0x6c, 0xf8];
 
     fn live(&self, k: usize) -> bool {
         k < self.num && self.slots.get(k).is_some_and(|r| Self::word(r, 4) != 0)

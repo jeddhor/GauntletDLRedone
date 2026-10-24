@@ -376,7 +376,7 @@ fn battle_wave_1_done(players: &[String]) -> Result<bool, Box<dyn std::error::Er
 pub type Visibility = dyn Fn(&Game, usize) -> (bool, bool);
 
 /// Frame report for logging: the first message of each unsupported path.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct FrameLog {
     pub unsupported: BTreeMap<String, u64>,
 }

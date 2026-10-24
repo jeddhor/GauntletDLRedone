@@ -227,6 +227,7 @@ pub struct ItemSession {
     pub sound_names: Vec<(Vec<u8>, i32)>,
 }
 
+#[derive(Clone)]
 pub struct ItemWorld {
     pub tables: ItemTables,
     pub session: ItemSession,

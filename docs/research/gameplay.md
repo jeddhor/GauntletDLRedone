@@ -983,3 +983,29 @@ differed (D4, I4, J6, B5: init_enemy's FloorPos returning WldBtm under a
 generator) are the original skipping a triangle whose stale stamp equals the
 query's CheckNum — reproduced natively once the stamps are seeded.
 Results (regression r71): see coverage.md; open items in unknowns.md.
+
+B5's combat (re-recorded as trace-B5-combat-v2 with the item_wobjs and
+CheckNum probes) still lost enemy 6 at step 376: native's EnemyCollideWalls
+found the falling B5LAVA_BALL7 (object 232, flags 0x8a033002: a 0x1000 root
+moved by its item, fire kind 0x30000) and EnemyWorldDamage killed the enemy;
+in the reference the enemy walks past the ball unhurt for the rest of the
+trace. WorldDynCollide reaches dynamic objects only through the dyngrid
+(collision.md "Dyngrid"): the query moves −x and −z, and NextDynGrid clamps
+its row step with the truncated end x (4) where the end z (−35.4) belongs, so
+the walk leaves cell (9, 21) for row 24 and never visits (10, 21), the cell
+the ball is linked in. With the dyngrid native (regression r72) B5's combat
+replay is equal in every part on all 300 updates except the sound items'
++0xfe words (unknowns.md).
+
+## Two players at a boss (2026-10-24, actual disc, WARPED)
+
+w2l6-2p-v1 (tower-2p-v2 with two players, warped to B6 by do_exit's wave
+skip; guest writes) traced for 500 vblanks with both players moving and
+attacking the dragon (trace-B6-2p-v1; its health 2000 → 1987): the native
+replay with NumVirtualPlayers 2 is equal in every part on all 250 updates
+(players, camera, items, effects, world animation, critters, the good
+wizard; regression r72 frame-B6two). The comparison masks the stack residue
+CritterGetTargetPlayers leaves in each target slot: CritterInsertTarget
+0x19ad38 copies the whole 0x30-byte stack record into slot k, and
+CritterCalcTarget never writes its +0x14/+0x18/+0x1c/+0x2c (both players'
+slots carry the same residue, +0x2c 0x5a000000 or 0; no code reads them).

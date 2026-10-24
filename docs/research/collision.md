@@ -87,10 +87,44 @@ Report: private/reports/place-items-g1-v1.json.
 WorldCollide runs the static grid pass first and WorldDynCollide 0x11fbe8 after
 it; both reach WorldObjCollide 0x11da08, whose compares are strict (c.lt.s at
 0x11dd84 water, 0x11ddc0 solid), so on an equal metric the static object keeps
-the hit. Native dyn_collide tests every dynamic object instead of the dyngrid
-cells (WorldObjCollide's segment-sphere rejection applies as in the original);
-the Tower's static grid lists none of its dynamic objects (checked for 2902,
-2903). The exclusion test ORs the parent's +0x35, as the original does.
+the hit. Dynamic objects are reached only through the dyngrid ("Dyngrid"
+below); the Tower's static grid lists none of its dynamic objects (checked
+for 2902, 2903). The exclusion test ORs the parent's +0x35, as the original
+does.
+
+A CheckFlags 0x20 query (TriLineCol) stops at its first solid hit: after
+each object of a static cell (0x11e828) and of a dyngrid cell (0x11fdf4), and
+after each cell, 0x11e128 tests CheckFlags & 0x20 with col_dist 0x2bcfa4 ==
+0, and the static pass's stop skips WorldDynCollide (0x11e900). Native does
+the same, so such a query stamps no further triangles.
+
+## Dyngrid (2026-10-24)
+
+InitDynobjGrid 0x11f4e8 sizes num_dyngridx/num_dyngridz as trunc((max − min)
+/ dyngrid_width) + 1 from WorldInfo +0x18..+0x2c; dyngrid_width 0x21f6a8 and
+dyngrid_invwidth 0x21f6ac are ELF initial data, 10.0 and 0x3dcccccd (not the
+static grid's cell; B5's capture: 19 × 25 = dyngridsize 0x1db, 25 dynobjs,
+170 links in use of 225). CreateDynobjGrid 0x11f5f8 clears the cell heads
+(u16 per cell) and dyngrid_list, then per dynobj (dynobj_list entries of
+0x50 bytes: +0x00 matrix, +0x40 object index, +0x42 stamp): GetWorldMat into
+the entry for 0x1000000 objects, +0x42 = 0, and a link (entry index, next)
+pushed at the head of every cell overlapped by the circle around the entry's
+translation (0x1000000), the node's +0x30 translation (0x1000 — the local
+one, also under a parent) or the static +0x1c, radius +0x30, each bound
+trunc((c ± r − min) × invwidth) clamped to the grid. WorldDynCollide
+0x11fbe8 adds one to ObjCheckNum 0x21f6b0 (1 after 0xfa00), starts at the
+cell of the clipped start x/z, tests each link's entry once per query (+0x42
+against ObjCheckNum) after the static filters (+0x10 mask, +0x35 with the
+parent's, 0x10000000, +0x38 < 0), and steps with NextDynGrid 0x11f8f8 —
+NextGrid's algorithm over the dyngrid with the bounds as integers:
+WorldDynCollide converts startx, endx and startz with cvt.w.s (0x11fcf4..
+0x11fd04) and passes trunc(endx) twice, as the end x and as the end z (t1 =
+s2 at 0x11fe30; endz in f15 is never read). The row clamp then uses the end
+x, so a query moving −z can skip the cells its swept circle covers (B5,
+gameplay.md "Combat sweep"). Native models the cells, links, stamps and
+walk exactly (CollisionWorld::create_dynobj_grid, dyn_collide,
+next_dyn_grid; synthetic test next_dyn_grid_clamps_rows_with_the_truncated_
+end_x); a cell lists its objects newest (highest entry) first.
 
 The original reads the object words (+0x10 flags, +0x35 exclusion, the node y)
 live. Native keeps copies in the collision world: sync_collision after
@@ -137,9 +171,7 @@ A5GEOMETRY, whose node holds y −0.0703; the chimera's floor was 9/128 high).
 
 ## Not yet native
 
-The dyngrid cells themselves (NextDynGrid order: a dynamic object reached
-through two cells is tested once per query via +0x42, so only the candidate
-order could differ). The CheckNum wrap after 255 queries is reproduced
+The CheckNum wrap after 255 queries is reproduced
 per native world, but its original value depends on every caller. Replays
 seed CheckNum and the triangle stamps (*0x21f3b4) from the trace's capture;
 native's counter then equals the reference's after every update of
