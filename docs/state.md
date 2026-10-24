@@ -266,6 +266,21 @@ original (PCSX2 reference on Xvfb :191, private captures):
    interrupt). M17: av-catalog (every cue/stream/world sound/movie resolves)
    and five GUI menu flow tests (menu_flows.py, GDL_UI_TRACE). M12
    acceptance report (research/m12-acceptance.md).
+   2026-10-23 (later): Sumner's record/save/Tower branches (saves.md);
+   back-face culling of object parts as VU1 does (gs_cull.py dump check,
+   rendering.md); additive draws quantised per GS write; the shop's
+   corner sweep and list scroll; the familiar, the attached powerup trees
+   (on AnimateATree clocks), the player's translucency, the attached
+   hand/head objects, the It sign, the pojo hiding the model, the level-99
+   head (player.md); the halo-on-Death effect and DoEnemyPickupItems
+   (items.md; the G1 fixture's 76 → 416 / 88 → 239 matched) in gdl_core;
+   chrome UVs from setTexShift. Unknowns resolved by reading code:
+   MBTreeSetAlpha, setPrimColor, AnimateNode's texmod frame, WorldNumLevels,
+   MBNodeInsert/MBNodeInit, the MBOX search rule, save +0xbec. Evidence:
+   level-smoke-v2 (61/61), exit-check-v1 (all 41 portal levels end), I5's
+   yeti defeated from the reference's warp point, the bot ends D3, G1 and
+   G3, the Tower is deterministic across render rates. Replays r60–r64
+   unchanged.
 
 ---
 
