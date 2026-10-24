@@ -7,9 +7,9 @@
 //!
 //! The archive holds one state per cell — player 0's position in boxes of
 //! BOX × BOX_Y × BOX, the keys held and a progress count (keys picked up,
-//! gates opened, triggers set: kind 1 subtype 2 and kind 7 records gone,
-//! kind 5 records with +0xde or +0xe2 set) — the first state that reached it
-//! in the fewest updates. Each iteration restores a chosen cell and plays one
+//! gates opened, triggers set, legend items taken: kind 1 subtype 2 or 0xd
+//! and kind 7 records gone, kind 5 records with +0xde or +0xe2 set) — the
+//! first state that reached it in the fewest updates. Each iteration restores a chosen cell and plays one
 //! macro:
 //! - random: one of the eight d-pad directions or none for MIN_LEN..=MAX_LEN
 //!   updates, a quarter of them with cross on alternate updates;
@@ -198,7 +198,9 @@ impl Progress {
             let r = &g.items.records[s];
             match item_kind(g, s) {
                 (5, _) => n += u32::from(self.start_active[s] && (!r.active() || r.i8_(0xde) != 0 || r.u8_(0xe2) != 0)),
-                (7, _) | (1, 2) => n += u32::from(self.start_active[s] && !r.active()),
+                // Gates, keys and the realm's legend item (kind 1 subtype 0xd,
+                // PlayerGiveLegendItem: the bosses need it).
+                (7, _) | (1, 2) | (1, 0xd) => n += u32::from(self.start_active[s] && !r.active()),
                 _ => {}
             }
         }
@@ -262,8 +264,8 @@ fn dpad_toward(g: &Game, p: V3, t: V3) -> u32 {
 }
 
 /// Items worth going to (slot): keys (kind 1 subtype 2), chests and barrels
-/// (2), unset triggers (5), gates (7) while a key is held, exits (9, listed
-/// three times).
+/// (2), unset triggers (5), gates (7) while a key is held, exits (9) and the
+/// realm's legend item (kind 1 subtype 0xd) listed three times.
 fn interest_items(g: &Game) -> Vec<usize> {
     let keys = g.players[0].i32_(KEYS);
     let mut out = Vec::new();
@@ -276,7 +278,7 @@ fn interest_items(g: &Game) -> Vec<usize> {
             (1, 2) | (2, _) => 1,
             (5, _) if r.i8_(0xde) == 0 && r.u8_(0xe2) == 0 => 1,
             (7, _) if 0 < keys => 1,
-            (9, _) => 3,
+            (9, _) | (1, 0xd) => 3,
             _ => 0,
         };
         for _ in 0..n {
