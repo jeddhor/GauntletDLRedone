@@ -159,11 +159,12 @@ pub fn level_ended(g: &Game) -> bool {
     g.level_done.is_some() || (g.players_done && g.exit_ready)
 }
 
-/// The level ended with player 0 through it: state 5 (exited by a portal)
-/// or 4 (a boss level's auto exit) — a death also ends the level
-/// (PlayersSetWaveDied → TowerWave) and does not count.
+/// The level ended without player 0 dying: a death also ends the level
+/// (PlayersSetWaveDied → TowerWave) with the player dying (state 8) or
+/// waiting to continue (0xb), which does not count; a portal exit leaves 5,
+/// a boss level's auto exit fires while the player is still in play (1).
 pub fn level_won(g: &Game) -> bool {
-    level_ended(g) && matches!(g.players[0].i32_(0xfc), 4 | 5)
+    level_ended(g) && !matches!(g.players[0].i32_(0xfc), 8 | 0xb)
 }
 
 /// The labelled DEBUG health assist (as bot.rs): applied before an update.

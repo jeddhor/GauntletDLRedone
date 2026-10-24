@@ -81,9 +81,9 @@ def main():
                 missed = [t for t in br.get('treasures', []) if not t['taken']]
                 step['bot'] = {'exit_update': b.get('exit_update'), 'exit_wave': b.get('exit_wave'), 'exit_state': b.get('exit_state'),
                                'assists': b.get('health_assists'), 'treasures': br.get('treasures')}
-                # Through the level (state 5 exited, 4 a boss's auto exit), not
-                # ended by a death.
-                won = b.get('exit_update') is not None and b.get('exit_state') in (4, 5)
+                # Through the level, not ended by a death (the player dying,
+                # state 8, or waiting to continue, 0xb).
+                won = b.get('exit_update') is not None and b.get('exit_state') not in (8, 11, None)
                 if won and bot_end.exists() and not (a.require and missed):
                     step.update(ended=True, by='bot', replay_level_end=b['exit_update'], assists=b.get('health_assists'),
                                 legend_debug=a.legend_bosses and code in BOSSES)

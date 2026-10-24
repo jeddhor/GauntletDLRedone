@@ -924,8 +924,9 @@ impl Bot {
             // auto exit (do_players done, AudioStillPlaying clear → TowerWave).
             self.exit_update = Some(f);
             self.exit_wave = g.level_done.or(Some(gdl_core::game::boss::TOWER_WAVE));
-            // 5 exited, 4 a boss level's auto exit; a dying state means the
-            // level ended by a death (PlayersSetWaveDied → TowerWave).
+            // 5 exited by a portal, 1 still in play at a boss level's auto
+            // exit; dying (8) or continue (0xb) means the level ended by a
+            // death (PlayersSetWaveDied → TowerWave).
             self.exit_state = Some(g.players[0].i32_(0xfc));
         }
         if self.exit_update.is_some() || g.players[0].i32_(0xfc) != 1 {
