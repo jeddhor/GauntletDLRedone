@@ -428,7 +428,13 @@ pub struct Bot {
     /// Update of the last rebuild for want of a goal (rate limit).
     idle_rebuild_at: usize,
     given_up: HashSet<usize>,
+    /// Stuck events per item goal since it was last (re)opened.
+    stuck_goal_counts: HashMap<usize, usize>,
     visited_triggers: HashSet<usize>,
+    /// Contacts per trigger (revisits are bounded) and the trigger now
+    /// sought again (reached only on contact: its state stays set).
+    trigger_visits: HashMap<usize, usize>,
+    revisiting: Option<usize>,
     /// Columns the player has stood in (exploration).
     visited_cols: HashSet<(i32, i32)>,
     progress: (usize, V3),
@@ -542,7 +548,10 @@ impl Bot {
             gate_blocked: HashSet::new(),
             idle_rebuild_at: 0,
             given_up: HashSet::new(),
+            stuck_goal_counts: HashMap::new(),
             visited_triggers: HashSet::new(),
+            trigger_visits: HashMap::new(),
+            revisiting: None,
             visited_cols: HashSet::new(),
             progress: (0, start),
             dwell: (0, start),
@@ -858,14 +867,33 @@ impl Bot {
         // While one is left and out of reach, keys and triggers come before
         // the exits: a trigger may bring it within reach (A3's rune lies on
         // the elevator A3ELEV3 that trigger 249 raises 7 units to the floor).
-        let order = if tower_crystals {
-            [near, Vec::new(), Vec::new(), Vec::new()]
-        } else if treasures.is_empty() {
-            [exits, near, secret, Vec::new()]
+        // Then, still out of reach, triggers already used, nearest the
+        // treasure first and at most three contacts each: B5's javelin needs
+        // lift 275 ridden again once trigger 279 has raised the bridge.
+        let mut revisit: Vec<usize> = if treasures.is_empty() {
+            Vec::new()
         } else {
-            [treasures, near, exits, secret]
+            active(g, &|k, _| k == 5)
+                .into_iter()
+                .filter(|&s| self.visited_triggers.contains(&s) && g.items.records[s].u16_(0xf4) & 1 == 0 && self.trigger_visits.get(&s).copied().unwrap_or(0) < 3)
+                .collect()
         };
-        for list in order {
+        let to_treasure = |s: usize| treasures.iter().map(|&t| dist3(g.items.records[s].v3(0x40), g.items.records[t].v3(0x40))).fold(f32::MAX, f32::min);
+        revisit.sort_by(|&a, &b| to_treasure(a).total_cmp(&to_treasure(b)));
+        let (first_revisit, revisits) = (2, revisit.len());
+        let order: Vec<Vec<usize>> = if tower_crystals {
+            vec![near]
+        } else if treasures.is_empty() {
+            vec![exits, near, secret]
+        } else {
+            let mut o = vec![treasures, near];
+            o.extend(revisit.into_iter().map(|s| vec![s]));
+            o.push(exits);
+            o.push(secret);
+            o
+        };
+        self.revisiting = None;
+        for (li, list) in order.into_iter().enumerate() {
             let list: Vec<usize> = list.into_iter().filter(|s| !self.given_up.contains(s)).collect();
             let targets = self.item_nodes(g, &list);
             if targets.is_empty() {
@@ -874,6 +902,9 @@ impl Bot {
             let goal_nodes: HashMap<usize, usize> = targets.iter().map(|&(s, n)| (n, s)).collect();
             if let Some(path) = self.nav.path(here, &|n| goal_nodes.contains_key(&n), &blocked, &avoid) {
                 let slot = goal_nodes[path.last().unwrap()];
+                if (first_revisit..first_revisit + revisits).contains(&li) {
+                    self.revisiting = Some(slot);
+                }
                 self.goal = Some(Goal::Item(slot));
                 self.path = path;
                 self.at = 0;
@@ -971,7 +1002,7 @@ impl Bot {
                 // (+0xde) or a player's touch bits (+0xe2); near it without
                 // contact the bot steers onto the item's own position.
                 let r = &g.items.records[s];
-                let reached = !r.active() || (k == 5 && (r.i8_(0xde) != 0 || r.u8_(0xe2) != 0));
+                let reached = !r.active() || (k == 5 && (r.u8_(0xe2) != 0 || (self.revisiting != Some(s) && r.i8_(0xde) != 0)));
                 if reached {
                     self.log.push(serde_json::json!({"update": f, "reached": s, "keys": g.players[0].i32_(KEYS)}));
                     self.bad_nodes.clear();
@@ -981,6 +1012,17 @@ impl Bot {
                         // for 30 updates after moving, 90 updates without
                         // moving, or 600 updates.
                         self.visited_triggers.insert(s);
+                        *self.trigger_visits.entry(s).or_insert(0) += 1;
+                        self.revisiting = None;
+                        // A trigger may bring a given-up rune or legend item
+                        // within reach (B5's javelin: trigger 279 raises
+                        // B5ELEV1 5 units to bridge the ditch before it).
+                        let reopened: Vec<usize> = self.given_up.iter().copied().filter(|&t| matches!(item_kind(g, t), (1, 10) | (1, 0xd))).collect();
+                        for t in reopened {
+                            self.given_up.remove(&t);
+                            self.stuck_goal_counts.remove(&t);
+                            self.log.push(serde_json::json!({"update": f, "reopened": t, "after_trigger": s}));
+                        }
                         self.wait = Some((f, g.players[0].v3(0x50), f));
                         self.goal = None;
                         self.path.clear();
@@ -1124,10 +1166,12 @@ impl Bot {
                 {
                     self.bad_nodes.insert(self.nav.place(n));
                 }
-                if let Some(Goal::Item(s)) = self.goal
-                    && 40 < self.log.iter().filter(|e| e["stuck_goal"] == s).count()
-                {
-                    self.given_up.insert(s);
+                if let Some(Goal::Item(s)) = self.goal {
+                    let n = self.stuck_goal_counts.entry(s).or_insert(0);
+                    *n += 1;
+                    if 40 < *n {
+                        self.given_up.insert(s);
+                    }
                 }
                 let enemies: Vec<_> = g.enemies.iter().enumerate().filter(|(_, e)| e.i32_(0xc8) != 0 && dist_xz(e.v3(0x40), p) < 4.0).map(|(k, e)| serde_json::json!([k, e.i32_(0), e.f32_(0x214)])).collect();
                 let items: Vec<_> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && dist_xz(g.items.records[s].v3(0x40), p) < 4.0).map(|s| serde_json::json!([s, item_kind(g, s), String::from_utf8_lossy(g.items.definitions[g.items.records[s].definition()].name())])).collect();
