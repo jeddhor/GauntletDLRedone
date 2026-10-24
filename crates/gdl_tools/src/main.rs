@@ -2118,6 +2118,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             // DEBUG override recorded in the report scope.
             game.players[0].set_i32(0x1a18, n.parse()?);
         }
+        if let Some(n) = opts.get("keys") {
+            // DEBUG: player 0's key count (+0x1a14), recorded in the report.
+            game.players[0].set_i32(0x1a14, n.parse()?);
+        }
         if let Some(v) = opts.get("crystals") {
             // DEBUG: player 0's crystal count for realm index N, "N:COUNT".
             let (n, c) = v.split_once(':').ok_or("crystals=N:COUNT")?;
@@ -3860,7 +3864,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             "lookouts":game.lookouts.iter().map(|l| serde_json::json!({"pos":l.position,"next":l.next,"param":l.param})).collect::<Vec<_>>(),
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
-            "potions_override":opts.get("potions"),"crystals_override":opts.get("crystals"),
+            "potions_override":opts.get("potions"),"keys_override":opts.get("keys"),"crystals_override":opts.get("crystals"),
             "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport")});
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).

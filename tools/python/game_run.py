@@ -83,6 +83,7 @@ def main():
     ap.add_argument('--load-players', type=int, help='NumInGamePlayers at GauntWorldInit\'s world_update (0: entered from the select screen, as the Tower of a new game)')
     ap.add_argument('--pads', help='record-based players: MASK_HEX:UPDATES,... (bit i = joyGetStatus entry i of port 0)')
     ap.add_argument('--potions', help='DEBUG: set player 0 potion count')
+    ap.add_argument('--keys', help='DEBUG: set player 0 key count')
     ap.add_argument('--crystals', help='DEBUG: player 0 crystal count N:COUNT')
     ap.add_argument('--boss-health', help='DEBUG: set the boss critter health')
     ap.add_argument('--teleport', help='DEBUG: start player 0 at x,y,z')
@@ -203,6 +204,8 @@ def main():
         cmd += [f'load_players={a.load_players}']
     if a.potions:
         cmd += [f'potions={a.potions}']
+    if a.keys:
+        cmd += [f'keys={a.keys}']
     if a.crystals:
         cmd += [f'crystals={a.crystals}']
     if a.teleport:
