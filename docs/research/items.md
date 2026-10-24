@@ -144,7 +144,10 @@ the world root nodes: an identity with +0x60 0x1000 (MulMat4: −0.0 becomes
 hang from a translation-only identity of their own. UpdateObjWorldMat's
 UnparentMatrix 0x1d0620 is recursive — outermost level first, each level
 inverting its own local (InvertMat4 0x1d4e80: transposed rotation,
-translation −t · rowᵢ from vsub 0 − t). With world-animated parents whose
+translation −t · rowᵢ from vsub 0 − t and vmul by each input row, then the
+sums x = (p0 + p1) + p2, y = (p1 + p0) + p2 and z = (p2 + p0) + p1 —
+0x1d4ef4..0x1d4f08; native had z as (p0 + p1) + p2, an ulp off under K4's
+tilted floors and I1's ice floes, corrected 2026-10-24). With world-animated parents whose
 rotation carries scale (G1's 387: [1][1] = 0x3f80003e) the transpose is not
 an exact inverse, so inverting the composed parent world instead drifts by
 ~2e-3 at a 300-unit translation: native now follows both chains
@@ -161,9 +164,16 @@ starts a tree's clock at once: AtreeInitSub's InitAnimInfo 0x110750 (zeroed
 AnimInfo, reset byte 1, +0x28/+0x2c 1.0 — record +0xac/+0xb0 — and
 InitAnim(0) with the library present), +0x38 (record +0xbc) the tree's node
 count, then AnimateATree(+0xde, 2). +0xfe of a sound item is the audio
-driver's: AudioLOOP's queue id (negated while pending) or AudioFindTID's
-one-bit track mask; native keeps 1 while playing (not modelled: the IOP
-queue and track allocation).
+driver's (ProcessItems 0x156d2c..0x156dac around DoItemSound 0x15d2b0): the
+track mask AudioFindTID found, or −tid while the IOP has not answered the
+loop's request — AudioLOOP → AudioTrack4 returns AudioTempTrackSet's tid
+(tid.165 0x2bd000 + 1, 1 after 0x3fff; the temp track's +0x14) and
+AudioFindTID ORs the bits of the twelve audioTrackData tracks holding it
+(none until AudioTrackSet, the IOP's reply, has run). trace-B5-combat-v2's
+item 257: 0, then −84 for one update, then 2. Native (2026-10-24) stores −tid
+for the update that starts the loop and a mask from the next (bit 0: the
+IOP's track choice is not modelled, HYPOTHESIS; the comparison takes the
+sign), and keeps a known track playing (AudioFindSoundTracks not modelled).
 
 Load order (2026-10-22, from the savestates' node +0x74 links): AddItemInstList
 runs ProcessItemWobjs between the NewItem loop and PlaceItem, so root elevators

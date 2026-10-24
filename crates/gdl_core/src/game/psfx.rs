@@ -79,7 +79,7 @@ fn mul_vec_mat3(v: V3, m: &[V3; 3]) -> R<V3> {
 
 /// MulVecMat3 0x1d5c30 on VU0: vmulax / vmadday / vmaddz (round toward
 /// zero, the VU adder rather than the EE FPU's).
-fn vu_mul_vec_mat3(v: V3, m: &[V3; 3]) -> R<V3> {
+pub(crate) fn vu_mul_vec_mat3(v: V3, m: &[V3; 3]) -> R<V3> {
     use crate::numeric::add_rz;
     let col = |c: usize| -> R<f32> { Ok(add_rz(add_rz(mul(m[0][c], v[0])?, mul(m[1][c], v[1])?)?, mul(m[2][c], v[2])?)?) };
     Ok([col(0)?, col(1)?, col(2)?])

@@ -896,9 +896,12 @@ impl Game {
         };
         let state = r.i16_(0xfe);
         if 0.0 < k || state < 0 {
-            let id = r.i32_(0xf4);
-            let playing = self.do_item_sound(slot, k, id, pos, r.u16_(0x100))?;
-            self.items.records[slot].set_i16(0xfe, i16::from(playing));
+            // 0x156d2c..0x156dac: +0xfe holds the loop's track mask
+            // (AudioFindTID) or, until the IOP answers the request, −tid.
+            let (tid, mask) = if state < 0 { (u32::from(state.unsigned_abs()), 0) } else { (0, state as u16 as u32) };
+            let (tid, mask) = self.do_item_sound(slot, k, r.i32_(0xf4), pos, r.u16_(0x100), tid, mask)?;
+            let v = if mask != 0 { mask as u16 } else { (tid as u16).wrapping_neg() };
+            self.items.records[slot].set_u16(0xfe, v);
         } else if 0 < state {
             self.events.push(Event::ItemSoundStop { slot });
             self.items.records[slot].set_i16(0xfe, 0);
@@ -911,10 +914,18 @@ impl Game {
     /// the first treasure room ×4 within 0x40..0xff); killed in game modes
     /// 0x4014/0x400c and at the end of the stage; priority 3 with flag 2,
     /// else 0x70; flag 1 lowers the music (LowerBGMusic(0.5, 1 − level/2)).
-    /// True while it plays.
-    fn do_item_sound(&mut self, slot: usize, k: f32, id: i32, pos: V3, flags: u16) -> R<bool> {
+    /// (tid, track mask) after the call: without a mask a loop is started —
+    /// AudioLOOP → AudioTrack4 → AudioTempTrackSet's tid (tid.165 + 1, 1
+    /// after 0x3fff) — and AudioFindTID finds no track for it until
+    /// AudioTrackSet, the IOP's reply, has run (the next update's AudioPoll;
+    /// HYPOTHESIS as audio_queue.rs, matching trace-B5-combat-v2's item 257:
+    /// 0, −84 for one update, then the mask). The track the IOP picks is not
+    /// modelled (bit 0; HYPOTHESIS); a known track is taken to keep playing
+    /// (item loops; AudioFindSoundTracks not modelled).
+    #[allow(clippy::too_many_arguments)]
+    fn do_item_sound(&mut self, slot: usize, k: f32, id: i32, pos: V3, flags: u16, mut tid: u32, mut mask: u32) -> R<(u32, u32)> {
         if id < 0 {
-            return Ok(false);
+            return Ok((tid, mask));
         }
         let mut vol = mul(mul(k, 224.0)?, self.level_f32(0x98))? as i32;
         let sumner = self.globals.cur_world == 0xd && 0.0 < self.tower.sumner_speech_time;
@@ -923,7 +934,7 @@ impl Game {
         }
         if matches!(self.globals.game_mode, 0x4014 | 0x400c) || self.globals.end_of_stage != 0 {
             self.events.push(Event::ItemSoundStop { slot });
-            return Ok(false);
+            return Ok((0, 0));
         }
         vol = vol.max(0);
         if self.globals.cur_world == 0xc && self.globals.cur_level == 0 {
@@ -931,6 +942,15 @@ impl Game {
             vol = if v < 0x40 { 0x40 } else { v.min(0xff) };
         }
         let priority = if flags & 2 != 0 { 3 } else { 0x70 };
+        if mask == 0 {
+            let fresh = tid == 0;
+            if fresh {
+                let t = self.audio_tid.wrapping_add(1);
+                self.audio_tid = if 0x4000 <= t { 1 } else { t };
+                tid = u32::from(self.audio_tid);
+            }
+            mask = if fresh { 0 } else { 1 };
+        }
         if self.sound_on() {
             let pan = self.audio_ang(Some(pos))?;
             self.events.push(Event::ItemSound { slot, id, volume: vol, position: pos, priority, pan });
@@ -939,7 +959,7 @@ impl Game {
             let amount = sub(1.0, mul(k, 0.5)?)?;
             self.lower_bg_music(0.5, amount);
         }
-        Ok(true)
+        Ok((tid, mask))
     }
 
     /// ProcessItems' find_enemy_slot(0, -1) probe: only sets no_enemy_slot.

@@ -1,4 +1,5 @@
 mod bot;
+mod explore;
 
 use gdl_formats::texdef::TextureTable;
 use gdl_formats::wad::{Entry, Limits, Wad};
@@ -2087,6 +2088,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         // joyGetStatus entry i of port 0 (clips=CLASS_ANIM.PS2 required).
         let mut pad_script: Vec<u32> = Vec::new();
         if let Some(sc) = opts.get("pads") {
+            // pads=@FILE: the runs from a file (explore.rs scripts).
+            let sc = match sc.strip_prefix('@') {
+                Some(f) => String::from_utf8(bounded_read(Path::new(f), 16 * 1024 * 1024)?)?.trim().to_string(),
+                None => sc.clone(),
+            };
             for part in sc.split(',') {
                 let (m, n) = part.split_once(':').ok_or("pads MASK_HEX:UPDATES")?;
                 let m = u32::from_str_radix(m, 16)?;
@@ -2497,6 +2503,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // The enemy nodes hold what UpdateObjWorldMat stored last
                     // update: derived from the seeded records.
                     game.enemy_node = vec![None; game.enemies.len()];
+                    game.enemy_floor_parent = vec![None; game.enemies.len()];
                     for k in 0..game.enemies.len().min(eb.len() / ESIZE) {
                         let rec = gdl_core::game::record::Record(eb[k * ESIZE..(k + 1) * ESIZE].to_vec());
                         let (t, st) = (rec.i32_(0), rec.i32_(0xc8));
@@ -2795,6 +2802,23 @@ fn run() -> Result<(), Box<dyn Error>> {
                             game.sync_collision();
                             game.do_world_animation().map_err(|e| e.0)?;
                             game.sync_collision();
+                        }
+                    }
+                    // Traces with enemy_node_parents (from trace-K4-combat-v2):
+                    // an enemy node under a floor object holds the record
+                    // relative to that object's pose before the update
+                    // (UpdateObjWorldMat's UnparentMatrix), so GetObjWorldMat
+                    // carries it when the floor moves.
+                    if let Some(ps) = b["enemies"].get("enemy_node_parents").and_then(|v| v.as_array()) {
+                        for (k, v) in ps.iter().enumerate().take(game.enemies.len()) {
+                            let Some(o) = v.as_i64().and_then(|o| usize::try_from(o).ok()) else { continue };
+                            if game.collision.objects.len() <= o || game.enemies[k].i32_(0xc8) == 0 {
+                                continue;
+                            }
+                            let r = &game.enemies[k];
+                            let m: [[f32; 4]; 4] = std::array::from_fn(|a| std::array::from_fn(|c| r.f32_(0x10 + 0x10 * a + 4 * c)));
+                            game.enemy_floor_parent[k] = Some(o);
+                            game.enemy_node[k] = Some(game.collision.unparent_chain(m, Some(o)).map_err(|e| e.0)?);
                         }
                     }
                     game.setup_dyn_grid().map_err(|e| e.0)?;
@@ -3351,6 +3375,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let base_of = |n: &str| -> Result<u32, Box<dyn Error>> { Ok(word(&hexb(e0.get(n).ok_or("trace base")?)?)) };
                     let (items_base, world_base) = (base_of("Items")?, base_of("WorldBase")?);
                     game.enemy_node = vec![None; game.enemies.len()];
+                    game.enemy_floor_parent = vec![None; game.enemies.len()];
                     for k in 0..game.enemies.len().min(eb.len() / 0x3b0) {
                         // An enemy killed this update (state 1 → 8) died in
                         // ProcessEffects after do_players: the before record.
@@ -3477,6 +3502,29 @@ fn run() -> Result<(), Box<dyn Error>> {
         let mut team = Vec::new();
         // bot=1 (with pads=): the traversal bot drives port 0 (bot.rs).
         let mut traversal: Option<bot::Bot> = None;
+        // explore=BUDGET (with pads=): the state search (explore.rs) from this
+        // state; its script then replays here from the same state. assist=1
+        // (implied by explore): the bot's DEBUG health assist before each
+        // update of the pads= path.
+        let assist_on = opts.contains_key("assist") || opts.contains_key("explore");
+        let start_health = game.players[0].f32_(0x1a10);
+        let mut explore_report = None;
+        let frames = match opts.get("explore").filter(|_| opts.contains_key("pads")) {
+            Some(b) => {
+                let budget: usize = b.parse()?;
+                let seed: u64 = opts.get("seed").map(|s| s.parse()).transpose()?.unwrap_or(1);
+                let cells: usize = opts.get("cells").map(|s| s.parse()).transpose()?.unwrap_or(4000);
+                let out = explore::explore(&game, budget, seed, cells, opts.contains_key("nav"));
+                let mut r = out.report;
+                r["script"] = serde_json::json!(explore::script_string(&out.script));
+                explore_report = Some(r);
+                pad_script = out.script;
+                pad_script.len() + 150
+            }
+            None => frames,
+        };
+        let mut level_end: Option<usize> = None;
+        let mut assists = 0usize;
         for f in 0..frames {
             if opts.contains_key("bot") && opts.contains_key("pads") {
                 if traversal.is_none() {
@@ -3588,10 +3636,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let r = game.debug_damage_boss().map_err(|e| e.0)?;
                     eprintln!("boss-kill at {f}: CritterDamage {r}");
                 }
+                if assist_on && explore::assist(&mut game, start_health) {
+                    assists += 1;
+                }
                 game.step_with(None, &mut |g| {
                     g.update_controls(&pads)?;
                     g.do_players().map(|_| ())
                 });
+                if level_end.is_none() && explore::level_ended(&game) {
+                    level_end = Some(f);
+                }
                 if f % 15 == 0 || f + 1 == frames || (opts.contains_key("weapon") && f % 3 == 0) {
                     let r = &game.players[0];
                     // watch=OBJ,...: those collision objects' matrix translations.
@@ -3697,6 +3751,15 @@ fn run() -> Result<(), Box<dyn Error>> {
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
         report["check_num"] = serde_json::json!(game.collision.check_num());
+        if let Some(r) = explore_report {
+            report["explore"] = r;
+        }
+        if assist_on {
+            // The replay of the pads= script: where the level ended and the
+            // DEBUG health assists it used.
+            report["level_end"] = serde_json::json!(level_end);
+            report["assists"] = serde_json::json!(assists);
+        }
         if opts.contains_key("no_enemies") {
             report["no_enemies"] = serde_json::json!("DEBUG: generators, placed enemies and statues deleted at the start; enemies cleared");
         }

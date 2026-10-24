@@ -315,6 +315,17 @@ original (PCSX2 reference on Xvfb :191, private captures):
    in all four slots); regression r72 (118 replays: 115 unchanged, 2
    improved, the new two-player one equal). traversal-v6: 36 of 61 levels
    ended by the bot. Game is Clone (state search tooling).
+   2026-10-24 (later): InvertMat4's z sum order ((p2 + p0) + p1) fixes the
+   K4 and I1 floor-parented items; enemies ride 0x1000 floors
+   (do_enemy_collide's MBNodeSetParent; traces carry enemy_node_parents);
+   sound items hold −tid for the update their loop is requested;
+   PlayerStartMissile's MulVecMat3 is VU0. Regressions r73–r75 (118
+   replays): 17 improved, none worse — K4 start/combat, J4 combat, B5
+   combat, H1, I1 and J1 (v2 trace with RandomItemNum) now equal in every
+   part, the +0xfe word gone from ten replays. Collision objects, triangles,
+   grid and item definitions are Arc-shared (clone cost); explore.rs (DEBUG
+   state search, random or graph-guided d-pad macros) is in game-run
+   (explore=, nav=1), not yet finishing levels.
 
 ---
 

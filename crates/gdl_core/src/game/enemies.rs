@@ -414,12 +414,16 @@ impl Game {
         std::array::from_fn(|a| std::array::from_fn(|b| r.f32_(0x10 + 0x10 * a + 4 * b)))
     }
 
-    /// GetObjWorldMat(+0x10, +0x240, +0x234) under EnemyRootNode: the record
-    /// matrix becomes the node's (as UpdateObjWorldMat stored it, −0.0 made
-    /// +0.0), then the attention/collision points.
+    /// GetObjWorldMat(+0x10, +0x240, +0x234): the record matrix becomes the
+    /// node's world — under EnemyRootNode the node as UpdateObjWorldMat
+    /// stored it (−0.0 made +0.0), under a floor object GetWorldMat's MulMat4
+    /// chain (collision::chain_world) — then the attention/collision points.
     pub(crate) fn enemy_get_obj_world_mat(&mut self, i: usize) -> R<()> {
         let m = match self.enemy_node.get(i).copied().flatten() {
-            Some(m) => m,
+            Some(m) => match self.enemy_floor_parent.get(i).copied().flatten() {
+                Some(o) => self.collision.chain_world(m, Some(o)).map_err(|e| super::Unsupported(e.0.to_string()))?,
+                None => m,
+            },
             None => super::doplayers::unparent_matrix(self.enemy_record_matrix(i), None)?,
         };
         let r = &mut self.enemies[i];
@@ -431,10 +435,14 @@ impl Game {
         self.enemy_update_offsets(i)
     }
 
-    /// UpdateObjWorldMat(+0x10): the node takes the record matrix
-    /// (UnparentMatrix under the root).
+    /// UpdateObjWorldMat(+0x10): the node takes the record matrix made
+    /// relative to its parent by UnparentMatrix (the root form, or the
+    /// recursive chain under a floor object: collision::unparent_chain).
     pub(crate) fn enemy_update_obj_world_mat(&mut self, i: usize) -> R<()> {
-        let m = super::doplayers::unparent_matrix(self.enemy_record_matrix(i), None)?;
+        let m = match self.enemy_floor_parent.get(i).copied().flatten() {
+            Some(o) => self.collision.unparent_chain(self.enemy_record_matrix(i), Some(o)).map_err(|e| super::Unsupported(e.0.to_string()))?,
+            None => super::doplayers::unparent_matrix(self.enemy_record_matrix(i), None)?,
+        };
         if let Some(n) = self.enemy_node.get_mut(i) {
             *n = Some(m);
         }
@@ -484,6 +492,9 @@ impl Game {
         }
         if let Some(n) = self.enemy_node.get_mut(i) {
             *n = Some(std::array::from_fn(|r| std::array::from_fn(|c| if r == c { 1.0 } else { 0.0 })));
+        }
+        if let Some(p) = self.enemy_floor_parent.get_mut(i) {
+            *p = None;
         }
         if 4 <= level {
             level = 2;

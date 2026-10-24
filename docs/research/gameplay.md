@@ -997,6 +997,27 @@ the ball is linked in. With the dyngrid native (regression r72) B5's combat
 replay is equal in every part on all 300 updates except the sound items'
 +0xfe words (unknowns.md).
 
+## Enemies on moving floors and K4's tilted floors (2026-10-24)
+
+do_enemy_collide 0x143568, after its floor queries (0x14379c..0x1437dc):
+with a floor object found (EnemyCollideFloor's, or the second
+FloorCollide's), MBNodeSetParent 0x1cf900 hangs the enemy's node (+0x70)
+from that object's node (+0x28) when the object has flag 0x1000 (a moving
+floor), else from EnemyRootNode. MBNodeSetParent only relinks; the enemy
+rides because UpdateObjWorldMat stores the node relative to the floor and
+the next GetObjWorldMat composes it with the floor's new pose. Native keeps
+the parent per enemy (Game::enemy_floor_parent; chain_world /
+unparent_chain as for players). The traces now carry each enemy node's
+parent (reference_enemies.py enemy_node_parents: node +0x74 as a world
+object, −1 EnemyRootNode) and the frame replay seeds it with the node
+relative to the floor's before-update pose. trace-K4-combat-v2 (an enemy
+respawned onto K4FLOOR#03, a 0x1000 floor under a rotator, carried 0.0004 a
+step) and trace-J4-combat-v2 (J4ELEV1) replay equal in every part on all 300
+updates. K4 also needed InvertMat4's z order (items.md "Matrix chains") and
+PlayerStartMissile's MulVecMat3 0x1d5c30 on VU0 (vmulax, vmadday, vmaddz:
+the VU adder, not the FPU's guarded one — the throws' launch points from a
+tilted floor were an ulp off in y).
+
 ## Two players at a boss (2026-10-24, actual disc, WARPED)
 
 w2l6-2p-v1 (tower-2p-v2 with two players, warped to B6 by do_exit's wave

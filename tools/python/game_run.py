@@ -96,6 +96,11 @@ def main():
     ap.add_argument('--itemrec', help='item slots SLOT,... whose whole records are sampled (hex)')
     ap.add_argument('--itemw', help='item slots SLOT,... whose +0xd8/+0xde/+0xe1/+0xe2 are sampled')
     ap.add_argument('--vplayers', help='NumVirtualPlayers at the level load (co-op traces)')
+    ap.add_argument('--explore', type=int, help='with --pads: DEBUG state search (explore.rs) for at most this many updates, then its script replayed')
+    ap.add_argument('--seed', type=int, help='--explore search seed')
+    ap.add_argument('--cells', type=int, help='--explore archive cell limit')
+    ap.add_argument('--nav', action='store_true', help='--explore with graph-guided macros (bot.rs Nav)')
+    ap.add_argument('--assist', action='store_true', help='with --pads: the DEBUG health assist before each update (replaying an --explore script)')
     ap.add_argument('--weapon', help='DEBUG: player 0 weapon powerup TYPE:SECONDS (kind 5)')
     ap.add_argument('--fall', help='DEBUG: player 0 drops below the world bottom at this update')
     ap.add_argument('--players', help='players in play (copies of player 0 without input, placed by load_player_geo)')
@@ -214,6 +219,16 @@ def main():
         cmd += [f'random_item_num={a.random_item_num}']
     if a.vplayers:
         cmd += [f'vplayers={a.vplayers}']
+    if a.explore:
+        cmd += [f'explore={a.explore}']
+    if a.seed is not None:
+        cmd += [f'seed={a.seed}']
+    if a.cells:
+        cmd += [f'cells={a.cells}']
+    if a.nav:
+        cmd += ['nav=1']
+    if a.assist:
+        cmd += ['assist=1']
     if a.players:
         cmd += [f'players={a.players}']
     if a.spawn:

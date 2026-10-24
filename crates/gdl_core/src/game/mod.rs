@@ -390,6 +390,13 @@ pub struct Game {
     /// stored it (−0.0 normalised); GetObjWorldMat copies it back into the
     /// record. None: not yet stored (taken from the record).
     pub enemy_node: Vec<Option<[[f32; 4]; 4]>>,
+    /// The world object whose node each enemy's node hangs from
+    /// (do_enemy_collide's MBNodeSetParent onto a 0x1000 floor object);
+    /// None = EnemyRootNode.
+    pub enemy_floor_parent: Vec<Option<usize>>,
+    /// tid.165 0x2bd000: AudioTempTrackSet's request counter (item loops
+    /// only; other sound starts do not advance it natively).
+    pub audio_tid: u16,
     /// Each player's sequence timings (the class ANIM tree DoPlayerAction's
     /// AnimInfo at +0x94 plays).
     pub player_clips: [Vec<crate::animation_clock::ClipTiming>; 4],

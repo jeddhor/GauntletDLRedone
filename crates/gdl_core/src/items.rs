@@ -231,7 +231,8 @@ pub struct ItemSession {
 pub struct ItemWorld {
     pub tables: ItemTables,
     pub session: ItemSession,
-    pub definitions: Vec<Definition>,
+    /// Shared by clones; the few run-time writers copy on write.
+    pub definitions: std::sync::Arc<Vec<Definition>>,
     pub records: Vec<ItemRecord>,
     pub first_empty: usize,
     pub wobjs: Vec<ItemWobj>,
@@ -351,7 +352,7 @@ impl ItemWorld {
         Ok(Self {
             tables,
             session,
-            definitions,
+            definitions: std::sync::Arc::new(definitions),
             records: Vec::new(),
             first_empty: 0,
             wobjs: Vec::new(),
@@ -721,7 +722,7 @@ impl ItemWorld {
                 };
                 if let Some((name, t, level)) = world_override {
                     let target = r.definition();
-                    self.definitions[target].0[0x28..0x2c].copy_from_slice(&name);
+                    std::sync::Arc::make_mut(&mut self.definitions)[target].0[0x28..0x2c].copy_from_slice(&name);
                     r.set_i16(0xf0, t);
                     r.set_u8(0xf6, level);
                 }
@@ -874,7 +875,7 @@ impl ItemWorld {
                 r.set_u16(0xf4, iu16(0x32));
                 if r.i16_(0xf4) != 0 {
                     let v = r.i16_(0xf4).wrapping_mul(-3);
-                    self.definitions[def].set_i16(0x48, v);
+                    std::sync::Arc::make_mut(&mut self.definitions)[def].set_i16(0x48, v);
                 }
                 r.set_f32(0xf0, mul(r.f32_(0xf0), m[4])?);
                 r.set_i16(0xe4, cvt(mul(f32::from(r.i16_(0xe4)), m[0])?) as i16);
@@ -953,7 +954,7 @@ impl ItemWorld {
                 r.set_u16(0x100, iu16(0x38));
                 r.set_u16(0x102, iu16(0x3a));
                 if inst.is_some() {
-                    self.definitions[def].0[0x28..0x38].copy_from_slice(&name);
+                    std::sync::Arc::make_mut(&mut self.definitions)[def].0[0x28..0x38].copy_from_slice(&name);
                 }
                 // +0xf8 = FindWorldAnimNode(10.0, position): sound_node,
                 // set by the caller (attach_sound_node: it needs the posed

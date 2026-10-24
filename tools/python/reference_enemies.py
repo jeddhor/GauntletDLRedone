@@ -125,6 +125,24 @@ def enemy_probe(memory):
                 obj_delta[str(k)] = r.hex()
                 previous_obj[k] = r
         out['objects_delta'] = obj_delta
+        # Each enemy node's parent (node +0x74): the world object whose node
+        # (+0x28) it is (do_enemy_collide's MBNodeSetParent onto a 0x1000
+        # floor), -1 for EnemyRootNode, -2 for another node; None without a node.
+        root, = struct.unpack('<I', read(sym['EnemyRootNode'], 4))
+        node_of = {}
+        for k in range(world['objects']):
+            n, = struct.unpack_from('<I', raw_obj, 60 * k + 0x28)
+            if n:
+                node_of.setdefault(n, k)
+        parents = []
+        for k in range(ENEMY_COUNT):
+            node, = struct.unpack_from('<I', raw, k * ENEMY_SIZE + 0x70)
+            if not 0x100000 <= node < 0x2000000 or node % 4:
+                parents.append(None)
+                continue
+            parent, = struct.unpack('<I', read(node + 0x74, 4))
+            parents.append(-1 if parent == root else node_of.get(parent, -2))
+        out['enemy_node_parents'] = parents
         # CritterInsts (16 × 0xb70, delta-coded) with NumCritterInsts and
         # BossCritInst.
         crit = chunks(read, sym['CritterInsts'], 16 * 0xb70)

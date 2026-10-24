@@ -827,14 +827,13 @@ impl Game {
                 _ => None,
             }
         };
-        // MulVecMat3(offset, out, player matrix +0x20).
+        // MulVecMat3(offset, out, player matrix +0x20): VU0 (vmulax,
+        // vmadday, vmaddz; trace-K4-combat-v2's throws from a tilted floor).
         let m = [pl.v3(0x20), pl.v3(0x30), pl.v3(0x40)];
-        let mut o = [0.0f32; 3];
-        if let Some(offset) = offset {
-            for (c, oc) in o.iter_mut().enumerate() {
-                *oc = add(add(mul(offset[0], m[0][c])?, mul(offset[1], m[1][c])?)?, mul(offset[2], m[2][c])?)?;
-            }
-        }
+        let o = match offset {
+            Some(offset) => super::psfx::vu_mul_vec_mat3(offset, &m)?,
+            None => [0.0f32; 3],
+        };
         let base = pl.v3(0x70);
         let origin = [add(base[0], o[0])?, add(base[1], o[1])?, add(base[2], o[2])?];
         let back = [add(mul(dir[0], -3.0)?, origin[0])?, add(mul(dir[1], -3.0)?, origin[1])?, add(mul(dir[2], -3.0)?, origin[2])?];
@@ -1568,7 +1567,7 @@ impl Game {
                     // subtype (+4, shared data) becomes 1, the content APPLE
                     // (kind 1, subtype 3), AudioDeathDies, +0xf2 = damage × 3;
                     // the hit spark shows.
-                    self.items.definitions[def].set_i32(4, 1);
+                    std::sync::Arc::make_mut(&mut self.items.definitions)[def].set_i32(4, 1);
                     let apple = self.items.find_info_index(1, 3, b"APPLE").ok_or_else(|| Unsupported("APPLE item".into()))?;
                     self.items.records[slot].set_i16(0xf0, apple as i16);
                     self.sfx3(0x65, at, 0x7f, 0x16)?;

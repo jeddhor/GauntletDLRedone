@@ -2050,6 +2050,16 @@ impl Game {
                 }
             }
             let flags = found.checked_sub(1).map_or(0, |o| self.items.objects[o as usize].flags_10);
+            // 0x1437a4: with a floor, MBNodeSetParent(the enemy's node, the
+            // floor object's node) when it has flag 0x1000 (a moving floor),
+            // else EnemyRootNode; UpdateObjWorldMat then stores the node
+            // relative to it and the next GetObjWorldMat carries the enemy.
+            if let Some(o) = found.checked_sub(1) {
+                let parent = (flags & 0x1000 != 0).then_some(o as usize);
+                if let Some(p) = self.enemy_floor_parent.get_mut(i) {
+                    *p = parent;
+                }
+            }
             self.enemies[i].set_u32(0x2b0, flags);
             let rec = &self.enemies[i];
             if fqdist(rec.f32_(0x224), rec.f32_(0x22c))?.0 < 0.01 {

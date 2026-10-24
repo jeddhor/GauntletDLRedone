@@ -47,7 +47,9 @@ for b in C5 D5 I5 J5 K5 E2 F2 H4 A5; do
   t=$R/trace-$b-boss-v1.json; [ $b = E2 ] && t=$R/trace-E2-boss-v2.json; [ $b = A5 ] && t=$R/trace-A5-boss-v2.json; [ $b = D5 ] && t=$R/trace-D5-boss-v2.json; [ $b = I5 ] && t=$R/trace-I5-boss-v2.json
   run $R/replay-frame-$b-$V.json --world ${b:0:1} --level ${b:1} --enemy-replay $t --frame-replay
 done
-for L in D E F H I J; do run $R/replay-frame-${L}1new-$V.json --world $L --level 1 --enemy-replay $R/trace-${L}1-newgame-v1 --frame-replay; done
+# J1's v2 re-records the same capture with RandomItemNum (the chest's random content).
+for L in D E F H I J; do t=$R/trace-${L}1-newgame-v1; [ $L = J ] && t=$R/trace-J1-newgame-v2
+  run $R/replay-frame-${L}1new-$V.json --world $L --level 1 --enemy-replay $t --frame-replay; done
 # D3 (WARPED captures w4l3-start-v1 / w4l3-leaf-v1): the level start and the falling leaves (kind 10 subtype 0x31).
 run $R/replay-frame-D3start-$V.json --world D --level 3 --enemy-replay $R/trace-D3-start-v1 --frame-replay
 run $R/replay-frame-D3leaf-$V.json --world D --level 3 --enemy-replay $R/trace-D3-leaf-v1 --frame-replay
@@ -64,7 +66,8 @@ for L in $SWEEP; do t=$R/trace-$L-start-v1; [ $L = J4 ] && t=$R/trace-J4-start-v
   run $R/replay-frame-${L}start-$V.json --world ${L:0:1} --level ${L:1} --enemy-replay $t --frame-replay; done
 # The combat sweep (2026-10-23 night): from lvl-<L>-play-v1 (the start
 # capture 210 vblanks on), 600 vblanks of attacks while turning.
-for L in $SWEEP; do t=$R/trace-$L-combat-v1; [ $L = B5 ] && t=$R/trace-B5-combat-v2
+# K4's and J4's v2 add the enemy node parents (enemies riding moving floors).
+for L in $SWEEP; do t=$R/trace-$L-combat-v1; case $L in B5|J4|K4) t=$R/trace-$L-combat-v2;; esac
   run $R/replay-frame-${L}combat-$V.json --world ${L:0:1} --level ${L:1} --enemy-replay $t --frame-replay; done
 # Two players at B6's boss (WARPED w2l6-2p-v1: tower-2p-v2 warped by the wave skip, 500 vblanks of both players' moves and attacks).
 run $R/replay-frame-B6two-$V.json --world B --level 6 --enemy-replay $R/trace-B6-2p-v1 --frame-replay --vplayers 2

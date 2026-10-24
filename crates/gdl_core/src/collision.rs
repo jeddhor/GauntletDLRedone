@@ -83,8 +83,9 @@ struct DynGrid {
 
 #[derive(Clone)]
 pub struct CollisionWorld {
-    pub objects: Vec<CollisionObject>,
-    pub triangles: Vec<Triangle>,
+    /// Load-time data, shared by clones (never written after load).
+    pub objects: std::sync::Arc<Vec<CollisionObject>>,
+    pub triangles: std::sync::Arc<Vec<Triangle>>,
     /// Objects with flags 0x1000/0x1000000 (WorldDynCollide candidates). The
     /// original's list (InitDynobjList) is the first grid cell word's
     /// entries (WORLDS header +20, cells[0]: count << 22 | contents offset,
@@ -110,7 +111,7 @@ pub struct CollisionWorld {
     /// plus the animated offset); the scale channel is kept separately.
     pub node_local: Vec<Option<[[f32; 4]; 4]>>,
     pub node_scale: Vec<Option<V3>>,
-    grid: CollisionGrid,
+    grid: std::sync::Arc<CollisionGrid>,
     dyn_grid: DynGrid,
     min_x: f32,
     min_z: f32,
@@ -282,8 +283,8 @@ impl CollisionWorld {
             runtime_flags,
             runtime_exclusion,
             node_y,
-            objects,
-            triangles,
+            objects: std::sync::Arc::new(objects),
+            triangles: std::sync::Arc::new(triangles),
             min_x: world.min[0],
             min_z: world.min[2],
             // Load-time reciprocal; the fixture's runtime value is 1/3 rounded
@@ -291,7 +292,7 @@ impl CollisionWorld {
             inv_cell: div_rn(1.0, cell)?,
             check: vec![0; world.collisions.len()],
             check_counter: 0,
-            grid: world.grid.clone(),
+            grid: std::sync::Arc::new(world.grid.clone()),
         })
     }
 
@@ -1230,8 +1231,11 @@ pub fn create_mat3_norm(k: f32, n: V3) -> R<[[f32; 4]; 3]> {
 }
 
 /// InvertMat4 0x1d4e80: the transposed rotation (w 0) and the translation
-/// −t · rowᵢ with VU operations — vsub from vf0 (0 − t, so +0 stays +0),
-/// vmul, then (x + y) + z; w keeps the input's.
+/// −t · rowᵢ with VU operations — vsub.xyz from vf0 (0 − t, so +0 stays +0),
+/// vmul.xyz by each input row (vf5..vf7), then per component the sums
+/// 0x1d4ef4..0x1d4f08: x = (p0 + p1) + p2 (vaddy.x, vaddz.x), y =
+/// (p1 + p0) + p2 (vaddx.y, vaddz.y), z = (p2 + p0) + p1 (vaddx.z, vaddy.z);
+/// w keeps the input's (sqc2 of the whole vf4).
 pub fn invert_mat4(m: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
     let mut out = [[0.0f32; 4]; 4];
     for (i, row) in out.iter_mut().take(3).enumerate() {
@@ -1240,10 +1244,11 @@ pub fn invert_mat4(m: &[[f32; 4]; 4]) -> R<[[f32; 4]; 4]> {
         }
     }
     let t = [sub_rz(0.0, m[3][0])?, sub_rz(0.0, m[3][1])?, sub_rz(0.0, m[3][2])?];
-    for i in 0..3 {
-        let r = m[i];
-        out[3][i] = add_rz(add_rz(mul(t[0], r[0])?, mul(t[1], r[1])?)?, mul(t[2], r[2])?)?;
-    }
+    let p = |i: usize| -> R<[f32; 3]> { Ok([mul(t[0], m[i][0])?, mul(t[1], m[i][1])?, mul(t[2], m[i][2])?]) };
+    let (a, b, c) = (p(0)?, p(1)?, p(2)?);
+    out[3][0] = add_rz(add_rz(a[0], a[1])?, a[2])?;
+    out[3][1] = add_rz(add_rz(b[1], b[0])?, b[2])?;
+    out[3][2] = add_rz(add_rz(c[2], c[0])?, c[1])?;
     out[3][3] = m[3][3];
     Ok(out)
 }
