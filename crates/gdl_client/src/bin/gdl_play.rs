@@ -1589,7 +1589,7 @@ fn show_movie_frame(
         }
     }
     if quad.is_empty() {
-        let params = gdl_client::BlitParams { rgba: Vec4::ONE, crop: Vec4::new(0.0, 1.0, 0.0, 1.0), mask_rect: Vec4::ZERO };
+        let params = gdl_client::BlitParams { rgba: Vec4::ONE, crop: Vec4::new(0.0, 1.0, 0.0, 1.0), mask_rect: Vec4::ZERO, corners: [Vec4::ZERO; 4] };
         let mat = mats.add(gdl_client::BlitMaterial { params, texture: Some(img), mask: None });
         screen.material = Some(mat.clone());
         commands.spawn((
@@ -2414,6 +2414,70 @@ fn present_hold_fx(
     }
 }
 
+/// PlayerProcessFamiliar 0x12cc18: from level 30 the player's familiar —
+/// InitPlayerMissiles' FamiliarTree, the SFX package's FAMILIAR1 (FAMILIAR2
+/// from level 80; one OANIM node, sequences READY 20 frames repeating and
+/// ATTACK 9) — under the player's node (ReplaceTree flag 0x800), placed at
+/// PDAT +0x164..+0x16c (× 1.2 at level 99: the tree's +0x10 and its root
+/// node's +0x30..+0x38, the local matrix's translation row), hidden in play
+/// (game mode 0x4010) while +0x138 bit 0x80 is set, animated every update
+/// (AnimateATree; HYPOTHESIS: READY looping on ATime at its timing; the
+/// ATTACK sequence and AnimateATree's mode 2 for +0x8d8 bit 0x10000000 are
+/// not modelled).
+#[derive(Component)]
+struct Familiar {
+    slot: usize,
+    key: Option<&'static str>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn present_familiars(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    libs: Res<Libraries>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut variants: ResMut<PartVariants>,
+    mut pending: ResMut<PendingTreePsys>,
+    mut q: Query<(Entity, &mut Familiar, &mut Transform, &mut Visibility)>,
+) {
+    let g = &sim.game;
+    for (e, mut f, mut tf, mut vis) in &mut q {
+        let r = &g.players[f.slot];
+        let level = r.i32_(0x2ac0);
+        let key = if 80 <= level {
+            Some("FAMILIAR2")
+        } else if 30 <= level {
+            Some("FAMILIAR1")
+        } else {
+            None
+        };
+        if f.key != key {
+            commands.entity(e).despawn_related::<Children>();
+            commands.entity(e).remove::<EffectTree>();
+            if let (Some(label), Some(pc)) = (key, sources.players[f.slot].as_ref()) {
+                let parts = tree_parts(&sources, &libs, &pc.sfx_name, label);
+                if std::env::var("GDL_DEBUG_FX").is_ok() {
+                    let trees: Vec<String> = sources.packages.get(&pc.sfx_name).and_then(|p| p.anim.as_ref()).map(|a| a.trees.iter().map(|t| t.label.clone()).collect()).unwrap_or_default();
+                    eprintln!("Familiar {} {label} in {}: {} parts; trees {trees:?}", f.slot, pc.sfx_name, parts.len());
+                }
+                spawn_parts(&mut commands, e, parts, &mut materials, &mut variants, &mut pending);
+                let tree = sources.packages.get(&pc.sfx_name).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, a.trees[i].sequences.first().map_or(30, |q| q.timing_factor))));
+                if let Some((tree, timing)) = tree {
+                    commands.entity(e).insert(EffectTree { pkg: pc.sfx_name.clone(), tree, start: g.globals.atime, timing: timing.max(1), slot: usize::MAX, looping: true });
+                }
+            }
+            f.key = key;
+        }
+        let raw = &g.classes[f.slot].raw;
+        let at = |o: usize| raw.get(o..o + 4).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+        tf.translation = Vec3::new(at(0x164), at(0x168), at(0x16c)) * if 99 <= level { 1.2 } else { 1.0 };
+        let hidden = f.key.is_none() || (g.globals.game_mode == 0x4010 && r.u32_(0x138) & 0x80 != 0);
+
+        *vis = if hidden { Visibility::Hidden } else { Visibility::Inherited };
+    }
+}
+
 fn present_special_texmods(sim: Res<Sim>, libs: Res<Libraries>, q: Query<(Entity, &SpecialTexmod)>, mut req: ResMut<MatRequests>, mut step: Local<(u64, u32)>) {
     // AFrame: one step per game update (DoSpecialTexmods runs per frame).
     let aframe = sim.updates;
@@ -2494,6 +2558,8 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
             }
         }
     }
+    let familiar = commands.spawn((Familiar { slot, key: None }, Transform::default(), Visibility::Hidden)).id();
+    commands.entity(body).add_child(familiar);
     // PlayerDoWeapTrail's eight copies of the held weapon (MBNewObject of
     // the weapon object at its world matrix, fading out).
     let trail = commands.spawn((WeaponTrail(slot), Transform::default(), Visibility::Inherited)).id();
@@ -4524,7 +4590,7 @@ fn present_world(
                         };
                         let key = format!("H{h}:{}:{}:{}", head.source, head.tree, node.start.to_bits());
                         if slot.key.as_deref() != Some(key.as_str()) {
-                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing, slot: slot.index });
+                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing, slot: slot.index, looping: false });
                         }
                         let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_index_parts(&sources, &libs, &pkg, head.tree));
                         (Some(key), parts, tf)
@@ -4784,7 +4850,7 @@ fn label_effect_tree(commands: &mut Commands, (entity, slot): (Entity, usize), s
     let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, a.trees[i].sequences.first().map_or(30, |q| q.timing_factor))));
     match tree {
         Some((tree, timing)) => {
-            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1), slot });
+            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1), slot, looping: false });
         }
         None => {
             commands.entity(entity).remove::<EffectTree>();
@@ -4812,6 +4878,9 @@ struct EffectTree {
     timing: i16,
     /// The effect slot (its node's MBTreeSetColor / MBTreeSetAlpha).
     slot: usize,
+    /// Sequence 0 wraps at its frame count (an AnimateATree tree whose
+    /// sequence repeats: the familiar's READY, repeat word 1).
+    looping: bool,
 }
 
 /// Pose effect trees' nodes (sequence 0) at the effect's current frame;
@@ -4834,7 +4903,11 @@ fn present_effect_trees(
         }
         let Some(pkg) = sources.packages.get(&fx.pkg) else { continue };
         let Some(anim) = pkg.anim.as_ref() else { continue };
-        let frame = ((atime - fx.start) * 900.0 / f32::from(fx.timing.max(1))).max(0.0);
+        let mut frame = ((atime - fx.start) * 900.0 / f32::from(fx.timing.max(1))).max(0.0);
+        if fx.looping {
+            let n = anim.trees.get(fx.tree).and_then(|t| t.sequences.first()).map_or(1, |s| s.frames.max(1));
+            frame %= f32::from(n);
+        }
         let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, 0, frame, true) else { continue };
         let index = object_frame(frame, anim.trees.get(fx.tree).and_then(|t| t.sequences.first()));
         let mut meshes = Vec::new();
@@ -5445,7 +5518,7 @@ fn setup_menu_icon(
     // inset) in the 512 × 384 HUD space.
     let h = 384.0;
     let mat = blits.add(gdl_client::BlitMaterial {
-        params: gdl_client::BlitParams { rgba: Vec4::new(1.0, 1.0, 1.0, 128.0 / 255.0), crop: Vec4::new(0.0, 1.0, 0.0, 1.0), mask_rect: Vec4::ZERO },
+        params: gdl_client::BlitParams { rgba: Vec4::new(1.0, 1.0, 1.0, 128.0 / 255.0), crop: Vec4::new(0.0, 1.0, 0.0, 1.0), mask_rect: Vec4::ZERO, corners: [Vec4::ZERO; 4] },
         texture: Some(target),
         mask: None,
     });
@@ -5601,6 +5674,8 @@ fn present_hud(
 ) {
     let playing = *screen == Screen::Playing;
     let mut list = Vec::new();
+    // MBDrawBlits' HILITE_FRAC clock (vb_counter).
+    let vb_counter = sim.as_ref().map_or(0, |s| s.game.vb_counter);
     if let Some(sim) = sim.as_ref().filter(|_| playing) {
         list = sim.game.hud.draw_list();
         if sim.shop.is_none() && sim.map.is_none() {
@@ -5778,7 +5853,12 @@ fn present_hud(
             Some((t, r)) => (resolve(t), Vec4::from_array(r)),
             None => (None, Vec4::ZERO),
         };
-        let params = gdl_client::BlitParams { rgba: Vec4::from_array(b.rgba.map(|c| f32::from(c) / 128.0)), crop: Vec4::from_array(b.crop), mask_rect };
+        let gs = |c: [u8; 4]| Vec4::from_array(c.map(|v| f32::from(v) / 128.0));
+        let (rgba, corners) = match b.corner_colours(vb_counter) {
+            Some(c) => (gs(c[0]), [gs(c[1]), gs(c[2]), gs(c[3]), Vec4::X]),
+            None => (gs(b.rgba), [Vec4::ZERO; 4]),
+        };
+        let params = gdl_client::BlitParams { rgba, crop: Vec4::from_array(b.crop), mask_rect, corners };
         let transform = Transform::from_xyz(b.x + b.w * 0.5 - 256.0, 192.0 - b.y - b.h * 0.5, i as f32 * 0.001).with_scale(Vec3::new(b.w, b.h, 1.0));
         if let Some((_, tr, vis, mat)) = slots.get_mut(i) {
             **tr = transform;
@@ -7305,7 +7385,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

@@ -74,7 +74,14 @@ FLOWS = {
         env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1', GDL_DEBUG_TELEPORT='118.28,86.30,-472.5'),
         steps=[["wait", 20], ["shot", "f1"], ["wait", 0.5], ["shot", "f2"], ["wait", 0.5], ["shot", "f3"], ["wait", 0.5], ["shot", "f4"], ["wait", 0.5], ["shot", "f5"], ["wait", 6], ["shot", "f6"]],
         expect=[r'playing .*world 7 level 0']),
-    # Soft reset (CheckSoftReset): START + SELECT (Enter + Tab) held past
+    # The corner highlight (DrawBlit flag 0x4010 + corner_hilite): G1's
+    # exit → the tally (game mode 0x4012), whose player-panel backgrounds
+    # and shop borders sweep over a 150-vblank cycle.
+    'shop-hilite': dict(
+        env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1', GDL_DEBUG_TELEPORT='118.28,86.30,-472.5'),
+        steps=[["wait", 32], ["shot", "h1"], ["wait", 0.6], ["shot", "h2"], ["wait", 0.6], ["shot", "h3"], ["wait", 0.6], ["shot", "h4"]],
+        expect=[r'playing .*world 7 level 0', r'shop']),
+        # Soft reset (CheckSoftReset): START + SELECT (Enter + Tab) held past
     # 0x78 control passes in G1 → the title screen.
     'soft-reset': dict(
         env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1'),

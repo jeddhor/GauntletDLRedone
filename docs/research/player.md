@@ -459,3 +459,20 @@ units, turned by the start yaw (game-run-mp-{G1,A1,L1}-v1.json); a drop
 below the world bottom (fall=200, 3 players) respawns player 1 beside
 another at a new_offset probe (game-run-mp-fall-G1-v1.json). Not compared
 with a reference multi-player run.
+
+## The familiar (PlayerProcessFamiliar 0x12cc18, 2026-10-23)
+
+From level 30 (0x1e) the player carries FamiliarTree[player][0] (FAMILIAR1
+of the SFX package, InitPlayerMissiles 0x18efe0), from level 80 [1]
+(FAMILIAR2); below 30 the tree is deleted. ReplaceTree attaches it under
+the player's node (+0x80, flag 0x800) at PDAT +0x164..+0x16c (× 1.2 at
+level 99), written to the tree's +0x10 and its root node's +0x30..+0x38.
+In game mode 0x4010 it is hidden (MBTreeSetFlags 2) while +0x138 bit 0x80
+is set; otherwise shown and animated (AnimateATree(tree, +0x8d8 bit
+0x10000000, that ? 2 : 0)). Each SFX package's FAMILIAR trees are one OANIM
+node with READY (20 frames, repeat 1) and ATTACK (9) sequences. The
+simulation keeps +0x720 as a marker (powerups.rs); gdl_play draws the
+tree (present_familiars; READY looping on ATime is a HYPOTHESIS). Native
+frames at levels 35 and 85 in G1: runs client-fam5-69700 / -280200. No
+reference capture.
+

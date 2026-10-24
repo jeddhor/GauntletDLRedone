@@ -101,8 +101,12 @@ pub struct Blit {
     pub h: f32,
     /// u0, u1, v0, v1 as texture fractions (MBBlitSetCrop).
     pub crop: [f32; 4],
-    /// GS RGBA (word 7; 0x80 = 1.0).
+    /// GS RGBA (word 7; 0x80 = 1.0): the colour, or the top-left corner's
+    /// with flag 0x10.
     pub rgba: [u8; 4],
+    /// Words 8..10 (flag 0x10, MBBlitSetColor4): the top-right, bottom-left
+    /// and bottom-right corners' GS RGBA (MBInitBlit: 0x80808080).
+    pub corners: [[u8; 4]; 3],
     /// MBBlitSetZ value (GS z = base − 32·z).
     pub z: f32,
     /// A coincident z-only blit (flag 0x10000: FBMSK all, TEST ATST EQUAL
@@ -114,11 +118,121 @@ pub struct Blit {
 impl Blit {
     fn init() -> Self {
         // MBInitBlit: flags 0, no texture, colours 0x80808080.
-        Self { flags: 0, tex: None, x: 0.0, y: 0.0, w: 0.0, h: 0.0, crop: [0.0, 1.0, 0.0, 1.0], rgba: [0x80; 4], z: 0.0, mask: None }
+        Self { flags: 0, tex: None, x: 0.0, y: 0.0, w: 0.0, h: 0.0, crop: [0.0, 1.0, 0.0, 1.0], rgba: [0x80; 4], corners: [[0x80; 4]; 3], z: 0.0, mask: None }
     }
     pub fn hidden(&self) -> bool {
         self.flags & 1 != 0
     }
+
+    /// MBBlitSetColor4 0x1c3ba0: flag 0x10 and the four corner words
+    /// (top-left, top-right, bottom-left, bottom-right; 0xAARRGGBB in GS
+    /// units).
+    pub fn set_colour4(&mut self, words: [u32; 4]) {
+        self.flags |= 0x10;
+        self.rgba = gs_word(words[0]);
+        for k in 0..3 {
+            self.corners[k] = gs_word(words[k + 1]);
+        }
+    }
+
+    /// The colours DrawBlit 0x1c1e68 sends for the four corners (top-left,
+    /// top-right, bottom-left, bottom-right) of a flag-0x10 blit (a Gouraud
+    /// strip): the corner words, plus corner_hilite's value on R, G and B
+    /// with flag 0x4000 (MBDrawBlits' HILITE_FRAC from `vb_counter`). None
+    /// for a single-colour blit.
+    pub fn corner_colours(&self, vb_counter: u32) -> Option<[[u8; 4]; 4]> {
+        if self.flags & 0x10 == 0 {
+            return None;
+        }
+        let mut c = [self.rgba, self.corners[0], self.corners[1], self.corners[2]];
+        if self.flags & 0x4000 != 0 {
+            // GS units relative to the viewport (MBBlitSetPos/SetSize scale
+            // 640/512 and 448/384; HYPOTHESIS: truncated as DrawBlit's
+            // shorts are); corner_hilite takes x and the height above the
+            // bottom edge.
+            let (x0, y0) = ((self.x * 1.25) as i32, (self.y * 448.0 / 384.0) as i32);
+            let (x1, y1) = (x0 + (self.w * 1.25) as i32, y0 + (self.h * 448.0 / 384.0) as i32);
+            let frac = hilite_frac(vb_counter);
+            let at = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)];
+            for (k, (x, y)) in at.into_iter().enumerate() {
+                let h = corner_hilite(x, VIEW_H - y, frac);
+                for ch in &mut c[k][..3] {
+                    *ch = (i32::from(*ch) + h) as u8;
+                }
+            }
+        }
+        Some(c)
+    }
+}
+
+/// The viewport (pbg +0x40 +0x10 / +0x14) in GS units: 640 × 448, the
+/// frame the dump's blit scales (×1.25, ×448/384) map 512 × 384 into.
+const VIEW_W: i32 = 640;
+const VIEW_H: i32 = 448;
+/// HILITE_FRAMES 0x272b40 (ELF data: 150.0).
+const HILITE_FRAMES: f32 = 150.0;
+
+/// A blit colour word (0xAARRGGBB, GS units) as [R, G, B, A].
+fn gs_word(w: u32) -> [u8; 4] {
+    [(w >> 16) as u8, (w >> 8) as u8, w as u8, (w >> 24) as u8]
+}
+
+/// MBDrawBlits 0x1c2588's HILITE_FRAC: (vb − floor(vb / HILITE_FRAMES) ×
+/// HILITE_FRAMES) / HILITE_FRAMES in single precision.
+pub fn hilite_frac(vb_counter: u32) -> f32 {
+    let v = vb_counter as f32;
+    (v - (v / HILITE_FRAMES).floor() * HILITE_FRAMES) / HILITE_FRAMES
+}
+
+/// corner_hilite 0x1c1bc8(x, y) (instructions read): s = (x + y) ×
+/// HILITE_END_INV (1 / (viewport width + height)), p = HILITE_FRAC × 7; a
+/// band that sweeps from the bottom-left corner (s = 0) to the top-right
+/// (s = 1) and back over the seven phases; × 127, clamped to 0..127 and
+/// truncated.
+pub fn corner_hilite(x: i32, y: i32, frac: f32) -> i32 {
+    let s = (x + y) as f32 * (1.0 / (VIEW_W + VIEW_H) as f32);
+    let p = frac * 7.0;
+    let v = if s < 0.5 {
+        if p < 1.0 {
+            p - s * 4.0
+        } else if p < 2.0 {
+            s * (p - 3.0) + s * (p - 3.0) + 1.0
+        } else if p < 3.0 {
+            let a = (3.0 - p) * (0.5 - s);
+            let b = (p - 2.0) * s;
+            a + a + (b + b)
+        } else if p < 4.0 {
+            let a = (3.0 - p) * (0.5 - s);
+            a + a + (s + s)
+        } else if p < 5.0 {
+            let a = (3.0 - p) * (0.5 - s);
+            let b = (5.0 - p) * s;
+            a + a + (b + b)
+        } else {
+            0.0
+        }
+    } else {
+        let t = 1.0 - s;
+        if p < 2.0 {
+            0.0
+        } else if p < 3.0 {
+            let a = (p - 4.0) * (0.5 - t);
+            let b = (p - 2.0) * t;
+            a + a + (b + b)
+        } else if p < 4.0 {
+            let a = (p - 4.0) * (0.5 - t);
+            a + a + (t + t)
+        } else if p < 5.0 {
+            let a = (p - 4.0) * (0.5 - t);
+            let b = (5.0 - p) * t;
+            a + a + (b + b)
+        } else if p < 6.0 {
+            t * (4.0 - p) + t * (4.0 - p) + 1.0
+        } else {
+            7.0 - p - t * 4.0
+        }
+    };
+    (v * 127.0).clamp(0.0, 127.0) as i32
 }
 
 /// A font message (MBDrawText's 0x2c-byte record).
@@ -998,6 +1112,7 @@ impl Hud {
                 h: f.font.height as f32 * m.scale_y,
                 crop: [g.x as f32 / dw, (g.x + g.width) as f32 / dw, g.y as f32 / dh, (g.y + f.font.height) as f32 / dh],
                 rgba: m.rgba,
+                corners: [[0x80; 4]; 3],
                 z: m.z,
                 mask: None,
             };
@@ -2191,6 +2306,36 @@ impl Game {
 
 #[cfg(test)]
 mod tests {
+    /// corner_hilite's phases (synthetic values from the instruction
+    /// formulas): phase 0 at the bottom-left corner grows with p; phase 6
+    /// lights the top-right; values clamp to 0..127.
+    #[test]
+    fn corner_hilite_phases() {
+        // p = 0.5 (frac 1/14): s = 0 → 0.5 × 127 = 63.
+        assert_eq!(corner_hilite(0, 0, 0.5 / 7.0), 63);
+        // s = 1 (top-right, x + y = 1088) at p = 6.5: 7 − 6.5 − 0 = 0.5.
+        assert_eq!(corner_hilite(640, 448, 6.5 / 7.0), 63);
+        // Bottom-left is dark late in the cycle, top-right early.
+        assert_eq!(corner_hilite(0, 0, 6.5 / 7.0), 0);
+        assert_eq!(corner_hilite(640, 448, 0.5 / 7.0), 0);
+        // p = 1.5, s = 0: 2·0·(−1.5) + 1 → 127 (clamped).
+        assert_eq!(corner_hilite(0, 0, 1.5 / 7.0), 127);
+        assert_eq!(hilite_frac(0), 0.0);
+        assert_eq!(hilite_frac(75), 0.5);
+        assert_eq!(hilite_frac(225), 0.5);
+        let mut b = Blit::init();
+        assert!(b.corner_colours(0).is_none());
+        b.set_colour4([0x8080_8080; 4]);
+        b.flags |= 0x4000;
+        b.w = 128.0;
+        b.h = 384.0;
+        // vb 5: p = 7 × 5/150 ≈ 0.233; the bottom-left corner (s 0) takes
+        // (int)(0.233 × 127) = 29, the top-left (s = 448/1088) none.
+        let c = b.corner_colours(5).unwrap();
+        assert_eq!(c[2], [0x80 + 29, 0x80 + 29, 0x80 + 29, 0x80]);
+        assert_eq!(c[0], [0x80; 4]);
+    }
+
     use super::*;
 
     #[test]

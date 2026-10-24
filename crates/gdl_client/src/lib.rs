@@ -143,6 +143,10 @@ pub struct BlitParams {
     pub crop: Vec4,
     /// The z-only mask blit's screen rectangle (w = 0: none).
     pub mask_rect: Vec4,
+    /// Flag-0x10 blits (DrawBlit's Gouraud strip): `rgba` is the top-left
+    /// corner, these the top-right, bottom-left and bottom-right (GS / 128);
+    /// `corners[3].x` 1 enables them.
+    pub corners: [Vec4; 4],
 }
 
 /// An MB blit sprite (blit.wgsl): MODULATE, alpha test GREATER 1, standard

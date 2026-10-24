@@ -27,6 +27,20 @@ private/reference/captures/render/tower-newgame-v1-240.png). Port:
   GEQUAL (later equal-z draws win). Dump state: TFX MODULATE, ALPHA 0x44,
   TEST alpha GREATER 1, TEX1 0x60 (bilinear). Order: node blits, temp
   blits, then MBRenderText (pbRenderNode).
+- Flag 0x10 (MBBlitSetColor4 0x1c3ba0; MBBlitSetColor/SetAlpha/
+  SetColorAlpha clear it): DrawBlit sends a Gouraud strip with the four
+  corner words +0x1c..+0x28 (MBInitBlit 0x80808080). With 0x4000 each
+  corner's R, G and B gain corner_hilite 0x1c1bc8(x, viewport height − y)
+  (instructions read; gdl_core hud::corner_hilite): s = (x + y) /
+  (viewport width + height), p = 7 × HILITE_FRAC, HILITE_FRAC = (vb_counter
+  mod HILITE_FRAMES 150.0) / 150 (MBDrawBlits), a band sweeping between
+  the bottom-left and top-right corners, × 127 clamped to 0..127. Users:
+  setup_player_display's panel backgrounds (bkg 0 and 2) in game modes
+  0x400b and 0x4012, shop_setup's S1/S2 borders (flag 0x4000 and
+  SetColor4 0x80808080). Native: Blit::corner_colours, blit.wgsl
+  interpolating per strip triangle; GUI menu-flows-m17-v16 shop-hilite
+  (the tally's borders change frame to frame, the backdrop does not). No
+  reference frame compared.
 
 ## Fonts
 
@@ -434,8 +448,8 @@ GamePrefs in options.json and applies difficulty/multiplayer at the next
 level start. UpdateCompass: POWERUPS' COMPASS object (StartCompass under
 the world root, world-aligned) at MBWindowTo3D(CompassZ 10, CompassPos
 (64, 128)), scale 1.5, alpha 128, hidden in menus or with the option off
-(HYPOTHESIS: the window point over the 640 × 384 viewport). Not ported:
-Control Style (do_controlsmenu), Screen Adjust (pbScreenSetAdjust).
+(HYPOTHESIS: the window point over the 640 × 384 viewport). Control
+Style and Screen Adjust: see their sections below.
 
 Vibration (2026-10-22, gdl_core pad.rs): damage_player's do_vibe 0x1069a8
 (strength 3 / 0x1e frames for flags 0x10040, 2 / 0x14 for 0x120, 1 / 0xf
@@ -591,11 +605,10 @@ the Tower panel against tower-newgame-v1-240.png (layout, tints, fonts).
 
 ## Open
 
-button_x_tex/button_tri_tex (ResetModels), NumLivePlayers, del_player_blits,
-low_res flags, the shadow/0x1000 text flags, menu_on/optmenu state from the
-front end, ability blits, SandglassBlit/ThermoBlit (boss and timers), the
-inventory/map/shop panels and DrawBlit's corner_hilite colour sweep are not
-ported. Help sites whose original point is a local vector (ids 0x1b, 0x14,
+NumLivePlayers, low_res flags, the shadow/0x1000 text flags and ability
+blits are not ported (2026-10-23: button_x_tex/button_tri_tex, the
+inventory/map/shop panels, the boss meters, the rune thermometer and
+DrawBlit's corner sweep are; see their sections). Help sites whose original point is a local vector (ids 0x1b, 0x14,
 0xe) use the player's attention point or none; AudioHelp/AudioExp cues are
 emitted as events but not voiced; low-res/Japanese help variants are not
 modelled. The scroll box's timing uses wall-clock vblanks (59.94 Hz).

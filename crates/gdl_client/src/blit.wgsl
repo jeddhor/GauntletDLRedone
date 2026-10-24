@@ -14,6 +14,9 @@ struct BlitParams {
     // A coincident z-only mask blit's screen rectangle (x, y, w, h; w = 0:
     // none): hidden where the mask texture's alpha is 0 (ATST EQUAL AREF 0).
     mask_rect: vec4<f32>,
+    // Flag-0x10 blits: top-right, bottom-left, bottom-right corner colours
+    // (rgba is the top-left); corners[3].x > 0.5 enables them.
+    corners: array<vec4<f32>, 4>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: BlitParams;
@@ -32,7 +35,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let lo = min(params.crop.xz, params.crop.yw) + half;
     let hi = max(params.crop.xz, params.crop.yw) - half;
     let t = textureSample(base_texture, base_sampler, clamp(uv, min(lo, hi), max(lo, hi)));
-    let rgb = min(t.rgb * params.rgba.rgb, vec3(1.0));
+    // DrawBlit's flag-0x10 strip: Gouraud over the triangles (TL, TR, BL)
+    // and (TR, BL, BR) (uv: x right, y down).
+    var cv = params.rgba;
+    if params.corners[3].x > 0.5 {
+        let u = in.uv.x;
+        let v = in.uv.y;
+        if u + v <= 1.0 {
+            cv = params.rgba + (params.corners[0] - params.rgba) * u + (params.corners[1] - params.rgba) * v;
+        } else {
+            cv = params.corners[2] + (params.corners[1] - params.corners[2]) * (1.0 - u) + (params.corners[0] - params.corners[2]) * (1.0 - v);
+        }
+    }
+    let rgb = min(t.rgb * cv.rgb, vec3(1.0));
     if params.mask_rect.z > 0.0 {
         // HUD world → blit screen (512×384, y down).
         let s = vec2(in.world_position.x + 256.0, 192.0 - in.world_position.y);
@@ -42,7 +57,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
     // Texel alpha is raw GS alpha (0x80 = 1.0).
-    let alpha = t.a * (255.0 / 128.0) * params.rgba.a;
+    let alpha = t.a * (255.0 / 128.0) * cv.a;
     if floor(alpha * 128.0) <= 1.0 {
         discard;
     }

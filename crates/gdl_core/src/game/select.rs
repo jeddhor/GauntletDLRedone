@@ -281,6 +281,12 @@ impl Hud {
             for (name, y, z) in [(format!("S1_PLYR{}", p + 1), 0, 64000.0), (format!("S2_PLYR{}", p + 1), 0x100, 64000.0), ("S1_BORDER".into(), 0, 63900.0), ("S2_BORDER".into(), 0x100, 63900.0)] {
                 let mut b = self.make_pub(self.lookup(&name), lx, y, 0x80, -1);
                 b.z = z;
+                // The borders: MBBlitSetFlags(0x4000) and MBBlitSetColor4
+                // with 0x80808080 at every corner (the corner sweep).
+                if z == 63900.0 {
+                    b.flags |= 0x4000;
+                    b.set_colour4([0x8080_8080; 4]);
+                }
                 out.push(b);
             }
             if r.i32_(0xfc) != 0 {
