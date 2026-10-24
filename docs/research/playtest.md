@@ -317,6 +317,25 @@ exactly the searched state's position (57.248, −7.023, 18.911), so the
 clones carry the whole simulation state. Like the bot, a level the search
 does not finish is not evidence that it cannot be finished.
 
+Diagnosing a level the search does not end (2026-10-24): the report's
+frontier (the best cell's place, keys, and the progress items done and
+left), game-run navdump= (navdump_at=N for a later state) with
+tools/python/level_map.py (floors by height, the graph reachable from the
+player, exits, gates, keys, triggers, legend item, the search's timeline),
+and short scripted checks (--teleport, --watch objects, --itemw items,
+--probe floors, --sample-every 1). Findings so far:
+- I5: a native bug (item culling under the boss camera, items.md) kept
+  the raft's pad untouchable; fixed — the level ends from its start.
+- D2: gates were opened but not counted (an opened gate keeps its record
+  with +0xdc set); the progress count now includes them.
+- F1: after pad 94 drops its bridge (object 324, y 29.7 → 9.7, one-shot:
+  object tf 0x2) the graph reaches pad 95, but the bot's route west hugs a
+  wall the player slides along. Compared with the reference (WARPED
+  warp-f1-bridge-v1: player written onto the pad, 300 idle vblanks, Left
+  held): the same positions — (−45.0, 10.6, 40.4) after 60 steps, the slide
+  from x −52 to −55 at z ≈ 36 — and enemies crowding the bridge (health
+  124). Native collision agrees there; the stall is the bot's path choice.
+
 ## Menu flow tests (M17, 2026-10-23)
 
 tools/python/menu_flows.py runs gdl_play on the private Xvfb through

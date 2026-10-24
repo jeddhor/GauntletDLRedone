@@ -3586,9 +3586,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             None => None,
         };
         // navdump=PATH (diagnostic maps, DEBUG tooling): the bot's graph from
-        // player 0 at the start (reachable nodes and edges) and every
-        // column's floors over the world bounds.
-        if let Some(path) = opts.get("navdump") {
+        // player 0 (reachable nodes and edges) and every column's floors over
+        // the world bounds, at the start or after navdump_at=N updates.
+        let navdump_at: usize = opts.get("navdump_at").map(|v| v.parse()).transpose()?.unwrap_or(0);
+        let write_navdump = |game: &gdl_core::game::Game, path: &str, f: usize| -> Result<(), Box<dyn Error>> {
             let mut c = game.collision.clone();
             let p = game.players[0].v3(0x50);
             let mut nav = bot::Nav::build(&mut c, &[p], game.globals.world_bottom - 2.0, p[1] + 80.0, 0.3);
@@ -3597,9 +3598,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             let edges: Vec<[usize; 2]> = reach.iter().flat_map(|&a| nav.adj[a].iter().filter(move |&&b| a < b).map(move |&b| [a, b])).collect();
             let pts: Vec<[f32; 3]> = nav.pts.iter().map(|q| q.map(r1)).collect();
             let all: Vec<[f32; 3]> = nav.sample_all(&mut c, world.min, world.max).into_iter().map(|q| q.map(r1)).collect();
-            let v = serde_json::json!({"scope": "DEBUG bot graph (bot.rs Nav) at the start; not game data", "start": p, "pts": pts, "reachable": reach, "edges": edges, "all_floors": all});
+            let v = serde_json::json!({"scope": "DEBUG bot graph (bot.rs Nav); not game data", "update": f, "start": p, "pts": pts, "reachable": reach, "edges": edges, "all_floors": all});
             let mut file = fs::OpenOptions::new().write(true).create_new(true).open(path)?;
             serde_json::to_writer(&mut file, &v)?;
+            Ok(())
+        };
+        if let (Some(path), 0) = (opts.get("navdump"), navdump_at) {
+            write_navdump(&game, path, 0)?;
         }
         let frames = match opts.get("explore").filter(|_| opts.contains_key("pads")) {
             Some(b) => {
@@ -3745,6 +3750,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     g.update_controls(&pads)?;
                     g.do_players().map(|_| ())
                 });
+                if let (Some(path), true) = (opts.get("navdump"), 0 < navdump_at && f + 1 == navdump_at) {
+                    write_navdump(&game, path, f + 1)?;
+                }
                 if level_end.is_none() && explore::level_ended(&game) {
                     level_end = Some(f);
                 }

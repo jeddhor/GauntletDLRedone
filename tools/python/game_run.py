@@ -104,6 +104,7 @@ def main():
     ap.add_argument('--start', help='the start state JSON (default: the Poison Fields game start); e.g. a previous run\'s end_state')
     ap.add_argument('--end-state', help='write the run\'s end as a start state JSON (new file; chained runs)')
     ap.add_argument('--navdump', help='DEBUG: write the bot graph and floor samples at the start (new file; level_map.py)')
+    ap.add_argument('--navdump-at', type=int, help='with --navdump: after this many updates instead of at the start')
     ap.add_argument('--next-level', action='store_true', help='enter the level from --start as init_next_level does (level_start and PlayerSaveState on the carried records, start locator); needs --pads')
     ap.add_argument('--padfile', help='with --pads: port 0 per update from an --explore JSON script (analog sticks included)')
     ap.add_argument('--no-assist', action='store_true', help='with --explore: no DEBUG health assist in the search or its replay')
@@ -242,6 +243,8 @@ def main():
         cmd += [f'end_state={a.end_state}']
     if a.navdump:
         cmd += [f'navdump={a.navdump}']
+    if a.navdump_at:
+        cmd += [f'navdump_at={a.navdump_at}']
     if a.next_level:
         if not a.pads:
             raise SystemExit('--next-level needs --pads')
