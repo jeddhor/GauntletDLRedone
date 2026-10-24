@@ -2597,8 +2597,8 @@ fn present_familiars(
 /// Where PlayerProcessPowerups hangs the attached powerup tree (+0x768):
 /// the player's node (+0x80), its HEAD node (+0x6ac, load_player's
 /// "<prefix>HEAD") or, for WINGS, +0x80's first child's first child (MB
-/// node +0x78; HYPOTHESIS: children in creation order — the rig root's
-/// other child, DUMMY, has none — so ROOT's LOWERTORSO for the Sorceress).
+/// node +0x78: MBNodeInsert 0x1cf528 appends siblings, so the first child
+/// created — ROOT, then its LOWERTORSO for the Sorceress).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PowerupAt {
     Node,

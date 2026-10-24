@@ -483,9 +483,9 @@ One tree per player (+0x768), chosen in this order (InitPlayerMissiles'
 trees): POJO (+0x138 0x400), WEAPONS' FW_SHLD_ACTIVE (+0x134 0x200000
 while the current action +0x1e0 is 0x16), PHOENIX (0x80), HEAD_BREATHEF /
 A / E (0x10 / 0x20 / 0x40) on the HEAD node (+0x6ac), WINGS (1) on the
-player node's +0x78 → +0x78 (HYPOTHESIS: the first-created child chain,
-ROOT → LOWERTORSO for the Sorceress — the rig root's other child, DUMMY,
-has no children), otherwise deleted; the others hang on the player's node.
+player node's +0x78 → +0x78 (MBNodeInsert appends siblings and leaves +0x78
+the first child created: ROOT → LOWERTORSO for the Sorceress), otherwise
+deleted; the others hang on the player's node.
 AnimateATree's sequence: the pojo's by action (1 for 8, 0x11..0x14, 0x16,
 0x19, 0x1a; 4 for 0x1b, 0x7f..0x83, 0x85, 0x87, 0x94; 3 for 0x6e; 5 for
 0x7e; 2 when PlayerMotion's attack signal +0x8d8 0x20000000 is set, which
