@@ -85,6 +85,7 @@ def main():
     ap.add_argument('--watch', help='collision objects OBJ,... whose matrix translations are sampled')
     ap.add_argument('--probe', help='X:Z;... points whose highest floor (object, y) is sampled')
     ap.add_argument('--random-item-num', type=int, help="vb_counter at the load (AddItemInstList's RandomItemNum seed)")
+    ap.add_argument('--no-enemies', action='store_true', help='DEBUG: generators, placed enemies and statues deleted at the start (progression traversal without combat)')
     ap.add_argument('--itemdump', action='store_true', help='the item records, definitions and object words at the end (report item_dump)')
     ap.add_argument('--itemrec', help='item slots SLOT,... whose whole records are sampled (hex)')
     ap.add_argument('--itemw', help='item slots SLOT,... whose +0xd8/+0xde/+0xe1/+0xe2 are sampled')
@@ -201,6 +202,8 @@ def main():
         cmd += [f'itemrec={a.itemrec}']
     if a.itemdump:
         cmd += ['itemdump=1']
+    if a.no_enemies:
+        cmd += ['no_enemies=1']
     if a.random_item_num is not None:
         cmd += [f'random_item_num={a.random_item_num}']
     if a.vplayers:

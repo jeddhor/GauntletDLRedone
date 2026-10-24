@@ -509,9 +509,13 @@ Seen in G1 (GDL_DEBUG_POWERUP 9:1 / 9:80 / 9:400, runs client-pw-1/-80/
 -400): the wings at the back, the phoenix and the pojo beside the player.
 The fire breath (9:10) spawns its one part (HEAD_BREATHEFFF, node flags
 0x1001000: camera-facing, unshaded; a single static key at (0, 0.896,
-0.086) on HEAD; ACTIVE 15 frames repeating) but showed nothing visible in
-G1 frames (runs client-pw4-10, -pw5-10) — not confirmed; its texture
-modifiers or facing may be the cause. No reference capture.
+0.086) on HEAD; ACTIVE 15 frames repeating). Compared 2026-10-23: the
+reference with the same powerup slot written into the G1 fixture
+(reference_warp --poke players+0x154=f:60, +0x158 9, +0x15c f:0, +0x160
+0x10; WARPED, private/reports/warp-G1-breath-v1.png) shows a small flame
+standing on the head, and native frame client-pw5-10/002-b shows the same
+flame on the head (seen from another facing); the earlier note that
+nothing was visible was a misreading of those frames.
 
 ## Player translucency (PlayerProcessPowerups, 2026-10-23)
 

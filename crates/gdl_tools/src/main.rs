@@ -2018,6 +2018,32 @@ fn run() -> Result<(), Box<dyn Error>> {
                 game.modify_exp(0, need).map_err(|e| e.0)?;
             }
         }
+        if opts.contains_key("no_enemies") {
+            // DEBUG (traversal of a level's progression without combat; not
+            // game logic): generators (kind 3) and placed enemies and statues
+            // (kind 4) are deleted and the live enemies cleared. An item a
+            // kind-4 item carries (DoEnemyPickupItems' +0x102, +0xe1 10) is
+            // shown where it lies, as if its critter had dropped it there.
+            for slot in 0..game.items.records.len() {
+                let r = &game.items.records[slot];
+                if !r.active() {
+                    continue;
+                }
+                let k = game.items.definitions[r.definition()].kind();
+                if k == 4
+                    && let Ok(c) = usize::try_from(r.i16_(0x102))
+                    && c < game.items.records.len()
+                {
+                    game.items.records[c].set_u8(0xe1, 0);
+                }
+                if k == 3 || k == 4 {
+                    game.delete_item(slot, false);
+                }
+            }
+            for e in game.enemies.iter_mut() {
+                e.set_i32(0xc8, 0);
+            }
+        }
         if opts.contains_key("legend") {
             // DEBUG: player 0 holds this world's legend item (class word +0xcf4);
             // GauntWorldInit's check then runs as at a level start.
@@ -3598,6 +3624,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport")});
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
+        if opts.contains_key("no_enemies") {
+            report["no_enemies"] = serde_json::json!("DEBUG: generators, placed enemies and statues deleted at the start; enemies cleared");
+        }
         if opts.contains_key("itemdump") {
             let w = &game.items;
             let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
