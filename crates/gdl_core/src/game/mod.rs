@@ -308,8 +308,9 @@ pub struct Game {
     pub world_order: Vec<i32>,
     /// The rune thermometer (init_thermometer / modify_thermometer).
     pub thermometer: thermometer::Thermometer,
-    /// WorldNumLevels(CurWorld): HYPOTHESIS = the world's LEVL record count
-    /// (the worlddatas field is filled at run time).
+    /// WorldNumLevels(CurWorld): worlddatas +0x14, which LoadWorldData
+    /// 0x161b98 fills from the WRLD chunk's +0x18 short — equal to the LEVL
+    /// record count in all 14 world files, which is what is stored here.
     pub world_num_levels: i32,
     /// World animations of the level (WORLDS.PS2 table).
     pub world_anims: world_anim::WorldAnimSet,
