@@ -1975,6 +1975,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             },
             critters })?;
         // DoEnemyPickupItems' links at load (generator slot, carried slot).
+        // The level's rune stone and legend item (kind 1 subtypes 10, 0xd)
+        // at load: reported with whether they were taken (campaign chains).
+        let treasures_at_load: Vec<usize> = (0..game.items.records.len())
+            .filter(|&s| game.items.records[s].active() && { let d = &game.items.definitions[game.items.records[s].definition()]; d.kind() == 1 && (d.subtype() == 10 || d.subtype() == 0xd) })
+            .collect();
         let carried_at_load: Vec<(usize, i16)> = game.items.records.iter().enumerate()
             .filter(|(_, r)| r.active() && game.items.definitions[r.definition()].kind() == 4 && 0 <= r.i16_(0x102))
             .map(|(k, r)| (k, r.i16_(0x102)))
@@ -3617,7 +3622,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let cells: usize = opts.get("cells").map(|s| s.parse()).transpose()?.unwrap_or(4000);
                 // nav=1: graph-guided macros; nav=2: bot macros.
                 let mode: u32 = opts.get("nav").map(|s| s.parse()).transpose()?.unwrap_or(0);
-                let out = explore::explore(&game, budget, seed, cells, mode, assist_on);
+                // require=1: the level's rune stone and legend item must be taken.
+                let out = explore::explore(&game, budget, seed, cells, mode, assist_on, opts.contains_key("require"));
                 let mut r = out.report;
                 let (digital, text) = explore::script_text(&out.script);
                 r["script_format"] = serde_json::json!(if digital { "pads" } else { "padfile" });
@@ -3869,6 +3875,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
         report["check_num"] = serde_json::json!(game.collision.check_num());
+        report["treasures"] = serde_json::json!(treasures_at_load.iter().map(|&s| serde_json::json!({"slot": s, "subtype": game.items.definitions[game.items.records[s].definition()].subtype(), "taken": !game.items.records[s].active()})).collect::<Vec<_>>());
         // end_state=PATH: the start JSON again with the players' records and
         // the globals at the end of the run (a next level's start state for
         // chained runs; the level transition itself is not simulated here).

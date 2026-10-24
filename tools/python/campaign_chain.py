@@ -3,7 +3,7 @@
 
   campaign_chain.py TAG LEVEL [LEVEL ...] [--budget N] [--cells N]
                     [--start START.json] [--legend-bosses] [--no-assist]
-                    [--bot-first FRAMES]
+                    [--bot-first FRAMES] [--require]
 
 For each level code in order (G1 G2 ...), game_run.py --explore (bot
 macros, nav=2) from the previous level's end state: the run's own replay of
@@ -21,6 +21,8 @@ DEBUG health assist (legitimate play: a dying branch is dropped).
 --bot-first FRAMES runs the traversal bot (bot.rs, one deterministic run of
 at most FRAMES updates) before the search and keeps its end state when it
 ends the level; the search runs only for the levels the bot does not end.
+--require: a level counts as ended only with its rune stone and legend item
+taken (the bot's run otherwise falls back to the search with require=1).
 """
 import argparse
 import json
@@ -43,6 +45,7 @@ def main():
     ap.add_argument('--legend-bosses', action='store_true')
     ap.add_argument('--no-assist', action='store_true')
     ap.add_argument('--bot-first', type=int, help='try the traversal bot for this many updates first')
+    ap.add_argument('--require', action='store_true', help='rune stones and legend items must be taken')
     a = ap.parse_args()
     if not a.tag.replace('-', '').isalnum():
         raise SystemExit('tag must be alphanumeric')
@@ -73,9 +76,12 @@ def main():
                    '--pads', '0:1', '--bot', '--end-state', str(bot_end)] + common
             p = subprocess.run(cmd, cwd=ROOT, env=os.environ, capture_output=True, text=True)
             if bot_report.exists():
-                b = json.loads(bot_report.read_text()).get('bot') or {}
-                step['bot'] = {'exit_update': b.get('exit_update'), 'exit_wave': b.get('exit_wave'), 'assists': b.get('health_assists')}
-                if b.get('exit_update') is not None and bot_end.exists():
+                br = json.loads(bot_report.read_text())
+                b = br.get('bot') or {}
+                missed = [t for t in br.get('treasures', []) if not t['taken']]
+                step['bot'] = {'exit_update': b.get('exit_update'), 'exit_wave': b.get('exit_wave'), 'assists': b.get('health_assists'),
+                               'treasures': br.get('treasures')}
+                if b.get('exit_update') is not None and bot_end.exists() and not (a.require and missed):
                     step.update(ended=True, by='bot', replay_level_end=b['exit_update'], assists=b.get('health_assists'),
                                 legend_debug=a.legend_bosses and code in BOSSES)
                     steps.append(step)
@@ -86,12 +92,14 @@ def main():
                 step['bot'] = {'error': (p.stderr.strip().splitlines() or [''])[-1][:300]}
         cmd = [sys.executable, 'tools/python/game_run.py', str(report), '--frames', '10', '--world', world, '--level', level,
                '--pads', '0:1', '--explore', str(a.budget), '--cells', str(a.cells), '--nav', '2', '--end-state', str(end)] + common
+        if a.require:
+            cmd += ['--require']
         p = subprocess.run(cmd, cwd=ROOT, env=os.environ, capture_output=True, text=True)
         step['returncode'] = p.returncode
         if report.exists():
             r = json.loads(report.read_text())
             x = r.get('explore', {})
-            step.update(ended=x.get('ended'), by='search', replay_level_end=r.get('level_end'), script_updates=x.get('script_updates'),
+            step.update(ended=x.get('ended'), by='search', replay_level_end=r.get('level_end'), script_updates=x.get('script_updates'), treasures=r.get('treasures'),
                         assists=r.get('assists'), progress=[x.get('start_progress'), x.get('max_progress')],
                         legend_debug=a.legend_bosses and code in BOSSES,
                         unsupported=[u['path'] for u in r.get('unsupported', []) if 'enemy_load' not in u['path']][:5])

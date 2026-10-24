@@ -202,9 +202,10 @@ impl Progress {
                 // A gate stays an active record once opened: its state +0xdc
                 // leaves 0 (1 opening, 2 open; ItemCollSub stops testing it).
                 (7, _) => n += u32::from(self.start_active[s] && (!r.active() || r.i8_(0xdc) != 0)),
-                // Keys and the realm's legend item (kind 1 subtype 0xd,
-                // PlayerGiveLegendItem: the bosses need it).
-                (1, 2) | (1, 0xd) => n += u32::from(self.start_active[s] && !r.active()),
+                // Keys, the realm's legend item (kind 1 subtype 0xd,
+                // PlayerGiveLegendItem: the bosses need it) and the level's
+                // rune stone (subtype 10: H4 needs all thirteen).
+                (1, 2) | (1, 0xd) | (1, 10) => n += u32::from(self.start_active[s] && !r.active()),
                 _ => {}
             }
         }
@@ -282,7 +283,7 @@ fn interest_items(g: &Game) -> Vec<usize> {
             (1, 2) | (2, _) => 1,
             (5, _) if r.i8_(0xde) == 0 && r.u8_(0xe2) == 0 => 1,
             (7, _) if 0 < keys && r.i8_(0xdc) == 0 => 1,
-            (9, _) | (1, 0xd) => 3,
+            (9, _) | (1, 0xd) | (1, 10) => 3,
             _ => 0,
         };
         for _ in 0..n {
@@ -413,11 +414,19 @@ pub struct Outcome {
 /// cells; past it new cells replace the most chosen one of the lowest
 /// progress). `mode`: 0 random macros, 1 guided, 2 bot macros. Without
 /// `assist` no health is given (a branch whose player dies is dropped).
-pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u32, assist: bool) -> Outcome {
+/// With `require` a level end counts only once the rune stone and legend
+/// item present at the start (kind 1 subtypes 10 and 0xd) are taken.
+pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u32, assist: bool, require: bool) -> Outcome {
     let mut rng = Rng(seed.max(1).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     // The assist rule's reference health; 0 disables it.
     let start_health = if assist { start.players[0].f32_(HEALTH) } else { 0.0 };
     let prog = Progress { start_active: start.items.records.iter().map(|r| r.active()).collect() };
+    let required: Vec<usize> = if require {
+        (0..start.items.records.len()).filter(|&s| start.items.records[s].active() && matches!(item_kind(start, s), (1, 10) | (1, 0xd))).collect()
+    } else {
+        Vec::new()
+    };
+    let ends = |g: &Game| level_ended(g) && required.iter().all(|&s| !g.items.records[s].active());
     let rss0 = vm_rss_kib();
     let mut assists = 0usize;
     // The stage-start sequence and camera waits hold the player: the search
@@ -531,9 +540,13 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
                 None if i + 1 == count => Box::new(g.take().expect("final state")),
                 None => continue,
             };
-            if level_ended(&state) {
+            if ends(&state) {
                 found = Some((Some(node), updates));
                 break;
+            }
+            if level_ended(&state) {
+                // Ended without a required item: not filed.
+                continue;
             }
             if state.players[0].i32_(0xfc) != 1 {
                 continue;
@@ -622,7 +635,7 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
         for s in 0..g.items.records.len().min(prog.start_active.len()) {
             let r = &g.items.records[s];
             let (kind, sub) = item_kind(g, s);
-            if !matches!((kind, sub), (5, _) | (7, _) | (1, 2) | (1, 0xd) | (9, _)) || !prog.start_active[s] {
+            if !matches!((kind, sub), (5, _) | (7, _) | (1, 2) | (1, 0xd) | (1, 10) | (9, _)) || !prog.start_active[s] {
                 continue;
             }
             let gone = !r.active() || (kind == 5 && (r.i8_(0xde) != 0 || r.u8_(0xe2) != 0)) || (kind == 7 && r.i8_(0xdc) != 0);
@@ -637,7 +650,7 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
     });
     let report = serde_json::json!({
         "scope": "DEBUG state search (explore.rs): Go-Explore over native Game clones, pad macros (random, graph-guided or bot), health assist; tooling, not a fidelity input",
-        "mode": mode, "health_assist": assist, "budget": budget, "seed": seed, "updates_used": used, "iterations": iterations, "cells": archive.len(), "evicted": evicted,
+        "mode": mode, "health_assist": assist, "required": required, "budget": budget, "seed": seed, "updates_used": used, "iterations": iterations, "cells": archive.len(), "evicted": evicted,
         "ended": found.is_some(), "ended_at": ended_at, "start_prefix": prefix, "script_updates": script.len(), "macros": chain.len(),
         "max_progress": max_progress, "start_progress": k0.4, "assists_in_search": assists,
         "nav": {"builds": nav_builds, "macros": nav_macros, "reached": nav_reached, "bot_macros": bot_macros, "nodes": nav.as_ref().map(|n| n.0.pts.len()), "blocked_edges": blocked.values().map(|b| b.len()).sum::<usize>()},

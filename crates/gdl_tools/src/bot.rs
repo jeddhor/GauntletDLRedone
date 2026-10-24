@@ -846,7 +846,11 @@ impl Bot {
             }
         }
         let tower_crystals = g.globals.cur_world == 0xd && !active(g, &|k, t| k == 1 && t == 15).is_empty();
-        let order = if tower_crystals { [near, Vec::new(), Vec::new()] } else { [exits, near, secret] };
+        // The level's rune stone (kind 1 subtype 10) and the realm's legend
+        // item (subtype 0xd) before its exits: the campaign needs every rune
+        // (H4 opens with all thirteen) and the bosses their legend item.
+        let treasures = active(g, &|k, t| k == 1 && (t == 10 || t == 0xd));
+        let order = if tower_crystals { [near, Vec::new(), Vec::new(), Vec::new()] } else { [treasures, exits, near, secret] };
         for list in order {
             let list: Vec<usize> = list.into_iter().filter(|s| !self.given_up.contains(s)).collect();
             let targets = self.item_nodes(g, &list);
