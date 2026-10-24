@@ -25,8 +25,9 @@
 //! bot throws for a while (barrels, chests, generators, enemies). With no
 //! goal for 900 updates it forgets given-up goals, gate blocks and explored
 //! columns and regrows the graph. Enemies within
-//! ATTACK_RANGE are attacked with throws (cross) every update, those within
-//! twice that in alternate 12-update windows. Below 60 % health, food first.
+//! ATTACK_RANGE are attacked with throws (cross) in alternate 12-update
+//! windows; without the health assist every update, and those within twice
+//! that in windows. Below 60 % health, food first.
 //! Health assist (labelled DEBUG in the report): health is restored to its
 //! start value when it falls below 40 % of it.
 use gdl_core::collision::{CollisionWorld, Query};
@@ -39,6 +40,8 @@ pub type Place = (i32, i32, i32);
 
 const CELL: f32 = 1.5;
 const STEP_UP: f32 = 2.0;
+const HEADROOM: f32 = 3.0;
+const STRICT_RADIUS: f32 = 1.2;
 const DROP: f32 = 12.0;
 const STUCK: usize = 45;
 const DWELL: f32 = 2.0;
@@ -199,7 +202,11 @@ impl Nav {
                 continue;
             };
             let fy = h.position[1];
-            if out.last().is_none_or(|&l: &usize| 2.0 <= self.pts[l][1] - fy) {
+            // A floor under another one with less than HEADROOM between
+            // their tops is not stood on: the player (collision height 2.5)
+            // does not fit (G2's ramp at (−112, 3.3, −157) over the ground at
+            // 0.9: the graph walked under it, the player walked up it).
+            if out.last().is_none_or(|&l: &usize| HEADROOM <= self.pts[l][1] - fy) {
                 self.pts.push([x, fy, z]);
                 self.obj.push(h.object);
                 self.adj.push(Vec::new());
@@ -249,7 +256,10 @@ impl Nav {
         if !matches!(c.floor_collide(FLOOR_RADIUS, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some()) {
             return None;
         }
-        let ok = Self::edge_ok(c, a, b, radius);
+        // The player-like test with nearly the player's radius (1.5): the
+        // permissive 0.3 passes gaps the player cannot (G2's ground under
+        // and beside its railed ramp).
+        let ok = Self::edge_ok(c, a, b, radius.max(STRICT_RADIUS));
         // A drop is walked off at the upper floor, where PlayerMotion tests
         // walls: a railing there stops the player whatever lies above it
         // (G2's walkway at y 9.7 over the spikes: the permissive sweep at
@@ -378,7 +388,7 @@ impl Nav {
                 let k = if self.hard.contains(&(n, m)) { 4.0 } else { 1.0 };
                 // Drops lose height that may have taken lifts to gain.
                 let drop = if self.pts[m][1] < self.pts[n][1] - 2.0 { 15.0 } else { 0.0 };
-                let drop = drop + if avoid.soft.contains(&m) { 25.0 } else { 0.0 };
+                let drop = drop + if avoid.soft.contains(&m) { 25.0 } else if avoid.cheap.contains(&m) { 4.0 } else { 0.0 };
                 // Clearance: a node missing neighbours lies by a wall or a
                 // ledge; the player (radius 1.5) slides there.
                 let drop = drop + (8usize.saturating_sub(self.adj[m].len())) as f32 * 0.6;
@@ -399,6 +409,11 @@ impl Nav {
 #[derive(Default)]
 pub struct Avoid {
     pub soft: HashSet<usize>,
+    /// Breakable barrels (kind 10 subtypes 43..45: BAROBJ, BAREXP,
+    /// BARPOI): a smaller cost, the bot breaks them on its way (G2's
+    /// ground route runs through dozens; at the full cost the route took a
+    /// raised walkway that ends above the ground).
+    pub cheap: HashSet<usize>,
     pub closed: HashSet<usize>,
 }
 
@@ -787,7 +802,13 @@ impl Bot {
                     for &n in self.nav.cols.get(&(c.0 + dx, c.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
                         let pn = self.nav.pts[n];
                         if dist_xz(pn, q) < reach && (pn[1] - q[1]).abs() < 3.0 {
-                            if k == 7 { out.closed.insert(n) } else { out.soft.insert(n) };
+                            if k == 7 {
+                                out.closed.insert(n);
+                            } else if k == 10 && (43..=45).contains(&item_kind(g, s).1) {
+                                out.cheap.insert(n);
+                            } else {
+                                out.soft.insert(n);
+                            }
                         }
                     }
                 }
@@ -810,8 +831,10 @@ impl Bot {
         // Route hints first, in order.
         while let Some(h) = self.hints.get(self.hint_at).cloned() {
             if let Some(s) = h.item {
+                // A gate stays an active record once opened (+0xdc leaves 0).
                 let done = !g.items.records.get(s).is_some_and(|r| r.active())
-                    || (item_kind(g, s).0 == 5 && (g.items.records[s].i8_(0xde) != 0 || g.items.records[s].u8_(0xe2) != 0));
+                    || (item_kind(g, s).0 == 5 && (g.items.records[s].i8_(0xde) != 0 || g.items.records[s].u8_(0xe2) != 0))
+                    || (item_kind(g, s).0 == 7 && g.items.records[s].i8_(0xdc) != 0);
                 if done {
                     self.log.push(serde_json::json!({"update": f, "hint_done": self.hint_at}));
                     self.hint_at += 1;
@@ -825,7 +848,8 @@ impl Bot {
                 self.goal = Some(Goal::Item(s));
                 self.path = path;
                 self.at = 0;
-                self.log.push(serde_json::json!({"update": f, "hint": self.hint_at, "item": s, "nodes": self.path.len()}));
+                let outline: Vec<V3> = self.path.iter().step_by(8).map(|&n| self.nav.pts[n]).collect();
+                self.log.push(serde_json::json!({"update": f, "hint": self.hint_at, "item": s, "nodes": self.path.len(), "outline": outline}));
                 return true;
             }
             if let Some(q) = h.goto {
@@ -1204,6 +1228,19 @@ impl Bot {
                             let (pn, pm) = (self.nav.place(n), self.nav.place(m));
                             self.blocked.insert((pn, pm));
                         }
+                        // Off the same object, any way, within 12 units: a
+                        // railed ramp or walkway (G2's ramp object over the
+                        // ground: one drop edge per column, each tried in turn).
+                        let from = self.nav.obj[a];
+                        let off: Vec<(usize, usize)> = (0..self.nav.pts.len())
+                            .filter(|&n| self.nav.obj[n] == from && dist_xz(self.nav.pts[n], p) < 12.0)
+                            .flat_map(|n| self.nav.adj[n].iter().map(move |&m| (n, m)))
+                            .filter(|&(n, m)| self.nav.pts[m][1] < self.nav.pts[n][1] - STEP_UP && self.nav.obj[m] != from)
+                            .collect();
+                        for (n, m) in off {
+                            let (pn, pm) = (self.nav.place(n), self.nav.place(m));
+                            self.blocked.insert((pn, pm));
+                        }
                     }
                 }
                 self.attack_until = f + if breakable { 150 } else { 40 };
@@ -1326,15 +1363,19 @@ impl Bot {
             pad.press(0xd);
             return Self::steer(pad, g, p, bp);
         }
-        // Enemies within ATTACK_RANGE: attack every update. Farther, up
-        // to twice that: attack in windows (12 updates fighting, 12 moving;
-        // holding attack keeps the player in its attack actions). Firing
-        // only at close range let crowds reach the player: no-assist G1
-        // died in all three tries by update 11714; with ranged fire two of
-        // three survived 60,000 updates (health 308 and 403 of 483).
+        // Enemies within ATTACK_RANGE: attack in windows (12 updates
+        // fighting, 12 moving; holding attack keeps the player in its attack
+        // actions). Without the health assist the bot must survive: it fires
+        // every update at those within ATTACK_RANGE and in windows at those
+        // within twice that. Close-range windows alone let crowds reach the
+        // player (no-assist G1 died in all three tries by update 11714; with
+        // ranged fire two of three survived 60,000 updates, health 308 and
+        // 403 of 483), but the fights cost assisted runs their progress
+        // (b32: B5 and A3 no longer ended within 60,000 updates).
+        let ranged = !self.assist_enabled;
         let near = Self::nearest_foe(g, p, ATTACK_RANGE);
-        let enemy = near.or_else(|| Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE));
-        let fighting = (f / 12).is_multiple_of(2) || near.is_some();
+        let enemy = if ranged { near.or_else(|| Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE)) } else { near };
+        let fighting = (f / 12).is_multiple_of(2) || (ranged && near.is_some());
         let target = match enemy.filter(|_| fighting) {
             Some((_, at)) => {
                 pad.press(0xd);
