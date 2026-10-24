@@ -76,6 +76,10 @@ fn centre(k: (i32, i32)) -> (f32, f32) {
     ((k.0 as f32 + 0.5) * CELL, (k.1 as f32 + 0.5) * CELL)
 }
 
+fn dist3(a: V3, b: V3) -> f32 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
 fn dist_xz(a: V3, b: V3) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
@@ -435,8 +439,8 @@ pub struct Bot {
     start_health: f32,
     /// Player 0's level (+0x2ac0) when the bot started (pexp precondition).
     start_level: i32,
-    /// Standing on a reached trigger: (since, y then, last y change).
-    wait: Option<(usize, f32, usize)>,
+    /// Standing on a reached trigger: (since, position then, last move).
+    wait: Option<(usize, V3, usize)>,
     pub assists: u32,
     pub log: Vec<serde_json::Value>,
     pub exit_update: Option<usize>,
@@ -446,7 +450,7 @@ pub struct Bot {
     replans: usize,
     rebuilds: usize,
     force_rebuild: bool,
-    last_y: f32,
+    last_y: V3,
     hints: Vec<Hint>,
     hint_at: usize,
     hint_stuck: usize,
@@ -475,7 +479,7 @@ pub struct Bot {
     last_floor: Option<usize>,
     riding: usize,
     still: usize,
-    ride_from: f32,
+    ride_from: V3,
     /// The first update of the current stretch without a goal.
     no_goal_since: Option<usize>,
     /// The DEBUG health assist (explore.rs applies its own).
@@ -552,7 +556,7 @@ impl Bot {
             replans: 0,
             rebuilds: 0,
             force_rebuild: false,
-            last_y: f32::NAN,
+            last_y: [f32::NAN; 3],
             hints: Vec::new(),
             hint_at: 0,
             hint_stuck: 0,
@@ -569,7 +573,7 @@ impl Bot {
             last_floor: None,
             riding: 0,
             still: 0,
-            ride_from: 0.0,
+            ride_from: [0.0; 3],
             no_goal_since: None,
             assist_enabled: true,
         }
@@ -951,12 +955,11 @@ impl Bot {
                     self.bad_nodes.clear();
                     if k == 5 {
                         // Stay on the pad while its platform moves (lifts,
-                        // bridges): until the height has been still for 30
-                        // updates after moving, 90 updates without moving,
-                        // or 600 updates.
+                        // bridges, rafts): until the player has been still
+                        // for 30 updates after moving, 90 updates without
+                        // moving, or 600 updates.
                         self.visited_triggers.insert(s);
-                        let y = g.players[0].v3(0x50)[1];
-                        self.wait = Some((f, y, f));
+                        self.wait = Some((f, g.players[0].v3(0x50), f));
                         self.goal = None;
                         self.path.clear();
                     } else {
@@ -993,8 +996,10 @@ impl Bot {
         if f.is_multiple_of(10) && self.trail.last().is_none_or(|q| 1.0 < dist_xz(*q, p) || 1.0 < (q[1] - p[1]).abs()) {
             self.trail.push(p);
         }
-        if let Some((since, y0, moved)) = self.wait {
-            let moved = if 0.05 < (p[1] - y0).abs() { f } else { moved };
+        if let Some((since, p0, moved)) = self.wait {
+            // Carried in any direction (I5's raft, object 111, travels
+            // level to the arena).
+            let moved = if 0.05 < dist3(p, p0) { f } else { moved };
             // Co-op: pads may need every player on them (+0xf4 0x400) and
             // lifts carry only those aboard — wait for the followers.
             let apart = (1..4).any(|k| g.globals.active_players >> k & 1 != 0 && g.players[k].i32_(0xfc) == 1 && 3.0 < dist_xz(g.players[k].v3(0x50), p));
@@ -1006,7 +1011,7 @@ impl Bot {
                 self.progress = (f, p);
                 self.choose(f, g);
             } else {
-                self.wait = Some((since, p[1], moved));
+                self.wait = Some((since, p, moved));
                 return pad;
             }
         }
@@ -1106,11 +1111,11 @@ impl Bot {
             }
             self.progress = (f, p);
         }
-        // Riding a lift or falling: no stick until the height settles.
-        // The floor object (+0x89c) moving: its node height changed.
+        // Riding a lift, raft or falling: no stick until the floor settles.
+        // The floor object (+0x89c) moving: its node translation changed.
         let floor = g.players[0].u32_(0x89c).checked_sub(1).map(|o| o as usize);
-        let fy = floor.and_then(|o| g.collision.object_matrix(o).ok()).map_or(f32::NAN, |m| m[3][1]);
-        let riding = floor == self.last_floor && 0.01 < (fy - self.last_y).abs();
+        let fy = floor.and_then(|o| g.collision.object_matrix(o).ok()).map_or([f32::NAN; 3], |m| [m[3][0], m[3][1], m[3][2]]);
+        let riding = floor == self.last_floor && 0.01 < dist3(fy, self.last_y);
         self.last_y = fy;
         self.last_floor = floor;
         // A ride holds input once the floor has moved 1.5 units from where
@@ -1126,7 +1131,7 @@ impl Bot {
         } else if 8 <= self.still {
             self.riding = 0;
         }
-        if riding && 1.5 < (fy - self.ride_from).abs() && self.riding < 300 {
+        if riding && 1.5 < dist3(fy, self.ride_from) && self.riding < 300 {
             self.progress = (f, p);
             self.dwell = (f, p);
             self.holds[2] += 1;
