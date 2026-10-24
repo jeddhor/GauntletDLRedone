@@ -579,6 +579,8 @@ pub struct Bot {
     /// enter (five or more: a thin wall the graph does not see).
     stuck_waypoints: HashMap<Place, usize>,
     dead_nodes: HashSet<Place>,
+    /// The last potion used (circle).
+    potion_at: Option<usize>,
     visited_triggers: HashSet<usize>,
     /// Contacts per trigger (revisits are bounded) and the trigger now
     /// sought again (reached only on contact: its state stays set).
@@ -709,6 +711,7 @@ impl Bot {
             gate_push: None,
             stuck_waypoints: HashMap::new(),
             dead_nodes: HashSet::new(),
+            potion_at: None,
             visited_triggers: HashSet::new(),
             trigger_visits: HashMap::new(),
             revisiting: None,
@@ -1338,29 +1341,24 @@ impl Bot {
                 // It goes when destroyed (C1's corridor generator 231, radius
                 // 2, stopped the bot at its edge): attack longer and keep the
                 // edge open instead of routing away.
-                // Within the item's own radius (+0xe8) + 2: K2's barrels 7
-                // and 58 have radius 6 and stopped the player 5 units off
-                // (2999 stuck events with the 3.5 limit).
+                // Within the item's own radius (+0xe8, at most 6) + 2 and 3
+                // units of height: K2's barrels 7 and 58 have radius 6 and
+                // stopped the player 5 units off (2999 stuck events with the
+                // 3.5 limit); its generator 240, 45 units below, has 40.
                 let blocker = (0..g.items.records.len())
                     .filter(|&s| {
                         let r = &g.items.records[s];
-                        r.active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(r.v3(0x40), p) < (r.f32_(0xe8) + 2.0).max(3.5)
+                        r.active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(r.v3(0x40), p) < (r.f32_(0xe8).min(6.0) + 2.0).max(3.5) && (r.v3(0x40)[1] - p[1]).abs() < 3.0
                     })
                     .min_by(|&a, &b| dist_xz(g.items.records[a].v3(0x40), p).total_cmp(&dist_xz(g.items.records[b].v3(0x40), p)));
                 self.attack_at = blocker.map(|s| g.items.records[s].v3(0x40));
                 // At most three long attacks per item: one that does not
                 // break (statues, rocks, a respawning generator) is then
                 // routed around as before (b27: A3's 1285 stuck events).
-                // A try that damaged it (+0xfc rising: A4's generator 128
-                // took 0.29, 0.5, 0.79, 0.86, then broke, over separate
-                // fights) does not count against it.
+                // Three long attacks per item. (+0xfc is no damage measure:
+                // K2's generator 240 cycles it 0 → 1 as a spawn timer.)
                 let breakable = blocker.is_some_and(|s| {
-                    let hit = g.items.records[s].f32_(0xfc);
-                    let (n, last) = self.break_tries.entry(s).or_insert((0, hit));
-                    if item_kind(g, s).0 == 3 && *last + 0.01 < hit {
-                        *n = 0;
-                    }
-                    *last = hit;
+                    let (n, _) = self.break_tries.entry(s).or_insert((0, 0.0));
                     *n += 1;
                     *n <= 3
                 });
@@ -1588,9 +1586,32 @@ impl Bot {
         // campaign (level 25 by K2) a crowd by K2's barrels held the bot.
         let recent = self.log.iter().rev().take_while(|e| e["update"].as_u64().is_some_and(|u| u + 2000 >= f as u64)).filter(|e| e.get("stuck").is_some()).count();
         let ranged = !self.assist_enabled || 5 <= recent;
+        // A potion (circle, entry 0xb: the magic blast) against a crowd that
+        // holds the bot (K2 in the campaign: level-scaled LOW creatures
+        // under the thrown weapons' height kept the corridor by generator 333
+        // closed) or, without the assist, when health runs low. At most one
+        // every 600 updates.
+        let crowd = Self::nearest_foe(g, p, 6.0).is_some();
+        let low_health = !self.assist_enabled && g.players[0].f32_(HEALTH) < self.start_health * 0.35;
+        if crowd && (5 <= recent || low_health) && 0 < g.players[0].i32_(0x1a18) && self.potion_at.is_none_or(|u| u + 600 <= f) {
+            self.potion_at = Some(f);
+            self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18)}));
+            pad.press(0xb);
+            return pad;
+        }
         let near = Self::nearest_foe(g, p, ATTACK_RANGE);
         let enemy = if ranged { near.or_else(|| Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE)) } else { near };
         let fighting = (f / 12).is_multiple_of(2) || (ranged && near.is_some());
+        // An enemy against the player (within 2 units): step away for a
+        // moment, then fire — thrown weapons leave beyond it (K2 in the
+        // campaign: a type-0x15 creature, never knocked back, held the player
+        // for 100,000 updates at health 14 without a hit).
+        if let Some((d, at)) = near
+            && d < 2.0
+            && (f / 30).is_multiple_of(3)
+        {
+            return Self::steer(pad, g, p, [2.0 * p[0] - at[0], p[1], 2.0 * p[2] - at[2]]);
+        }
         let target = match enemy.filter(|_| fighting) {
             Some((_, at)) => {
                 pad.press(0xd);
