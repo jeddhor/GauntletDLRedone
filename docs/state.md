@@ -335,6 +335,22 @@ original (PCSX2 reference on Xvfb :191, private captures):
    builds the player rig and seeds team links. explore.rs gains bot
    macros (nav=2: bot.rs on a shared graph, random first hint) and
    analog pad scripts (padfile=).
+   2026-10-24 (morning): chained levels enter through init_next_level's
+   record steps (game-run next_level=1; campaign_chain.py) instead of the
+   previous level's exit state. tools/python/gs_replay.py replays a GS
+   dump's draws in software: the Tower crystals' brightness difference is
+   phase spread (reference frames 446..525, native 397..461), and the
+   pale-green hit flash in native frames is the original's (reference GS
+   dump of B4 at the flash: 183/220/183 against 179/219/179). Scene
+   comparisons now cover all 61 levels (38 added, presentation.md).
+   Item culling took the StdCam record's eye under the boss and trigger
+   cameras; it now takes the MB window's eye (MBWorldSphereVisible), which
+   lets I5's raft pad be touched — the bot reaches the yeti's arena on foot
+   (items.md "Item culling under the boss and trigger cameras"). Traversal
+   tooling: explorer frontier reports, level maps (game-run navdump=,
+   level_map.py), a no-assist search (no_assist=1), opened gates counted as
+   progress (they stay active records with +0xdc set), and the bot rides
+   floors moving in any direction (I5's and K4's rafts).
 
 ---
 

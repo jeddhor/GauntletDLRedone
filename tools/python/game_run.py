@@ -88,6 +88,7 @@ def main():
     ap.add_argument('--teleport', help='DEBUG: start player 0 at x,y,z')
     ap.add_argument('--powerup', help='DEBUG: player 0 powerup KIND:FLAGS_HEX:SECONDS at update 0 (e.g. 9:2:60, X-ray)')
     ap.add_argument('--place0', action='store_true', help='DEBUG: place player 0 at the start locator through load_player_geo (placement comparisons)')
+    ap.add_argument('--sample-every', type=int, help='sample rate in updates (default 15)')
     ap.add_argument('--watch', help='collision objects OBJ,... whose matrix translations are sampled')
     ap.add_argument('--probe', help='X:Z;... points whose highest floor (object, y) is sampled')
     ap.add_argument('--random-item-num', type=int, help="vb_counter at the load (AddItemInstList's RandomItemNum seed)")
@@ -209,6 +210,8 @@ def main():
         cmd += ['place0=1']
     if a.powerup:
         cmd += [f'powerup={a.powerup}']
+    if a.sample_every:
+        cmd += [f'sample_every={a.sample_every}']
     if a.watch:
         cmd += [f'watch={a.watch}']
     if a.probe:

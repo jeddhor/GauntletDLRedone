@@ -309,3 +309,22 @@ instance coordinate becomes +0.0 (I2 item 257, a generator at instance x
 that add to the record translation (item_runtime.rs); before, native kept
 −0.0 for the whole level. D3's BRIDGEPAD 353 (matrix [1][0] −0.0 at load)
 is floor-parented and already became +0.0 through chain_world.
+
+## Item culling under the boss and trigger cameras (2026-10-24)
+
+ProcessItems sets +0xd8 bit 0x4000 from ItemVisible 0x153ad0 (outside the
+stage start): MBWorldSphereVisible(+0xe8, +0x50) against the MB window's
+camera, then, while StdCam ≠ 0 and newcam_mode is 1 or 2, the squared
+distance from StdCam +0xa4 (its target) against ITEM_ACTIVE_DIST
+(instructions read, ghidra-items5). ItemCollSub tests an item only with
++0xd8 & 0x4040, so a culled trigger, gate or key cannot be touched. The
+window camera is whichever camera last ran MBCameraUpdate — StdCam, the
+boss camera or a trigger camera. Native built the culling view from the
+window's rows but the StdCam record's eye, which the boss camera never
+updates: in I5 the raft's pad (trigger 40, flags 0x50a, bound object 111)
+stayed culled from the bot's approach, so the raft never left and the
+yeti's arena was unreachable on foot (bosses.md: "I5's on-foot route to
+the arena is still not shown"). sync_view now takes the window's eye
+(pb eye, written by every MBCameraUpdate); with it the traversal bot walks
+from the start onto the pad, rides the raft (~180 updates, about 12.8 units
+south) and enters the arena (game-run, bot route hint to item 40).

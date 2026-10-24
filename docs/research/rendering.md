@@ -785,3 +785,18 @@ reference 525 (56.0/36.6/11.6); native frames at the scene-tower-v3 camera
 inside the reference's frame-to-frame range (the reference's own consecutive
 frames differ by 32). The dump and scene cameras are close but not
 identical (both the Tower start).
+
+## Hit flash (2026-10-24)
+
+The knockback flash (pcontact: SetSkinFX(1, TextureWhite, 1, 1);
+DoProcessSkinFX: MBTreeSetAltTex −4 and MBTreeSetAmbientAdd 999) draws the
+player as a flat pale-green silhouette, not white: POWERUPS' AAAWHITE is an
+8×8 format-16 texture whose every index is CLUT entry 0, 0xdf97 =
+(184, 224, 184), and the keep-A pass modulates it by program A's base,
+which the add saturates at 128 (min(ambient + light, 128)). Reference: the
+B4 combat capture lvl-B4-play-v1 stepped to vblank 132 with the trace's
+schedule (trace-B4-combat-v1 shows +0x7b4 = 1 at steps 132..135; no guest
+write) — screenshot ref-b4-flash-v1.png and GS dump …20261024040218,
+replayed by tools/python/gs_replay.py (gsreplay-b4flash-v1): the silhouette
+averages 183/220/183. Native frames of B4, C3 and J6 (scene batch
+2026-10-24) show the same silhouette at 179/219/179.

@@ -16,6 +16,7 @@ scene-<tag>-ref.png / -native.png and the side-by-side scene-<tag>.png.
 | First levels | A1, B1, C1, D1, E1, F1, G1, H1, I1, J1, K2 | actual reference (warped captures labelled), same camera |
 | Boss arenas | A5, B6, C5, D5, E2, F2, G5, H4, I5, J5, K5 | actual reference, same camera |
 | Features | A1 statue, golem, Death; G1 mip levels | actual reference, same camera |
+| Every other level (2026-10-24) | A2 A3 A4 A6 B2 B3 B4 B5 C2 C3 C4 D2 D3 D4 G2 G3 G4 H2 H3 I2 I3 I4 J2 J3 J4 J6 K1 K3 K4 S1–S9 (scene-<level>-v1; B2/D3/I2 from their warped start captures, the rest from lvl-<L>-play-v1) | actual reference, same camera |
 
 Fixed through these comparisons (rendering.md, textures.md, hud.md):
 materials and GS blend/test state, lightmaps and their CLUT, mip LOD
@@ -25,6 +26,16 @@ body, E2's falling slabs, the inverted ProcessItemWobjs fade (the Tower's
 podium and beams), point lights and the VU1 lighting formula, the frame's
 PSMCT16S + dither output, texture modifiers, skins, chrome, particle
 systems, effect trees.
+
+With these every one of the 61 levels has a reference frame beside the
+native one at the same camera. The 2026-10-24 set shows no missing model,
+material or lighting layer; its differences are the moment (trap spikes up
+or down, spinning gems edge-on or face-on, caustic and tile phases, enemy
+counts and health after the native's 12 idle seconds). The pale-green
+player silhouette in the native B4, C3 and J6 frames is the original's hit
+flash, checked against a reference GS dump (rendering.md "Hit flash"); the
+Tower's crystal brightness is phase spread (rendering.md "GS dump software
+replay").
 
 Open (unknowns.md, rendering.md): the GS's per-draw integer truncation of
 lighting (colours can differ by one or two steps); critter broken-part models use the

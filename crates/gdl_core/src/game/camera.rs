@@ -2460,9 +2460,15 @@ impl super::Game {
         self.globals.camera_90 = fx;
         self.globals.camera_98 = fz;
         if let Some(rest) = &self.camera_rest {
+            // MBWorldSphereVisible culls with the MB window's camera — rows
+            // and eye as the last MBCameraUpdate left them, whichever camera
+            // (StdCam, the boss camera, a trigger camera) made it; ItemVisible's
+            // distance test reads StdCam +0xa4 (the target). The StdCam
+            // record's own eye is stale while the boss camera runs (I5: the
+            // raft's pad, item 40, stayed culled and could not be touched).
             self.camera = Some(super::item_runtime::Camera {
                 basis: cam.pb.cam_rows,
-                eye: cam.std.v3(o::EYE),
+                eye: cam.pb.eye,
                 target: cam.std.v3(o::TARGET),
                 planes: rest.planes,
                 newcam_mode: self.newcam_mode,

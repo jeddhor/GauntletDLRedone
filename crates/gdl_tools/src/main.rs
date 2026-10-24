@@ -3748,7 +3748,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                 if level_end.is_none() && explore::level_ended(&game) {
                     level_end = Some(f);
                 }
-                if f % 15 == 0 || f + 1 == frames || (opts.contains_key("weapon") && f % 3 == 0) {
+                // sample_every=N: the sample rate (default every 15 updates).
+                let every: usize = opts.get("sample_every").and_then(|v| v.parse().ok()).filter(|&n| n > 0).unwrap_or(15);
+                if f % every == 0 || f + 1 == frames || (opts.contains_key("weapon") && f % 3 == 0) {
                     let r = &game.players[0];
                     // watch=OBJ,...: those collision objects' matrix translations.
                     let watch: Vec<_> = opts.get("watch").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).map(|o| serde_json::json!([o, game.collision.object_matrix(o).ok().map(|m| m[3]), game.collision.object_matrix(o).ok().map(|m| [m[0], m[1], m[2]])])).collect()).unwrap_or_default();

@@ -8,7 +8,8 @@
 //! The archive holds one state per cell — player 0's position in boxes of
 //! BOX × BOX_Y × BOX, the keys held and a progress count (keys picked up,
 //! gates opened, triggers set, legend items taken: kind 1 subtype 2 or 0xd
-//! and kind 7 records gone, kind 5 records with +0xde or +0xe2 set) — the
+//! records gone, kind 7 records gone or with their state +0xdc set, kind 5
+//! records with +0xde or +0xe2 set) — the
 //! first state that reached it in the fewest updates. Each iteration restores a chosen cell and plays one
 //! macro:
 //! - random: one of the eight d-pad directions or none for MIN_LEN..=MAX_LEN
@@ -198,9 +199,12 @@ impl Progress {
             let r = &g.items.records[s];
             match item_kind(g, s) {
                 (5, _) => n += u32::from(self.start_active[s] && (!r.active() || r.i8_(0xde) != 0 || r.u8_(0xe2) != 0)),
-                // Gates, keys and the realm's legend item (kind 1 subtype 0xd,
+                // A gate stays an active record once opened: its state +0xdc
+                // leaves 0 (1 opening, 2 open; ItemCollSub stops testing it).
+                (7, _) => n += u32::from(self.start_active[s] && (!r.active() || r.i8_(0xdc) != 0)),
+                // Keys and the realm's legend item (kind 1 subtype 0xd,
                 // PlayerGiveLegendItem: the bosses need it).
-                (7, _) | (1, 2) | (1, 0xd) => n += u32::from(self.start_active[s] && !r.active()),
+                (1, 2) | (1, 0xd) => n += u32::from(self.start_active[s] && !r.active()),
                 _ => {}
             }
         }
@@ -277,7 +281,7 @@ fn interest_items(g: &Game) -> Vec<usize> {
         let n = match item_kind(g, s) {
             (1, 2) | (2, _) => 1,
             (5, _) if r.i8_(0xde) == 0 && r.u8_(0xe2) == 0 => 1,
-            (7, _) if 0 < keys => 1,
+            (7, _) if 0 < keys && r.i8_(0xdc) == 0 => 1,
             (9, _) | (1, 0xd) => 3,
             _ => 0,
         };
@@ -621,7 +625,7 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
             if !matches!((kind, sub), (5, _) | (7, _) | (1, 2) | (1, 0xd) | (9, _)) || !prog.start_active[s] {
                 continue;
             }
-            let gone = !r.active() || (kind == 5 && (r.i8_(0xde) != 0 || r.u8_(0xe2) != 0));
+            let gone = !r.active() || (kind == 5 && (r.i8_(0xde) != 0 || r.u8_(0xe2) != 0)) || (kind == 7 && r.i8_(0xdc) != 0);
             let row = serde_json::json!([s, kind, sub, r.v3(0x40).map(|v| (v * 10.0).round() / 10.0)]);
             if gone && kind != 9 { done.push(row) } else { left.push(row) }
         }
