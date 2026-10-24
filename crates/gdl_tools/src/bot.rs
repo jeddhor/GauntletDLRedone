@@ -43,6 +43,8 @@ const STEP_UP: f32 = 2.0;
 const HEADROOM: f32 = 3.0;
 const STRICT_RADIUS: f32 = 1.2;
 const HARD_COST: f32 = 20.0;
+/// Shot switches are fired at from within this distance.
+const SHOOT_RANGE: f32 = 9.0;
 const DROP: f32 = 12.0;
 const STUCK: usize = 45;
 const DWELL: f32 = 2.0;
@@ -471,6 +473,21 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
             continue;
         }
         let q = g.items.records[s].v3(0x40);
+        // A shot switch (kind 5 subtype 0x1f: WeaponCheckItemCollision lets
+        // missiles hit it; D2's elevator call 405 sits 5 units above the
+        // floor): any reachable node within SHOOT_RANGE, nearest first.
+        if item_kind(g, s) == (5, 0x1f) {
+            // Not from above it: the shots fly level (D2's 405 was hit from
+            // the floor 5 units below, missed from the one 4 units above).
+            let score = |n: usize| dist_xz(nav.pts[n], q) + if q[1] < nav.pts[n][1] { 20.0 } else { 0.0 };
+            let best = (0..nav.pts.len())
+                .filter(|&n| !nav.adj[n].is_empty() && dist_xz(nav.pts[n], q) < SHOOT_RANGE && (q[1] - nav.pts[n][1]).abs() < 8.0)
+                .min_by(|&a, &c| score(a).total_cmp(&score(c)));
+            if let Some(n) = best {
+                out.push((s, n));
+            }
+            continue;
+        }
         let k = key(q[0], q[2]);
         let mut best: Option<(f32, usize)> = None;
         for dx in -1..=1 {
@@ -512,6 +529,8 @@ pub struct Bot {
     stuck_goal_counts: HashMap<usize, usize>,
     /// When a given-up goal was last reopened for being near.
     reopened_at: HashMap<usize, usize>,
+    /// Steering at a closed gate's centre until the update (key held).
+    gate_push: Option<(usize, V3)>,
     visited_triggers: HashSet<usize>,
     /// Contacts per trigger (revisits are bounded) and the trigger now
     /// sought again (reached only on contact: its state stays set).
@@ -639,6 +658,7 @@ impl Bot {
             given_up: HashSet::new(),
             stuck_goal_counts: HashMap::new(),
             reopened_at: HashMap::new(),
+            gate_push: None,
             visited_triggers: HashSet::new(),
             trigger_visits: HashMap::new(),
             revisiting: None,
@@ -954,7 +974,10 @@ impl Bot {
         // Then, still out of reach, triggers already used, nearest the
         // treasure first and at most three contacts each: B5's javelin needs
         // lift 275 ridden again once trigger 279 has raised the bridge.
-        let mut revisit: Vec<usize> = if treasures.is_empty() {
+        // With no treasure left the same holds for the exits, after the
+        // exits and fresh triggers (D2: the bot came back down for keys and
+        // had to shoot the elevator call 405 again to climb to the exit).
+        let mut revisit: Vec<usize> = if tower_crystals {
             Vec::new()
         } else {
             active(g, &|k, _| k == 5)
@@ -962,13 +985,16 @@ impl Bot {
                 .filter(|&s| self.visited_triggers.contains(&s) && touchable(s) && self.trigger_visits.get(&s).copied().unwrap_or(0) < 3)
                 .collect()
         };
-        let to_treasure = |s: usize| treasures.iter().map(|&t| dist3(g.items.records[s].v3(0x40), g.items.records[t].v3(0x40))).fold(f32::MAX, f32::min);
-        revisit.sort_by(|&a, &b| to_treasure(a).total_cmp(&to_treasure(b)));
-        let (mut first_revisit, revisits) = (2, revisit.len());
+        let goals_left: Vec<usize> = if treasures.is_empty() { exits.clone() } else { treasures.clone() };
+        let to_goal = |s: usize| goals_left.iter().map(|&t| dist3(g.items.records[s].v3(0x40), g.items.records[t].v3(0x40))).fold(f32::MAX, f32::min);
+        revisit.sort_by(|&a, &b| to_goal(a).total_cmp(&to_goal(b)));
+        let (mut first_revisit, revisits) = (if treasures.is_empty() { 3 } else { 2 }, revisit.len());
         let mut order: Vec<Vec<usize>> = if tower_crystals {
             vec![near]
         } else if treasures.is_empty() {
-            vec![exits, near, secret]
+            let mut o = vec![exits, near, secret];
+            o.extend(revisit.into_iter().map(|s| vec![s]));
+            o
         } else {
             let mut o = vec![treasures, near];
             o.extend(revisit.into_iter().map(|s| vec![s]));
@@ -1103,7 +1129,9 @@ impl Bot {
                 // (+0xde) or a player's touch bits (+0xe2); near it without
                 // contact the bot steers onto the item's own position.
                 let r = &g.items.records[s];
-                let reached = !r.active() || (k == 5 && (r.u8_(0xe2) != 0 || (self.revisiting != Some(s) && r.i8_(0xde) != 0)));
+                // A shot switch is never touched: its state counts.
+                let shot = item_kind(g, s) == (5, 0x1f);
+                let reached = !r.active() || (k == 5 && (r.u8_(0xe2) != 0 || ((shot || self.revisiting != Some(s)) && r.i8_(0xde) != 0)));
                 if reached {
                     self.log.push(serde_json::json!({"update": f, "reached": s, "keys": g.players[0].i32_(KEYS)}));
                     self.bad_nodes.clear();
@@ -1197,6 +1225,19 @@ impl Bot {
                     && let (Some(&a), Some(&b)) = (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at))
                 {
                     self.gate_blocked.insert((self.nav.place(a), self.nav.place(b)));
+                }
+                // With a key: walk at the gate's centre for a while. A path
+                // node beside its centre leaves the player against the door
+                // frame short of the item's contact (D2's gate 116: 192 stuck
+                // events with seven keys; approached head-on it opens).
+                if at_gate && 0 < g.players[0].i32_(KEYS) {
+                    let gate = (0..g.items.records.len())
+                        .filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 7 && g.items.records[s].i8_(0xdc) == 0)
+                        .map(|s| g.items.records[s].v3(0x40))
+                        .min_by(|a, b| dist_xz(*a, p).total_cmp(&dist_xz(*b, p)));
+                    if let Some(q) = gate.filter(|q| dist_xz(*q, p) < 6.0) {
+                        self.gate_push = Some((f + 60, q));
+                    }
                 }
                 // A container, generator or obstacle item in the way (chests,
                 // generators, barrels and walls: kinds 2, 3 and 10): face it
@@ -1298,7 +1339,7 @@ impl Bot {
                 let enemies: Vec<_> = g.enemies.iter().enumerate().filter(|(_, e)| e.i32_(0xc8) != 0 && dist_xz(e.v3(0x40), p) < 4.0).map(|(k, e)| serde_json::json!([k, e.i32_(0), e.f32_(0x214)])).collect();
                 let items: Vec<_> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && dist_xz(g.items.records[s].v3(0x40), p) < 4.0).map(|s| serde_json::json!([s, item_kind(g, s), String::from_utf8_lossy(g.items.definitions[g.items.records[s].definition()].name())])).collect();
                 let next = self.path.get(self.at).map(|&n| self.nav.pts[n]);
-                self.log.push(serde_json::json!({"update": f, "stuck": p, "next": next, "enemies": enemies, "items": items, "stuck_goal": match self.goal { Some(Goal::Item(s)) => s, _ => usize::MAX }}));
+                self.log.push(serde_json::json!({"update": f, "stuck": p, "next": next, "enemies": enemies, "items": items, "keys": g.players[0].i32_(KEYS), "stuck_goal": match self.goal { Some(Goal::Item(s)) => s, _ => usize::MAX }}));
                 if self.hint_at < self.hints.len() {
                     self.hint_stuck += 1;
                     if 20 <= self.hint_stuck {
@@ -1355,6 +1396,22 @@ impl Bot {
             self.ride_holds = (None, 0);
             self.riding = 300;
             self.choose(f, g);
+        }
+        if let Some(Goal::Item(s)) = self.goal
+            && item_kind(g, s) == (5, 0x1f)
+            && dist_xz(g.items.records[s].v3(0x40), p) < SHOOT_RANGE
+            && (self.at + 2 >= self.path.len())
+        {
+            if (f / 6).is_multiple_of(2) {
+                pad.press(0xd);
+            }
+            return Self::steer(pad, g, p, g.items.records[s].v3(0x40));
+        }
+        if let Some((until, q)) = self.gate_push {
+            if f < until {
+                return Self::steer(pad, g, p, q);
+            }
+            self.gate_push = None;
         }
         if let Some((until, away)) = self.backoff {
             if f < until {
