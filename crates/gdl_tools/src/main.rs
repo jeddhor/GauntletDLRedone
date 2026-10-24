@@ -1905,6 +1905,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 None => None,
             },
             critters })?;
+        // DoEnemyPickupItems' links at load (generator slot, carried slot).
+        let carried_at_load: Vec<(usize, i16)> = game.items.records.iter().enumerate()
+            .filter(|(_, r)| r.active() && game.items.definitions[r.definition()].kind() == 4 && 0 <= r.i16_(0x102))
+            .map(|(k, r)| (k, r.i16_(0x102)))
+            .collect();
         // Replays of traces that start mid-level keep the start state's
         // RuneDispTimer rather than init_next_level's 300 (traces since
         // trace-a1-newgame-v2 seed their own per update).
@@ -3537,7 +3542,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             .filter(|(n, _)| !n.is_empty() && !game.item_anim_lib.contains_key(n))
             .map(|(n, k)| format!("{n} kind {k}"))
             .collect();
-        let report = serde_json::json!({"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
+        let report = serde_json::json!({"carried_at_load":carried_at_load,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
             "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
                 "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),

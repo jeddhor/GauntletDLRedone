@@ -225,3 +225,25 @@ world animations (node y 8.3038 vs loader 11.7344). A fresh-load capture would
 remove the mid-play ambiguity; it has not been taken.
 
 Hazard (type 8) active times use RandInt (decision 0002) and are excluded.
+
+## Items carried from the start (DoEnemyPickupItems, 2026-10-23)
+
+GauntWorldInit runs DoEnemyPickupItems 0x15a4d8 after SetupDynGrid and
+CreateDynobjGrid: every kind-4 item gets +0x102 = EnemyPickupItem
+0x15a340(+0xf0 enemy type, +0x40 position). For types 0x20 (gargoyle),
+0x21 (general) and 0x1d — the critter generators — it walks the item grid
+(StartItemGrid(−1.0) / NextGridItem order) for an active (+0xd8 ≠ −1, no
+0x8100 bits), shown (+0xe1 0) kind-1 item whose horizontal fqdist beats
+the best so far (from 2.0) with a height difference under 3.0; that item
+is carried — +0xe1 = 10, its tree hidden (MBTreeSetFlags 2) — and its slot
+returned (else −1). The generator's critter later drops it (+0xb54 →
+StartBagFX at death; item_runtime). Ported in gdl_core at the end of
+world init (instructions read); before this the pickup stayed visible
+and collectable under the statue. Check against the reference: the G1
+fixture (live-items-g1-fixture-v1, poison-fields-original) holds generator
+76 → item 416 and 88 → 239 with both items at +0xe1 10; the native load
+computes exactly [[76, 416], [88, 239]]. game-run's report now lists the
+links (carried_at_load): 38 of the 61 levels have such pairs (scratch
+scan). The whole-update replays seed their items from captures, so they
+were not affected by the missing port.
+

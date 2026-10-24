@@ -785,6 +785,8 @@ impl Game {
         for slot in 0..item_count {
             game.set_item_geo(slot).map_err(|e| format!("SetItemGeo: {}", e.0))?;
         }
+        // GauntWorldInit: DoEnemyPickupItems after the grids.
+        game.do_enemy_pickup_items().map_err(|e| format!("DoEnemyPickupItems: {}", e.0))?;
         if let Some(n) = load_note {
             game.log.unsupported.insert(n, 0);
         }

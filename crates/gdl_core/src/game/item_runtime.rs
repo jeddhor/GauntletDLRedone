@@ -643,6 +643,54 @@ impl Game {
         Ok(())
     }
 
+    /// DoEnemyPickupItems 0x15a4d8 (GauntWorldInit, after SetupDynGrid and
+    /// CreateDynobjGrid): every kind-4 item's +0x102 = EnemyPickupItem(its
+    /// enemy type +0xf0, its position +0x40).
+    pub(crate) fn do_enemy_pickup_items(&mut self) -> R<()> {
+        self.grid.place_items(&mut self.items)?;
+        for slot in 0..self.items.records.len() {
+            let r = &self.items.records[slot];
+            if !r.active() || self.items.definitions[r.definition()].kind() != 4 {
+                continue;
+            }
+            let (t, at) = (i32::from(r.i16_(0xf0)), r.v3(0x40));
+            let picked = self.enemy_pickup_item(t, at)?;
+            self.items.records[slot].set_i16(0x102, picked as i16);
+        }
+        Ok(())
+    }
+
+    /// EnemyPickupItem 0x15a340(type, position) (instructions read): for
+    /// enemy types 0x20, 0x21 and 0x1d, the item grid around `at`
+    /// (StartItemGrid(−1.0)) in NextGridItem order — an active (+0xd8 ≠ −1,
+    /// no 0x8100), shown (+0xe1 0) kind-1 item whose horizontal distance
+    /// (fqdist of x, z) beats the best so far (from 2.0) and whose height
+    /// differs by less than 3.0 — is carried: +0xe1 = 10 (hidden; the tree's
+    /// MBTreeSetFlags 2). Its slot, or −1.
+    fn enemy_pickup_item(&mut self, t: i32, at: [f32; 3]) -> R<i32> {
+        if !((t as u32).wrapping_sub(0x20) < 2 || t == 0x1d) {
+            return Ok(-1);
+        }
+        let (mut best, mut best_d) = (-1i32, 2.0f32);
+        for k in self.grid.items_near(&self.items, -1.0, at)? {
+            let r = &self.items.records[k];
+            let fl = r.i16_(0xd8);
+            if fl == -1 || (fl as u16) & 0x8100 != 0 || r.u8_(0xe1) != 0 || self.items.definitions[r.definition()].kind() != 1 {
+                continue;
+            }
+            let p = r.v3(0x40);
+            let (d, _) = crate::vu0::fqdist(sub(p[0], at[0])?, sub(p[2], at[2])?)?;
+            if d < best_d && sub(p[1], at[1])?.abs() < 3.0 {
+                best_d = d;
+                best = k as i32;
+            }
+        }
+        if let Ok(k) = usize::try_from(best) {
+            self.items.records[k].set_u8(0xe1, 10);
+        }
+        Ok(best)
+    }
+
     /// ProcessItems.
     pub fn process_items(&mut self) -> R<()> {
         let quiet = if self.globals.game_mode == 0x8008 {
