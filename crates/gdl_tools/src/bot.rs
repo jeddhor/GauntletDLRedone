@@ -1390,6 +1390,18 @@ impl Bot {
                         self.given_up.insert(s);
                     }
                 }
+                // An exploration target the bot is stuck short of counts as
+                // explored, and so does the waypoint it was stuck at (K1:
+                // 214 stuck events at one chest, the same column chosen
+                // again each time).
+                if let Some(Goal::Explore(n)) = self.goal {
+                    let q = self.nav.pts[n];
+                    self.visited_cols.insert(key(q[0], q[2]));
+                    if let Some(&w) = self.path.get(self.at) {
+                        let q = self.nav.pts[w];
+                        self.visited_cols.insert(key(q[0], q[2]));
+                    }
+                }
                 let enemies: Vec<_> = g.enemies.iter().enumerate().filter(|(_, e)| e.i32_(0xc8) != 0 && dist_xz(e.v3(0x40), p) < 4.0).map(|(k, e)| serde_json::json!([k, e.i32_(0), e.f32_(0x214)])).collect();
                 let items: Vec<_> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && dist_xz(g.items.records[s].v3(0x40), p) < 4.0).map(|s| serde_json::json!([s, item_kind(g, s), String::from_utf8_lossy(g.items.definitions[g.items.records[s].definition()].name())])).collect();
                 let next = self.path.get(self.at).map(|&n| self.nav.pts[n]);
