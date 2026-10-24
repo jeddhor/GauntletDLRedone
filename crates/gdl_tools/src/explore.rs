@@ -177,7 +177,7 @@ pub fn assist(g: &mut Game, start_health: f32) -> bool {
 }
 
 /// One update with port 0's `pad` (game-run's pads= path).
-fn step(g: &mut Game, pad: Pad, start_health: f32, assists: &mut usize) {
+pub(crate) fn step(g: &mut Game, pad: Pad, start_health: f32, assists: &mut usize) {
     if assist(g, start_health) {
         *assists += 1;
     }
@@ -240,7 +240,7 @@ fn dist_xz(a: V3, b: V3) -> f32 {
 }
 
 /// bot.rs's graph from the player (and `seeds`), on a copy of the state's collision.
-fn build_nav(g: &Game, seeds: &[V3]) -> Nav {
+pub(crate) fn build_nav(g: &Game, seeds: &[V3]) -> Nav {
     let mut c = g.collision.clone();
     let p = g.players[0].v3(0x50);
     let mut all = vec![p];

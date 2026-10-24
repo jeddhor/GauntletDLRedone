@@ -25,7 +25,8 @@
 //! bot throws for a while (barrels, chests, generators, enemies). With no
 //! goal for 900 updates it forgets given-up goals, gate blocks and explored
 //! columns and regrows the graph. Enemies within
-//! ATTACK_RANGE are attacked with throws (cross) on alternate updates.
+//! ATTACK_RANGE are attacked with throws (cross) every update, those within
+//! twice that in alternate 12-update windows. Below 60 % health, food first.
 //! Health assist (labelled DEBUG in the report): health is restored to its
 //! start value when it falls below 40 % of it.
 use gdl_core::collision::{CollisionWorld, Query};
@@ -248,7 +249,15 @@ impl Nav {
         if !matches!(c.floor_collide(FLOOR_RADIUS, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some()) {
             return None;
         }
-        Some(Self::edge_ok(c, a, b, radius))
+        let ok = Self::edge_ok(c, a, b, radius);
+        // A drop is walked off at the upper floor, where PlayerMotion tests
+        // walls: a railing there stops the player whatever lies above it
+        // (G2's walkway at y 9.7 over the spikes: the permissive sweep at
+        // 11.2 passed it, and the bot tried its drops for 3,000 updates).
+        if dy < -STEP_UP && !ok {
+            return None;
+        }
+        Some(ok)
     }
 
     fn edge_ok(c: &mut CollisionWorld, a: V3, b: V3, radius: f32) -> bool {
@@ -412,6 +421,53 @@ pub struct Hint {
     pub goto: Option<[f32; 3]>,
     pub radius: Option<f32>,
     pub wait: Option<usize>,
+}
+
+/// Reachable graph nodes within 2 units of each item (slot, node).
+pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for &s in slots {
+        // A trigger that counts only players standing on its bound object
+        // (+0xf4 0x100, e.g. lifts): the nearest node on that object (or a
+        // child of it) within the trigger's reach.
+        let r = &g.items.records[s];
+        if item_kind(g, s).0 == 5
+            && r.u16_(0xf4) & 0x100 != 0
+            && let Some(b) = r.u32_(0xf0).checked_sub(1).map(|o| o as usize)
+        {
+            let q = r.v3(0x40);
+            let reach = r.f32_(0xfc).max(r.f32_(0xe8)).max(2.5) + 1.5;
+            let on = |o: usize| o == b || g.collision.objects.get(o).is_some_and(|c| c.parent == Some(b));
+            let best = (0..nav.pts.len())
+                .filter(|&n| !nav.adj[n].is_empty() && on(nav.obj[n]) && dist_xz(nav.pts[n], q) < reach)
+                .min_by(|&a, &c| dist_xz(nav.pts[a], q).total_cmp(&dist_xz(nav.pts[c], q)));
+            if let Some(n) = best {
+                out.push((s, n));
+            }
+            continue;
+        }
+        let q = g.items.records[s].v3(0x40);
+        let k = key(q[0], q[2]);
+        let mut best: Option<(f32, usize)> = None;
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                for &n in nav.cols.get(&(k.0 + dx, k.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
+                    let p = nav.pts[n];
+                    if nav.adj[n].is_empty() || !(-3.0..=3.0).contains(&(q[1] - p[1])) {
+                        continue;
+                    }
+                    let d = dist_xz(p, q);
+                    if d < 2.5 && best.is_none_or(|b| d < b.0) {
+                        best = Some((d, n));
+                    }
+                }
+            }
+        }
+        if let Some((_, n)) = best {
+            out.push((s, n));
+        }
+    }
+    out
 }
 
 pub struct Bot {
@@ -638,49 +694,7 @@ impl Bot {
 
     /// Reachable graph nodes within 2 units of each item (slot, node).
     fn item_nodes(&self, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
-        let mut out = Vec::new();
-        for &s in slots {
-            // A trigger that counts only players standing on its bound object
-            // (+0xf4 0x100, e.g. lifts): the nearest node on that object (or a
-            // child of it) within the trigger's reach.
-            let r = &g.items.records[s];
-            if item_kind(g, s).0 == 5
-                && r.u16_(0xf4) & 0x100 != 0
-                && let Some(b) = r.u32_(0xf0).checked_sub(1).map(|o| o as usize)
-            {
-                let q = r.v3(0x40);
-                let reach = r.f32_(0xfc).max(r.f32_(0xe8)).max(2.5) + 1.5;
-                let on = |o: usize| o == b || g.collision.objects.get(o).is_some_and(|c| c.parent == Some(b));
-                let best = (0..self.nav.pts.len())
-                    .filter(|&n| !self.nav.adj[n].is_empty() && on(self.nav.obj[n]) && dist_xz(self.nav.pts[n], q) < reach)
-                    .min_by(|&a, &c| dist_xz(self.nav.pts[a], q).total_cmp(&dist_xz(self.nav.pts[c], q)));
-                if let Some(n) = best {
-                    out.push((s, n));
-                }
-                continue;
-            }
-            let q = g.items.records[s].v3(0x40);
-            let k = key(q[0], q[2]);
-            let mut best: Option<(f32, usize)> = None;
-            for dx in -1..=1 {
-                for dz in -1..=1 {
-                    for &n in self.nav.cols.get(&(k.0 + dx, k.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
-                        let p = self.nav.pts[n];
-                        if self.nav.adj[n].is_empty() || !(-3.0..=3.0).contains(&(q[1] - p[1])) {
-                            continue;
-                        }
-                        let d = dist_xz(p, q);
-                        if d < 2.5 && best.is_none_or(|b| d < b.0) {
-                            best = Some((d, n));
-                        }
-                    }
-                }
-            }
-            if let Some((_, n)) = best {
-                out.push((s, n));
-            }
-        }
-        out
+        item_nodes(&self.nav, g, slots)
     }
 
     /// Picks the next goal. The graph is regrown from the player only when
@@ -894,8 +908,8 @@ impl Bot {
         };
         let to_treasure = |s: usize| treasures.iter().map(|&t| dist3(g.items.records[s].v3(0x40), g.items.records[t].v3(0x40))).fold(f32::MAX, f32::min);
         revisit.sort_by(|&a, &b| to_treasure(a).total_cmp(&to_treasure(b)));
-        let (first_revisit, revisits) = (2, revisit.len());
-        let order: Vec<Vec<usize>> = if tower_crystals {
+        let (mut first_revisit, revisits) = (2, revisit.len());
+        let mut order: Vec<Vec<usize>> = if tower_crystals {
             vec![near]
         } else if treasures.is_empty() {
             vec![exits, near, secret]
@@ -906,6 +920,18 @@ impl Bot {
             o.push(secret);
             o
         };
+        // Hungry (under 60 % of the start health): food first (kind 1
+        // subtype 3; BADMEAT poisons).
+        if g.players[0].f32_(HEALTH) < self.start_health * 0.6 {
+            let food = active(g, &|k, t| k == 1 && t == 3)
+                .into_iter()
+                .filter(|&s| g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT")
+                .collect::<Vec<_>>();
+            if !food.is_empty() {
+                order.insert(0, food);
+                first_revisit += 1;
+            }
+        }
         self.revisiting = None;
         for (li, list) in order.into_iter().enumerate() {
             let list: Vec<usize> = list.into_iter().filter(|s| !self.given_up.contains(s)).collect();
@@ -1300,10 +1326,15 @@ impl Bot {
             pad.press(0xd);
             return Self::steer(pad, g, p, bp);
         }
-        let enemy = Self::nearest_foe(g, p, ATTACK_RANGE);
-        // Attack in windows (12 updates fighting, 12 moving): holding attack
-        // keeps the player in its attack actions, and generators refill.
-        let fighting = (f / 12).is_multiple_of(2);
+        // Enemies within ATTACK_RANGE: attack every update. Farther, up
+        // to twice that: attack in windows (12 updates fighting, 12 moving;
+        // holding attack keeps the player in its attack actions). Firing
+        // only at close range let crowds reach the player: no-assist G1
+        // died in all three tries by update 11714; with ranged fire two of
+        // three survived 60,000 updates (health 308 and 403 of 483).
+        let near = Self::nearest_foe(g, p, ATTACK_RANGE);
+        let enemy = near.or_else(|| Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE));
+        let fighting = (f / 12).is_multiple_of(2) || near.is_some();
         let target = match enemy.filter(|_| fighting) {
             Some((_, at)) => {
                 pad.press(0xd);

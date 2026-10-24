@@ -1,5 +1,6 @@
 mod bot;
 mod explore;
+mod puzzle;
 
 use gdl_formats::texdef::TextureTable;
 use gdl_formats::wad::{Entry, Limits, Wad};
@@ -3580,6 +3581,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let mut team = Vec::new();
         // bot=1 (with pads=): the traversal bot drives port 0 (bot.rs).
         let mut traversal: Option<bot::Bot> = None;
+        let mut plan_report: Option<serde_json::Value> = None;
         // explore=BUDGET (with pads=): the state search (explore.rs) from this
         // state; its script then replays here from the same state. assist=1
         // (implied by explore): the bot's DEBUG health assist before each
@@ -3649,6 +3651,14 @@ fn run() -> Result<(), Box<dyn Error>> {
                     if let Some(h) = opts.get("hints") {
                         let hints: Vec<bot::Hint> = serde_json::from_slice(&bounded_read(Path::new(h), 1024 * 1024)?)?;
                         b = b.with_hints(hints);
+                    } else if opts.contains_key("plan") {
+                        // plan=1: the DEBUG trigger planner's sequence as route
+                        // hints (puzzle.rs; its probes run on copies).
+                        let (hints, rep) = puzzle::plan(&game);
+                        plan_report = Some(rep);
+                        if !hints.is_empty() {
+                            b = b.with_hints(hints);
+                        }
                     }
                     traversal = Some(b);
                 }
@@ -3864,7 +3874,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             .filter(|(n, _)| !n.is_empty() && !game.item_anim_lib.contains_key(n))
             .map(|(n, k)| format!("{n} kind {k}"))
             .collect();
-        let mut report = serde_json::json!({"carried_at_load":carried_at_load,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
+        let mut report = serde_json::json!({"carried_at_load":carried_at_load,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"plan":plan_report,"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
             "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
                 "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
