@@ -842,9 +842,11 @@ impl Game {
         game.newcam_mode = s.camera.newcam_mode;
         // GauntWorldInit 0x162e38: QuestItemState 1 for the first active
         // player holding this world's legend item (PlayerHasLegendItem).
+        // The BossType test is unsigned (0x162f08 sltiu 0x2b): a level
+        // without a boss (-1) skips it and leaves +0x80c as carried.
         game.globals.quest_item_state = 0;
         game.quest_item_timer = 0.0;
-        if game.globals.boss_type < 0x2b {
+        if quest_setup_applies(game.globals.boss_type) {
             for k in 0..4 {
                 if !matches!(game.players[k].i32_(0xfc), 1 | 3 | 5) {
                     continue;
@@ -1131,5 +1133,22 @@ impl Game {
             self.players[player].set_u32(0x888, 0);
         }
         Ok(())
+    }
+}
+
+/// GauntWorldInit 0x162f08 `sltiu v0,v0,0x2b`: the legend-item quest setup
+/// runs for BossType 0..0x2a only (unsigned; -1 = no boss skips it).
+fn quest_setup_applies(boss_type: i32) -> bool {
+    (boss_type as u32) < 0x2b
+}
+
+#[cfg(test)]
+mod quest_tests {
+    #[test]
+    fn quest_setup_test_is_unsigned() {
+        assert!(super::quest_setup_applies(0));
+        assert!(super::quest_setup_applies(0x2a));
+        assert!(!super::quest_setup_applies(0x2b));
+        assert!(!super::quest_setup_applies(-1));
     }
 }
