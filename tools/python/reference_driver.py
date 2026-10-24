@@ -12,8 +12,10 @@ according to PINE's status, ["wait", s], ["shot", label] (the render window),
 ["status"] (PINE status, game_mode), ["dump", label, address, size]
 (EE bytes to dump-label.bin), ["gsdump"] (a single-frame GS dump through
 the Tools menu — Alt+T, then the item's mnemonic G — while running; waits
-for the complete file in the private snaps directory). No other key can be
-sent: the
+for the complete file in the private snaps directory), ["capture",
+"start"|"stop"] (the System menu's Video Capture by mouse; Return accepts
+the save dialog's default new file in the private videos directory). No
+other key can be sent: the
 function-key hotkeys (savestate saves among them) are never pressed. Frames
 and output go to private/runs/reference-TAG/. Use only with the private
 reference launched by launch_reference.py; slot files are not touched.
@@ -160,6 +162,48 @@ def serve(tag):
                         if z.eof:
                             done = f
                 out.append(f'gsdump {done}' if done else 'gsdump did not complete')
+            elif kind == 'capture':
+                # ["capture", "start"|"stop"]: the System menu's Video Capture
+                # by mouse (the menu mnemonics did not reach the item; a menu
+                # left open highlights Shut Down, so no keys are sent to it):
+                # click System (33, 36), then Video Capture (78, 325) — the
+                # reference window's layout on the private Xvfb, checked by a
+                # screenshot of the open menu. Start opens a save dialog whose
+                # default is a new timestamped file in the private videos
+                # directory: the dialog is focused and Return accepts it. The
+                # recording's audio is the SPU2 output in emulated time.
+                videos = ROOT / 'private/reference/config/PCSX2/videos'
+                before = set(videos.glob('*')) if videos.exists() else set()
+                if not focus():
+                    out.append('capture needs the reference in focus')
+                    continue
+                xdo('mousemove', '33', '36')
+                time.sleep(0.3)
+                xdo('click', '1')
+                time.sleep(1.0)
+                xdo('mousemove', '78', '325')
+                time.sleep(0.4)
+                xdo('click', '1')
+                if st[1] == 'start':
+                    dialog = None
+                    for _ in range(20):
+                        time.sleep(0.5)
+                        found = [w for w in xdo('search', '--onlyvisible', '--name', 'Video Capture').split() if w.isdigit()]
+                        if found:
+                            dialog = found[0]
+                            break
+                    if dialog is None:
+                        out.append('capture dialog not found')
+                        continue
+                    xdo('windowfocus', '--sync', dialog)
+                    time.sleep(0.3)
+                    xdo('key', '--delay', '50', 'Return')
+                    time.sleep(2.0)
+                    new = sorted(set(videos.glob('*')) - before) if videos.exists() else []
+                    out.append(f'capture started {[str(f) for f in new]}')
+                else:
+                    time.sleep(3.0)
+                    out.append(f'capture stopped {[str(f) for f in sorted(videos.glob("*"))][-3:] if videos.exists() else []}')
             elif kind == 'dump':
                 # ["dump", label, address, size]: EE bytes to a new file.
                 label, addr, size = st[1], int(str(st[2]), 0), int(str(st[3]), 0)

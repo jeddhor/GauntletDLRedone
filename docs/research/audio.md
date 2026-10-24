@@ -216,9 +216,32 @@ chest view, presentation not ported), the option menus' burn on close
 scroll), bank management (AudioLoadBank/ReplaceBank/UnloadPart: the host
 loads banks on demand). Replays r51 = r50 (sounds are events).
 
+## Reference output capture (2026-10-24)
+
+PCSX2's System → Video Capture records the SPU2 output (after its mix
+clamp and output DC filter) in emulated time, AAC 48 kHz stereo
+(reference_driver.py ["capture", "start"|"stop"]; private capture
+ref-audio-g1-v1.mp4: the Poison Fields fixture, player idle, 86.5 s).
+tools/python/audio_compare.py locates a window of it in the native decode
+of an ADS stream (gdl_tools ads-pcm) by cross-correlation and fits gains:
+the fixture's music is TOWN1 (correlation 0.966 left, 0.967 right over
+8 s; TOWN2 0.10), and the spectrum matches the native decode within
+±0.6 dB from 90 Hz to 3.5 kHz; above, the capture falls (−2.2 dB at 7 kHz,
+−5.7 dB at 11 kHz, −10.5 dB at 14 kHz: the SPU's 4-point interpolation and
+the AAC encoder), below 60 Hz the output DC filter takes up to 2.7 dB
+(private/reports/audio-compare-g1-TOWN1-v1.json).
+
+Level (open): volMusic is 128 in the captures (0x21f6c8) and G1's LEVL
++0x94 factor is 1.0, so the stream volume word is 128 — AdsSetVolume gain
+(128 × 0x1fff >> 8) / 0x4000 = 0.25 of full scale, which the native mixer
+outputs — but the capture fits 0.0754 (the word 39's gain): the reference
+chain after AdsSetVolume carries a further ×0.30 (−10.4 dB) on the music
+that native lacks. Whether the voices see the same factor (the
+music/effects balance) needs an effects measurement; not yet done.
+
 ## Not yet
 
-Tower coin sounds, an SPU-level output comparison (resampling filter and
-mix saturation only; envelope, reverb and pitch skew settled above), the
-+0xf8 world-node motion of moving sound items (the position stays the
-placement), AudioLoadStage bank residency (the host loads banks on demand).
+Tower coin sounds, the output level and music/effects balance against the
+reference capture (above), the SPU's interpolation filter (provenance:
+unknowns.md), AudioLoadStage bank residency (the host loads banks on
+demand). Sound items follow their +0xf8 world node (process_sound_item).

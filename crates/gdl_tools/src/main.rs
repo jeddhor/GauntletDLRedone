@@ -3915,6 +3915,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "ads-pcm" {
+        // ads-pcm STREAM.ADS NEW_OUT.raw — the native ADS decoder's PCM
+        // (interleaved little-endian i16), with "rate channels frames" on
+        // stdout (audio comparisons; research only).
+        let bytes = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
+        let ads = gdl_formats::audio::Ads::parse(&bytes)?;
+        let pcm = ads.decode(&bytes);
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        file.write_all(&pcm.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>())?;
+        println!("{} {} {}", ads.rate, ads.channels, pcm.len() / ads.channels as usize);
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "place-items" {
         // place-items WORLDS.PS2 NEW_REPORT.json — PlaceItem 0x153068 heights.
         let raw = bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?;
