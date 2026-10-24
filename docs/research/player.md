@@ -547,3 +547,28 @@ After the familiar (the whole part needs the player node +0x80):
 Seen in G1: the pojo alone without the player (run client-pw3-400), the
 level-99 head (client-lv99). Not compared with the reference.
 
+## Attached objects (PlayerProcessPowerups, 2026-10-23)
+
+Three object slots (MBNewObject on first use, MBSetObject to swap,
+MBRemoveNode when none applies):
+
+- Left hand (+0x704 on +0x6a4, player_lhand): the left boss gauntlet
+  (+0x138 0x8000, flags 0x9010), else RF_SHLD (+0x134 0x20000), FW_SHLD
+  (0x200000) or L_SHLD (0x400000) (0x810). While it holds one, base
+  classes (+8) 1 and 5 hide the hand's parent node and class 7 the hand
+  (MB flag 1, the node alone); cleared when it is gone.
+- Head (+0x70c on +0x6ac): BOSSHORNS (+0x138 0x1000), BOSSMASK (0x2000)
+  (0x9010), HEAD_HALO (+0x134 0x80000), HEAD_GAS (+0x134 0x2000),
+  HEAD_XRAY (+0x138 2) (0x810).
+- Right hand (+0x708 on +0x6a8; untouched while QuestItemState and the
+  legend stage +0x80c are set): the right boss gauntlet (+0x138 0x4000,
+  0x9010), SUPERXBOW (+0x130 0x100000, 0x810), HAMMER_HD (+0x130
+  0x10000000, 0x10). While it holds one, the held weapon (+0x6b8) is
+  hidden (MBTreeSetFlags 2) and the WEAP_HOLD effect tree deleted.
+
+gdl_play: hand_objects / present_hand_objects (objects searched in every
+loaded table, as MBOX_FindObject), the held weapon and WEAP_HOLD effect
+hidden under a right-hand object, LeftHandMesh. Seen in G1 with
+GDL_DEBUG_POWERUP 6:20000 (the mirror shield), 9:2 (x-ray) and 5:100000
+(the super crossbow) — runs client-hand-*. No reference capture.
+

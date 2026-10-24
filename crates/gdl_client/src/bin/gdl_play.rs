@@ -2177,6 +2177,12 @@ struct RigNode(usize, usize);
 #[derive(Component)]
 struct HeadMesh;
 
+/// A mesh of the left-hand node (false) or its parent (true): hidden (MB
+/// flag 1) while the left hand holds an object — the parent for base
+/// classes 1 and 5, the hand for class 7.
+#[derive(Component)]
+struct LeftHandMesh(bool);
+
 /// PlayerProcessPowerups' "It" sign: MBOX_NewObject(IT_SIGN, 0, player node,
 /// 0x10) while +0x92c (the It enemy's tag) is set and +0x93c bit 2 is clear,
 /// removed otherwise (the realm's ITEMS package holds IT_SIGN).
@@ -2424,6 +2430,15 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
 
 /// player_rhand[class] (ELF table of label pointers): the hand node the
 /// held weapon hangs from (load_player).
+/// A per-class node name table of the ELF (player_rhand / player_lhand).
+fn player_hand(elf_bytes: &[u8], table: &str, class: u32) -> Option<String> {
+    let elf = gdl_formats::elf::Elf::parse(elf_bytes).ok()?;
+    let table = elf.object(table).ok()?;
+    let p = u32::from_le_bytes(table.get(class as usize * 4..class as usize * 4 + 4)?.try_into().ok()?);
+    let s = elf.read(p, 16).ok()?;
+    Some(s.iter().take_while(|b| **b != 0).map(|b| char::from(*b)).collect())
+}
+
 fn player_rhand(elf_bytes: &[u8], class: u32) -> Option<String> {
     let elf = gdl_formats::elf::Elf::parse(elf_bytes).ok()?;
     let table = elf.object("player_rhand").ok()?;
@@ -2471,7 +2486,9 @@ fn present_hold_fx(
         let r = &g.players[h.slot];
         let t = (r.u32_(0x130) & 0xf) as usize;
         let tier = (r.i32_(0x2ac0) / 10).clamp(0, 9) as usize;
-        let label = g.effects.tables.dmg_type_desc.get(t).filter(|d| !d.is_empty()).map(|d| format!("WEAP_HOLD_{d}"));
+        // No held-weapon effect while the right hand holds an object.
+        let right = !right_hand_frozen(g, h.slot) && hand_objects(g, h.slot)[2].is_some();
+        let label = g.effects.tables.dmg_type_desc.get(t).filter(|d| !d.is_empty() && !right).map(|d| format!("WEAP_HOLD_{d}"));
         let key = label.as_ref().map(|l| format!("{l}:{tier}"));
         if h.key != key {
             commands.entity(e).despawn_related::<Children>();
@@ -2686,6 +2703,97 @@ fn present_powerup_trees(
     }
 }
 
+/// PlayerProcessPowerups' attached objects (MBNewObject / MBSetObject /
+/// MBRemoveNode): [left hand +0x704 on +0x6a4, head +0x70c on +0x6ac, right
+/// hand +0x708 on +0x6a8] with their MB flags. Left: the left boss gauntlet
+/// (+0x138 0x8000), else RF_SHLD (+0x134 0x20000), FW_SHLD (0x200000),
+/// L_SHLD (0x400000). Head: BOSSHORNS (+0x138 0x1000), BOSSMASK (0x2000),
+/// HEAD_HALO (+0x134 0x80000), HEAD_GAS (+0x134 0x2000), HEAD_XRAY (+0x138
+/// 2). Right (left as it was — None here — while QuestItemState and the
+/// legend stage +0x80c are set): the right boss gauntlet (+0x138 0x4000),
+/// SUPERXBOW (+0x130 0x100000), HAMMER_HD (+0x130 0x10000000).
+fn hand_objects(g: &Game, k: usize) -> [Option<(&'static str, u32)>; 3] {
+    let r = &g.players[k];
+    let (r130, r134, r138) = (r.u32_(0x130), r.u32_(0x134), r.u32_(0x138));
+    let left = if r138 & 0x8000 != 0 {
+        Some(("BOSSGAUNTL", 0x9010))
+    } else if r134 & 0x2_0000 != 0 {
+        Some(("RF_SHLD", 0x810))
+    } else if r134 & 0x20_0000 != 0 {
+        Some(("FW_SHLD", 0x810))
+    } else if r134 & 0x40_0000 != 0 {
+        Some(("L_SHLD", 0x810))
+    } else {
+        None
+    };
+    let head = if r138 & 0x1000 != 0 {
+        Some(("BOSSHORNS", 0x9010))
+    } else if r138 & 0x2000 != 0 {
+        Some(("BOSSMASK", 0x9010))
+    } else if r134 & 0x8_0000 != 0 {
+        Some(("HEAD_HALO", 0x810))
+    } else if r134 & 0x2000 != 0 {
+        Some(("HEAD_GAS", 0x810))
+    } else if r138 & 2 != 0 {
+        Some(("HEAD_XRAY", 0x810))
+    } else {
+        None
+    };
+    let right = if r138 & 0x4000 != 0 {
+        Some(("BOSSGAUNTR", 0x9010))
+    } else if r130 & 0x10_0000 != 0 {
+        Some(("SUPERXBOW", 0x810))
+    } else if r130 & 0x1000_0000 != 0 {
+        Some(("HAMMER_HD", 0x10))
+    } else {
+        None
+    };
+    [left, head, right]
+}
+
+/// The right-hand slot is kept as it was while QuestItemState and the
+/// player's legend stage (+0x80c) are set.
+fn right_hand_frozen(g: &Game, k: usize) -> bool {
+    g.globals.quest_item_state != 0 && g.players[k].i32_(0x80c) != 0
+}
+
+/// One of a player's three attached-object anchors (0 left hand, 1 head, 2
+/// right hand).
+#[derive(Component)]
+struct HandObject {
+    slot: usize,
+    at: usize,
+    key: Option<&'static str>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn present_hand_objects(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    libs: Res<Libraries>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut variants: ResMut<PartVariants>,
+    mut pending: ResMut<PendingTreePsys>,
+    mut q: Query<(Entity, &mut HandObject, &mut Visibility)>,
+) {
+    for (e, mut h, mut vis) in &mut q {
+        if h.at == 2 && right_hand_frozen(&sim.game, h.slot) {
+            continue;
+        }
+        let want = hand_objects(&sim.game, h.slot)[h.at.min(2)];
+        if h.key != want.map(|w| w.0) {
+            commands.entity(e).despawn_related::<Children>();
+            if let Some((label, flags)) = want
+                && let Some(parts) = libs.0.values().find_map(|l| l.by_label.get(label))
+            {
+                spawn_parts(&mut commands, e, vec![(Vec3::ZERO, parts.clone(), flags, None, None)], &mut materials, &mut variants, &mut pending);
+            }
+            h.key = want.map(|w| w.0);
+        }
+        *vis = if h.key.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+    }
+}
+
 fn present_special_texmods(sim: Res<Sim>, libs: Res<Libraries>, q: Query<(Entity, &SpecialTexmod)>, mut req: ResMut<MatRequests>, mut step: Local<(u64, u32)>) {
     // AFrame: one step per game update (DoSpecialTexmods runs per frame).
     let aframe = sim.updates;
@@ -2725,6 +2833,7 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
         character.objects.definitions.iter().filter(|d| d.label == label).flat_map(|d| parts.get(&(d.object_index as u32)).cloned().unwrap_or_default()).collect()
     };
     let rhand = player_rhand(&session.elf_bytes, pc.key.class);
+    let lhand = player_hand(&session.elf_bytes, "player_lhand", pc.key.class);
     // load_player: base classes (player_multiple_models) hold "WEAP_HOLD"
     // of the model package, an MBNewObject under the right hand (0x810).
     let weapon = object_parts("WEAP_HOLD");
@@ -2739,6 +2848,9 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
     let body = commands.spawn((CharacterRoot(slot), Transform::default(), vis)).id();
     commands.entity(root).add_child(body);
     let tree = &pc.rig.trees[0];
+    // The left hand's parent node (classes 1 and 5 hide it while the left
+    // hand holds an object; class 7 hides the hand itself).
+    let lhand_parent = lhand.as_ref().and_then(|l| tree.nodes.iter().find(|n| &n.label == l)).and_then(|n| tree.nodes.iter().find(|m| m.index as i32 == n.parent)).map(|m| m.label.clone());
     // Rig nodes pose by the class clip node of the same label (the root,
     // "UNNAMED" in the model, is clip node 0).
     let clip_nodes = &pc.clips.trees[0].nodes;
@@ -2754,8 +2866,28 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
                 if node.label == "HEAD" {
                     commands.entity(child).insert(HeadMesh);
                 }
+                if lhand.as_deref() == Some(node.label.as_str()) {
+                    commands.entity(child).insert(LeftHandMesh(false));
+                } else if lhand_parent.as_deref() == Some(node.label.as_str()) {
+                    commands.entity(child).insert(LeftHandMesh(true));
+                }
                 commands.entity(body).add_child(child);
             }
+        }
+        // PlayerProcessPowerups' attached-object anchors (left hand, head,
+        // right hand).
+        let hand_at = if lhand.as_deref() == Some(node.label.as_str()) {
+            Some(0)
+        } else if node.label == "HEAD" {
+            Some(1)
+        } else if rhand.as_deref() == Some(node.label.as_str()) {
+            Some(2)
+        } else {
+            None
+        };
+        if let Some(at) = hand_at {
+            let anchor = commands.spawn((HandObject { slot, at, key: None }, RigNode(pose, slot), Transform::default(), Visibility::Hidden)).id();
+            commands.entity(body).add_child(anchor);
         }
         // PlayerProcessPowerups' head and wings anchors.
         let at = if node.label == "HEAD" {
@@ -3296,7 +3428,10 @@ fn present_weapon_trails(
         }
     }
     for (h, mut vis) in &mut held {
-        let hide = sim.weapon_hidden.get(h.0).copied().unwrap_or(false);
+        // PlayerProcessPowerups hides the held weapon (+0x6b8,
+        // MBTreeSetFlags 2) while the right hand holds an object (+0x708).
+        let right = h.0 < 4 && !right_hand_frozen(&sim.game, h.0) && hand_objects(&sim.game, h.0)[2].is_some();
+        let hide = right || sim.weapon_hidden.get(h.0).copied().unwrap_or(false);
         let want = if hide { Visibility::Hidden } else { Visibility::Inherited };
         if *vis != want {
             *vis = want;
@@ -5352,7 +5487,7 @@ fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) 
 
 type BodyQuery<'w, 's> = Query<'w, 's, (&'static CharacterRoot, &'static mut Transform, &'static mut Visibility), (Without<RigNode>, Without<FollowCamera>, Without<Slot>)>;
 type BarQuery<'w, 's> = Query<'w, 's, &'static mut Visibility, (With<LetterBox>, Without<CharacterRoot>, Without<RigNode>)>;
-type NodeQuery<'w, 's> = Query<'w, 's, (&'static RigNode, &'static mut Transform, Has<HeadMesh>, &'static mut Visibility), (Without<CharacterRoot>, Without<FollowCamera>, Without<Slot>)>;
+type NodeQuery<'w, 's> = Query<'w, 's, (&'static RigNode, &'static mut Transform, Has<HeadMesh>, &'static mut Visibility, Option<&'static LeftHandMesh>), (Without<CharacterRoot>, Without<FollowCamera>, Without<Slot>)>;
 type CameraQuery<'w, 's> = Query<'w, 's, (&'static mut Transform, &'static mut Projection), (With<FollowCamera>, Without<CharacterRoot>, Without<RigNode>, Without<Slot>)>;
 
 #[allow(clippy::too_many_arguments)]
@@ -5402,11 +5537,22 @@ fn present_player(
     // own model tree (+0x90, MBTreeSetFlags 2) — the player becomes the
     // pojo; shown again (once) when it wears off.
     let pojo: [bool; 4] = std::array::from_fn(|k| sim.game.players[k].u32_(0x138) & 0x400 != 0);
-    for (node, mut t, head, mut vis) in &mut nodes {
+    // The left hand's object hides the hand (class 7) or its parent
+    // (base classes 1, 5) — MB flag 1, the node alone.
+    let left_hide: [Option<bool>; 4] = std::array::from_fn(|k| {
+        let held = hand_objects(&sim.game, k)[0].is_some();
+        match sim.game.players[k].u32_(8) {
+            1 | 5 if held => Some(true),
+            7 if held => Some(false),
+            _ => None,
+        }
+    });
+    for (node, mut t, head, mut vis, left) in &mut nodes {
         let k = node.1.min(3);
-        if pojo[k] {
+        let left_hidden = left.is_some_and(|l| left_hide[k] == Some(l.0));
+        if pojo[k] || left_hidden {
             *vis = Visibility::Hidden;
-        } else if pojo_was[k] {
+        } else if pojo_was[k] || left.is_some() {
             *vis = Visibility::Inherited;
         }
         if let Some(p) = poses.get(node.1).and_then(|p| p.as_ref()).and_then(|pose| pose.get(node.0)) {
@@ -7676,7 +7822,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
