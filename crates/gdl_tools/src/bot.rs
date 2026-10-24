@@ -1033,7 +1033,19 @@ impl Bot {
                 {
                     self.gate_blocked.insert((self.nav.place(a), self.nav.place(b)));
                 }
+                // A container, generator or obstacle item in the way (chests,
+                // generators, barrels and walls: kinds 2, 3 and 10): face it
+                // while attacking (K3 b23: goals given up beside generators).
+                // It goes when destroyed (C1's corridor generator 231, radius
+                // 2, stopped the bot at its edge): attack longer and keep the
+                // edge open instead of routing away.
+                self.attack_at = (0..g.items.records.len())
+                    .filter(|&s| g.items.records[s].active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(g.items.records[s].v3(0x40), p) < 3.5)
+                    .map(|s| g.items.records[s].v3(0x40))
+                    .min_by(|a, b| dist_xz(*a, p).total_cmp(&dist_xz(*b, p)));
+                let breakable = self.attack_at.is_some();
                 if !at_gate
+                    && !breakable
                     && let (Some(&a), Some(&b)) = (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at))
                 {
                     let (pa, pb) = (self.nav.place(a), self.nav.place(b));
@@ -1070,19 +1082,12 @@ impl Bot {
                         }
                     }
                 }
-                self.attack_until = f + 40;
+                self.attack_until = f + if breakable { 150 } else { 40 };
                 // Back off briefly (away from the blocked waypoint) before the new route.
-                if let Some(&b) = self.path.get(self.at) {
+                if let (Some(&b), false) = (self.path.get(self.at), breakable) {
                     let q = self.nav.pts[b];
                     self.backoff = Some((f + 10, [2.0 * p[0] - q[0], p[1], 2.0 * p[2] - q[2]]));
                 }
-                // A container, generator or obstacle item in the way (chests,
-                // generators, barrels and walls: kinds 2, 3 and 10): face it
-                // while attacking (K3 b23: goals given up beside generators).
-                self.attack_at = (0..g.items.records.len())
-                    .filter(|&s| g.items.records[s].active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(g.items.records[s].v3(0x40), p) < 3.5)
-                    .map(|s| g.items.records[s].v3(0x40))
-                    .min_by(|a, b| dist_xz(*a, p).total_cmp(&dist_xz(*b, p)));
                 // No step taken from the located node: the node itself is out
                 // of reach from here (an item between); locate elsewhere.
                 if self.at == 0
