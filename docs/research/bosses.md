@@ -73,3 +73,25 @@ raft, fights the yeti from 5000 to 0 and the auto exit ends the level at
 update 30812 → 0xd00 (private/reports/game-run-I5-bot-start-v1.json). All
 eleven boss levels now end from their own start.
 
+
+## The critical path (2026-10-24)
+
+From the ported gates (tower.rs: WorldOpen 0x177778, HideExits 0x15b690;
+critter_ai.rs BossDeath; pickups.rs PlayerGiveRune):
+- An ordinary realm opens when a player holds all of its WorldCrystal set;
+  inside a realm, level n needs bit n−1 of that world's wave byte, so its
+  levels are played in order.
+- Each boss death gives the players in state 1 the shard bit of the realm's
+  place in WorldOrder (13, 7, 2, 1, 11, 4, 3, 9, 10, 5, 6, 8): G 1, B 2, A 3,
+  K 4, D 5, C 6, I 7, J 8, E 9, F 10, H 11.
+- The Temple (E) opens with shards 0x1fe — the eight ordinary bosses; Hell
+  (F) with 0x3fe (E2's too) and runes 0xfff; Battle (H) with 0x7fe (F2's
+  too); H4 (Garm, the ending) with all thirteen runes 0x1fff.
+- Rune stones (kind 1 subtype 10, one per level, PlayerGiveRune to every
+  player) lie in A3 B1 C1 D2 G1 G4 H3 I2 I3 J4 J6 K1 K3; legend items
+  (subtype 0xd) in A2 B5 C3 D4 E1 G3 I4 J2 K4 (item survey of all 61
+  levels' loads, game-run treasures).
+So the ending needs every realm's levels in order, each boss with its
+legend item, and all thirteen runes before H4: in effect every non-secret
+level. The traversal tools seek runes and legend items before exits and
+campaign_chain.py --require makes a level count only with them taken.
