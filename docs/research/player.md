@@ -577,3 +577,13 @@ hidden under a right-hand object, LeftHandMesh. Seen in G1 with
 GDL_DEBUG_POWERUP 6:20000 (the mirror shield), 9:2 (x-ray) and 5:100000
 (the super crossbow) — runs client-hand-*. No reference capture.
 
+## Player texture modifiers (DoPlayerTexMods 0x12f0a8, 2026-10-23)
+
+do_items runs DoTexMods on each present player's model package
+(PlayerModelData +0x24), clip package (+0x30) and SFX package (+0x48).
+On the disc the model packages hold <colour>_HANDGLOW (5 frames, divisor
+2: the magic classes' glowing hands; HYE/JAC/MED/TIG/WIZ variants) and the
+Jester's BOMB; the SFX packages the PIXIE_R/G/B frames; the clip packages
+none. gdl_play now spawns the model package's list with the character
+(spawn_body); the SFX lists already ran with the level's (texmod_packages).
+

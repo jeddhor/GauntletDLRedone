@@ -2840,6 +2840,14 @@ fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, sessio
 fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerChar, session: &Session, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<gdl_client::GsMaterial>) {
     let character = &pc.character;
     let set = gdl_client::materials_for(&character.objects, &character.table, &character.textures, images, materials);
+    // DoPlayerTexMods 0x12f0a8 (do_items): the model package's texture modifiers
+    // (PlayerModelData +0x24 — the magic classes' <colour>_HANDGLOW, 5
+    // frames; the Jester's BOMB); the SFX package's (+0x48) run with the
+    // level's lists (texmod_packages); the clip packages hold none.
+    if !character.anim_bytes.is_empty() {
+        let list = gdl_formats::animation::texmods(&character.anim_bytes).unwrap_or_default();
+        spawn_texmod_list(commands, &list, &set.label_index, &set.record_images, &[]);
+    }
     let (parts, _) = gdl_client::object_meshes(&character.objects, &set, materials, meshes);
     let object_parts = |label: &str| -> Vec<(Handle<Mesh>, Handle<gdl_client::GsMaterial>)> {
         character.objects.definitions.iter().filter(|d| d.label == label).flat_map(|d| parts.get(&(d.object_index as u32)).cloned().unwrap_or_default()).collect()
