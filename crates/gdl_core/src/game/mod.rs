@@ -311,6 +311,10 @@ pub struct Game {
     pub item_trees: std::collections::HashMap<usize, String>,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
+    /// PlayerProcessPowerups' AnimateATree sequence for each player's
+    /// attached powerup tree (+0x768; presentation reads it, the tree
+    /// itself is the client's).
+    pub powerup_tree_seq: [u8; 4],
     /// DoRockFly / DidRockFly (DoWorldEffects counts boss 0x2a's rock
     /// launches; ProcessItems launches subtype-0x33 rocks on a change).
     /// ResetItems zeroes both at level start.

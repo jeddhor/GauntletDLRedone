@@ -2464,7 +2464,7 @@ fn present_familiars(
                 spawn_parts(&mut commands, e, parts, &mut materials, &mut variants, &mut pending);
                 let tree = sources.packages.get(&pc.sfx_name).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, a.trees[i].sequences.first().map_or(30, |q| q.timing_factor))));
                 if let Some((tree, timing)) = tree {
-                    commands.entity(e).insert(EffectTree { pkg: pc.sfx_name.clone(), tree, start: g.globals.atime, timing: timing.max(1), slot: usize::MAX, looping: true });
+                    commands.entity(e).insert(EffectTree { pkg: pc.sfx_name.clone(), tree, start: g.globals.atime, timing: timing.max(1), slot: usize::MAX, looping: true, seq: 0 });
                 }
             }
             f.key = key;
@@ -2475,6 +2475,111 @@ fn present_familiars(
         let hidden = f.key.is_none() || (g.globals.game_mode == 0x4010 && r.u32_(0x138) & 0x80 != 0);
 
         *vis = if hidden { Visibility::Hidden } else { Visibility::Inherited };
+    }
+}
+
+/// Where PlayerProcessPowerups hangs the attached powerup tree (+0x768):
+/// the player's node (+0x80), its HEAD node (+0x6ac, load_player's
+/// "<prefix>HEAD") or, for WINGS, +0x80's first child's first child (MB
+/// node +0x78; HYPOTHESIS: children in creation order — the rig root's
+/// other child, DUMMY, has none — so ROOT's LOWERTORSO for the Sorceress).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PowerupAt {
+    Node,
+    Head,
+    Wings,
+}
+
+/// One of a player's three anchors for the attached powerup tree.
+#[derive(Component)]
+struct PowerupTree {
+    slot: usize,
+    at: PowerupAt,
+    key: Option<(&'static str, u8)>,
+}
+
+/// PlayerProcessPowerups 0x12d040's choice (InitPlayerMissiles' trees): the
+/// pojo (+0x138 0x400), the fire shield (+0x134 0x200000 during action
+/// 0x16; WEAPONS' FW_SHLD_ACTIVE), the phoenix (0x80), fire/acid/electric
+/// breath (0x10/0x20/0x40, HEAD_BREATHEF/A/E) or the wings (1), else none.
+fn powerup_tree_choice(r: &Record) -> Option<(&'static str, &'static str, PowerupAt)> {
+    let (r134, r138) = (r.u32_(0x134), r.u32_(0x138));
+    if r138 & 0x400 != 0 {
+        return Some(("POWERUPS", "POJO", PowerupAt::Node));
+    }
+    if r134 & 0x20_0000 != 0 && r.u32_(0x1e0) == 0x16 {
+        return Some(("WEAPONS", "FW_SHLD_ACTIVE", PowerupAt::Node));
+    }
+    [(0x80, "PHOENIX", PowerupAt::Node), (0x10, "HEAD_BREATHEF", PowerupAt::Head), (0x20, "HEAD_BREATHEA", PowerupAt::Head), (0x40, "HEAD_BREATHEE", PowerupAt::Head), (1, "WINGS", PowerupAt::Wings)]
+        .into_iter()
+        .find(|(bit, _, _)| r138 & bit != 0)
+        .map(|(_, label, at)| ("POWERUPS", label, at))
+}
+
+/// The attached powerup tree: spawned on the matching anchor, animated
+/// with the core's AnimateATree sequence (Game::powerup_tree_seq; a change
+/// restarts it), faded with MBTreeSetAlpha((1 − t) × 255) over the last
+/// second of the longest such powerup (t: kind-6 0x200000 / kind-9 0x4f1
+/// slots' remaining time).
+#[allow(clippy::too_many_arguments)]
+fn present_powerup_trees(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    libs: Res<Libraries>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut variants: ResMut<PartVariants>,
+    mut pending: ResMut<PendingTreePsys>,
+    mut req: ResMut<MatRequests>,
+    mut q: Query<(Entity, &mut PowerupTree, &mut Visibility, Option<&Children>)>,
+) {
+    let g = &sim.game;
+    for (e, mut t, mut vis, children) in &mut q {
+        let r = &g.players[t.slot];
+        let choice = powerup_tree_choice(r).filter(|c| c.2 == t.at);
+        let seq = g.powerup_tree_seq[t.slot];
+        let want = choice.map(|c| (c.1, seq));
+        if t.key != want {
+            let same_tree = t.key.map(|k| k.0) == want.map(|k| k.0);
+            if !same_tree {
+                commands.entity(e).despawn_related::<Children>();
+                commands.entity(e).remove::<EffectTree>();
+            }
+            if let Some((pkg, label, _)) = choice {
+                if !same_tree {
+                    let parts = tree_parts(&sources, &libs, pkg, label);
+                    spawn_parts(&mut commands, e, parts, &mut materials, &mut variants, &mut pending);
+                }
+                let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| {
+                    let i = a.trees.iter().position(|x| x.label == label)?;
+                    let s = usize::from(seq).min(a.trees[i].sequences.len().saturating_sub(1));
+                    Some((i, s, a.trees[i].sequences.get(s).map_or(30, |q| q.timing_factor)))
+                });
+                if let Some((tree, s, timing)) = tree {
+                    commands.entity(e).insert(EffectTree { pkg: pkg.to_string(), tree, start: g.globals.atime, timing: timing.max(1), slot: usize::MAX, looping: true, seq: s });
+                }
+            }
+            t.key = want;
+        }
+        *vis = if t.key.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+        // fVar18: the longest remaining time of the tree powerups.
+        let mut fade = -1.0f32;
+        for k in 0..8 {
+            let o = 0x144 + 16 * k;
+            let (time, kind, flags) = (r.f32_(o), r.i32_(o + 4), r.u32_(o + 12));
+            if time != 0.0 && ((kind == 6 && flags & 0x20_0000 != 0) || (kind == 9 && flags & 0x4f1 != 0)) && fade < time {
+                fade = time;
+            }
+        }
+        if t.key.is_some()
+            && (0.0..1.0).contains(&fade)
+            && let Some(children) = children
+        {
+            let v = ((1.0 - fade) * 255.0) as i32;
+            for c in children.iter() {
+                req.alpha(c, (255 - v) as f32 / 255.0);
+            }
+        }
     }
 }
 
@@ -2534,6 +2639,8 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
     // Rig nodes pose by the class clip node of the same label (the root,
     // "UNNAMED" in the model, is clip node 0).
     let clip_nodes = &pc.clips.trees[0].nodes;
+    let first_child = |parent: i32| tree.nodes.iter().find(|n| n.parent == parent).map(|n| n.index as i32);
+    let wings_node = first_child(0).and_then(first_child);
     for node in &tree.nodes {
         let pose = if node.index == 0 { Some(0) } else { clip_nodes.iter().position(|c| c.label == node.label) };
         let Some(pose) = pose else { continue };
@@ -2543,6 +2650,18 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
                 let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot))).id();
                 commands.entity(body).add_child(child);
             }
+        }
+        // PlayerProcessPowerups' head and wings anchors.
+        let at = if node.label == "HEAD" {
+            Some(PowerupAt::Head)
+        } else if Some(node.index as i32) == wings_node {
+            Some(PowerupAt::Wings)
+        } else {
+            None
+        };
+        if let Some(at) = at {
+            let anchor = commands.spawn((PowerupTree { slot, at, key: None }, RigNode(pose, slot), Transform::default(), Visibility::Hidden)).id();
+            commands.entity(body).add_child(anchor);
         }
         if rhand.as_deref() == Some(node.label.as_str()) {
             let hold = commands.spawn((HoldFx { slot, key: None }, RigNode(pose, slot), Transform::default(), Visibility::Hidden)).id();
@@ -2560,6 +2679,8 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
     }
     let familiar = commands.spawn((Familiar { slot, key: None }, Transform::default(), Visibility::Hidden)).id();
     commands.entity(body).add_child(familiar);
+    let anchor = commands.spawn((PowerupTree { slot, at: PowerupAt::Node, key: None }, Transform::default(), Visibility::Hidden)).id();
+    commands.entity(body).add_child(anchor);
     // PlayerDoWeapTrail's eight copies of the held weapon (MBNewObject of
     // the weapon object at its world matrix, fading out).
     let trail = commands.spawn((WeaponTrail(slot), Transform::default(), Visibility::Inherited)).id();
@@ -4590,7 +4711,7 @@ fn present_world(
                         };
                         let key = format!("H{h}:{}:{}:{}", head.source, head.tree, node.start.to_bits());
                         if slot.key.as_deref() != Some(key.as_str()) {
-                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing, slot: slot.index, looping: false });
+                            commands.entity(entity).insert(EffectTree { pkg: pkg.clone(), tree: head.tree, start: node.start, timing: head.timing, slot: slot.index, looping: false, seq: 0 });
                         }
                         let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_index_parts(&sources, &libs, &pkg, head.tree));
                         (Some(key), parts, tf)
@@ -4850,7 +4971,7 @@ fn label_effect_tree(commands: &mut Commands, (entity, slot): (Entity, usize), s
     let tree = sources.packages.get(pkg).and_then(|p| p.anim.as_ref()).and_then(|a| a.trees.iter().position(|t| t.label == label).map(|i| (i, a.trees[i].sequences.first().map_or(30, |q| q.timing_factor))));
     match tree {
         Some((tree, timing)) => {
-            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1), slot, looping: false });
+            commands.entity(entity).insert(EffectTree { pkg: pkg.to_string(), tree, start, timing: timing.max(1), slot, looping: false, seq: 0 });
         }
         None => {
             commands.entity(entity).remove::<EffectTree>();
@@ -4878,9 +4999,12 @@ struct EffectTree {
     timing: i16,
     /// The effect slot (its node's MBTreeSetColor / MBTreeSetAlpha).
     slot: usize,
-    /// Sequence 0 wraps at its frame count (an AnimateATree tree whose
-    /// sequence repeats: the familiar's READY, repeat word 1).
+    /// AnimateATree semantics (a tree a game function animates every
+    /// update): the sequence wraps at its frame count when its repeat word
+    /// is set (the familiar's READY) and holds its last frame otherwise.
     looping: bool,
+    /// The sequence played (StartFXTree trees: 0).
+    seq: usize,
 }
 
 /// Pose effect trees' nodes (sequence 0) at the effect's current frame;
@@ -4904,12 +5028,15 @@ fn present_effect_trees(
         let Some(pkg) = sources.packages.get(&fx.pkg) else { continue };
         let Some(anim) = pkg.anim.as_ref() else { continue };
         let mut frame = ((atime - fx.start) * 900.0 / f32::from(fx.timing.max(1))).max(0.0);
-        if fx.looping {
-            let n = anim.trees.get(fx.tree).and_then(|t| t.sequences.first()).map_or(1, |s| s.frames.max(1));
-            frame %= f32::from(n);
+        let sequence = anim.trees.get(fx.tree).and_then(|t| t.sequences.get(fx.seq));
+        if fx.looping
+            && let Some(s) = sequence
+        {
+            let n = f32::from(s.frames.max(1));
+            frame = if s.repeat != 0 { frame % n } else { frame.min(n - 1.0) };
         }
-        let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, 0, frame, true) else { continue };
-        let index = object_frame(frame, anim.trees.get(fx.tree).and_then(|t| t.sequences.first()));
+        let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, fx.seq, frame, true) else { continue };
+        let index = object_frame(frame, sequence);
         let mut meshes = Vec::new();
         for child in children.iter() {
             if let Ok((e, idx, mut tf, of, mut v)) = parts.get_mut(child) {
@@ -7385,7 +7512,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_movie, present_tree_alpha, present_skins, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

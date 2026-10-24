@@ -9,9 +9,11 @@
 //! words from the eight powerup slots (+0x144 + 16k: time, kind, amount,
 //! flags), counts their timers down outside the Tower, applies speed/magic
 //! boosts and the turbo refill, and clamps the derived words to the class
-//! ranges, and plays the pojo/levitation wear-off sounds. Not ported
-//! (presentation or separate systems): see-through, skin effects, attached
-//! models and trees, PlayerProcessFamiliar, PlayerProcessScale, death effects.
+//! ranges, and plays the pojo/levitation wear-off sounds. PlayerProcessScale
+//! and the skin effects are ported here; PlayerProcessFamiliar keeps the
+//! +0x720 marker and the client draws its tree (research/player.md "The
+//! familiar"); see-through is seethru.rs. Attached powerup models and the
+//! death effects are presentation outside this module.
 use super::{Game, R};
 
 /// The X-ray powerup's flag in +0x138.
@@ -171,8 +173,37 @@ impl Game {
         } else if r134 & 0x1_0000 != 0 && !blink_off {
             super::skin::set_skin_fx(r, 0x7b4, 1.0, super::skin::SkinTex::Silver, 1, 1.0);
         }
+        // The attached powerup tree (+0x768: POJO, the fire shield, PHOENIX,
+        // HEAD_BREATHE*, WINGS; drawn by the client) and AnimateATree's
+        // sequence: the pojo's by the current action (1 moving, 4 hit, 3
+        // ATTPWR, 5 death, 2 for PlayerMotion's attack signal +0x8d8
+        // 0x20000000, which this branch clears); otherwise 1 (ATTACK) while
+        // +0x8d8 0x10000000 is set and the short at +0x778 is ≥ 2.
+        // (Skipped with the player's node +0x80 unset, as the original's
+        // whole presentation part.)
+        let r138 = r.u32_(0x138);
+        let seq = if r.u32_(0x80) == 0 {
+            0
+        } else if r138 & 0x400 != 0 {
+            let mut s = match r.u32_(0x1e0) {
+                8 | 0x11..=0x14 | 0x16 | 0x19 | 0x1a => 1,
+                0x1b | 0x7f..=0x83 | 0x85 | 0x87 | 0x94 => 4,
+                0x6e => 3,
+                0x7e => 5,
+                _ => 0,
+            };
+            if r.u32_(0x8d8) & 0x2000_0000 != 0 {
+                s = 2;
+            }
+            r.and_u32(0x8d8, !0x2000_0000);
+            s
+        } else {
+            u8::from(r.u32_(0x8d8) & 0x1000_0000 != 0 && 2 <= r.i16_(0x778))
+        };
+        self.powerup_tree_seq[p] = seq;
         // PlayerProcessFamiliar: the familiar tree +0x720 exists from level
         // 30 (native marker 1; the tree itself is presentation).
+        let r = &mut self.players[p];
         let lvl = r.i32_(0x2ac0);
         r.set_u32(0x720, u32::from(0x1e <= lvl));
         // The model/tree branch is presentation; in every path it ends with

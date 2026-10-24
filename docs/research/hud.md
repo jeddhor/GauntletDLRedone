@@ -609,8 +609,8 @@ NumLivePlayers, low_res flags, the shadow/0x1000 text flags and ability
 blits are not ported (2026-10-23: button_x_tex/button_tri_tex, the
 inventory/map/shop panels, the boss meters, the rune thermometer and
 DrawBlit's corner sweep are; see their sections). Help sites whose original point is a local vector (ids 0x1b, 0x14,
-0xe) use the player's attention point or none; AudioHelp/AudioExp cues are
-emitted as events but not voiced; low-res/Japanese help variants are not
+0xe) use the player's attention point or none; AudioHelp/AudioExp are voiced
+(sound_cues.rs); low-res/Japanese help variants are not
 modelled. The scroll box's timing uses wall-clock vblanks (59.94 Hz).
 
 ## Control Style (DoOptions 0xd/0xe, action 0x21)

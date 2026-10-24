@@ -513,6 +513,7 @@ impl Game {
             stop_time: s.extra.stop_time,
             max_stop_time: 0.0,
             sumner_hint_time: 0.0,
+            powerup_tree_seq: [0; 4],
             do_rock_fly: 0,
             did_rock_fly: 0,
             world_num_levels: inp.wdata.levels.len() as i32,

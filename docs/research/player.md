@@ -476,3 +476,31 @@ tree (present_familiars; READY looping on ATime is a HYPOTHESIS). Native
 frames at levels 35 and 85 in G1: runs client-fam5-69700 / -280200. No
 reference capture.
 
+## Attached powerup trees (PlayerProcessPowerups 0x12d040, 2026-10-23)
+
+One tree per player (+0x768), chosen in this order (InitPlayerMissiles'
+trees): POJO (+0x138 0x400), WEAPONS' FW_SHLD_ACTIVE (+0x134 0x200000
+while the current action +0x1e0 is 0x16), PHOENIX (0x80), HEAD_BREATHEF /
+A / E (0x10 / 0x20 / 0x40) on the HEAD node (+0x6ac), WINGS (1) on the
+player node's +0x78 → +0x78 (HYPOTHESIS: the first-created child chain,
+ROOT → LOWERTORSO for the Sorceress — the rig root's other child, DUMMY,
+has no children), otherwise deleted; the others hang on the player's node.
+AnimateATree's sequence: the pojo's by action (1 for 8, 0x11..0x14, 0x16,
+0x19, 0x1a; 4 for 0x1b, 0x7f..0x83, 0x85, 0x87, 0x94; 3 for 0x6e; 5 for
+0x7e; 2 when PlayerMotion's attack signal +0x8d8 0x20000000 is set, which
+this branch clears), otherwise 1 (ATTACK) while +0x8d8 0x10000000 is set
+and the short at +0x778 is ≥ 2. The longest remaining time t of the
+kind-6 0x200000 and kind-9 0x4f1 slots fades the tree over its last
+second (MBTreeSetAlpha((1 − t) × 255)). The whole part is skipped without
+a player node (+0x80). Sequences on the disc: POJO READY/RUN/ATTACK/
+ATTPWR/HIT/DEATH, PHOENIX READY/ATTACK, the breaths and the shield one
+looping ACTIVE, WINGS static.
+
+Native: the core clears the pojo signal and records the sequence
+(Game::powerup_tree_seq); gdl_play's present_powerup_trees draws the tree
+on its anchor (EffectTree with AnimateATree looping/hold semantics).
+Seen in G1 (GDL_DEBUG_POWERUP 9:1 / 9:80 / 9:400, runs client-pw-1/-80/
+-400): the wings at the back, the phoenix and the pojo beside the player.
+The fire breath (9:10, a camera-facing no-shade object at the head) was
+not visible in those frames — not confirmed. No reference capture.
+
