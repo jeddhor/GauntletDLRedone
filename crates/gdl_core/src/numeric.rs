@@ -23,25 +23,20 @@ impl Error for UnsupportedNumericDomain {}
 /// explicitly rejected until their original consumers and behavior are tested.
 #[inline]
 pub fn add_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
-    let (a, b) = (daz(a)?, daz(b)?);
-    let mut words = [a.to_bits(), b.to_bits()];
-    let exponents = words.map(|w| ((w >> 23) & 255) as i32);
-    let distance = exponents[0] - exponents[1];
-    if distance != 0 {
-        let smaller = usize::from(distance > 0);
-        let shift = distance.unsigned_abs();
-        let mask = if shift >= 25 {
-            0x8000_0000
-        } else {
-            u32::MAX << (shift - 1)
-        };
-        words[smaller] &= mask;
+    let (mut wa, mut wb) = (daz(a)?.to_bits(), daz(b)?.to_bits());
+    let (ea, eb) = ((wa >> 23) & 255, (wb >> 23) & 255);
+    // The smaller operand keeps its bits down to one guard bit below the
+    // larger's last place (sign only beyond 24 places).
+    let mask = |shift: u32| if shift >= 25 { 0x8000_0000 } else { u32::MAX << (shift - 1) };
+    if eb < ea {
+        wb &= mask(ea - eb);
+    } else if ea < eb {
+        wa &= mask(eb - ea);
     }
     // After alignment masking, both operands together need at most 49 binary
     // significant digits. This sum is exact in f64; no host rounding-mode change
     // or fused operation is involved.
-    let exact = f64::from(f32::from_bits(words[0])) + f64::from(f32::from_bits(words[1]));
-    round_rz(exact)
+    round_rz(f64::from(f32::from_bits(wa)) + f64::from(f32::from_bits(wb)))
 }
 
 /// DAZ: a subnormal operand reads as zero of its sign; infinities and NaNs
@@ -212,6 +207,21 @@ mod reference {
         Ok(if v != 0.0 && !v.is_normal() { 0.0f32.copysign(v) } else { v })
     }
 
+    pub fn add_guarded_rz(a: f32, b: f32) -> Result<f32, UnsupportedNumericDomain> {
+        let (a, b) = (daz(a)?, daz(b)?);
+        let mut words = [a.to_bits(), b.to_bits()];
+        let exponents = words.map(|w| ((w >> 23) & 255) as i32);
+        let distance = exponents[0] - exponents[1];
+        if distance != 0 {
+            let smaller = usize::from(distance > 0);
+            let shift = distance.unsigned_abs();
+            let mask = if shift >= 25 { 0x8000_0000 } else { u32::MAX << (shift - 1) };
+            words[smaller] &= mask;
+        }
+        let exact = f64::from(f32::from_bits(words[0])) + f64::from(f32::from_bits(words[1]));
+        round_rz(exact)
+    }
+
     pub fn round_rz(exact: f64) -> Result<f32, UnsupportedNumericDomain> {
         if !exact.is_finite() || exact.abs() > f64::from(f32::MAX) {
             return Err(UnsupportedNumericDomain);
@@ -280,6 +290,8 @@ mod bit_forms {
                 f32::from_bits(((r >> 33) as u32 & 0x807f_ffff) | eb << 23)
             };
             assert!(same(super::daz(a), reference::daz(a)), "daz {a:?}");
+            assert!(same(super::add_guarded_rz(a, b), reference::add_guarded_rz(a, b)), "add {a:?} {b:?}");
+            assert!(same(super::add_guarded_rz(b, a), reference::add_guarded_rz(b, a)), "add {b:?} {a:?}");
             for e in [f64::from(a) + f64::from(b), f64::from(a) * f64::from(b), f64::from(a) / f64::from(b), f64::from(a).abs().sqrt(), f64::from_bits(next())] {
                 assert!(same(super::round_rz(e), reference::round_rz(e)), "round_rz {e:?} ({a:?}, {b:?})");
             }
