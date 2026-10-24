@@ -2,7 +2,7 @@
 """Chained state-search runs (M15 tooling; DEBUG, not a fidelity input).
 
   campaign_chain.py TAG LEVEL [LEVEL ...] [--budget N] [--cells N]
-                    [--start START.json] [--legend-bosses]
+                    [--start START.json] [--legend-bosses] [--no-assist]
 
 For each level code in order (G1 G2 ...), game_run.py --explore (bot
 macros, nav=2) from the previous level's end state: the run's own replay of
@@ -15,7 +15,8 @@ the first level the search does not end. Reports: private/reports/
 campaign-TAG-<L>.json (the game-run report), campaign-TAG-<L>-end.json
 (the end state) and campaign-TAG.json (the summary). --legend-bosses gives
 boss levels the legend item (DEBUG precondition, as the bot batches) when
-the carried record lacks it.
+the carried record lacks it. --no-assist searches and replays without the
+DEBUG health assist (legitimate play: a dying branch is dropped).
 """
 import argparse
 import json
@@ -36,6 +37,7 @@ def main():
     ap.add_argument('--cells', type=int, default=500)
     ap.add_argument('--start')
     ap.add_argument('--legend-bosses', action='store_true')
+    ap.add_argument('--no-assist', action='store_true')
     a = ap.parse_args()
     if not a.tag.replace('-', '').isalnum():
         raise SystemExit('tag must be alphanumeric')
@@ -57,6 +59,8 @@ def main():
             cmd += ['--start', start, '--next-level']
         if a.legend_bosses and code in BOSSES:
             cmd += ['--legend']
+        if a.no_assist:
+            cmd += ['--no-assist']
         p = subprocess.run(cmd, cwd=ROOT, env=os.environ, capture_output=True, text=True)
         step = {'level': code, 'start': start, 'returncode': p.returncode}
         if report.exists():
@@ -74,6 +78,7 @@ def main():
             break
         start = str(end.relative_to(ROOT))
     summary_path.write_text(json.dumps({'scope': 'DEBUG chained state-search runs (campaign_chain.py); the exit flow between levels is not simulated',
+                                        'health_assist': not a.no_assist,
                                         'levels': a.levels, 'steps': steps}, indent=1) + '\n')
     print(summary_path)
 

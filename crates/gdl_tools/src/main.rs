@@ -3575,7 +3575,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         // state; its script then replays here from the same state. assist=1
         // (implied by explore): the bot's DEBUG health assist before each
         // update of the pads= path.
-        let assist_on = opts.contains_key("assist") || opts.contains_key("explore");
+        // no_assist=1: neither the search nor the replay gives health.
+        let assist_on = (opts.contains_key("assist") || opts.contains_key("explore")) && !opts.contains_key("no_assist");
         let start_health = game.players[0].f32_(0x1a10);
         let mut explore_report = None;
         // padfile=PATH: port 0's pads per update from a JSON script
@@ -3584,6 +3585,22 @@ fn run() -> Result<(), Box<dyn Error>> {
             Some(f) => Some(explore::parse_padfile(&String::from_utf8(bounded_read(Path::new(f), 64 * 1024 * 1024)?)?)?),
             None => None,
         };
+        // navdump=PATH (diagnostic maps, DEBUG tooling): the bot's graph from
+        // player 0 at the start (reachable nodes and edges) and every
+        // column's floors over the world bounds.
+        if let Some(path) = opts.get("navdump") {
+            let mut c = game.collision.clone();
+            let p = game.players[0].v3(0x50);
+            let mut nav = bot::Nav::build(&mut c, &[p], game.globals.world_bottom - 2.0, p[1] + 80.0, 0.3);
+            let reach: Vec<usize> = (0..nav.pts.len()).filter(|&k| !nav.adj[k].is_empty()).collect();
+            let r1 = |v: f32| (v * 10.0).round() / 10.0;
+            let edges: Vec<[usize; 2]> = reach.iter().flat_map(|&a| nav.adj[a].iter().filter(move |&&b| a < b).map(move |&b| [a, b])).collect();
+            let pts: Vec<[f32; 3]> = nav.pts.iter().map(|q| q.map(r1)).collect();
+            let all: Vec<[f32; 3]> = nav.sample_all(&mut c, world.min, world.max).into_iter().map(|q| q.map(r1)).collect();
+            let v = serde_json::json!({"scope": "DEBUG bot graph (bot.rs Nav) at the start; not game data", "start": p, "pts": pts, "reachable": reach, "edges": edges, "all_floors": all});
+            let mut file = fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+            serde_json::to_writer(&mut file, &v)?;
+        }
         let frames = match opts.get("explore").filter(|_| opts.contains_key("pads")) {
             Some(b) => {
                 let budget: usize = b.parse()?;
@@ -3591,7 +3608,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let cells: usize = opts.get("cells").map(|s| s.parse()).transpose()?.unwrap_or(4000);
                 // nav=1: graph-guided macros; nav=2: bot macros.
                 let mode: u32 = opts.get("nav").map(|s| s.parse()).transpose()?.unwrap_or(0);
-                let out = explore::explore(&game, budget, seed, cells, mode);
+                let out = explore::explore(&game, budget, seed, cells, mode, assist_on);
                 let mut r = out.report;
                 let (digital, text) = explore::script_text(&out.script);
                 r["script_format"] = serde_json::json!(if digital { "pads" } else { "padfile" });
@@ -3860,9 +3877,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Some(r) = explore_report {
             report["explore"] = r;
         }
-        if assist_on {
+        if assist_on || opts.contains_key("no_assist") {
             // The replay of the pads= script: where the level ended and the
-            // DEBUG health assists it used.
+            // DEBUG health assists it used (none with no_assist).
             report["level_end"] = serde_json::json!(level_end);
             report["assists"] = serde_json::json!(assists);
         }
