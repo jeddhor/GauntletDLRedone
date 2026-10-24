@@ -200,6 +200,35 @@ impl Game {
                 r.and_u32(0x8d8, !0x2000_0000);
             }
         }
+        // The halo's hit on Death (PlayerMotion: +0x13c 1, 3 for a level-2
+        // Death): StartDeathFX(player node, 1 or 2, 0x10) into +0x710 once
+        // and do_death_sound(+0x50) every update; without it DeleteEffect
+        // (+0x710, 0) (the index stays while the effect lingers) and, when
+        // the previous update had it (+0x140 1), kill_death_sound.
+        if self.players[p].u32_(0x80) != 0 {
+            let r13c = self.players[p].u32_(0x13c);
+            if r13c & 1 != 0 {
+                if self.players[p].i32_(0x710) < 0 {
+                    let k = self.start_death_fx(if r13c & 2 != 0 { 2 } else { 1 })?;
+                    if let Ok(i) = usize::try_from(k) {
+                        self.parent_fx_to_player(i, p, [0.0; 3]);
+                    }
+                    self.players[p].set_i32(0x710, k);
+                }
+                let at = self.players[p].v3(0x50);
+                self.do_death_sound(at)?;
+            } else {
+                if let Ok(k) = usize::try_from(self.players[p].i32_(0x710)) {
+                    let linger = self.fx(k).f32_(super::effects::fx::LINGER);
+                    let keeps = 0.0 < linger && self.globals.atime < linger;
+                    self.delete_effect(k, false);
+                    self.players[p].set_i32(0x710, if keeps { k as i32 } else { -1 });
+                }
+                if self.players[p].u32_(0x140) & 1 != 0 {
+                    self.kill_sound(0x66);
+                }
+            }
+        }
         // PlayerProcessFamiliar: the familiar tree +0x720 exists from level
         // 30 (native marker 1; the tree itself is presentation).
         let r = &mut self.players[p];

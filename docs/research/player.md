@@ -522,3 +522,28 @@ and the trees hung on the player fade with it. gdl_play present_player_alpha
 (drawn alpha (255 − v) / 255); seen in G1 with GDL_DEBUG_POWERUP 9:4
 (run client-pw-4). No reference capture.
 
+## The rest of PlayerProcessPowerups' presentation part (2026-10-23)
+
+After the familiar (the whole part needs the player node +0x80):
+
+- +0x13c bit 1 (PlayerMotion: the halo's hit on Death; bit 2 for a
+  level-2 Death): StartDeathFX(player node, 1 or 2, 0x10) into +0x710
+  when that is negative, and do_death_sound(+0x50) every update; without
+  it DeleteEffect(+0x710, 0) (the index stays while the effect lingers)
+  and kill_death_sound when the previous update had it (+0x140 bit 1).
+  Ported in gdl_core (the effect is an Effects slot, parented to the
+  player); no trace covers it.
+- The short at +0x92c (the It enemy's tag) with +0x93c bit 2 clear:
+  MBOX_NewObject(IT_SIGN, 0, player node, 0x10) once, removed otherwise
+  (the realms' ITEMS packages hold IT_SIGN). gdl_play present_it_sign.
+- The pojo (+0x138 0x400) hides the player's model tree (*(+0x90),
+  MBTreeSetFlags 2) and shows it again without (AudioUnpojo on the change,
+  already in the core). gdl_play hides the rig meshes (present_player).
+- Level ≥ 99: MBTreeSetFlags(HEAD node, 8) and its +0x40..+0x48 scale
+  1.5. HYPOTHESIS: the scale reaches only the node's own object (GetWorldMat
+  ignores +0x40), so hair, braids and the breath tree keep their size
+  (gdl_play HeadMesh).
+
+Seen in G1: the pojo alone without the player (run client-pw3-400), the
+level-99 head (client-lv99). Not compared with the reference.
+

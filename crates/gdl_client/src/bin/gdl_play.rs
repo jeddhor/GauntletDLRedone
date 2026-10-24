@@ -2170,6 +2170,44 @@ struct CharacterRoot(usize);
 #[derive(Component)]
 struct RigNode(usize, usize);
 
+/// A mesh of the player's HEAD node: PlayerProcessPowerups at level ≥ 99
+/// sets its MB flag 8 and node scale (+0x40..+0x48) to 1.5. HYPOTHESIS: the
+/// scale reaches only the node's own object (GetWorldMat ignores +0x40, so
+/// the hair, braids and anything hung on the head keep their size).
+#[derive(Component)]
+struct HeadMesh;
+
+/// PlayerProcessPowerups' "It" sign: MBOX_NewObject(IT_SIGN, 0, player node,
+/// 0x10) while +0x92c (the It enemy's tag) is set and +0x93c bit 2 is clear,
+/// removed otherwise (the realm's ITEMS package holds IT_SIGN).
+#[derive(Component)]
+struct ItSign {
+    slot: usize,
+    spawned: bool,
+}
+
+fn present_it_sign(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    libs: Res<Libraries>,
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut variants: ResMut<PartVariants>,
+    mut pending: ResMut<PendingTreePsys>,
+    mut q: Query<(Entity, &mut ItSign, &mut Visibility)>,
+) {
+    for (e, mut sign, mut vis) in &mut q {
+        let r = &sim.game.players[sign.slot];
+        let show = r.i16_(0x92c) != 0 && r.u16_(0x93c) & 2 == 0;
+        if show && !sign.spawned {
+            if let Some(parts) = libs.0.values().find_map(|l| l.by_label.get("IT_SIGN")) {
+                spawn_parts(&mut commands, e, vec![(Vec3::ZERO, parts.clone(), 0x10, None, None)], &mut materials, &mut variants, &mut pending);
+            }
+            sign.spawned = true;
+        }
+        *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
+    }
+}
+
 /// A part of player slot `.0`'s held weapon (load_player's +0x6b8 WEAP_HOLD):
 /// DoPlayerAction's MBTreeSetFlags/ClearFlags(+0x6b8, 2) hide and show it.
 #[derive(Component)]
@@ -2713,6 +2751,9 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
         for def in character.objects.definitions.iter().filter(|d| d.label == label) {
             for (mesh, material) in parts.get(&(def.object_index as u32)).into_iter().flatten() {
                 let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot))).id();
+                if node.label == "HEAD" {
+                    commands.entity(child).insert(HeadMesh);
+                }
                 commands.entity(body).add_child(child);
             }
         }
@@ -2746,6 +2787,8 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
     commands.entity(body).add_child(familiar);
     let anchor = commands.spawn((PowerupTree { slot, at: PowerupAt::Node, key: None }, Transform::default(), Visibility::Hidden)).id();
     commands.entity(body).add_child(anchor);
+    let sign = commands.spawn((ItSign { slot, spawned: false }, Transform::default(), Visibility::Hidden)).id();
+    commands.entity(body).add_child(sign);
     // PlayerDoWeapTrail's eight copies of the held weapon (MBNewObject of
     // the weapon object at its world matrix, fading out).
     let trail = commands.spawn((WeaponTrail(slot), Transform::default(), Visibility::Inherited)).id();
@@ -5308,7 +5351,8 @@ fn missile_parts(sources: &Sources, libs: &Libraries, throw: &(String, String)) 
 }
 
 type BodyQuery<'w, 's> = Query<'w, 's, (&'static CharacterRoot, &'static mut Transform, &'static mut Visibility), (Without<RigNode>, Without<FollowCamera>, Without<Slot>)>;
-type NodeQuery<'w, 's> = Query<'w, 's, (&'static RigNode, &'static mut Transform), (Without<CharacterRoot>, Without<FollowCamera>, Without<Slot>)>;
+type BarQuery<'w, 's> = Query<'w, 's, &'static mut Visibility, (With<LetterBox>, Without<CharacterRoot>, Without<RigNode>)>;
+type NodeQuery<'w, 's> = Query<'w, 's, (&'static RigNode, &'static mut Transform, Has<HeadMesh>, &'static mut Visibility), (Without<CharacterRoot>, Without<FollowCamera>, Without<Slot>)>;
 type CameraQuery<'w, 's> = Query<'w, 's, (&'static mut Transform, &'static mut Projection), (With<FollowCamera>, Without<CharacterRoot>, Without<RigNode>, Without<Slot>)>;
 
 #[allow(clippy::too_many_arguments)]
@@ -5323,7 +5367,8 @@ fn present_player(
     mut hud: Query<&mut Text2d, (With<Hud>, Without<Banner>)>,
     mut banner: Query<&mut Text2d, (With<Banner>, Without<Hud>)>,
     ui: Res<Ui>,
-    mut bars: Query<&mut Visibility, (With<LetterBox>, Without<CharacterRoot>)>,
+    mut bars: BarQuery,
+    mut pojo_was: Local<[bool; 4]>,
 ) {
     // ScrollMessageBox runs (modal) before the trigger camera it precedes
     // starts (do_players: welcome box, then CrystalCamActivate).
@@ -5353,11 +5398,24 @@ fn present_player(
             m0[0], m0[1], m0[2], 0.0, m1[0], m1[1], m1[2], 0.0, m2[0], m2[1], m2[2], 0.0, p[0], p[1], p[2], 1.0,
         ]));
     }
-    for (node, mut t) in &mut nodes {
+    // PlayerProcessPowerups: the pojo (+0x138 0x400) hides the player's
+    // own model tree (+0x90, MBTreeSetFlags 2) — the player becomes the
+    // pojo; shown again (once) when it wears off.
+    let pojo: [bool; 4] = std::array::from_fn(|k| sim.game.players[k].u32_(0x138) & 0x400 != 0);
+    for (node, mut t, head, mut vis) in &mut nodes {
+        let k = node.1.min(3);
+        if pojo[k] {
+            *vis = Visibility::Hidden;
+        } else if pojo_was[k] {
+            *vis = Visibility::Inherited;
+        }
         if let Some(p) = poses.get(node.1).and_then(|p| p.as_ref()).and_then(|pose| pose.get(node.0)) {
-            *t = Transform::from_matrix(*p);
+            // Level ≥ 99: the HEAD node's scale 1.5 (HeadMesh).
+            let big = head && 99 <= sim.game.players[node.1].i32_(0x2ac0);
+            *t = Transform::from_matrix(if big { *p * Mat4::from_scale(Vec3::splat(1.5)) } else { *p });
         }
     }
+    *pojo_was = pojo;
     // The StdCam window camera (research/camera.md): eye and matrix rows.
     if let (Some(cam), Ok((mut t, mut projection))) = (&sim.game.std_camera, camera.single_mut()) {
         // pbProjCalc's +0x90 projection: x scale 1/tan_h, y scale −1/tan_v
@@ -7618,7 +7676,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
