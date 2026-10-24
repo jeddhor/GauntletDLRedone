@@ -335,6 +335,17 @@ and short scripted checks (--teleport, --watch objects, --itemw items,
   held): the same positions — (−45.0, 10.6, 40.4) after 60 steps, the slide
   from x −52 to −55 at z ≈ 36 — and enemies crowding the bridge (health
   124). Native collision agrees there; the stall is the bot's path choice.
+- A3's rune stone (item 251) lies at the bottom of a framed 6×6 pit
+  (floor y 1.1 in a floor at y 8); the reference player walking into it
+  slides along its rim (WARPED warp-a3-runepit-v2), as native's. The pit's
+  floor is the elevator A3ELEV3 (node 1003), which trigger 249 on the far
+  side of the level raises 7 units to the surrounding floor, rune and all.
+  The bot now visits keys and triggers before the exits while a rune or
+  legend item is left: it presses 249, takes the rune and exits (update
+  17793).
+- Deaths: a level also ends when the player dies (TowerWave); the tools
+  count a level as won only when it ends without the player dying (state
+  8 or 0xb). The no-assist chain t5 had counted a death in G1.
 
 ## Menu flow tests (M17, 2026-10-23)
 
