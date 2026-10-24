@@ -35,7 +35,7 @@ Evidence:
 | F2 | Skorne 2 (0x2b) | 3000 | 0, 99 | 20220 | 21093 → 0xd00 (the "garm" movie follows in the client) |
 | G5 | lich (0x29) | 4500 | 1, 2, 3, 5, 99 | 5805 | 6686 → 0xd00 |
 | H4 | Garm (0x2c) | 5625 | 0, 99 | 13605 | 14310 → 0xd00 ("victory", final stats) |
-| I5 | yeti (0x27) | 5000 | 1 | — | the bot never activates it |
+| I5 | yeti (0x27) | 5000 | 1 | — | defeated from the reference's warp point (below) |
 | J5 | wraith (0x28) | 5000 | 1, 2, 3, 5, 6, 99 | 13230 | 14120 → 0xd00 |
 | K5 | pboss (0x26) | 3750 | 1, 2, 3, 5, 6, 99 | 5205 | 6079 → 0xd00 |
 
@@ -51,3 +51,14 @@ updates). I5's yeti still not reached (its arena is a separate floor region; the
 I5 also needed a warp). Co-op: B6 with 2–4 players (playtest.md
 "Co-op matrix"). Not done: a campaign that earns the legend items in play
 and chains realm → boss (the full critical path, M15).
+
+I5 from the warp point (2026-10-23): the reference capture of I5 needed a
+warp (w9l5-boss-v2: player 0 at (9.6, −4.047, −5.2), 62 units from the
+yeti); the native traversal bot started there (game-run DEBUG teleport,
+legend item held, --pexp 30, health assists 49) fights the yeti from 5000
+to 0, BossIsDead follows and the auto exit ends the level at update
+21674 to TowerWave 0xd00 (private/reports/game-run-I5-warp-bot-v1.json).
+An idle player at that point never creates the boss instance (activation
+needs the approach). With this every boss level's fight and end have run
+natively; I5's on-foot route to the arena is still not shown.
+
