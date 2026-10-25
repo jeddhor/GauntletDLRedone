@@ -418,7 +418,9 @@ original (PCSX2 reference on Xvfb :191, private captures):
    dispelled with a potion, hazards soft. I3 ended for the first time
    (b48). Ended alive with their rune and legend item in some run: 53 of
    61 (H2 in chain t21, I3 the newest); C3 ended without its bellows; not
-   yet D3 D4 H3 I4 J3 J6 K1. Legitimate chain lg2 died in G2 (all six tries, then the
+   yet D3 D4 H3 I4 J3 J6 K1. Later: the bot's drops limited to what
+   PlayerCollideFloor allows (3 units, 4 on one object; the graph had 12)
+   — D4 ends with its sword (b53), 54 of 61; G1, K2, D2, B5 end faster. Legitimate chain lg2 died in G2 (all six tries, then the
    search); lg3 runs with the Death rule.
 
 ---
