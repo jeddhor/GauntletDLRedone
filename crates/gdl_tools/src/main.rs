@@ -2363,7 +2363,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             // main reseeds rand every loop (srand(pbGetCPUTime() >> 3)), so the
             // seed is solved from the reference's state after the update by
             // inverting newlib's LCG over the native call count.
-            let trace: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(tp), 256 * 1024 * 1024)?)?;
+            // 512 MiB: chained traces joined at their links (four 500-vblank
+            // boss-completion traces, 300 MB).
+            let trace: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(tp), 512 * 1024 * 1024)?)?;
             let samples = trace["samples"].as_array().ok_or("trace samples")?;
             let clips = anim_of("clips")?;
             game.player_clips[0] = gdl_core::game::setup::clips_of(&clips, 0);

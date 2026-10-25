@@ -2051,6 +2051,7 @@ struct TestHarness {
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
     /// {"at": u, "health": h} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
+    /// {"at": u, "boss_kill": true} (DEBUG) |
     /// {"at": u, "save": card file}] for player 1.
     actions: Vec<serde_json::Value>,
     /// GDL_MENU_SCRIPT: like GDL_INPUT_SCRIPT, indexed by the ticks spent
@@ -4145,6 +4146,14 @@ fn simulate(
             }
             if let Some(gold) = a["gold"].as_i64() {
                 sim.game.players[0].set_i32(0x1a20, gold as i32);
+            }
+            // {"boss_kill": true}: DEBUG lethal CritterDamage on the boss
+            // (Game::debug_damage_boss, as game_run's boss-kill); the death,
+            // good wizard, auto exit and what follows are the game's own.
+            if a["boss_kill"].as_bool() == Some(true) && sim.game.globals.boss_is_dead == 0
+                && let Err(e) = sim.game.debug_damage_boss()
+            {
+                sim.error = Some(format!("TEST boss_kill: {}", e.0));
             }
             if let Some(port) = a["disconnect"].as_u64() {
                 harness.disconnect = Some((port as usize, a["reconnect_after"].as_u64().unwrap_or(120)));

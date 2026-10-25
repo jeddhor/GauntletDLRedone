@@ -1125,7 +1125,31 @@ impl Bot {
             o.extend(revisit.into_iter().map(|s| vec![s]));
             o
         } else {
-            let mut o = vec![treasures, near];
+            // Fresh triggers bound to the object a left treasure rests on (or
+            // that object's parent) right after the treasures: A3's rune on
+            // the elevator trigger 249 raises, E1's legend item on the
+            // pedestal pad 159 moves (object 632), D4's sword on object 735
+            // that trigger 355 raises (the bot stood on the ledge beside it
+            // 686 times: the graph's drop into the pit fails in play).
+            let support: HashSet<usize> = treasures
+                .iter()
+                .filter_map(|&t| {
+                    let q = g.items.records[t].v3(0x40);
+                    g.items.floor_parent.get(t).copied().flatten().map(|(o, _)| o).or_else(|| {
+                        let c = key(q[0], q[2]);
+                        self.nav.cols.get(&c).and_then(|v| v.iter().copied().filter(|&n| (self.nav.pts[n][1] - q[1]).abs() < 2.0).min_by(|&a, &b| dist_xz(self.nav.pts[a], q).total_cmp(&dist_xz(self.nav.pts[b], q)))).map(|n| self.nav.obj[n])
+                    })
+                })
+                .flat_map(|o| std::iter::once(o).chain(g.collision.objects.get(o).and_then(|c| c.parent)))
+                .collect();
+            let bound: Vec<usize> = near
+                .iter()
+                .copied()
+                .filter(|&s| item_kind(g, s).0 == 5 && g.items.records[s].u32_(0xf0).checked_sub(1).is_some_and(|o| support.contains(&(o as usize))))
+                .collect();
+            // (The revisits start one list later.)
+            first_revisit += 1;
+            let mut o = vec![treasures, bound, near];
             o.extend(revisit.into_iter().map(|s| vec![s]));
             o.push(exits);
             o.push(secret);
