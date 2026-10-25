@@ -36,6 +36,7 @@ import pathlib
 import signal
 import subprocess
 import sys
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BOSSES = {'A5', 'B6', 'C5', 'D5', 'E2', 'F2', 'G5', 'H4', 'I5', 'J5', 'K5'}
@@ -99,42 +100,51 @@ def main():
             if a.require:
                 # The bot does not take an exit while a rune or legend item is left.
                 cmd += ['--require']
-            # The tries run side by side; the first (lowest delay) that wins counts.
+            # The tries run side by side; the first to finish with a win counts.
             err_path = bot_report.with_suffix('.err')
             with open(err_path, 'x') as err_file:
                 tries.append((t, bot_report, bot_end, err_path, subprocess.Popen(cmd, cwd=ROOT, env=os.environ, stdout=subprocess.DEVNULL, stderr=err_file,
                                                                                  start_new_session=True)))
-        for t, bot_report, bot_end, err_path, proc in tries:
-            if won_by_bot:
-                # A lower try won: the rest are stopped (their reports are
-                # partial and not read).
-                try:
-                    os.killpg(proc.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                proc.wait()
+        # The first try to finish with a win counts (any try's run is
+        # reproducible from its recorded delay); the others are stopped.
+        pending = list(tries)
+        while pending and not won_by_bot:
+            done = [x for x in pending if x[4].poll() is not None]
+            if not done:
+                time.sleep(5)
                 continue
+            for t, bot_report, bot_end, err_path, proc in sorted(done, key=lambda x: x[0]):
+                pending.remove((t, bot_report, bot_end, err_path, proc))
+                if won_by_bot:
+                    continue
+                err = err_path.read_text(errors='replace')
+                key = 'bot' if t == 0 else f'bot{t + 1}'
+                if bot_report.exists():
+                    br = json.loads(bot_report.read_text())
+                    b = br.get('bot') or {}
+                    missed = [x for x in br.get('treasures', []) if not x['taken']]
+                    step[key] = {'exit_update': b.get('exit_update'), 'exit_wave': b.get('exit_wave'), 'exit_state': b.get('exit_state'),
+                                 'assists': b.get('health_assists'), 'treasures': br.get('treasures'), 'delay': BOT_DELAYS[t]}
+                    # Through the level, not ended by a death (the player dying,
+                    # state 8, or waiting to continue, 0xb).
+                    won = b.get('exit_update') is not None and b.get('exit_state') not in (8, 11, None)
+                    if won and bot_end.exists() and not (a.require and missed):
+                        step.update(ended=True, by=key, replay_level_end=b['exit_update'], assists=b.get('health_assists'),
+                                    legend_debug=a.legend_bosses and code in BOSSES)
+                        steps.append(step)
+                        print(json.dumps(step), flush=True)
+                        start = str(bot_end.relative_to(ROOT))
+                        won_by_bot = True
+                else:
+                    step[key] = {'error': (err.strip().splitlines() or [''])[-1][:300]}
+        for t, bot_report, bot_end, err_path, proc in pending:
+            # A try won: the rest are stopped (their reports are partial and
+            # not read).
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             proc.wait()
-            err = err_path.read_text(errors='replace')
-            key = 'bot' if t == 0 else f'bot{t + 1}'
-            if bot_report.exists():
-                br = json.loads(bot_report.read_text())
-                b = br.get('bot') or {}
-                missed = [x for x in br.get('treasures', []) if not x['taken']]
-                step[key] = {'exit_update': b.get('exit_update'), 'exit_wave': b.get('exit_wave'), 'exit_state': b.get('exit_state'),
-                             'assists': b.get('health_assists'), 'treasures': br.get('treasures'), 'delay': BOT_DELAYS[t]}
-                # Through the level, not ended by a death (the player dying,
-                # state 8, or waiting to continue, 0xb).
-                won = b.get('exit_update') is not None and b.get('exit_state') not in (8, 11, None)
-                if won and bot_end.exists() and not (a.require and missed):
-                    step.update(ended=True, by=key, replay_level_end=b['exit_update'], assists=b.get('health_assists'),
-                                legend_debug=a.legend_bosses and code in BOSSES)
-                    steps.append(step)
-                    print(json.dumps(step), flush=True)
-                    start = str(bot_end.relative_to(ROOT))
-                    won_by_bot = True
-            else:
-                step[key] = {'error': (err.strip().splitlines() or [''])[-1][:300]}
         if won_by_bot:
             continue
         cmd = [sys.executable, 'tools/python/game_run.py', str(report), '--frames', '10', '--world', world, '--level', level,
