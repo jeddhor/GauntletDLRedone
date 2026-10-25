@@ -436,7 +436,14 @@ original (PCSX2 reference on Xvfb :191, private captures):
    nine-potion limit, most likely) and a frame-rate drop during the
    Sorceress's square attack — fixed in the client (point lights in one
    shared buffer, materials mutated only on change; 262 → 180 ms frames on
-   the software renderer; m12-acceptance.md, rendering.md). Legitimate chain lg2 died in G2 (all six tries, then the
+   the software renderer; m12-acceptance.md, rendering.md).
+   2026-10-25: chains on f102 (labelled DEBUG: C3 and K1 skipped while
+   they do not end; boss legend items held, --legend-bosses): t32 ends
+   K5 A1 A6 A2 (legend item) A3 (rune) A4 A5 D1 D2 (rune) in sequence;
+   t31 ends C4 C5 I1 and stops at I2 (rune not taken; I2 ended
+   standalone in b37 — route hints for I2 J1 J2 J4 added); t33 runs I2
+   onward. Bot regression b57 (f102: line test for goal nodes) — the
+   eight ended levels checked all end. Legitimate chain lg2 died in G2 (all six tries, then the
    search); lg3 runs with the Death rule.
 
 ---
