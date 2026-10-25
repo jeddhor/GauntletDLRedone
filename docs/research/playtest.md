@@ -430,6 +430,19 @@ GDL_DEBUG_CAMERA):
   mid region (y −8) above that area is fenced (an idle drop test at
   (−142.5, −8, −51.8) in four directions stops at the edge). The planner's
   frontier: [7, 38, 40, 41, 66, 8] (opens 9, 56, 57, the far west).
+- Exit portals: the avoidance zone is the exit's reach + 3, no route for
+  another goal enters it (a start inside included), and within reach + 2.5
+  the bot steps away (b41: E1's player was taken by the exit at 4.33 units
+  from its centre while fighting beside it).
+- Chain t21 (binary c20, from t16's K4 end state): E1 ends at update
+  63,780 with the soul taken (the first run to take it; 6 assists) and E2's
+  Skorne 1 dies, level end at 29,611 → the Tower (12 assists).
+- Trigger hints count as done when the bot reached them or their state
+  changed since the hint began (a chain had set K1's far-west pads, so the
+  hints were skipped without the bot going there).
+- Treasure supports found: C3's bellows on object 854 (triggers 433, 434,
+  435), I4's lamp on 1518 (trigger 527); H3's and J6's runes rest on
+  objects no trigger is bound to (2748 → 2176; 933 → 811).
  Chain lg1 plays from a new game with --no-assist
   --loot --shop-buy heal,potion.
 
