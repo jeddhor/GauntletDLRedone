@@ -473,6 +473,34 @@ GDL_DEBUG_CAMERA):
   so far. Chains now take the first bot try to finish with a win.
 - Legitimate chain lg2 (from lg1's G1 end state; no assist, shop, loot,
   route hints, route-guided search) replaces lg1 for G2 onward.
+- Rules added 2026-10-24 (late; binaries f86–f91):
+  - Islands count for the "by the island" triggers only up to 3000 nodes
+    (H3 695, J6 130, D4 35). G1's rune island had 14,451 nodes — from it
+    the rune reaches most of the level and the start is the cut-off part —
+    so every trigger was "by the island" and b45 pressed them in turn for
+    150,000 updates; b49 (f89) takes the rune and exits at 24,332 (G2 G3 G4
+    A3 K4 unchanged; E1 from a fresh start still not, as in b33–b42).
+  - Breakable walls (kind 10 subtype 0x2a: AudioExplodeWall, then
+    DeleteItem) have their origin raised in the wall: the blocker and
+    obstacle height window reaches 5 units above the player for them (H3's
+    wall 8 stands 3.76 above the floor that leads to the rune RUNEE1).
+  - Long attacks on a blocker count per visit: 3000 updates after the last
+    try the count starts again (J6's barrel 567, health 5, breaks at once
+    from a teleport beside it; b44 had spent its tries on earlier passes).
+  - A trigger's contact forgets the edges learnt as blocked within 30 units
+    of the trigger or its object (D4: pad 55 raises the pit floor 333 —
+    wobj, 5.5 − 10 → 5.5 — beside trigger 355, which raises the sword's
+    pedestal 735; the edges into the pit, blocked while it was down, kept
+    355 out of reach for 130,000 updates after pad 55 in b47). Natively
+    the pit's rim holds the player at x −78.5 while the floor is down (wall
+    item 12 destroyed; a teleport check, not compared with the reference).
+  - Death (enemy type 0x1e: weapons take one point, a potion's blast
+    dispels it; death_touch drains health) is no fight target: within 6
+    units the bot uses a potion (one per 150 updates) or steps away. In
+    lg2's G2 try 2 health fell 99 → 25 while the bot sought food beside
+    G2's DEATH statue by the secret exit (−176, 11.9, −200); it died at
+    update 18,886 (the enemies doing the damage are not in the report).
+    Hazards (kind 8: spikes) are soft obstacles.
  Chain lg1 plays from a new game with --no-assist
   --loot --shop-buy heal,potion.
 

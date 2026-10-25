@@ -698,7 +698,8 @@ pub struct Bot {
     /// variation of the same start for retries; the simulation is
     /// deterministic, so a retry needs a different input).
     pub delay: usize,
-    /// Long attacks spent on each blocking item (slot).
+    /// Long attacks spent on each blocking item (slot) and the update of
+    /// the last.
     break_tries: HashMap<usize, (u32, f32)>,
 }
 
@@ -706,6 +707,16 @@ fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
     let r = &g.items.records[slot];
     let d = &g.items.definitions[r.definition()];
     (d.kind(), d.subtype())
+}
+
+/// Whether item `slot` (at height `qy`) lies within an obstacle's height
+/// window of a player or node at `py`: 3 units, and for breakable walls
+/// (kind 10 subtype 0x2a, the origin raised in the wall) up to 5 above
+/// (H3's wall 8 stands 3.76 above the floor that leads to the rune RUNEE1;
+/// b43 never attacked it: 1699 stuck events).
+fn in_height(g: &Game, slot: usize, qy: f32, py: f32) -> bool {
+    let dy = qy - py;
+    dy.abs() < 3.0 || (item_kind(g, slot) == (10, 0x2a) && (0.0..5.0).contains(&dy))
 }
 
 impl Bot {
@@ -941,7 +952,8 @@ impl Bot {
             let (k, _) = item_kind(g, s);
             // Generators (kind 3) once three attacks did not damage them.
             let spent = k == 3 && self.break_tries.get(&s).is_some_and(|&(n, _)| 3 <= n);
-            if !r.active() || !(k == 2 || k == 10 || spent || (k == 7 && keys < 1)) {
+            // Hazards (kind 8: spikes, traps) too, at the soft cost.
+            if !r.active() || !(k == 2 || k == 8 || k == 10 || spent || (k == 7 && keys < 1)) {
                 continue;
             }
             let q = r.v3(0x40);
@@ -952,7 +964,7 @@ impl Bot {
                 for dz in -span..=span {
                     for &n in self.nav.cols.get(&(c.0 + dx, c.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
                         let pn = self.nav.pts[n];
-                        if dist_xz(pn, q) < reach && (pn[1] - q[1]).abs() < 3.0 {
+                        if dist_xz(pn, q) < reach && in_height(g, s, q[1], pn[1]) {
                             if k == 7 {
                                 out.closed.insert(n);
                             } else if k == 10 && (43..=45).contains(&item_kind(g, s).1) {
@@ -1223,9 +1235,14 @@ impl Bot {
                 self.log.push(serde_json::json!({"update": f, "island": t, "nodes": pts.len()}));
                 self.islands.insert(t, pts);
             }
+            // Islands up to 3000 nodes (H3 695, J6 130, D4 35): from a
+            // larger one the treasure reaches most of the level, the start is
+            // the cut-off part (G1's rune: 14,451 nodes, every trigger "by the
+            // island"; b45 pressed them in turn for 150,000 updates and never
+            // went for the rune that b34 took after pad 418's lift).
             let by_island = |o: usize| {
                 g.collision.object_matrix(o).ok().map(|m| m[3]).is_some_and(|w| {
-                    self.islands.values().any(|pts| pts.iter().any(|p| dist_xz(*p, [w[0], w[1], w[2]]) < 12.0 && (p[1] - w[1]).abs() < 10.0))
+                    self.islands.values().filter(|pts| pts.len() <= 3000).any(|pts| pts.iter().any(|p| dist_xz(*p, [w[0], w[1], w[2]]) < 12.0 && (p[1] - w[1]).abs() < 10.0))
                 })
             };
             let bound: Vec<usize> = near
@@ -1438,6 +1455,27 @@ impl Bot {
                             }
                             self.log.push(serde_json::json!({"update": f, "reopened": t, "after_trigger": s}));
                         }
+                        // The trigger's object moves: edges learnt as blocked
+                        // within 30 units of it or of the trigger were guesses
+                        // about the old geometry (D4 b47: pad 55 raises the
+                        // pit floor 333 beside trigger 355; the edges into the
+                        // pit, blocked while it was down, kept 355 — the
+                        // sword's pedestal — out of reach for 130,000 updates).
+                        let mut at = vec![r.v3(0x40)];
+                        if let Some(o) = r.u32_(0xf0).checked_sub(1)
+                            && let Ok(m) = g.collision.object_matrix(o as usize)
+                        {
+                            at.push([m[3][0], m[3][1], m[3][2]]);
+                        }
+                        let near = |pl: &Place| {
+                            let (x, z) = centre((pl.0, pl.2));
+                            at.iter().any(|q| dist_xz([x, 0.0, z], *q) < 30.0)
+                        };
+                        let before = self.blocked.len();
+                        self.blocked.retain(|(a, b)| !(near(a) || near(b)));
+                        if self.blocked.len() < before {
+                            self.log.push(serde_json::json!({"update": f, "unblocked": before - self.blocked.len(), "after_trigger": s}));
+                        }
                         self.wait = Some((f, g.players[0].v3(0x50), f));
                         self.goal = None;
                         self.path.clear();
@@ -1546,7 +1584,7 @@ impl Bot {
                 let blocker = (0..g.items.records.len())
                     .filter(|&s| {
                         let r = &g.items.records[s];
-                        r.active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(r.v3(0x40), p) < (r.f32_(0xe8).min(6.0) + 2.0).max(3.5) && (r.v3(0x40)[1] - p[1]).abs() < 3.0
+                        r.active() && matches!(item_kind(g, s).0, 2 | 3 | 10) && dist_xz(r.v3(0x40), p) < (r.f32_(0xe8).min(6.0) + 2.0).max(3.5) && in_height(g, s, r.v3(0x40)[1], p[1])
                     })
                     .min_by(|&a, &b| dist_xz(g.items.records[a].v3(0x40), p).total_cmp(&dist_xz(g.items.records[b].v3(0x40), p)));
                 self.attack_at = blocker.map(|s| g.items.records[s].v3(0x40));
@@ -1555,9 +1593,17 @@ impl Bot {
                 // routed around as before (b27: A3's 1285 stuck events).
                 // Three long attacks per item. (+0xfc is no damage measure:
                 // K2's generator 240 cycles it 0 → 1 as a spawn timer.)
+                // Counted per visit: 3000 updates after the last try the
+                // count starts again (J6 b44: barrel 567, health 5, spent
+                // on passes from the floor above, then blocked the trench
+                // for 255,000 updates; from a teleport it breaks at once).
                 let breakable = blocker.is_some_and(|s| {
-                    let (n, _) = self.break_tries.entry(s).or_insert((0, 0.0));
+                    let (n, last) = self.break_tries.entry(s).or_insert((0, 0.0));
+                    if 3000.0 < f as f32 - *last {
+                        *n = 0;
+                    }
                     *n += 1;
+                    *last = f as f32;
                     *n <= 3
                 });
                 if !at_gate
@@ -1807,6 +1853,27 @@ impl Bot {
         // under the thrown weapons' height kept the corridor by generator 333
         // closed) or, without the assist, when health runs low. At most one
         // every 600 updates.
+        // Death (enemy type 0x1e) takes no weapon damage and drains health
+        // on contact (death_touch); a magic blast kills it. Within 6 units:
+        // a potion if one is held (one every 150 updates), else away from it
+        // (legitimate chain lg2, G2: the bot fought the Death by the secret
+        // exit at (−176, 11.9, −200) from health 99 to 25).
+        let death = g
+            .enemies
+            .iter()
+            .filter(|e| e.i32_(0xc8) != 0 && e.i32_(0) == 0x1e && (e.v3(0x40)[1] - p[1]).abs() < 4.0)
+            .map(|e| (dist_xz(e.v3(0x40), p), e.v3(0x40)))
+            .filter(|&(d, _)| d < 6.0)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, at)) = death {
+            if 0 < g.players[0].i32_(0x1a18) && self.potion_at.is_none_or(|u| u + 150 <= f) {
+                self.potion_at = Some(f);
+                self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18), "death": at}));
+                pad.press(0xb);
+                return pad;
+            }
+            return Self::steer(pad, g, p, [2.0 * p[0] - at[0], p[1], 2.0 * p[2] - at[2]]);
+        }
         let crowd = Self::nearest_foe(g, p, 6.0).is_some();
         let low_health = !self.assist_enabled && g.players[0].f32_(HEALTH) < self.start_health * 0.35;
         if crowd && (5 <= recent || low_health) && 0 < g.players[0].i32_(0x1a18) && self.potion_at.is_none_or(|u| u + 600 <= f) {
@@ -1856,13 +1923,14 @@ impl Bot {
         }
     }
 
-    /// The nearest live enemy, or critter (bosses, statues' creatures:
-    /// +0x4f4 health), within `range` and 3 units of height.
+    /// The nearest live enemy (not Death: no weapon damages it), or critter
+    /// (bosses, statues' creatures: +0x4f4 health), within `range` and 3
+    /// units of height.
     fn nearest_foe(g: &Game, p: V3, range: f32) -> Option<(f32, V3)> {
         let enemies = g
             .enemies
             .iter()
-            .filter(|e| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && (e.v3(0x40)[1] - p[1]).abs() < 3.0)
+            .filter(|e| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && e.i32_(0) != 0x1e && (e.v3(0x40)[1] - p[1]).abs() < 3.0)
             .map(|e| (dist_xz(e.v3(0x40), p), e.v3(0x40)));
         let critters = g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| (dist_xz(c.rec.v3(0x40), p), c.rec.v3(0x40)));
         enemies.chain(critters).filter(|(d, _)| *d < range).min_by(|a, b| a.0.total_cmp(&b.0))
