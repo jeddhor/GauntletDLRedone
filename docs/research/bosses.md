@@ -106,6 +106,12 @@ in v4, and the replay carries native's own EE voice queue (it is not in the
 trace), so state 9 (AudioStillPlaying) ended at once; from v4 the speech is
 queued natively and runs its 76 vblanks as in the reference.
 
+K2's General (a statue creature, kind 8, riding the ship's moving floor
+beside the player from the level start): w11l1-genkill-v1 (WARPED: its
+health written to 10 in w11l1-newgame-v2), trace-K2-genkill-v2 (four
+Left-and-throw bursts): hits at steps 81 and 105, death at 113, the instance
+cleared by 205; replay-frame-K2genkill-v1 260/260 in every part.
+
 Fixed on the way: AddExp's StartLevelUpFX (a level up in play started no
 level-up effect natively; the Tower had it), and ProcessSpewItems'
 UpdateObjWorldMat (coins spewed onto A5's parented arena floor went back to
