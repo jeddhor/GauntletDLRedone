@@ -3719,6 +3719,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     b.assist_enabled = !opts.contains_key("no_assist");
                     // loot=1: the bot picks up gold, food and potions near it.
                     b.loot = opts.contains_key("loot");
+                    // require=1: exits wait for the rune stone and legend item.
+                    b.require = opts.contains_key("require");
                     if let Some(d) = opts.get("bot_delay") {
                         b.delay = d.parse()?;
                     }

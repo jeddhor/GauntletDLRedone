@@ -29,6 +29,8 @@ const MAX_PROBES: usize = 1200;
 /// Presses in a row that bring nothing new within reach (a combination
 /// lock's earlier presses); deeper no-gain branches are not opened.
 const MAX_IDLE: usize = 2;
+/// Queued nodes per set of items within reach.
+const MAX_PER_REACH: usize = 3;
 const HEALTH: usize = 0x1a10;
 const KEYS: usize = 0x1a14;
 
@@ -149,6 +151,10 @@ pub fn plan(start: &Game) -> (Vec<Hint>, serde_json::Value) {
     let mut states: std::collections::HashSet<Vec<u32>> = std::collections::HashSet::from([signature(start)]);
     let mut probes = 0;
     let mut best: Option<(usize, Vec<usize>)> = None;
+    // Nodes queued per reach set: orders of the same presses that bring
+    // the same items within reach are one state for the search (K1's 1200
+    // probes went to [7, 38, 40, 41, 66, X, 8] for every X).
+    let mut per_reach: std::collections::HashMap<Vec<usize>, usize> = std::collections::HashMap::new();
     while let Some(Ranked(_, _, _, node)) = queue.pop() {
         if MAX_DEPTH <= node.seq.len() {
             continue;
@@ -196,9 +202,19 @@ pub fn plan(start: &Game) -> (Vec<Hint>, serde_json::Value) {
             // combination lock opens only at its last press.
             let new_state = states.insert(signature(&g));
             let idle = if gained.is_empty() { node.idle + 1 } else { 0 };
-            if !gained.is_empty() || (new_state && idle <= MAX_IDLE) {
-                let mut union = node.reach.clone();
-                union.extend(r.iter().copied());
+            let mut union = node.reach.clone();
+            union.extend(r.iter().copied());
+            // Gains: at most MAX_PER_REACH nodes per reach set; presses
+            // without a gain: MAX_IDLE in a row (a combination's earlier
+            // presses keep the reach set).
+            let open = if gained.is_empty() {
+                new_state && idle <= MAX_IDLE
+            } else {
+                let n = per_reach.entry(union.iter().copied().collect()).or_insert(0);
+                *n += 1;
+                *n <= MAX_PER_REACH
+            };
+            if open {
                 if best.as_ref().is_none_or(|b| b.0 < union.len()) {
                     best = Some((union.len(), seq.clone()));
                 }

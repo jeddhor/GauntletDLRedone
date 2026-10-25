@@ -577,6 +577,9 @@ pub struct Bot {
     /// three times: never goals again (no-assist G2: 328 tries at one food
     /// item out of reach while health drained from 600 to 0).
     optional_skip: HashSet<usize>,
+    /// The collision object each treasure rests on (a floor query on a
+    /// copy of the collision state, once per treasure).
+    support_cache: HashMap<usize, Option<usize>>,
     /// When a given-up goal was last reopened for being near.
     reopened_at: HashMap<usize, usize>,
     /// Steering at a closed gate's centre until the update (key held).
@@ -657,6 +660,10 @@ pub struct Bot {
     /// economy a campaign without the DEBUG assist lives on (the Tower
     /// shop's healing costs 2.5 gold a point).
     pub loot: bool,
+    /// require=1: a level counts only with its rune stone and legend item,
+    /// so exits are not goals while one is left (E1: the bot took the exit
+    /// at update 113,924 without the soul, which needs pads 134/135 first).
+    pub require: bool,
     /// Updates to stand idle after the stage start (bot_delay=N: a
     /// variation of the same start for retries; the simulation is
     /// deterministic, so a retry needs a different input).
@@ -720,6 +727,7 @@ impl Bot {
             given_up: HashSet::new(),
             stuck_goal_counts: HashMap::new(),
             optional_skip: HashSet::new(),
+            support_cache: HashMap::new(),
             reopened_at: HashMap::new(),
             gate_push: None,
             stuck_waypoints: HashMap::new(),
@@ -767,6 +775,7 @@ impl Bot {
             no_goal_since: None,
             assist_enabled: true,
             loot: false,
+            require: false,
             break_tries: HashMap::new(),
             delay: 0,
         }
@@ -1136,17 +1145,28 @@ impl Bot {
             // pedestal pad 159 moves (object 632), D4's sword on object 735
             // that trigger 355 raises (the bot stood on the ledge beside it
             // 686 times: the graph's drop into the pit fails in play).
-            let support: HashSet<usize> = treasures
-                .iter()
-                .filter_map(|&t| {
+            // E1's soul rests on object 636 (no item floor parent, no graph
+            // node on its platform): a floor query on a collision copy.
+            for &t in &treasures {
+                if !self.support_cache.contains_key(&t) {
                     let q = g.items.records[t].v3(0x40);
-                    g.items.floor_parent.get(t).copied().flatten().map(|(o, _)| o).or_else(|| {
-                        let c = key(q[0], q[2]);
-                        self.nav.cols.get(&c).and_then(|v| v.iter().copied().filter(|&n| (self.nav.pts[n][1] - q[1]).abs() < 2.0).min_by(|&a, &b| dist_xz(self.nav.pts[a], q).total_cmp(&dist_xz(self.nav.pts[b], q)))).map(|n| self.nav.obj[n])
-                    })
-                })
-                .flat_map(|o| std::iter::once(o).chain(g.collision.objects.get(o).and_then(|c| c.parent)))
-                .collect();
+                    let o = g.items.floor_parent.get(t).copied().flatten().map(|(o, _)| o).or_else(|| {
+                        let mut c = g.collision.clone();
+                        c.floor_pos(q[1] - 3.0, 0.3, [q[0], q[1] + 1.0, q[2]], 0).ok().and_then(|(_, h)| h).map(|h| h.object)
+                    });
+                    self.support_cache.insert(t, o);
+                }
+            }
+            let mut support: HashSet<usize> = HashSet::new();
+            for &t in &treasures {
+                // The object and its ancestors (a pedestal under its lift).
+                let mut o = self.support_cache.get(&t).copied().flatten();
+                for _ in 0..4 {
+                    let Some(x) = o else { break };
+                    support.insert(x);
+                    o = g.collision.objects.get(x).and_then(|c| c.parent);
+                }
+            }
             let bound: Vec<usize> = near
                 .iter()
                 .copied()
@@ -1156,8 +1176,10 @@ impl Bot {
             first_revisit += 1;
             let mut o = vec![treasures, bound, near];
             o.extend(revisit.into_iter().map(|s| vec![s]));
-            o.push(exits);
-            o.push(secret);
+            if !self.require {
+                o.push(exits);
+                o.push(secret);
+            }
             o
         };
         // loot=1: pickups near the player first, nearest by path.
@@ -1932,6 +1954,17 @@ impl Bot {
             "explain": explain,
             "nav": self.nav.pts.iter().zip(&self.nav.adj).filter(|(_, a)| !a.is_empty()).map(|(p, _)| [(p[0] * 10.0).round() / 10.0, (p[1] * 10.0).round() / 10.0, (p[2] * 10.0).round() / 10.0]).collect::<Vec<_>>(),
             "nav_edges": edges, "items": marks, "all_items": all_items, "triggers": triggers,
+            // Each treasure's support object and its parent chain.
+            "treasure_support": self.support_cache.iter().map(|(&t, &o)| {
+                let mut chain = Vec::new();
+                let mut x = o;
+                for _ in 0..6 {
+                    let Some(v) = x else { break };
+                    chain.push(v);
+                    x = g.collision.objects.get(v).and_then(|c| c.parent);
+                }
+                serde_json::json!([t, chain])
+            }).collect::<Vec<_>>(),
             "critters": g.critters.iter().flatten().map(|c| serde_json::json!({"pos": c.rec.v3(0x40), "state": c.rec.i32_(8), "health": c.rec.f32_(0x4f4)})).collect::<Vec<_>>(),
             "scope": "TRAVERSAL BOT (gdl_tools bot.rs): port 0 driven through the ordinary pad path; health assist is a DEBUG shortcut",
             "start": self.start, "start_level": self.start_level, "player_radius": g.players[0].f32_(0x828), "collision_offset": g.players[0].f32_(0x820), "collision_height": g.players[0].f32_(0x82c), "nav_nodes": self.nav.pts.len(), "reachable_nodes": self.nav.reached,

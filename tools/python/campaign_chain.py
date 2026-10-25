@@ -96,6 +96,9 @@ def main():
                    '--pads', '0:1', '--bot', '--end-state', str(bot_end)] + common
             if BOT_DELAYS[t]:
                 cmd += ['--bot-delay', str(BOT_DELAYS[t])]
+            if a.require:
+                # The bot does not take an exit while a rune or legend item is left.
+                cmd += ['--require']
             # The tries run side by side; the first (lowest delay) that wins counts.
             err_path = bot_report.with_suffix('.err')
             with open(err_path, 'x') as err_file:
