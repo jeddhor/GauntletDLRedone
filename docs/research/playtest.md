@@ -654,6 +654,16 @@ GDL_DEBUG_CAMERA):
   - Checks on c38: G1 J4 C1 end (b61), H1 H2 J2 end at 300,000 (b63), J6
     ends (b62); E1 F1 I3 do not (E1 identically on c33 and c38: 4,406
     stuck events at (0, 0, 80.3)).
+  - Trigger target nodes: a node nearer than the trigger's contact distance
+    (the player's radius + the definition's reach +0xc, +0xfc when set,
+    doubled for subtype 0x1b; less 0.3) is a target even when the line
+    test fails — item_coll_sub does not test walls. I2's trigger 495
+    (TRIGGER2, box, reach 0.7) stands behind static wall 1192 from the
+    floor the bot reaches, 1.1 units from its node (explain_items in
+    i2dbg5); b37 fired it from that side. J3's 502 (same definition) stays
+    excluded: its nearest node is 2.2 away. With it (c44) I2 ends from
+    t31's I1 end in all three tries with the rune: updates 59,136
+    (delay 61), 76,299 and 84,836 (i2r4).
   - A trigger hint whose state an earlier touch left set counts only on
     contact (+0xe2): I3's hint 8, trigger 533 (it raises the rune's
     platform 566 about 6 units, after which the rune is taken from y −2.6;
@@ -681,7 +691,24 @@ GDL_DEBUG_CAMERA):
     ticks every 31 updates with nothing near (a poison cloud).
   - Legitimate G2 tries (no assist, from lg1's G1 end): Medium lg8 died at
     6,044–23,820; Easy lg9 at 29,320–73,375 (one alive at 200,000 on
-    bridge 1054, the mover-place loop above), lg10 at 26,561–104,955.
+    bridge 1054, the mover-place loop above), lg10 at 26,561–104,955,
+    lg13 (all the rules above) at 13,947–138,991 (losses: knights within 6
+    units 190–433, hazards 98–213, statue creatures 47–303 a try). Chain
+    lg14 (Easy, six tries then a 600,000-update search) did not end G2:
+    the search reached progress 7 in 256 iterations and 93 bot macros
+    (lg7 on Medium, before these rules: 22, 299 and 176).
+  - Enemies do not scale with the player's level in the ported code (the
+    enemy keeps PlayersAverageLevel at +0x384, read by nothing ported);
+    damage dealt to enemies does (× (1 + 0.1 × (level − LEVL +0x9c)) above
+    the level's target, − 1 % a level below), and max health is 500 + 100
+    a level. Replaying G1 to level up (campaign_chain.py now takes a level
+    twice, e.g. G1 G1 G2; a completed level is entered again from the
+    Tower in the game): lg15's six G1 replay tries (level 4, Easy) all
+    died (20,902–78,210). A/B from the same state (ab-g1-*): the build
+    before these rules (c29) dies too (Medium 25,282 and 22,992), as do
+    both builds from the fixture's own G1 start (level 1: c29 at 24,907,
+    c44 at 64,386); lg1's four G1 exits (f94-era build, 2026-10-24) were
+    the lucky end of a wide spread, not a better bot.
 
 
 ## State search (M14/M15 tooling, 2026-10-24)

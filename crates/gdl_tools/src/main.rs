@@ -3921,6 +3921,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                             }
                             v["explain"] = serde_json::json!(out);
                         }
+                        if let Some(list) = opts.get("explain_items") {
+                            let slots: Vec<usize> = list.split(',').map(str::parse).collect::<Result<_, _>>()?;
+                            v["explain_items"] = serde_json::json!(slots.iter().map(|&s| bot::explain_item(&b.nav, &game, s)).collect::<Vec<_>>());
+                        }
                         let mut file = fs::OpenOptions::new().write(true).create_new(true).open(format!("{path}.bot.json"))?;
                         serde_json::to_writer(&mut file, &v)?;
                     }

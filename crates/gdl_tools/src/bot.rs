@@ -733,6 +733,33 @@ fn clear_line(coll: &mut Option<CollisionWorld>, g: &Game, p: V3, q: V3) -> bool
     clear_line_skip(coll, g, p, q, None)
 }
 
+/// Why item `s` has or lacks a target node (DIAGNOSTIC): each node within
+/// 2.5 units in the item's and neighbouring columns with its distance,
+/// height difference, reachability and the line test's first hit.
+pub fn explain_item(nav: &Nav, g: &Game, s: usize) -> serde_json::Value {
+    let q = g.items.records[s].v3(0x40);
+    let bound = g.items.records[s].u32_(0xf0).checked_sub(1).map(|o| o as usize);
+    let mut c = g.collision.clone();
+    let k = key(q[0], q[2]);
+    let mut out = Vec::new();
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            for &n in nav.cols.get(&(k.0 + dx, k.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
+                let p = nav.pts[n];
+                let d = dist_xz(p, q);
+                if 2.5 <= d {
+                    continue;
+                }
+                let h = p[1] + 1.0;
+                let hit = c.world_collide(Query { radius: 0.3, first: [p[0], h, p[2]], last: [q[0], h, q[2]], check_flags: 7, min_normal_y: f32::from_bits(0xbf5d_b22d), max_normal_y: f32::from_bits(0x3f5d_b22d), object_mask: 0x13a, exclusion_mask: 1 });
+                let first = match hit { Ok((w, _)) => w.solid.map(|h| (h.object, format!("{:#x}", c.runtime_flags[h.object]))), Err(_) => None };
+                out.push(serde_json::json!({"node": p, "obj": nav.obj[n], "d": d, "dy": q[1] - p[1], "reachable": !nav.adj[n].is_empty(), "hit": first}));
+            }
+        }
+    }
+    serde_json::json!({"slot": s, "pos": q, "bound": bound, "kind": item_kind(g, s), "flags_f4": g.items.records[s].u16_(0xf4), "nodes": item_nodes(nav, g, &[s]), "candidates": out})
+}
+
 /// `clear_line`, a hit on object `skip` (an item's own bound object) not
 /// counting.
 fn clear_line_skip(coll: &mut Option<CollisionWorld>, g: &Game, p: V3, q: V3, skip: Option<usize>) -> bool {
@@ -786,6 +813,24 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
             }
             continue;
         }
+        // A trigger (kind 5) is touched by distance, walls or not
+        // (item_coll_sub: within the player's radius + the definition's
+        // reach +0xc, +0xfc when set, doubled for subtype 0x1b): a node
+        // nearer than that, less 0.3, counts even when the line test fails. I2's
+        // trigger 495 fires through wall 1192 from 1.1 units (b37 took it so);
+        // J3's 502, 2.2 from the nearest node behind wall 1512, never did.
+        let touch = (item_kind(g, s).0 == 5).then(|| {
+            let r = &g.items.records[s];
+            let d = &g.items.definitions[r.definition()];
+            let reach = if 0.0 < r.f32_(0xfc) {
+                r.f32_(0xfc)
+            } else if d.subtype() == 0x1b {
+                2.0 * d.f32_(0xc)
+            } else {
+                d.f32_(0xc)
+            };
+            PLAYER_DIMS.get().map_or(1.5, |p| p.0) + reach - 0.3
+        });
         let k = key(q[0], q[2]);
         // The item's bound object (+0xf0) is no wall for its own line test:
         // I2's trigger 495 sits on door 262, which it opens (c38: no target
@@ -804,7 +849,8 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
                     // the static wall 1512 from the floor the bot reached; a
                     // node 2.2 away on that side was taken as within reach
                     // (2521 stuck events in b56).
-                    if d < 2.5 && best.is_none_or(|b| d < b.0) && (d <= 1.0 || clear_line_skip(&mut coll, g, p, q, bound)) {
+                    let near = (d < 2.5 && (d <= 1.0 || clear_line_skip(&mut coll, g, p, q, bound))) || touch.is_some_and(|t| d < t);
+                    if near && best.is_none_or(|b| d < b.0) {
                         best = Some((d, n));
                     }
                 }
