@@ -405,7 +405,32 @@ GDL_DEBUG_CAMERA):
   assisted t16 run) and every no-assist try died on lift pad 483 by update
   1650: the assisted chain's economy (gold, health) is not one a player
   would arrive with. With turbo one of three tries got past the General
-  and died at update 17,612 to a second critter (health 400). Chain lg1 plays from a new game with --no-assist
+  and died at update 17,612 to a second critter (health 400).
+- Treasure supports: fresh triggers bound to the object a left rune or
+  legend item rests on (a floor query on a collision copy) or one of its
+  parents come right after the treasures — D4's sword on object 735
+  (trigger 355 raises it; the bot had stood on the ledge beside it 686
+  times), E1's soul on 636 whose parent 632 is pad 159's, A3's rune on the
+  elevator of 249 (still ends, b38).
+- require=1 (the chain passes it to the bot tries): no exit goals while a
+  rune stone or legend item is left (E1 exited at update 113,924 without
+  the soul; pads 134/135 move the platform pad 159 stands on).
+- Optional pickups (gold, food, potions, chests) are dropped after three
+  stuck events (no-assist G2: 328 tries at one food item while health
+  drained from 600 to 0). Chests with keys to spare are loot (legit G1:
+  two of three tries ended at updates 20,661 and 21,675 against 29,252).
+- Legitimate G2 (lg1, f69 retries): all die by update 28,000 — the bot's
+  route to the exit takes longer than the health lasts (drain and hits,
+  600 → about 100 at update 27,000). route_hints.py turns a winning run's
+  reached triggers and treasures into hints for later runs.
+- K1 (navdumps from teleported points, tools: components of the bot graph):
+  the exit's region is reached from the ledge region above (−66, −32, −78)
+  (14,654 graph nodes from there, the exit among them); bridge 1093
+  (trigger 48) joins it to the western low area (y −34, x −208..−109); the
+  mid region (y −8) above that area is fenced (an idle drop test at
+  (−142.5, −8, −51.8) in four directions stops at the edge). The planner's
+  frontier: [7, 38, 40, 41, 66, 8] (opens 9, 56, 57, the far west).
+ Chain lg1 plays from a new game with --no-assist
   --loot --shop-buy heal,potion.
 
 
