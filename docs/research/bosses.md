@@ -74,6 +74,40 @@ update 30812 → 0xd00 (private/reports/game-run-I5-bot-start-v1.json). All
 eleven boss levels now end from their own start.
 
 
+## Boss deaths against the reference (2026-10-24)
+
+Every boss's death is now compared update by update with the reference.
+Captures: the boss level's start capture with the boss critter's health
+written to 10 (reference_warp.py --critter-health 0 10; WARPED, a guest
+write), for D5, J5 and A5 after an approach saved by reference_warp (D5:
+Up+Right 340 vblanks; J5: Up 360; A5: trace-A5-boss-v2's inputs, 500), I5
+from the warped w9l5-boss-v2. Traces: walk, six throw bursts, idle
+(trace-<code>-bosskill-v1/-v2, 488–500 vblanks; the first throws kill).
+Replays: whole update (game_run --enemy-replay --frame-replay), every part
+compared — items, players, effects, world animation, critters, camera,
+good wizard.
+
+| Boss | Death (trace step) | Replay | Result |
+|---|---|---|---|
+| G5 lich | 261 | replay-frame-G5kill-v1 | 250/250, every part |
+| C5 djinn | 225 | replay-frame-C5kill-v2 | 250/250 (v1: effects 249 — AddExp's level-up effect, now ported) |
+| E2 Skorne 1 | 226 | replay-frame-E2kill-v1 | 250/250 |
+| F2 Skorne 2 | 196 | replay-frame-F2kill-v1 | 250/250 |
+| H4 Garm | 251 | replay-frame-H4kill-v1; -H4wiz2-v1 (the next 500 vblanks, death move) | 250/250, 250/250 |
+| K5 pboss | 220 | replay-frame-K5kill-v1 | 250/250 |
+| I5 yeti | 246 | replay-frame-I5kill-v2 | 250/250 |
+| J5 wraith | 88 | replay-frame-J5kill-v2 | 244/244 |
+| D5 drider | 179 | replay-frame-D5kill-v2 | 250/250 but critters 249: step 185, collision node 1's rotation (+0x5b0..+0x5d8) differs in the third decimal for one update, six updates into the death move |
+| A5 chimera | 107 | replay-frame-A5kill-v3 | 244/244 but effects 240: every 15 updates an effect's node starts 0.025 units off (the dead chimera's node pose); v2's coins fixed (below) |
+| B6 dragon | 203 | replay-frame-B6kill (2026-10-22) | 250/250, and the good wizard and auto exit after it |
+
+Fixed on the way: AddExp's StartLevelUpFX (a level up in play started no
+level-up effect natively; the Tower had it), and ProcessSpewItems'
+UpdateObjWorldMat (coins spewed onto A5's parented arena floor went back to
+their spawn point at the next GetObjWorldMat). Open residuals: D5's
+collision-node rotation and A5's effect node position, both from the dead
+boss's animated node pose (first divergent observations above).
+
 ## The critical path (2026-10-24)
 
 From the ported gates (tower.rs: WorldOpen 0x177778, HideExits 0x15b690;
