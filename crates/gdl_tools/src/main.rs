@@ -3003,6 +3003,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     game.effects.tables.headers.clone(),
                     // The EE voice queue (AudioQueUpdate's state).
                     game.audio_que.clone(),
+                    // QuestWeaponSfx (the legend item's glow; a retry must
+                    // start it again: trace-B6-legend-v1 step 1).
+                    game.quest_weapon_sfx,
                 );
                 // WorldCollide's CheckNum and stamps: one query sequence per update.
                 let check_before = game.collision.check_state();
@@ -3024,6 +3027,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         game.effects.custom_effects,
                         game.effects.tables.headers,
                         game.audio_que,
+                        game.quest_weapon_sfx,
                     ) = item_side.clone();
                     seed_all(game)?;
                     game.rng.state = seed;

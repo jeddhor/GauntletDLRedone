@@ -125,6 +125,22 @@ the awakening), w1l1-gargkill-v1 (WARPED: health 10), trace-A1-gargkill-v1
 220; replay-frame-A1gargkill 206/206 in every part. The Death statue stays
 unreached (fenced, gameplay.md "Statues").
 
+The legend-item phase (B6, 2026-10-24): w2l6-legend-v1 (WARPED: in
+w2l6-boss-v1 QuestItemState 1, player +0x80c 1, the class's legend bit for
+world 2 (+0x112c |= 4) and the dragon's health 130), trace-B6-legend-v1
+(walk, six throw bursts): QuestItemState 1 → 2 at step 89 (+0x80c 1 → 3,
+the player's legend action 0x63 at 149, 0x64 at 221: the javelin fired),
+3 at 273, 4 at the hit (345), 5 at 347; the dragon 130 → 118 → 105.
+replay-frame-B6legend-v2 (the replay now restores QuestWeaponSfx per
+retry): items, world animation, camera and the good wizard 290/290, the
+player 289/290, effects 228/290, critters 172/290 — the first divergence
+is the fired javelin's homing velocity at step 223 (y 5.2012 native, 5.8679
+reference; x and z equal to the last bit; SfxSetHitTarget's node, the
+dragon's +0xcc tree root, about one unit higher in the reference), and the
+hit's update shifts with it (the critter's +0xb4c pause 0x4b0 and the
+player's +0x7d4 at 345 follow). Open: the homing target's height (the
+dragon's root-node pose; cf. D5's and A5's pose residuals above).
+
 Fixed on the way: AddExp's StartLevelUpFX (a level up in play started no
 level-up effect natively; the Tower had it), and ProcessSpewItems'
 UpdateObjWorldMat (coins spewed onto A5's parented arena floor went back to
