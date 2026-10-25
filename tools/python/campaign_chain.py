@@ -54,6 +54,8 @@ def main():
     ap.add_argument('--no-assist', action='store_true')
     ap.add_argument('--bot-first', type=int, help='try the traversal bot for this many updates first')
     ap.add_argument('--bot-tries', type=int, default=1, help='bot runs per level before the search (different start delays)')
+    ap.add_argument('--loot', action='store_true', help='bot runs pick up nearby gold, food and potions (game_run.py --loot)')
+    ap.add_argument('--shop-buy', help='chained starts: the Tower shop purchases (game_run.py --shop-buy, e.g. heal,potion)')
     ap.add_argument('--require', action='store_true', help='rune stones and legend items must be taken')
     a = ap.parse_args()
     if not a.tag.replace('-', '').isalnum():
@@ -75,10 +77,14 @@ def main():
             # The Tower between levels: its shop opened from the menu
             # restores health (PlayersRestoreHealth); not simulated.
             common += ['--start', start, '--next-level', '--tower-shop']
+            if a.shop_buy:
+                common += ['--shop-buy', a.shop_buy]
         if a.legend_bosses and code in BOSSES:
             common += ['--legend']
         if a.no_assist:
             common += ['--no-assist']
+        if a.loot:
+            common += ['--loot']
         step = {'level': code, 'start': start}
         won_by_bot = False
         tries = []

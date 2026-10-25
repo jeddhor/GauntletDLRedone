@@ -58,6 +58,8 @@ const FLOOR_RADIUS: f32 = 0.3;
 /// floor test is a short sweep).
 const SWEEP: f32 = 8.0;
 const ATTACK_RANGE: f32 = 5.0;
+/// loot=1: pickups within this many units (and 5 of height) are goals.
+const LOOT_RANGE: f32 = 25.0;
 const NODE_LIMIT: usize = 400_000;
 const HEALTH: usize = 0x1a10;
 const KEYS: usize = 0x1a14;
@@ -645,6 +647,11 @@ pub struct Bot {
     no_goal_since: Option<usize>,
     /// The DEBUG health assist (explore.rs applies its own).
     pub assist_enabled: bool,
+    /// loot=1: gold, gems, food (below the maximum health) and potions
+    /// (below the cap) within LOOT_RANGE come before the other goals — the
+    /// economy a campaign without the DEBUG assist lives on (the Tower
+    /// shop's healing costs 2.5 gold a point).
+    pub loot: bool,
     /// Updates to stand idle after the stage start (bot_delay=N: a
     /// variation of the same start for retries; the simulation is
     /// deterministic, so a retry needs a different input).
@@ -753,6 +760,7 @@ impl Bot {
             ride_holds: (None, 0),
             no_goal_since: None,
             assist_enabled: true,
+            loot: false,
             break_tries: HashMap::new(),
             delay: 0,
         }
@@ -911,6 +919,35 @@ impl Bot {
         out
     }
 
+    /// Nodes within an exit's reach (+0xe8 and the player's radius): routes
+    /// to other goals go around them. E1's way to pad 159 (the legend
+    /// item's pedestal) passed the exit portal, and the bot left the level
+    /// without the item (update 245,365).
+    fn exit_nodes(&self, g: &Game) -> HashSet<usize> {
+        let mut out = HashSet::new();
+        for s in 0..g.items.records.len() {
+            let r = &g.items.records[s];
+            if !r.active() || item_kind(g, s).0 != 9 {
+                continue;
+            }
+            let q = r.v3(0x40);
+            let reach = r.f32_(0xe8).clamp(1.0, 6.0) + 1.5;
+            let c = key(q[0], q[2]);
+            let span = (reach / CELL).ceil() as i32;
+            for dx in -span..=span {
+                for dz in -span..=span {
+                    for &n in self.nav.cols.get(&(c.0 + dx, c.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
+                        let pn = self.nav.pts[n];
+                        if dist_xz(pn, q) < reach && (pn[1] - q[1]).abs() < 3.0 {
+                            out.insert(n);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// The next goal on the current graph; false when none is reachable.
     fn plan(&mut self, f: usize, g: &mut Game) -> bool {
         // A given-up goal the player has come near again gets another try
@@ -934,6 +971,9 @@ impl Bot {
             self.log.push(serde_json::json!({"update": f, "reopened_near": s}));
         }
         let avoid = self.obstacle_nodes(g);
+        // Routes to anything but an exit stay out of the exits' reach.
+        let avoid_x = Avoid { soft: avoid.soft.clone(), cheap: avoid.cheap.clone(), closed: avoid.closed.union(&self.exit_nodes(g)).copied().collect() };
+        let is_exit = |s: usize| item_kind(g, s).0 == 9;
         if 0 < g.players[0].i32_(KEYS) {
             self.gate_blocked.clear();
         }
@@ -955,7 +995,7 @@ impl Bot {
                     continue;
                 }
                 let targets = self.item_nodes(g, &[s]);
-                let path = targets.first().and_then(|&(_, n)| self.nav.path(here, &|m| m == n, &blocked, &avoid));
+                let path = targets.first().and_then(|&(_, n)| self.nav.path(here, &|m| m == n, &blocked, if is_exit(s) { &avoid } else { &avoid_x }));
                 // Not reachable yet: the ordinary goals (keys open gates,
                 // triggers move floors) until the next re-plan.
                 let Some(path) = path else { break };
@@ -974,7 +1014,7 @@ impl Bot {
                     continue;
                 }
                 let goal = self.nav.locate_cached(q, &HashSet::new());
-                let path = goal.and_then(|n| self.nav.path(here, &|m| m == n, &blocked, &avoid));
+                let path = goal.and_then(|n| self.nav.path(here, &|m| m == n, &blocked, &avoid_x));
                 let Some(path) = path else { break };
                 self.goal = Some(Goal::Point(self.hint_at));
                 self.path = path;
@@ -1090,6 +1130,22 @@ impl Bot {
             o.push(secret);
             o
         };
+        // loot=1: pickups near the player first, nearest by path.
+        if self.loot {
+            let hurt = g.players[0].f32_(HEALTH) < gdl_core::player_class::max_health(g.players[0].i32_(0x2ac0));
+            let potions_left = g.players[0].i32_(0x1a18) < g.globals.max_potions_per_player;
+            let loot: Vec<usize> = active(g, &|k, t| k == 1 && (t == 1 || (t == 3 && hurt) || (t == 4 && potions_left)))
+                .into_iter()
+                .filter(|&s| {
+                    let q = g.items.records[s].v3(0x40);
+                    g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT" && dist_xz(q, p) < LOOT_RANGE && (q[1] - p[1]).abs() < 5.0
+                })
+                .collect();
+            if !loot.is_empty() {
+                order.insert(0, loot);
+                first_revisit += 1;
+            }
+        }
         // Hungry (under 60 % of the start health): food first (kind 1
         // subtype 3; BADMEAT poisons).
         if g.players[0].f32_(HEALTH) < self.start_health * 0.6 {
@@ -1110,7 +1166,8 @@ impl Bot {
                 continue;
             }
             let goal_nodes: HashMap<usize, usize> = targets.iter().map(|&(s, n)| (n, s)).collect();
-            if let Some(path) = self.nav.path(here, &|n| goal_nodes.contains_key(&n), &blocked, &avoid) {
+            let av = if list.iter().all(|&s| is_exit(s)) { &avoid } else { &avoid_x };
+            if let Some(path) = self.nav.path(here, &|n| goal_nodes.contains_key(&n), &blocked, av) {
                 let slot = goal_nodes[path.last().unwrap()];
                 if (first_revisit..first_revisit + revisits).contains(&li) {
                     self.revisiting = Some(slot);
@@ -1135,7 +1192,7 @@ impl Bot {
                     d(a).total_cmp(&d(b))
                 });
             let near = |n: usize| foes.iter().any(|q| dist_xz(self.nav.pts[n], *q) < 4.0) || Some(n) == close;
-            if let Some(path) = self.nav.path(here, &near, &blocked, &avoid) {
+            if let Some(path) = self.nav.path(here, &near, &blocked, &avoid_x) {
                 let n = *path.last().unwrap();
                 self.goal = Some(Goal::Explore(n));
                 self.path = path;
@@ -1151,7 +1208,7 @@ impl Bot {
             let q = self.nav.pts[n];
             !self.nav.adj[n].is_empty() && !self.visited_cols.contains(&key(q[0], q[2])) && 3.0 < dist_xz(q, p)
         };
-        if let Some(path) = self.nav.path(here, &unvisited, &blocked, &avoid) {
+        if let Some(path) = self.nav.path(here, &unvisited, &blocked, &avoid_x) {
             let n = *path.last().unwrap();
             self.goal = Some(Goal::Explore(n));
             self.path = path;
@@ -1301,7 +1358,12 @@ impl Bot {
                 self.choose(f, g);
             } else {
                 self.wait = Some((since, p, moved));
-                return pad;
+                // A foe within reach: fight it rather than stand still (no-
+                // assist K2: the General statue's creature beat the player
+                // down on lift pad 483 while the bot waited for the lift).
+                if Self::nearest_foe(g, p, ATTACK_RANGE).is_none() {
+                    return pad;
+                }
             }
         }
         // Stuck detection: under half a unit in STUCK updates, or no goal
@@ -1613,6 +1675,13 @@ impl Bot {
             return Self::steer(pad, g, p, [2.0 * p[0] - at[0], p[1], 2.0 * p[2] - at[2]]);
         }
         let target = match enemy.filter(|_| fighting) {
+            // Turbo (triangle, entry 0xc: an edge gives code 0x15, the turbo
+            // attack at +0x800 >= 40; its melee triples the damage) every 40
+            // updates against a foe within reach.
+            Some((_, at)) if near.is_some() && 40.0 <= g.players[0].f32_(0x800) && f.is_multiple_of(40) => {
+                pad.press(0xc);
+                Some(at)
+            }
             Some((_, at)) => {
                 pad.press(0xd);
                 Some(at)

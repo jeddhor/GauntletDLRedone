@@ -109,7 +109,9 @@ def main():
     ap.add_argument('--next-level', action='store_true', help='enter the level from --start as init_next_level does (level_start and PlayerSaveState on the carried records, start locator); needs --pads')
     ap.add_argument('--padfile', help='with --pads: port 0 per update from an --explore JSON script (analog sticks included)')
     ap.add_argument('--require', action='store_true', help='with --explore: a level end counts only with its rune stone and legend item taken')
+    ap.add_argument('--shop-buy', help="with --next-level: the Tower shop's purchases with the character's own gold, cheapest first per kind until refused (heal,potion,key,fight,magic,speed,armor; e.g. heal,potion)")
     ap.add_argument('--tower-shop', action='store_true', help='with --next-level: PlayersRestoreHealth as the Tower shop opened from its menu (the Tower is not simulated between chained levels)')
+    ap.add_argument('--loot', action='store_true', help='with --bot: gold, food (when hurt) and potions within 25 units are goals first')
     ap.add_argument('--plan', action='store_true', help='with --bot: the DEBUG trigger planner (puzzle.rs) gives the route hints')
     ap.add_argument('--bot-delay', type=int, help='with --bot: stand idle N updates after the stage start (a variation for retries)')
     ap.add_argument('--no-assist', action='store_true', help='with --explore: no DEBUG health assist in the search or its replay')
@@ -266,8 +268,13 @@ def main():
         cmd += [f'bot_delay={a.bot_delay}']
     if a.plan:
         cmd += ['plan=1']
+    if a.loot:
+        cmd += ['loot=1']
     if a.tower_shop:
         cmd += ['tower_shop=1']
+    if a.shop_buy:
+        [shop] = resolve(['SHPDATA/SHOP.WAD'])
+        cmd += [f'shop={shop}', f'shop_buy={a.shop_buy}']
     if a.require:
         cmd += ['require=1']
     if a.players:

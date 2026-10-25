@@ -24,8 +24,11 @@ use gdl_core::game::Game;
 use std::collections::{BTreeSet, BinaryHeap};
 
 const SETTLE: usize = 300;
-const MAX_DEPTH: usize = 5;
-const MAX_PROBES: usize = 400;
+const MAX_DEPTH: usize = 10;
+const MAX_PROBES: usize = 1200;
+/// Presses in a row that bring nothing new within reach (a combination
+/// lock's earlier presses); deeper no-gain branches are not opened.
+const MAX_IDLE: usize = 2;
 const HEALTH: usize = 0x1a10;
 const KEYS: usize = 0x1a14;
 
@@ -102,12 +105,13 @@ fn signature(g: &Game) -> Vec<u32> {
     v
 }
 
-/// A queued node with its rank (items within reach, inverse length).
-struct Ranked(usize, usize, Node);
+/// A queued node with its rank (items within reach, then fewer presses
+/// without a gain, then the shorter sequence).
+struct Ranked(usize, usize, usize, Node);
 
 impl PartialEq for Ranked {
     fn eq(&self, o: &Self) -> bool {
-        (self.0, self.1) == (o.0, o.1)
+        (self.0, self.1, self.2) == (o.0, o.1, o.2)
     }
 }
 impl Eq for Ranked {}
@@ -118,7 +122,7 @@ impl PartialOrd for Ranked {
 }
 impl Ord for Ranked {
     fn cmp(&self, o: &Self) -> std::cmp::Ordering {
-        (self.0, self.1).cmp(&(o.0, o.1))
+        (self.0, self.1, self.2).cmp(&(o.0, o.1, o.2))
     }
 }
 
@@ -126,6 +130,7 @@ struct Node {
     game: Box<Game>,
     seq: Vec<usize>,
     reach: BTreeSet<usize>,
+    idle: usize,
 }
 
 /// The trigger sequence (route hints) and a report.
@@ -139,12 +144,12 @@ pub fn plan(start: &Game) -> (Vec<Hint>, serde_json::Value) {
     }
     let start_reach: Vec<serde_json::Value> = r0.iter().map(|&s| serde_json::json!([s, item_kind(start, s)])).collect();
     // Best first: the most items within reach, then the shortest sequence.
-    let mut queue = BinaryHeap::from([Ranked(r0.len(), usize::MAX, Node { game: Box::new(start.clone()), seq: Vec::new(), reach: r0 })]);
+    let mut queue = BinaryHeap::from([Ranked(r0.len(), usize::MAX, usize::MAX, Node { game: Box::new(start.clone()), seq: Vec::new(), reach: r0, idle: 0 })]);
     let mut seen: BTreeSet<Vec<usize>> = BTreeSet::new();
     let mut states: std::collections::HashSet<Vec<u32>> = std::collections::HashSet::from([signature(start)]);
     let mut probes = 0;
     let mut best: Option<(usize, Vec<usize>)> = None;
-    while let Some(Ranked(_, _, node)) = queue.pop() {
+    while let Some(Ranked(_, _, _, node)) = queue.pop() {
         if MAX_DEPTH <= node.seq.len() {
             continue;
         }
@@ -190,14 +195,14 @@ pub fn plan(start: &Game) -> (Vec<Hint>, serde_json::Value) {
             // A new puzzle state opens a branch even without a gain: a
             // combination lock opens only at its last press.
             let new_state = states.insert(signature(&g));
-            if !gained.is_empty() || new_state {
+            let idle = if gained.is_empty() { node.idle + 1 } else { 0 };
+            if !gained.is_empty() || (new_state && idle <= MAX_IDLE) {
                 let mut union = node.reach.clone();
                 union.extend(r.iter().copied());
                 if best.as_ref().is_none_or(|b| b.0 < union.len()) {
                     best = Some((union.len(), seq.clone()));
                 }
-                let rank = (union.len(), usize::MAX - seq.len());
-                queue.push(Ranked(rank.0, rank.1, Node { game: g, seq, reach: union }));
+                queue.push(Ranked(union.len(), usize::MAX - idle, usize::MAX - seq.len(), Node { game: g, seq, reach: union, idle }));
             }
         }
     }

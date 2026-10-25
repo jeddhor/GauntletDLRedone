@@ -2141,6 +2141,61 @@ fn run() -> Result<(), Box<dyn Error>> {
             let o = 0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n.parse::<usize>()?;
             game.players[0].set_i16(o, c.parse()?);
         }
+        // shop=SHOP.WAD shop_buy=heal,potion,... (chained runs): the Tower
+        // shop a player opens between levels, paid with the character's own
+        // gold through do_shopping's purchase (Game::shop_buy, make_skiplist's
+        // refusals): per wanted kind the cheapest item, again and again until
+        // refused — heal (kind 0x11) to the maximum health, potion (3) to the
+        // cap, key (1), fight/speed/armor/magic (5..8, +10 each). Then
+        // PlayerSaveState again: the level is entered after the shop. Not a
+        // DEBUG input, but the Tower is not simulated (labelled in the
+        // report; the potion colours' RandInt draws come from the level's rng).
+        let mut shop_report = Vec::new();
+        if let (Some(path), Some(buy)) = (opts.get("shop"), opts.get("shop_buy")) {
+            use gdl_core::game::powerups::Purchase;
+            let items = gdl_core::game::powerups::shop_items(&bounded_read(Path::new(path), 1024 * 1024)?)?;
+            let kinds: Vec<i32> = buy
+                .split(',')
+                .map(|w| match w {
+                    "heal" => Ok(0x11),
+                    "potion" => Ok(3),
+                    "key" => Ok(1),
+                    "fight" => Ok(5),
+                    "speed" => Ok(6),
+                    "armor" => Ok(7),
+                    "magic" => Ok(8),
+                    _ => Err(format!("shop_buy: unknown {w}")),
+                })
+                .collect::<Result<_, _>>()?;
+            for p in 0..4 {
+                if game.players[p].i32_(0xfc) == 0 {
+                    continue;
+                }
+                let gold0 = game.players[p].i32_(0x1a20);
+                let health0 = game.players[p].f32_(0x1a10);
+                let mut bought: Vec<String> = Vec::new();
+                for &kind in &kinds {
+                    let mut idx: Vec<usize> = (1..items.len()).filter(|&i| items[i].kind == kind).collect();
+                    idx.sort_by_key(|&i| items[i].price);
+                    'buy: for _ in 0..1000 {
+                        for &i in &idx {
+                            if game.shop_buy(p, &items, i).map_err(|e| e.0)? == Purchase::Bought {
+                                bought.push(items[i].name.clone());
+                                continue 'buy;
+                            }
+                        }
+                        break;
+                    }
+                }
+                if opts.contains_key("next_level") && game.globals.cur_world != 0xc {
+                    let controls = std::array::from_fn(|k| u32::from(game.players[p].u8_(0x190c + k)));
+                    let (cw, cl) = (game.globals.cur_world, game.globals.cur_level);
+                    gdl_core::game::profile::player_save_state(&mut game.players[p], cw != 0xd, cw, cl, &controls);
+                }
+                shop_report.push(serde_json::json!({"player": p, "gold": [gold0, game.players[p].i32_(0x1a20)], "health": [health0, game.players[p].f32_(0x1a10)], "bought": bought}));
+            }
+            shop_report.push(serde_json::json!({"items": items.iter().map(|it| (it.name.clone(), it.kind, it.price, it.amount)).collect::<Vec<_>>()}));
+        }
         let mut script: Vec<u32> = Vec::new();
         if let Some(sc) = opts.get("script") {
             for part in sc.split(',') {
@@ -3660,6 +3715,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let mut b = bot::Bot::new(&game);
                     // no_assist=1: the bot plays without the DEBUG health assist.
                     b.assist_enabled = !opts.contains_key("no_assist");
+                    // loot=1: the bot picks up gold, food and potions near it.
+                    b.loot = opts.contains_key("loot");
                     if let Some(d) = opts.get("bot_delay") {
                         b.delay = d.parse()?;
                     }
@@ -3899,7 +3956,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
             "potions_override":opts.get("potions"),"keys_override":opts.get("keys"),"crystals_override":opts.get("crystals"),
-            "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport"),"tower_shop_restore":opts.contains_key("tower_shop")});
+            "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport"),"tower_shop_restore":opts.contains_key("tower_shop"),"shop":shop_report});
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
         report["check_num"] = serde_json::json!(game.collision.check_num());

@@ -366,6 +366,36 @@ GDL_DEBUG_CAMERA):
   copies. Limited: G4's crossing is a bridge that cycles (floor 353 is
   absent at fixed settle times), G2 counted as solved at the start (its
   obstacle was the graph, not a trigger).
+- K2 in the campaign was a native bug, not the bot (unknowns.md "Potion in
+  K2"): GauntWorldInit's legend-item quest setup is unsigned (0x162f08
+  sltiu 0x2b) and setup.rs compared signed, so a level without a boss
+  started QuestItemState 1 for a player carrying the realm's legend item;
+  a critter move then set +0x80c to 2, used the item up and held the
+  player on code 1 (no attacks, no potions). Fixed; chain t16 then ended
+  K2 (update 30,979, 4 assists), K3 and K4 with their rune and legend item.
+- Exits: routes to anything but an exit stay out of every exit's reach
+  (+0xe8 + 1.5). E1's way to pad 159 (the legend item's pedestal, object
+  632) passed the exit portal; the bot left at update 245,365 without the
+  item.
+- The planner keeps branches without a gain to two presses in a row and
+  ranks them below gains (K1 spent its 400 probes on orders of the same
+  five pads); depth 10, 1200 probes.
+- A foe within reach during a trigger wait is fought (the bot stood still
+  on K2's lift pad 483 while the General beat it down); turbo (triangle,
+  code 0x15, +0x800 >= 40) against a foe within reach every 40 updates.
+- Legitimate play (no DEBUG assist): --shop-buy heal,potion buys in the
+  Tower shop between chained levels with the character's own gold
+  (Game::shop_buy, make_skiplist's refusals, then PlayerSaveState again;
+  SHOP.WAD: SHP_CHERRY 20 health for 50 gold, SHP_drumstik 100 for 250,
+  SHP_POTION 250); --loot makes gold, gems, food (when hurt) and potions
+  (below the cap) within 25 units the bot's first goals. From the
+  assisted chain's B6 end state (86 health, 1260 gold) the shop raised
+  health to 586, but K2's General costs about 930 at level 24 (the
+  assisted t16 run) and every no-assist try died on lift pad 483 by update
+  1650: the assisted chain's economy (gold, health) is not one a player
+  would arrive with. With turbo one of three tries got past the General
+  and died at update 17,612 to a second critter (health 400). Chain lg1 plays from a new game with --no-assist
+  --loot --shop-buy heal,potion.
 
 
 ## State search (M14/M15 tooling, 2026-10-24)
