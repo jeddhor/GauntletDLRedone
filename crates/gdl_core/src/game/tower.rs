@@ -75,7 +75,7 @@ pub struct GhostState {
 
 const IDENTITY: [[f32; 4]; 4] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
 /// LevelUpEffects 0x2407e8 (effect headers per player colour).
-const LEVEL_UP_EFFECTS: [i32; 4] = [0x39, 0x3a, 0x3b, 0x3c];
+pub(super) const LEVEL_UP_EFFECTS: [i32; 4] = [0x39, 0x3a, 0x3b, 0x3c];
 /// gem_color.39 0x23f588 (StartGemFX argument per player colour).
 const GEM_COLOR: [i32; 4] = [6, 4, 2, 5];
 
@@ -856,7 +856,7 @@ impl Game {
 
     /// StartFXSub(0, header, 0, 0, …) then SfxSetParent to player `p`'s
     /// node: the effect slot or −1.
-    fn sumner_player_fx(&mut self, p: usize, header: Option<i32>) -> R<i32> {
+    pub(super) fn sumner_player_fx(&mut self, p: usize, header: Option<i32>) -> R<i32> {
         let Some(h) = header.and_then(|h| usize::try_from(h).ok()) else { return Ok(-1) };
         let k = self.start_fx_sub(0.0, h, None, 0)?;
         if 0 <= k

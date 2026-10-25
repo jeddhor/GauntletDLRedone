@@ -71,6 +71,11 @@ impl Game {
                 self.audio_gained_level(p, -1);
             } else if 0 < n {
                 self.help(0x22, p);
+                // StartLevelUpFX(NULL, colour) and SfxSetParent to the
+                // player's node (0x134a9c..): LevelUpEffects[+4] (the
+                // reference's record has flags +0x64 = 0, as the Tower's).
+                let colour = self.players[p].u32_(4) as usize;
+                self.sumner_player_fx(p, super::tower::LEVEL_UP_EFFECTS.get(colour).copied())?;
                 let h = add(self.players[p].f32_(0x1a10), 100.0)?;
                 self.players[p].set_f32(0x1a10, h);
                 self.events.push(Event::LevelUp { player: p, level: self.players[p].i32_(0x2ac0) });

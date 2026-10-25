@@ -261,6 +261,16 @@ impl Game {
             r.set_f32(0x44, y);
             r.set_f32(0x48, z);
             self.spew_items[s].1 = v;
+            // UpdateObjWorldMat(item + 0x10) (0x19eb10): the item's node
+            // takes the record matrix; a coin on a parented floor keeps it
+            // relative to that object (A5's arena: without this the next
+            // GetObjWorldMat put the coins back, trace-A5-bosskill-v2).
+            if let Some(Some((o, _))) = self.items.floor_parent.get(k).copied() {
+                let r = &self.items.records[k];
+                let m: [[f32; 4]; 4] = std::array::from_fn(|a| std::array::from_fn(|b| r.f32_(0x10 + 0x10 * a + 4 * b)));
+                let local = self.collision.unparent_chain(m, Some(o)).map_err(|e| super::Unsupported(format!("spew item node: {e:?}")))?;
+                self.items.floor_parent[k] = Some((o, local));
+            }
         }
         Ok(())
     }

@@ -647,8 +647,9 @@ pub struct Bot {
     no_goal_since: Option<usize>,
     /// The DEBUG health assist (explore.rs applies its own).
     pub assist_enabled: bool,
-    /// loot=1: gold, gems, food (below the maximum health) and potions
-    /// (below the cap) within LOOT_RANGE come before the other goals — the
+    /// loot=1: gold, gems, food (below the maximum health), potions (below
+    /// the cap) and chests (with keys to spare) within LOOT_RANGE come
+    /// before the other goals — the
     /// economy a campaign without the DEBUG assist lives on (the Tower
     /// shop's healing costs 2.5 gold a point).
     pub loot: bool,
@@ -1134,8 +1135,19 @@ impl Bot {
         if self.loot {
             let hurt = g.players[0].f32_(HEALTH) < gdl_core::player_class::max_health(g.players[0].i32_(0x2ac0));
             let potions_left = g.players[0].i32_(0x1a18) < g.globals.max_potions_per_player;
-            let loot: Vec<usize> = active(g, &|k, t| k == 1 && (t == 1 || (t == 3 && hurt) || (t == 4 && potions_left)))
+            // Chests (kind 2 subtypes 0x2e..0x30) open on contact with a key
+            // (use_key, OpenChest: gold or an item) while three keys are held
+            // (two kept for gates); not the time-bomb chest (0x2c).
+            let spare_keys = 3 <= g.players[0].i32_(KEYS);
+            // A closed chest (+0xd8 & 0x11 == 0x10, +0xdc 0) takes a key; an
+            // opened one (+0xdc 2) gives its gold or item on contact.
+            let chest = |s: usize| {
+                let r = &g.items.records[s];
+                (spare_keys && r.u16_(0xd8) & 0x11 == 0x10 && r.u8_(0xdc) == 0) || r.u8_(0xdc) == 2
+            };
+            let loot: Vec<usize> = active(g, &|k, t| (k == 1 && (t == 1 || (t == 3 && hurt) || (t == 4 && potions_left))) || (k == 2 && (0x2e..=0x30).contains(&t)))
                 .into_iter()
+                .filter(|&s| item_kind(g, s).0 != 2 || chest(s))
                 .filter(|&s| {
                     let q = g.items.records[s].v3(0x40);
                     g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT" && dist_xz(q, p) < LOOT_RANGE && (q[1] - p[1]).abs() < 5.0
