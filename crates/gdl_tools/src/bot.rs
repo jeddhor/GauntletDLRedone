@@ -730,6 +730,12 @@ fn shot_node(nav: &Nav, g: &Game, q: V3) -> Option<usize> {
 /// No wall between floor node `p` and item `q` one unit above the node
 /// (PlayerWallCollide's query, radius 0.3).
 fn clear_line(coll: &mut Option<CollisionWorld>, g: &Game, p: V3, q: V3) -> bool {
+    clear_line_skip(coll, g, p, q, None)
+}
+
+/// `clear_line`, a hit on object `skip` (an item's own bound object) not
+/// counting.
+fn clear_line_skip(coll: &mut Option<CollisionWorld>, g: &Game, p: V3, q: V3, skip: Option<usize>) -> bool {
     let c = coll.get_or_insert_with(|| g.collision.clone());
     let h = p[1] + 1.0;
     let hit = c.world_collide(Query {
@@ -742,7 +748,7 @@ fn clear_line(coll: &mut Option<CollisionWorld>, g: &Game, p: V3, q: V3) -> bool
         object_mask: 0x13a,
         exclusion_mask: 1,
     });
-    !matches!(hit, Ok((ref w, _)) if w.solid.is_some_and(|h| c.runtime_flags[h.object] & 0x38 == 0))
+    !matches!(hit, Ok((ref w, _)) if w.solid.is_some_and(|h| c.runtime_flags[h.object] & 0x38 == 0 && Some(h.object) != skip))
 }
 
 /// Reachable graph nodes within 2 units of each item (slot, node).
@@ -781,6 +787,10 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
             continue;
         }
         let k = key(q[0], q[2]);
+        // The item's bound object (+0xf0) is no wall for its own line test:
+        // I2's trigger 495 sits on door 262, which it opens (c38: no target
+        // node, hint 11 and the rune's route after it skipped).
+        let bound = g.items.records[s].u32_(0xf0).checked_sub(1).map(|o| o as usize);
         let mut best: Option<(f32, usize)> = None;
         for dx in -1..=1 {
             for dz in -1..=1 {
@@ -794,7 +804,7 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
                     // the static wall 1512 from the floor the bot reached; a
                     // node 2.2 away on that side was taken as within reach
                     // (2521 stuck events in b56).
-                    if d < 2.5 && best.is_none_or(|b| d < b.0) && (d <= 1.0 || clear_line(&mut coll, g, p, q)) {
+                    if d < 2.5 && best.is_none_or(|b| d < b.0) && (d <= 1.0 || clear_line_skip(&mut coll, g, p, q, bound)) {
                         best = Some((d, n));
                     }
                 }
@@ -1005,6 +1015,23 @@ impl Bot {
     /// The graph and the collision state it was built on.
     pub fn nav_state(&self) -> (&Nav, u64) {
         (&self.nav, self.collision_at_build)
+    }
+
+    /// The bot's own graph (DIAGNOSTIC navdump while a bot runs): nodes,
+    /// the reachable ones, edges, ride edges, movers at the build (object,
+    /// lowest, highest, current y) and the blocked edges by place.
+    pub fn nav_dump(&self, f: usize) -> serde_json::Value {
+        let nav = &self.nav;
+        let r1 = |v: f32| (v * 10.0).round() / 10.0;
+        let reach: Vec<usize> = (0..nav.pts.len()).filter(|&k| !nav.adj[k].is_empty()).collect();
+        let edges: Vec<[usize; 2]> = reach.iter().flat_map(|&a| nav.adj[a].iter().map(move |&b| [a, b])).collect();
+        let ride: Vec<[usize; 2]> = nav.ride.iter().map(|&(a, b)| [a, b]).collect();
+        let movers: Vec<(usize, [f32; 3])> = nav.movers.iter().map(|(&o, &(lo, hi, cur))| (o, [r1(lo), r1(hi), r1(cur)])).collect();
+        serde_json::json!({"scope": "DEBUG bot graph (the running bot's own Nav, ride edges included); not game data", "update": f,
+            "pts": nav.pts.iter().map(|q| q.map(r1)).collect::<Vec<_>>(), "obj": nav.obj, "reachable": reach, "edges": edges, "ride": ride, "movers": movers,
+            "blocked": self.blocked.iter().collect::<Vec<_>>(), "rebuilds": self.rebuilds,
+            "seen": self.movers.iter().filter(|(_, m)| 0.5 <= m.hi - m.lo).map(|(&o, m)| serde_json::json!([o, r1(m.lo), r1(m.hi), r1(m.last), m.reversals, m.moved_at])).collect::<Vec<_>>(),
+            "candidates": self.mover_candidates.len()})
     }
 
     pub fn collision_fingerprint(g: &Game) -> u64 {

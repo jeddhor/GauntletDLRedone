@@ -642,6 +642,18 @@ GDL_DEBUG_CAMERA):
     10,289 (hint 9; t33 never), but objects that rose once and stayed
     held the bot in ride waits (I2 i2r1: 208–229 timeouts a try; G1 in b60:
     183, the level no longer ended).
+  - A ride edge onto a mover that has not moved for 300 updates times out at
+    once (K1's lift by (−71, 74), moving only while stood on, 31 units
+    below its ledge: waited for 16 times in k1rune-c38-v1).
+  - The goal-node line test (f102) ignores the item's own bound object
+    (+0xf0): I2's trigger 495 sits on door 262, which it opens (bound
+    object 262; door 262's edge moves from x 6.6 to x 6–9.5 later and
+    closes the way west to trigger 496 and the rune), so it had no target
+    node and hints 11–20 were skipped (i2r2, c38; i2dbg4's explain at
+    update 16,000).
+  - Checks on c38: G1 J4 C1 end (b61), H1 H2 J2 end at 300,000 (b63), J6
+    ends (b62); E1 F1 I3 do not (E1 identically on c33 and c38: 4,406
+    stuck events at (0, 0, 80.3)).
   - Without the assist only (legitimate play): stuck with a foe within 10
     units the bot fights in place for up to 600 updates; hazards (kind 8)
     and statues (kind 4, within reach + 1.5; contact or a hit wakes them)

@@ -3906,6 +3906,24 @@ fn run() -> Result<(), Box<dyn Error>> {
                 });
                 if let (Some(path), true) = (opts.get("navdump"), 0 < navdump_at && f + 1 == navdump_at) {
                     write_navdump(&game, path, f + 1)?;
+                    // With a bot: its own graph too (PATH.bot.json), and with
+                    // explain_at=X,Y,Z;... why each edge from those points
+                    // passes or fails on the collision state of that update.
+                    if let Some(b) = traversal.as_ref() {
+                        let mut v = b.nav_dump(f + 1);
+                        if let Some(list) = opts.get("explain_at") {
+                            let mut out = Vec::new();
+                            for pt in list.split(';') {
+                                let q: Vec<f32> = pt.split(',').map(str::parse).collect::<Result<_, _>>()?;
+                                let q = [*q.first().ok_or("x")?, *q.get(1).ok_or("y")?, *q.get(2).ok_or("z")?];
+                                let mut c = game.collision.clone();
+                                out.push(serde_json::json!({"at": q, "edges": bot::Nav::explain(&mut c, q, 0.3, q[1] + 80.0, game.globals.world_bottom - 2.0)}));
+                            }
+                            v["explain"] = serde_json::json!(out);
+                        }
+                        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(format!("{path}.bot.json"))?;
+                        serde_json::to_writer(&mut file, &v)?;
+                    }
                 }
                 if level_end.is_none() && explore::level_ended(&game) {
                     level_end = Some(f);
