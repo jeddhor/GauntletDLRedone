@@ -31,6 +31,7 @@
 //! Health assist (labelled DEBUG in the report): health is restored to its
 //! start value when it falls below 40 % of it.
 use gdl_core::collision::{CollisionWorld, Query};
+use gdl_core::player_collision::{DisplacementInput, PlayerFloorState, player_displacement};
 use gdl_core::game::Game;
 use gdl_core::game::pad::PadStatus;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
@@ -42,6 +43,64 @@ const CELL: f32 = 1.5;
 const STEP_UP: f32 = 2.0;
 /// Steps up to this height pass when the player-like wall test does.
 const STEP_MAX: f32 = 3.0;
+/// Player 0's collision radius (+0x828), height (+0x82c) and the world's
+/// bottom, set when a bot is made: steps and drops of the graph are walked
+/// with the game's own displacement (walk_reaches).
+static PLAYER_DIMS: std::sync::OnceLock<(f32, f32, f32)> = std::sync::OnceLock::new();
+
+/// Whether a player walking from floor point `a` towards `b` gets there:
+/// PlayerMotion's static displacement (player_collision::player_displacement:
+/// PlayerCollideWalls, PlayerCollideFloor with its 3-unit step limit, the
+/// floor-height adjustment; 96/96 updates byte-equal with the reference in
+/// G1, movement.md) in steps of 0.25, from a standing start on the floor
+/// object under `a`. Used for the graph's steps and drops (over 1 unit),
+/// where the column sweeps and the one-unit-up wall test pass edges the
+/// player cannot take (D3's bridge pieces 71.9 → 73.4: 162 stuck events).
+pub fn set_player_dims(g: &Game) {
+    let _ = PLAYER_DIMS.set((g.players[0].f32_(0x828), g.players[0].f32_(0x82c), g.globals.world_bottom));
+}
+
+fn walk_reaches(c: &mut CollisionWorld, a: V3, b: V3) -> bool {
+    let Some(&(radius, height, bottom)) = PLAYER_DIMS.get() else { return true };
+    let floor = c.floor_collide(0.3, 0.0, -3.0, [a[0], a[1] + 1.0, a[2]], true, 0).ok().and_then(|(f, _)| f.solid).map(|h| h.object);
+    let mut state = PlayerFloorState { floor_y_88c: a[1], floor_object_89c: floor, flags_8ac: 0, word_100: 0, y_54: a[1], wall_object_8a0: None, floor_contact: floor, floor_hit: None, water: None };
+    let mut pos = a;
+    let mut stalls = 0;
+    for _ in 0..48 {
+        let (dx, dz) = (b[0] - pos[0], b[2] - pos[2]);
+        let dist = dx.hypot(dz);
+        if dist < 0.35 {
+            return (pos[1] - b[1]).abs() < 1.5;
+        }
+        let k = 0.25f32.min(dist) / dist;
+        let input = DisplacementInput {
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            collision_offset_81c: [0.0; 3],
+            offset_flags_84: 0,
+            position: pos,
+            request: [dx * k, 0.0, dz * k],
+            speed: 0.25,
+            radius_828: radius,
+            height_82c: height,
+            flags_8b0: 0,
+            current_action: 0x13,
+            spf: 1.0 / 30.0,
+            world_bottom: bottom,
+        };
+        let Ok(out) = player_displacement(c, input, &mut state) else { return true };
+        if dist_xz(out.position, pos) < 0.02 {
+            stalls += 1;
+            if 3 <= stalls {
+                return false;
+            }
+        } else {
+            stalls = 0;
+        }
+        pos = out.position;
+        state.y_54 = pos[1];
+    }
+    false
+}
 const HEADROOM: f32 = 3.0;
 const STRICT_RADIUS: f32 = 1.2;
 const HARD_COST: f32 = 20.0;
@@ -259,9 +318,8 @@ impl Nav {
         // A step of up to STEP_MAX (PlayerCollideFloor's limit is 3, 4 on one
         // object) when the player-like wall test at one unit up passes: a
         // step face lower than that, or a step object (+0x10 & 0x38), which
-        // PlayerMotion hands to the floor stage. D3's bridge pieces rise as
-        // stairs of 1–2 units (70, 72, 73, 75) to pad 354; the 73 → 75 step
-        // was no edge under STEP_UP.
+        // PlayerMotion hands to the floor stage (the floor stage limits a
+        // step to 3 units, 4 on one object). The walk check below decides.
         let step = STEP_UP < dy && dy <= STEP_MAX;
         let ramp = (STEP_UP < dy || dy < -DROP) && span <= dist_xz(a, b) * 1.7;
         if (STEP_UP < dy || dy < -DROP) && !ramp && !step {
@@ -298,6 +356,9 @@ impl Nav {
         // and beside its railed ramp).
         let ok = Self::edge_ok(c, a, b, radius.max(STRICT_RADIUS));
         if step && !ramp && !ok {
+            return None;
+        }
+        if 1.0 < span && !walk_reaches(c, a, b) {
             return None;
         }
         // A drop is walked off at the upper floor, where PlayerMotion tests
@@ -752,6 +813,7 @@ impl Bot {
     }
 
     pub fn new(g: &Game) -> Bot {
+        set_player_dims(g);
         let mut b = Self::blank(g);
         b.rebuild(g);
         let exits: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9).collect();

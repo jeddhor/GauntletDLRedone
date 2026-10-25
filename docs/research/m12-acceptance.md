@@ -101,5 +101,7 @@ seems resolved." Two issues reported with it:
    226,918 pixels (the green glow on the ground around the Sorceress).
    These are software-rendered timings on the private Xvfb under a busy
    machine (llvmpipe); the share each cause takes on a GPU is not
-   measured.
+   measured. The client smoke of every level on this renderer
+   (level-smoke-v4): 61 of 61 load, render and report no error, unported
+   path or panic.
 

@@ -241,6 +241,7 @@ fn dist_xz(a: V3, b: V3) -> f32 {
 
 /// bot.rs's graph from the player (and `seeds`), on a copy of the state's collision.
 pub(crate) fn build_nav(g: &Game, seeds: &[V3]) -> Nav {
+    crate::bot::set_player_dims(g);
     let mut c = g.collision.clone();
     let p = g.players[0].v3(0x50);
     let mut all = vec![p];

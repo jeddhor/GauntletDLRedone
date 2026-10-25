@@ -538,9 +538,17 @@ GDL_DEBUG_CAMERA):
   - Steps: climbs of 2–3 units are edges when the player-like wall test
     one unit up passes (a lower face, or a step object, +0x10 & 0x38,
     which PlayerMotion hands to the floor stage); PlayerCollideFloor's
-    limit is 3 (4 on one object). D3's bridge pieces, raised by pads
-    50–47, form stairs 70 → 72 → 73 → 75 to pad 354 (navdump after the
-    pads, b53's run); the 73 → 75 step had been no edge (f99).
+    limit is 3 (4 on one object) (f99). It changed nothing in D3: there
+    the bridge pieces raised by pads 50–47 stand at 70, 71.9, 73.4 and 74.7
+    (navdump after the pads), the graph already joined them, and the bot
+    stuck 162 times stepping 71.9 → 73.4 toward pad 354 — a step the graph
+    passes and the player does not take.
+  - Walk check (f100): every graph edge with more than 1 unit of height
+    change is walked with the game's own static displacement
+    (player_collision::player_displacement — PlayerCollideWalls and
+    PlayerCollideFloor, 96/96 updates byte-equal with the reference in G1)
+    from a standing start, 0.25 per step, radius +0x828 and height +0x82c
+    of player 0; an edge the walk does not finish is no edge.
   - b53 (f95): I4 takes its lamp (legend item 540) but does not reach the
     exit; H3 takes its rune standalone (and ends in chain t26).
   - Without the assist the start delay (0–541 updates per try) is spent
