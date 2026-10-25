@@ -138,8 +138,33 @@ is the fired javelin's homing velocity at step 223 (y 5.2012 native, 5.8679
 reference; x and z equal to the last bit; SfxSetHitTarget's node, the
 dragon's +0xcc tree root, about one unit higher in the reference), and the
 hit's update shifts with it (the critter's +0xb4c pause 0x4b0 and the
-player's +0x7d4 at 345 follow). Open: the homing target's height (the
+player's +0x7d4 at 345 follow). replay-frame-B6legend-v4 (QuestItemTimer
+restored per retry, QuestItemState from the sample before the update; see
+D5 below): the player 290/290, the rest unchanged. Open: the homing target's height (the
 dragon's root-node pose; cf. D5's and A5's pose residuals above).
+
+The drider's legend phase (D5, 2026-10-24): w4l5-legend-v1 (WARPED: in
+w4l5-boss-v1 QuestItemState 1, player +0x80c 1, +0x112c = 0x10, then 400
+vblanks of Up+Right), trace-D5-legend-v1 (six throw bursts, then idle):
+QuestItemState 1 → 2 and +0x80c 1 → 3 at step 109, +0x80c 4 at 169, the
+finale at 189 (+0x80c 0; BossType 0x25: the drider's MB node scale 0.8
+with flag 8, CritterDamage of a tenth of its health, 3250 → 2927, +0xb50
+0.5), a throw's hit at 243 (2915), 3 at 293 (the drider's move 0x22, clip
+22 at period scale 2), 4 at 381, 5 at 383. Native fixes from it: the node
+scale (critter `node_scale`) scales CritterDoDamageFX's and CritterDoSfx's
+offsets as it already did their radius and blast; the replay seeds
+QuestWeaponSfx from the live kind-0x5c effect and QuestItemState from the
+sample before the update (world_update's machine runs before the critters'
+1 → 2, so its three-second timer starts one update later: replay-frame-
+D5legend-v3 had the 2 → 3 and the drider's clip 22 at 291, v4 at 293) and
+restores QuestItemTimer per retry (a retry of the update that ended it
+restarted it: B6's 2 → 3 at 273).
+replay-frame-D5legend-v4: items, players, world animation, camera and the
+good wizard 300/300, effects 296/300, critters 294/300 — the first
+divergence is the look-at pitch +0x114 at step 295 (−0.3347 native,
+−0.3372 reference), two updates into clip 22, then collision node 1's
+rotation (+0x5b0..) at 297: the drider's animated pose again, as in its
+death replay.
 
 Fixed on the way: AddExp's StartLevelUpFX (a level up in play started no
 level-up effect natively; the Tower had it), and ProcessSpewItems'

@@ -185,6 +185,11 @@ pub struct Critter {
     /// (CritterInitChild detaches it from the root's animation tree but
     /// keeps the matrix hierarchy, so children share the root's pose).
     pub anim_root: usize,
+    /// The +0x70 MB node's scale (+0x44) while its flag 8 is set (else
+    /// 1.0): CritterDoSfx/CritterDoSfxSub/CritterDoDamageFX scale effect
+    /// offsets, radius and blast by it (D5's drider at 0.8 after the legend
+    /// item, trace-D5-legend-v1 step 395).
+    pub node_scale: f32,
     pub clock: ClockState,
     pub clip: u16,
     pub clips: Vec<ClipTiming>,
@@ -712,6 +717,7 @@ impl Game {
             child: None,
             parent: None,
             anim_root: 0,
+            node_scale: 1.0,
             clock: super::setup::fresh_clock(),
             clip: 0,
             clips,

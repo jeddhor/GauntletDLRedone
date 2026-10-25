@@ -1287,7 +1287,10 @@ impl Game {
                     }
                     self.sfx_set_morph(k as usize, 3.0, 0x5a, 0);
                 }
-                // MBTreeSetColor/SetFlags and the boss tree's 0.8 scale: presentation.
+                // MBTreeSetColor is presentation; MBTreeSetFlags(node, 8) and
+                // the node's 0.8 scale also scale the boss's effect offsets,
+                // radius and blast (CritterDoDamageFX, CritterDoSfx).
+                self.crit_mut(b).node_scale = f32::from_bits(0x3f4c_cccd);
                 damage = mul(health, ten)?;
                 self.critter_damage(damage, b, me, 0, None, None, 0)?;
                 self.crm_pub(b).set_f32(0xb50, 0.5);

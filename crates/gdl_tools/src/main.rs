@@ -636,6 +636,9 @@ impl ReferenceCritters {
     fn seed(&self, game: &mut gdl_core::game::Game, items_base: u32, objects: &ReferenceObjects) -> Result<(), Box<dyn Error>> {
         let etypes = self.global("CritterETypes")?;
         let enemy_root = self.global("EnemyRootNode").ok().map(|b| Self::word(&b, 0));
+        // The +0x70 node's scale is not in the trace (64-byte node probe):
+        // native's own carries over (the legend item's 0.8 for D5).
+        let scales: Vec<Option<f32>> = game.critters.iter().map(|c| c.as_ref().map(|c| c.node_scale)).collect();
         game.critters.clear();
         let mut roots = Vec::new();
         for k in 0..self.num.min(16) {
@@ -675,6 +678,9 @@ impl ReferenceCritters {
                 None => (None, None),
             };
             game.seed_critter(k, t, slot, &Self::native(raw, ncol, items_base)?, node_dc, node, floor).map_err(|e| e.0)?;
+            if let (Some(Some(sc)), Some(Some(cr))) = (scales.get(k), game.critters.get_mut(k)) {
+                cr.node_scale = *sc;
+            }
             roots.push((k, t, ty));
             // The traced node pointers against the native look-at and
             // collision nodes (a reference node outside the tree is noted).
@@ -2603,7 +2609,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     gl.cam_wait = word(&hexb(&bp["cam_wait"])?) as i32;
                     gl.start_of_stage = word(&hexb(&bp["start_of_stage"])?) as i32;
                     gl.enemy_shrink = fl(&g("EnemyShrink")?);
-                    gl.quest_item_state = word(&g("QuestItemState")?);
+                    // QuestItemState before the update: world_update's machine
+                    // runs before the critters' 1 → 2 and 3 → 4, so its timer
+                    // starts one update after the 1 → 2 (trace-D5-legend-v1:
+                    // 1 → 2 at step 109, 2 → 3 at 293, not 291).
+                    gl.quest_item_state = word(&hexb(&bp["QuestItemState"])?);
                     gl.boss_type = word(&g("BossType")?) as i32;
                     gl.boss_active = word(&g("BossActive")?) as i32;
                     gl.world_bottom = fl(&g("WldBtm")?);
@@ -2859,6 +2869,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                         let atime = gl.atime;
                         let player_node = word(&hexb(&bp["player0"])?[0x80..]);
                         fx_b.seed(game, items_base, atime, player_node, &crit_b.node_pointers());
+                        // QuestWeaponSfx is not in the probe: the reference's
+                        // live effect of kind 0x5c (the legend item's glow),
+                        // else -1 (trace-D5-legend-v1 starts with it made).
+                        game.quest_weapon_sfx = (0..game.effects.slots.len())
+                            .find(|&k| game.effects.slots[k].u32_(0x14) != 0 && game.effects.slots[k].u32_(0x60) == 0x5c)
+                            .map_or(-1, |k| k as i32);
                         if have_crit {
                             crit_b.seed(game, items_base, &obj_b)?;
                         }
@@ -3006,6 +3022,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // QuestWeaponSfx (the legend item's glow; a retry must
                     // start it again: trace-B6-legend-v1 step 1).
                     game.quest_weapon_sfx,
+                    // QuestItemTimer (a retry of the update that ends it must
+                    // not restart it: trace-B6-legend-v1 step 273).
+                    game.quest_item_timer,
                 );
                 // WorldCollide's CheckNum and stamps: one query sequence per update.
                 let check_before = game.collision.check_state();
@@ -3028,6 +3047,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         game.effects.tables.headers,
                         game.audio_que,
                         game.quest_weapon_sfx,
+                        game.quest_item_timer,
                     ) = item_side.clone();
                     seed_all(game)?;
                     game.rng.state = seed;

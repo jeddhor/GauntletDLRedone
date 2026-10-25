@@ -347,7 +347,10 @@ impl Game {
         if flags & 0x400 != 0 && self.globals.aux_levels & 0x80 != 0 {
             return Ok(-1);
         }
+        // The offset scaled by the critter node's scale (flag 8, +0x44).
+        let sc = self.crit(i).node_scale;
         let off = v3(&srec, 0x30);
+        let off = [mul(sc, off[0])?, mul(sc, off[1])?, mul(sc, off[2])?];
         let mut out = -1;
         let mut attach = attach;
         if flags & 0x0f00_0000 != 0 {
@@ -623,7 +626,11 @@ impl Game {
         if f16 & 0x4000 != 0 && 0.0 < self.crit(i).rec.f32_(c::FX_HOLD) && dtype != 1 {
             return Ok(-1);
         }
+        // The critter node's scale (flag 8: +0x44) scales the offset, the
+        // radius and the blast (0x1946f0..).
+        let scale = self.crit(i).node_scale;
         let off = v3(&drec, 0x20);
+        let off = [mul(scale, off[0])?, mul(scale, off[1])?, mul(scale, off[2])?];
         let m = self.node_rows(i, c::MATRIX);
         let pos = self.crit(i).rec.v3(c::POS);
         let e = if !local {
@@ -724,7 +731,6 @@ impl Game {
         if extra < 0.0 {
             return Ok(k as i32);
         }
-        let scale = 1.0;
         let r = self.fx_mut(k);
         r.set_f32(fx::DAMAGE, 0.0);
         let dmg = mul(extra, self.level_f32(0xbc))?;
