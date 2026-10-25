@@ -397,6 +397,11 @@ impl Nav {
                 if avoid.closed.contains(&m) && !avoid.closed.contains(&n) && !goal(m) {
                     continue;
                 }
+                // Never entered unless it is the goal (exit portals: a start
+                // node inside the zone must not route through it).
+                if avoid.forbidden.contains(&m) && !goal(m) {
+                    continue;
+                }
                 // Edges the player-like test rejects: nearly closed (with
                 // the 1.2 radius they cross walls the player cannot, G2's
                 // stair wall); kept for gaps the sweep misjudges.
@@ -430,6 +435,8 @@ pub struct Avoid {
     /// raised walkway that ends above the ground).
     pub cheap: HashSet<usize>,
     pub closed: HashSet<usize>,
+    /// Nodes no route enters except as its goal (exit portals).
+    pub forbidden: HashSet<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -946,7 +953,9 @@ impl Bot {
                 continue;
             }
             let q = r.v3(0x40);
-            let reach = r.f32_(0xe8).clamp(1.0, 6.0) + 1.5;
+            // The player's radius and a margin past the exit's reach (E1:
+            // exit state 4 at 4.33 units from the centre while fighting).
+            let reach = r.f32_(0xe8).max(1.0) + 3.0;
             let c = key(q[0], q[2]);
             let span = (reach / CELL).ceil() as i32;
             for dx in -span..=span {
@@ -987,7 +996,7 @@ impl Bot {
         }
         let avoid = self.obstacle_nodes(g);
         // Routes to anything but an exit stay out of the exits' reach.
-        let avoid_x = Avoid { soft: avoid.soft.clone(), cheap: avoid.cheap.clone(), closed: avoid.closed.union(&self.exit_nodes(g)).copied().collect() };
+        let avoid_x = Avoid { soft: avoid.soft.clone(), cheap: avoid.cheap.clone(), closed: avoid.closed.clone(), forbidden: self.exit_nodes(g) };
         let is_exit = |s: usize| item_kind(g, s).0 == 9;
         if 0 < g.players[0].i32_(KEYS) {
             self.gate_blocked.clear();
@@ -1660,6 +1669,18 @@ impl Bot {
                 pad.press(0xd);
             }
             return Self::steer(pad, g, p, g.items.records[s].v3(0x40));
+        }
+        // An exit portal close by while the goal is something else: step
+        // away from it first (fights pulled E1's bot into its exit).
+        let to_exit = !matches!(self.goal, Some(Goal::Item(s)) if item_kind(g, s).0 == 9);
+        if to_exit {
+            let near_exit = (0..g.items.records.len())
+                .filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9)
+                .map(|s| (g.items.records[s].v3(0x40), g.items.records[s].f32_(0xe8).max(1.0) + 2.5))
+                .find(|&(q, reach)| dist_xz(q, p) < reach && (q[1] - p[1]).abs() < 3.0);
+            if let Some((q, _)) = near_exit {
+                return Self::steer(pad, g, p, [2.0 * p[0] - q[0], p[1], 2.0 * p[2] - q[2]]);
+            }
         }
         if let Some((until, q)) = self.gate_push {
             if f < until {
