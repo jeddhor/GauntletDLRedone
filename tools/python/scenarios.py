@@ -128,6 +128,20 @@ SCENARIOS.update({
         checks=[("made", "health", "==", 123.0), ("p1", "players.0.file", "==", 0), ("both", "players.0.file", "==", 0),
                 ("both", "players.1.file", "==", 1), ("both", "players.1.health", "==", 123.0), ("both", "players.1.port", "==", 1),
                 ("both", "players.0.health", "==", 500.0)]),
+    # M15 ending (DEBUG boss_kill: lethal CritterDamage on Garm, labelled):
+    # BossDeath, the good wizard and the auto exit run natively, then
+    # game_main's BossType 0x2c level end plays /MPEG/victory.pss
+    # (init_gamemovie, movietype 2), its end opens the shop (init_shop), and
+    # the panels lead to the Tower. H4's completion bit (world 8, level 4)
+    # is recorded and survives a save and a reload.
+    'ending-h4': dict(
+        level='H4', updates=2600,
+        actions=[{"at": 5, "dump": "start"}, {"at": 150, "boss_kill": True}, {"at": 160, "boss_kill": True}, {"at": 600, "dump": "dead"},
+                 {"at": 2500, "dump": "after"}, {"at": 2510, "save": 0}, {"at": 2520, "dump": "saved"}],
+        menu=[e for t in range(1400, 6000, 400) for e in ([[t, t + 2, [UP]], [t + 60, t + 62, [CROSS]]] + presses(TRIANGLE, t + 120, 4, 60))],
+        then=dict(load_slot=1, updates=300, actions=[{"at": 200, "dump": "loaded"}], menu=presses(TRIANGLE, 30, 12, 60)),
+        checks=[("dead", "world", "==", 8), ("after", "world", "==", 13), ("after", "waves", "!=", "start.waves"), ("after", "state", "==", 1),
+                ("loaded", "waves", "==", "saved.waves"), ("loaded", "world", "==", 13)]),
 })
 
 
