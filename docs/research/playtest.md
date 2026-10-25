@@ -464,6 +464,15 @@ GDL_DEBUG_CAMERA):
   49 of 61 levels ended alive with their rune and legend item, C3 ended
   without its bellows; not ended in the current reports: D3 D4 F1 H1 H2 H3
   I3 I4 J3 J6 K1 (D3 ended once in b22).
+- Chain t21 continues: F1 ends at update 115,534 (52 assists; the first
+  bot run to end F1) and F2's Skorne 2 dies, level end at 9,805.
+- Route library (tools/bot-routes, README there): route_hints.py output
+  per level, passed by game_run.py to every --bot and --explore run of the
+  level; the state search's bot macros follow the rest of the route from
+  the first hint not done in their state half of the time. G2, E1 and F1
+  so far. Chains now take the first bot try to finish with a win.
+- Legitimate chain lg2 (from lg1's G1 end state; no assist, shop, loot,
+  route hints, route-guided search) replaces lg1 for G2 onward.
  Chain lg1 plays from a new game with --no-assist
   --loot --shop-buy heal,potion.
 
