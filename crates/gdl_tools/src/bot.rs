@@ -122,9 +122,18 @@ impl Nav {
             let k = key(p[0], p[2]);
             for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
                 let k2 = (k.0 + dx, k.1 + dz);
-                for m in nav.column(c, k2) {
+                let col = nav.column(c, k2);
+                for &m in &col {
                     if seen.len() <= m {
                         seen.resize(nav.pts.len(), false);
+                    }
+                    // A drop into a column whose other floor lies between the
+                    // two heights (within a step of the source) lands on that
+                    // floor instead: K1's ramp over the y −10 floor at (−53,
+                    // 39), where the bot stood on the ramp aiming below it.
+                    let q = nav.pts[m];
+                    if q[1] < p[1] - STEP_UP && col.iter().any(|&o| o != m && q[1] + 1.0 < nav.pts[o][1] && nav.pts[o][1] < p[1] + STEP_UP) {
+                        continue;
                     }
                     if let Some(strict) = Self::edge_class(c, p, nav.pts[m], nav.radius) {
                         nav.adj[n].push(m);
@@ -1655,7 +1664,9 @@ impl Bot {
                 self.log.push(serde_json::json!({"update": f, "stuck": p, "next": next, "enemies": enemies, "items": items, "keys": g.players[0].i32_(KEYS), "stuck_goal": match self.goal { Some(Goal::Item(s)) => s, _ => usize::MAX }}));
                 if self.hint_at < self.hints.len() {
                     self.hint_stuck += 1;
-                    if 20 <= self.hint_stuck {
+                    // Sixty stuck events (K1: twenty went by on the way to
+                    // pad 40, skipped two units short of it).
+                    if 60 <= self.hint_stuck {
                         self.log.push(serde_json::json!({"update": f, "hint_skipped": self.hint_at}));
                         self.hint_at += 1;
                         self.hint_stuck = 0;
