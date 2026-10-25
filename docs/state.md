@@ -430,7 +430,13 @@ original (PCSX2 reference on Xvfb :191, private captures):
    end); keep an eye on free space (bot reports are 25–40 MB each).
    Chain t26 (f98, from H2's end): H3 ends with its rune at 143,648 and
    H4 (Garm) after it; t29: D4, D5, C1 end in sequence. 55 of 61; not yet
-   D3 I4 J3 J6 K1. Legitimate chain lg2 died in G2 (all six tries, then the
+   D3 I4 J3 J6 K1.
+   2026-10-24 (night): **M12 accepted by the user** (lighting, crystals,
+   Sumner resolved). Reported with it: a green potion not picked up (the
+   nine-potion limit, most likely) and a frame-rate drop during the
+   Sorceress's square attack — fixed in the client (point lights in one
+   shared buffer, materials mutated only on change; 262 → 180 ms frames on
+   the software renderer; m12-acceptance.md, rendering.md). Legitimate chain lg2 died in G2 (all six tries, then the
    search); lg3 runs with the Death rule.
 
 ---
