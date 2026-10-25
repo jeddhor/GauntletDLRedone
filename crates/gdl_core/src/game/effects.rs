@@ -2438,12 +2438,11 @@ impl Game {
         r.set_i16(fx::HIT_FX, 0x45);
         r.set_u32(fx::HIT_SOUND, 0);
         r.set_u32(fx::WALL_SOUND, 0);
-        r.set_v3(fx::VELOCITY, vel);
-        r.set_v3(fx::SPIN, spin);
-        r.set_f32(fx::GRAVITY, 50.0);
-        r.set_f32(fx::RADIUS, 1.0);
         // +0xec: the carried item (native slot + 1).
         r.set_u32(0xec, item as u32 + 1);
+        // SfxSetPhysics(50, 1, velocity, spin): the node also takes the
+        // velocity's yaw (A1's golem bag, trace-A1-golemkill-v2 step 312).
+        self.sfx_set_physics_pub(i, 50.0, 1.0, Some(vel), Some(spin));
         Ok(i as i32)
     }
 

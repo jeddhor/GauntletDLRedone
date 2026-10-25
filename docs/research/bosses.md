@@ -112,6 +112,13 @@ health written to 10 in w11l1-newgame-v2), trace-K2-genkill-v2 (four
 Left-and-throw bursts): hits at steps 81 and 105, death at 113, the instance
 cleared by 205; replay-frame-K2genkill-v1 260/260 in every part.
 
+A1's golem (statue creature, kind 3): w1l1-golem-v3 (trace-A1-golem-v2's
+walk until after the spawn), w1l1-golemkill-v1 (WARPED: health 10),
+trace-A1-golemkill-v2 (walk Down, throw): hits at 198 and 224 (death), the
+instance cleared by 312 with CritterDropItem's bag; replay-frame-A1golemkill
+240/240 in every part after StartBagFX took SfxSetPhysics (the bag's node
+yaw from its velocity; v1 had effects 239/240).
+
 Fixed on the way: AddExp's StartLevelUpFX (a level up in play started no
 level-up effect natively; the Tower had it), and ProcessSpewItems'
 UpdateObjWorldMat (coins spewed onto A5's parented arena floor went back to
