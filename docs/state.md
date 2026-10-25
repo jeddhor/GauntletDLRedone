@@ -382,6 +382,30 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (from t10's G3 end state; t8 G1, t10 G2/G3) has ended G4 G5 B1 B2 B3 B4;
    D2 and I1 now end by the bot (b36). Not yet ended by any batch: C1 C3 C4
    D3 D4 E1 F1 H1–H3 I2–I4 J1–J4 J6 K1.
+   2026-10-24 (evening): K2's campaign block was a native bug —
+   GauntWorldInit's legend-item quest setup is unsigned (0x162f08 sltiu),
+   native compared signed, so a carried legend item locked the player's
+   attacks and potions in a level without a boss (fixed; chain t16 ended K2
+   K3 K4). Every boss's death compared with the reference (bosses.md "Boss
+   deaths against the reference"; WARPED boss health, regress r81 adds the
+   replays with no change to the 123 others): nine equal in every part, D5
+   and A5 with one residual each; fixed AddExp's level-up effect and
+   ProcessSpewItems' UpdateObjWorldMat. The endgame completions equal
+   through game_main's transitions: E2 to its level end, F2 to the garm
+   movie, H4 (Garm) to the victory movie. GUI scenario ending-h4
+   (scenarios-m15-v1, PASS): Garm's death (DEBUG boss_kill) → good wizard →
+   victory movie → shop → the Tower, H4's completion byte kept through a
+   save and reload. Legitimate play (no DEBUG assist): Tower shop purchases
+   with the character's gold between chained levels (--shop-buy), loot
+   (gold, food, potions, chests with spare keys), turbo, fighting during
+   trigger waits; chain lg1 ends L1 and G1 with no assist (G2 in progress).
+   Bot: exit portals avoided for other goals, triggers bound to a
+   treasure's support first, optional pickups skipped after three stuck
+   events. b37 (assisted, 200,000 updates): C1 C4 I2 J4 now end; still not
+   ended in some batch: C3 (legend item) D3 D4 E1 F1 H1–H3 I3 I4 J1–J3 J6
+   K1. K1's route traced from navdumps (the exit region is reached from the
+   ledge region above (−66, −32, −78), which bridge 1093 — trigger 48 —
+   joins to the western low area; hints under test).
 
 ---
 
