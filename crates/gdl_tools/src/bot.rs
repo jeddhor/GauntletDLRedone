@@ -40,6 +40,8 @@ pub type Place = (i32, i32, i32);
 
 const CELL: f32 = 1.5;
 const STEP_UP: f32 = 2.0;
+/// Steps up to this height pass when the player-like wall test does.
+const STEP_MAX: f32 = 3.0;
 const HEADROOM: f32 = 3.0;
 const STRICT_RADIUS: f32 = 1.2;
 const HARD_COST: f32 = 20.0;
@@ -254,11 +256,18 @@ impl Nav {
         // a ramp: floors (normal y ≥ 0.5, at most 60°) and a floor under the
         // midpoint near the mean height.
         let span = dy.abs();
+        // A step of up to STEP_MAX (PlayerCollideFloor's limit is 3, 4 on one
+        // object) when the player-like wall test at one unit up passes: a
+        // step face lower than that, or a step object (+0x10 & 0x38), which
+        // PlayerMotion hands to the floor stage. D3's bridge pieces rise as
+        // stairs of 1–2 units (70, 72, 73, 75) to pad 354; the 73 → 75 step
+        // was no edge under STEP_UP.
+        let step = STEP_UP < dy && dy <= STEP_MAX;
         let ramp = (STEP_UP < dy || dy < -DROP) && span <= dist_xz(a, b) * 1.7;
-        if (STEP_UP < dy || dy < -DROP) && !ramp {
+        if (STEP_UP < dy || dy < -DROP) && !ramp && !step {
             return None;
         }
-        if ramp {
+        if ramp && !(step && Self::edge_ok(c, a, b, radius.max(STRICT_RADIUS))) {
             let mid = [(a[0] + b[0]) * 0.5, a[1].max(b[1]) + 1.0, (a[2] + b[2]) * 0.5];
             let mean = (a[1] + b[1]) * 0.5;
             if !matches!(c.floor_collide(0.3, 0.0, -(span + 2.0), mid, true, 0), Ok((f, _)) if f.solid.is_some_and(|h| (h.position[1] - mean).abs() < 0.4 * span)) {
@@ -288,6 +297,9 @@ impl Nav {
         // permissive 0.3 passes gaps the player cannot (G2's ground under
         // and beside its railed ramp).
         let ok = Self::edge_ok(c, a, b, radius.max(STRICT_RADIUS));
+        if step && !ramp && !ok {
+            return None;
+        }
         // A drop is walked off at the upper floor, where PlayerMotion tests
         // walls: a railing there stops the player whatever lies above it
         // (G2's walkway at y 9.7 over the spikes: the permissive sweep at

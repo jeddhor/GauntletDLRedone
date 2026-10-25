@@ -535,6 +535,14 @@ GDL_DEBUG_CAMERA):
     the fenced Death statue for the whole of b54 (3200 stuck events); now
     it is only no fight target, with a potion within 4 units (f98: A1 past
     that point again).
+  - Steps: climbs of 2–3 units are edges when the player-like wall test
+    one unit up passes (a lower face, or a step object, +0x10 & 0x38,
+    which PlayerMotion hands to the floor stage); PlayerCollideFloor's
+    limit is 3 (4 on one object). D3's bridge pieces, raised by pads
+    50–47, form stairs 70 → 72 → 73 → 75 to pad 354 (navdump after the
+    pads, b53's run); the 73 → 75 step had been no edge (f99).
+  - b53 (f95): I4 takes its lamp (legend item 540) but does not reach the
+    exit; H3 takes its rune standalone (and ends in chain t26).
   - Without the assist the start delay (0–541 updates per try) is spent
     fighting foes within reach in place (f96). lg4 (generators first, f94):
     four of six G2 tries died by update 28,450 — try 6 lost 123 health
