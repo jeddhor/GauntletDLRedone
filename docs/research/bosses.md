@@ -119,6 +119,12 @@ instance cleared by 312 with CritterDropItem's bag; replay-frame-A1golemkill
 240/240 in every part after StartBagFX took SfxSetPhysics (the bag's node
 yaw from its velocity; v1 had effects 239/240).
 
+A1's gargoyle (kind 7): w1l1-statue-v3 (trace-A1-statue-v2's inputs past
+the awakening), w1l1-gargkill-v1 (WARPED: health 10), trace-A1-gargkill-v1
+(Down-Left and throw bursts): hits at 44, 122, 158, death at 166, cleared by
+220; replay-frame-A1gargkill 206/206 in every part. The Death statue stays
+unreached (fenced, gameplay.md "Statues").
+
 Fixed on the way: AddExp's StartLevelUpFX (a level up in play started no
 level-up effect natively; the Tower had it), and ProcessSpewItems'
 UpdateObjWorldMat (coins spewed onto A5's parented arena floor went back to
