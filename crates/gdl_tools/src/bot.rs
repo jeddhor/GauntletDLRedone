@@ -1140,7 +1140,7 @@ impl Bot {
             o
         } else {
             // Fresh triggers bound to the object a left treasure rests on (or
-            // that object's parent) right after the treasures: A3's rune on
+            // one of its parents) first: A3's rune on
             // the elevator trigger 249 raises, E1's legend item on the
             // pedestal pad 159 moves (object 632), D4's sword on object 735
             // that trigger 355 raises (the bot stood on the ledge beside it
@@ -1174,7 +1174,10 @@ impl Bot {
                 .collect();
             // (The revisits start one list later.)
             first_revisit += 1;
-            let mut o = vec![treasures, bound, near];
+            // The support's triggers before the treasure itself: the graph
+            // may show the treasure within reach (D4: a drop into the sword's
+            // pit) while play needs the pedestal raised first.
+            let mut o = vec![bound, treasures, near];
             o.extend(revisit.into_iter().map(|s| vec![s]));
             if !self.require {
                 o.push(exits);
