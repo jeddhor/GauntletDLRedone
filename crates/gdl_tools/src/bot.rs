@@ -358,9 +358,11 @@ impl Nav {
         if step && !ramp && !ok {
             return None;
         }
-        if 1.0 < span && !walk_reaches(c, a, b) {
-            return None;
-        }
+        // The walk check (walk_reaches) is not applied: with it A3 and K2,
+        // which end otherwise, did not (b56: 1289 and 2652 stuck events) —
+        // the static displacement from a standing start refuses steps the
+        // moving player takes. Kept for diagnostics.
+        let _ = walk_reaches;
         // A drop is walked off at the upper floor, where PlayerMotion tests
         // walls: a railing there stops the player whatever lies above it
         // (G2's walkway at y 9.7 over the spikes: the permissive sweep at

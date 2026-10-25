@@ -548,7 +548,11 @@ GDL_DEBUG_CAMERA):
     (player_collision::player_displacement — PlayerCollideWalls and
     PlayerCollideFloor, 96/96 updates byte-equal with the reference in G1)
     from a standing start, 0.25 per step, radius +0x828 and height +0x82c
-    of player 0; an edge the walk does not finish is no edge.
+    of player 0; an edge the walk does not finish is no edge. Withdrawn
+    the same night: b56 (f100) — A3 and K2, which end otherwise, did not
+    (1289 and 2652 stuck events; the standing-start walk refuses steps the
+    moving player takes), and none of D3 I4 J3 J6 K1 ended. The function
+    stays for diagnostics, unused.
   - b53 (f95): I4 takes its lamp (legend item 540) but does not reach the
     exit; H3 takes its rune standalone (and ends in chain t26).
   - Without the assist the start delay (0–541 updates per try) is spent
