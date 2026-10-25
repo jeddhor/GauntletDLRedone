@@ -525,7 +525,12 @@ GDL_DEBUG_CAMERA):
     DROP is now 4; deeper descents only on a ramp, as climbs (f95). b53
     (f95): D4 ends for the first time with its sword (pads 342 → 55 → 355,
     the sword at update 25,286, exit at 36,377; route hints in
-    tools/bot-routes/D4.json).
+    tools/bot-routes/D4.json). Regression b54 (f95, 150,000 updates):
+    G1 G3 A3 B2 B5 D1 D2 K2 K4 I1 end (G1 17,662 against 24,332, I1
+    63,874 against 121,907); A1 held by the Death rule (fixed in f98);
+    C1 not: the bot sat in the water pit by (−20.5, −12.1, 50.8), 1.3
+    under the surface, for 135,000 updates (528 assists; C1's earlier
+    win took 143,254 updates and 410 assists).
   - Death: stepping away from it within 6 units (f91–f97) held A1's bot by
     the fenced Death statue for the whole of b54 (3200 stuck events); now
     it is only no fight target, with a potion within 4 units (f98: A1 past

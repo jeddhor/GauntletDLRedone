@@ -15,3 +15,4 @@ ordinary pad path; the hints only choose its goals. Not game data.
 | F1 | campaign-t21-F1-bot (assisted, 115,534) |
 | I3 | private/reports/bot-b48-I3.json (assisted bot f87, the rune taken, exit at update 148,473) |
 | D4 | private/reports/bot-b53-D4.json (assisted bot f95, the sword taken, exit at update 36,377) |
+| H3 | campaign-t26-H3-bot3 (assisted chain bot f98, the rune taken, 143,648) |

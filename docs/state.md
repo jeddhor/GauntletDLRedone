@@ -427,7 +427,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    private/reports/campaign-bot-tries-summary-v1.json) and the scratch
    bot batches' losing runs (summary bot-batches-summary-v1.json). Chain
    t29 runs D4 onward from D2's end state (D3 skipped while it does not
-   end); keep an eye on free space (bot reports are 25–40 MB each). Legitimate chain lg2 died in G2 (all six tries, then the
+   end); keep an eye on free space (bot reports are 25–40 MB each).
+   Chain t26 (f98, from H2's end): H3 ends with its rune at 143,648 and
+   H4 (Garm) after it; t29: D4, D5, C1 end in sequence. 55 of 61; not yet
+   D3 I4 J3 J6 K1. Legitimate chain lg2 died in G2 (all six tries, then the
    search); lg3 runs with the Death rule.
 
 ---
