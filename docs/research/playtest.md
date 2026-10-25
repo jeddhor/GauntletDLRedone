@@ -454,6 +454,16 @@ GDL_DEBUG_CAMERA):
   whole route; the rune's pads are the open part (planner from a teleport
   into the area).
 - I4: the planner's plan is [527] (the lamp's platform 1518).
+- K1, the last link (teleport checks): trigger 48 moves object 1093 from
+  (−69.1, −30.7, −75.3) to (−63.8, −30.7, −65.2), away from the gap; pad 15
+  is a ferry — object 1080 carries the player from x −113 to x −74.6 (z
+  −77), beside the ledge region (−66, −32, −78), and back. K1's route:
+  [7, 40, 41, 66] → 8 → (far-west mid) 9 ↓ → (far-west low) 10 ↑ →
+  (western low area, the rune 192) → ferry 15 → the ledge region → exit.
+- Traversal status (every bot batch and chain so far, 2026-10-24 night):
+  49 of 61 levels ended alive with their rune and legend item, C3 ended
+  without its bellows; not ended in the current reports: D3 D4 F1 H1 H2 H3
+  I3 I4 J3 J6 K1 (D3 ended once in b22).
  Chain lg1 plays from a new game with --no-assist
   --loot --shop-buy heal,potion.
 
