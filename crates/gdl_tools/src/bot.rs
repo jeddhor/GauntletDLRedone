@@ -629,6 +629,12 @@ pub struct Bot {
     hint_at: usize,
     hint_stuck: usize,
     hint_wait: Option<usize>,
+    /// Slots reached since the current hint began, and the current trigger
+    /// hint's state when it began: a trigger hint is done when the bot
+    /// reached it or its state changed since (K1: hints whose triggers a
+    /// chain had already set counted as done, and the bot never went west).
+    hint_reached: HashSet<usize>,
+    hint_base: Option<(usize, i8, u8)>,
     /// Followers' (waypoint index, path) by player.
     followers: [(usize, Vec<usize>); 4],
     /// Followers' path to the exit portal while the leader waits on one
@@ -768,6 +774,8 @@ impl Bot {
             hint_at: 0,
             hint_stuck: 0,
             hint_wait: None,
+            hint_reached: HashSet::new(),
+            hint_base: None,
             followers: Default::default(),
             follow_nav: Default::default(),
             follow_stuck: Default::default(),
@@ -1014,12 +1022,20 @@ impl Bot {
         while let Some(h) = self.hints.get(self.hint_at).cloned() {
             if let Some(s) = h.item {
                 // A gate stays an active record once opened (+0xdc leaves 0).
+                let state = g.items.records.get(s).map(|r| (r.i8_(0xde), r.u8_(0xe2)));
+                if self.hint_base.is_none_or(|b| b.0 != self.hint_at)
+                    && let Some((de, e2)) = state
+                {
+                    self.hint_base = Some((self.hint_at, de, e2));
+                }
+                let changed = self.hint_base.zip(state).is_some_and(|(b, st)| (b.1, b.2) != st && st.0 != 0);
                 let done = !g.items.records.get(s).is_some_and(|r| r.active())
-                    || (item_kind(g, s).0 == 5 && (g.items.records[s].i8_(0xde) != 0 || g.items.records[s].u8_(0xe2) != 0))
+                    || (item_kind(g, s).0 == 5 && (self.hint_reached.contains(&s) || changed))
                     || (item_kind(g, s).0 == 7 && g.items.records[s].i8_(0xdc) != 0);
                 if done {
                     self.log.push(serde_json::json!({"update": f, "hint_done": self.hint_at}));
                     self.hint_at += 1;
+                    self.hint_reached.clear();
                     continue;
                 }
                 let targets = self.item_nodes(g, &[s]);
@@ -1359,6 +1375,7 @@ impl Bot {
                 let shot = item_kind(g, s) == (5, 0x1f);
                 let reached = !r.active() || (k == 5 && (r.u8_(0xe2) != 0 || ((shot || self.revisiting != Some(s)) && r.i8_(0xde) != 0)));
                 if reached {
+                    self.hint_reached.insert(s);
                     self.log.push(serde_json::json!({"update": f, "reached": s, "keys": g.players[0].i32_(KEYS)}));
                     self.bad_nodes.clear();
                     if k == 5 {
