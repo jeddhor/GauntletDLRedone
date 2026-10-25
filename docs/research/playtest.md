@@ -591,6 +591,76 @@ GDL_DEBUG_CAMERA):
     (f91) did not bring the rune within reach either; open.
  Chain lg1 plays from a new game with --no-assist
   --loot --shop-buy heal,potion.
+- 2026-10-25 runs (c29 = f102):
+  - Standalone searches s1 (400,000 updates each, assisted) for the five
+    levels the bot does not end: none ended (progress D3 11, I4 18, J3 8,
+    J6 5, K1 10; I4 took its lamp, 540).
+  - lg7 (no assist, G2 from lg1's G1 end, 600,000-update search): the six
+    bot tries died (state 0xb, by updates 6,098–22,195) and the search
+    reached progress 22 (lg6: 23). Legitimate G2 stays blocked by the
+    character's strength at that point, not by the route.
+  - t33 (I2 onward from t31's I1 end): the six I2 tries and the search
+    (progress 11) left rune 505. Cause: the route hints (from b37, before
+    DROP was 4) list trigger 485 on the ground (y 3.6) after bridge pad
+    476; b37 got there on lift 47, which the pad sets moving between the
+    walkway (13.1) and the ground (4.8 at its lowest): the old graph held
+    the 9.6-unit drop from the walkway and the bot happened to ride the
+    lift. With DROP 4 the graph built at the pad (i2dbg1-nav, update 8731)
+    has no node within 4 units of 485; hint 9 was never reachable and
+    every later hint was skipped in turn after 60 stuck events (the bot
+    reached the ground only when a rebuild caught the lift at the bottom,
+    update 59,741).
+  - Where legitimate G2 loses its health (lg7 tries 1, 2, 4, 5; 150-update
+    windows): 773–894 health lost a try, two thirds of it in windows with
+    stuck events, by enemies (KNI generators 123/125 near the start, 140/229
+    by (−70, 0, −5), LOW 220 at (−102, 10.3, −98.5)) and by SPIKES (36–146 a
+    try, e.g. (−64, 0, −5)); no health drain without enemies (drain-g2-v1:
+    600 for 3600 idle updates with --no-enemies). The character enters G2
+    at level 4 with no potions and 250 gold (five SHP_CHERRY bought).
+  - Game difficulty: the Game Options menu's Difficulty (Easy / Medium /
+    Hard, difficulty_options → GamePrefs +0x14, the 0x21edcc index of
+    ResolveWorldData's diff_mul_tab 0.667 / 1.0 / 1.5) is an ordinary
+    setting; the fixture plays Medium. game_run.py --difficulty N writes it
+    into the start state as gdl_play does at each level start
+    (diffcheck-easy-v1: G2's multipliers +0xcc..+0xdc 0.75 0.667 0.5 2.0
+    0.333 against Medium's 0.75 1.0 0.75 1.333 0.5). Enemy health (+0xac)
+    and damage (+0xbc) are not among the scaled fields; enemy speed (+0xb0,
+    fwrdval) and aggression (+0xb4) are (× 0.667 on Easy).
+- Rules added 2026-10-25 (bot.rs; tuning, not game data):
+  - Ride edges (Nav::ride): the bot samples every object that can move (a
+    run-time y, rotation or animation matrix on it or an ancestor) every 5
+    updates; one whose translation y has spanned at least 1 unit and has
+    reversed direction is a mover. Edges between floors on different
+    objects, one of them a mover, are ride edges when at some point of the
+    travel the far floor is within 3 below (PlayerCollideFloor) or 2 above:
+    the bot waits at the near end (nodes on movers followed where their
+    floors are now) until the step fits, at most 600 updates, then blocks
+    that edge and every ride edge onto the same object within 4 units.
+    Mover nodes are kept by object in the blocked-edge memory, whatever
+    height a rebuild caught them at. First tries (c30, no reversal test,
+    height-keyed places): I2 reached trigger 485 by lift 47 at update
+    10,289 (hint 9; t33 never), but objects that rose once and stayed
+    held the bot in ride waits (I2 i2r1: 208–229 timeouts a try; G1 in b60:
+    183, the level no longer ended).
+  - Without the assist only (legitimate play): stuck with a foe within 10
+    units the bot fights in place for up to 600 updates; hazards (kind 8)
+    and statues (kind 4, within reach + 1.5; contact or a hit wakes them)
+    cost 150 to enter instead of 25 (closing statues shut lg11's try 2 in
+    for 155,000 updates); generators up to 15 units along a clear line
+    are fired at; foes within 3.2 units are stepped away from every other
+    20 updates (knights strike from about 3); explosive and poison barrels
+    are not broken on the way; nodes inside a live poison cloud (an effect
+    with damage flags 0x800: StartExplosion 0x19, blast 6.5) are closed
+    and the bot walks out of one; food with a negative amount is no loot.
+  - Report `hurt` entries (DIAGNOSTIC): each loss of 3 or more health with
+    the foes within 30 units (critters as type −1, within 40) and hazards
+    within 5. hurt-g2-easy-v2 (Easy, no assist, died at update 35,265):
+    790 lost — knights at about 3 units 382, statue creatures 290 (hits of
+    29–39 from 5–9 units), hazards 71; lg11 try 1 lost 230 to 4.1-point
+    ticks every 31 updates with nothing near (a poison cloud).
+  - Legitimate G2 tries (no assist, from lg1's G1 end): Medium lg8 died at
+    6,044–23,820; Easy lg9 at 29,320–73,375 (one alive at 200,000 on
+    bridge 1054, the mover-place loop above), lg10 at 26,561–104,955.
 
 
 ## State search (M14/M15 tooling, 2026-10-24)

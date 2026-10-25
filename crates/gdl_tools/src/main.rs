@@ -1951,6 +1951,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                 *h = r.0.iter().map(|b| format!("{b:02x}")).collect();
             }
         }
+        // difficulty=N: the Game Options menu's Difficulty (difficulty_options
+        // Easy / Medium / Hard = 0 / 1 / 2, GamePrefs +0x14: the difficulty
+        // word 0x21edcc, ResolveWorldData's diff_mul_tab index), which
+        // gdl_play writes into every level start from the saved options. An
+        // ordinary game setting, not a DEBUG change.
+        if let Some(d) = opts.get("difficulty") {
+            let d: i32 = d.parse()?;
+            if !(0..=2).contains(&d) {
+                return Err("difficulty must be 0, 1 or 2".into());
+            }
+            start.extra.target_cone_mode = d;
+        }
         // A level entered through the start locator (later levels, other
         // realms, chained runs) rather than the fixture's mid-play state.
         let entered = 0 < level || opts.contains_key("world") || opts.contains_key("next_level");
@@ -4001,7 +4013,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             "unsupported":game.log.unsupported.iter().map(|(k, v)| serde_json::json!({"path":k,"count":v})).collect::<Vec<_>>(),
             "scope":"INTERIM native game run: fresh items, no initial enemies, optional scripted interim player (0x80000000 = magic edge), optional potions= debug override; not a fidelity comparison",
             "potions_override":opts.get("potions"),"keys_override":opts.get("keys"),"crystals_override":opts.get("crystals"),
-            "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport"),"tower_shop_restore":opts.contains_key("tower_shop"),"shop":shop_report});
+            "crystal_counts":(0..9).map(|n| game.players[0].i16_(0xd0a + 0xb4 * game.players[0].u32_(0xc) as usize + 2 * n)).collect::<Vec<_>>(),"boss_health_override":opts.get("boss_health"),"teleport_override":opts.get("teleport"),"tower_shop_restore":opts.contains_key("tower_shop"),"shop":shop_report,"difficulty":game.target_cone_mode});
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
         report["check_num"] = serde_json::json!(game.collision.check_num());

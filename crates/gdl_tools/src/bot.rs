@@ -108,13 +108,29 @@ const HARD_COST: f32 = 20.0;
 /// level line from within SHOT_FAR.
 const SHOOT_RANGE: f32 = 9.0;
 const SHOT_FAR: f32 = 30.0;
+/// No-assist runs fire at generators up to this far along a clear line.
+const GEN_RANGE: f32 = 15.0;
 /// The largest drop walked off a ledge: PlayerCollideFloor 0x145218 refuses
 /// a floor change of over 3 units (4 on the same object) and the player
 /// stops at the edge (D4's pit rim, H3's ledge 8.7 above trigger 504, D1's
 /// walkway); steeper descents only on a ramp, as climbs. (12 before: the
 /// graph held drops no player can take.)
 const DROP: f32 = 4.0;
+/// Ride edges (Nav::ride): an object whose translation y has spanned at
+/// least MOVER_MIN is a mover; the bot steps across once the far floor is
+/// within RIDE_DROP below (PlayerCollideFloor's 3-unit limit) or RIDE_CLIMB
+/// above (the graph's ordinary step), waiting at most RIDE_WAIT
+/// updates. RIDE_COST weighs the wait in routes (tuning, not game data).
+const MOVER_MIN: f32 = 1.0;
+/// Place heights of mover nodes: this plus the object index.
+const MOVER_PLACE: i32 = 1_000_000;
+const RIDE_DROP: f32 = 3.0;
+const RIDE_CLIMB: f32 = STEP_UP;
+const RIDE_COST: f32 = 10.0;
+const RIDE_WAIT: usize = 600;
 const STUCK: usize = 45;
+/// No-assist runs: updates a stuck bot may spend fighting foes in place.
+const FIGHT_HOLD: usize = 600;
 const DWELL: f32 = 2.0;
 /// Floor probes for columns and edge midpoints.
 const FLOOR_RADIUS: f32 = 0.3;
@@ -138,6 +154,16 @@ pub struct Nav {
     pub adj: Vec<Vec<usize>>,
     /// Edges the player-like wall test rejects (kept at a higher cost).
     hard: HashSet<(usize, usize)>,
+    /// Edges between floors on different objects of which at least one
+    /// moves vertically (a lift): walkable only while the mover holds the
+    /// far floor within a step, so the bot waits at the near end (ride
+    /// edges). I2's lift 47 (bridge pad 476) carries the player between
+    /// the walkway at 13.1 and the ground at 3.5 by trigger 485, a 9.6-unit
+    /// drop no walk takes (DROP).
+    pub ride: HashSet<(usize, usize)>,
+    /// Vertically moving objects at the build: object → (lowest, highest,
+    /// current) translation y the bot has seen.
+    pub movers: HashMap<usize, (f32, f32, f32)>,
     cols: HashMap<(i32, i32), Vec<usize>>,
     top: f32,
     bottom: f32,
@@ -167,7 +193,14 @@ impl Nav {
     /// previous graph reached, so an isolated spot on a lift does not lose
     /// the known level).
     pub fn build(c: &mut CollisionWorld, seeds: &[V3], bottom: f32, top: f32, radius: f32) -> Nav {
-        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top, bottom, radius, reached: 0 };
+        Self::build_with_movers(c, seeds, bottom, top, radius, HashMap::new())
+    }
+
+    /// `build` with the vertically moving objects seen so far (object →
+    /// lowest, highest, current translation y): ride edges join their
+    /// floors to floors a step away at some point of their travel.
+    pub fn build_with_movers(c: &mut CollisionWorld, seeds: &[V3], bottom: f32, top: f32, radius: f32, movers: HashMap<usize, (f32, f32, f32)>) -> Nav {
+        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), ride: HashSet::new(), movers, cols: HashMap::new(), top, bottom, radius, reached: 0 };
         let mut queue = VecDeque::new();
         let mut seen = Vec::new();
         for &p in seeds {
@@ -201,9 +234,13 @@ impl Nav {
                     if q[1] < p[1] - STEP_UP && col.iter().any(|&o| o != m && q[1] + 1.0 < nav.pts[o][1] && nav.pts[o][1] < p[1] + STEP_UP) {
                         continue;
                     }
-                    if let Some(strict) = Self::edge_class(c, p, nav.pts[m], nav.radius) {
+                    let class = Self::edge_class(c, p, nav.pts[m], nav.radius);
+                    let ride = nav.ride_edge(c, n, m, class.is_some());
+                    if let Some(strict) = class.or(ride.then_some(false)) {
                         nav.adj[n].push(m);
-                        if !strict {
+                        if ride {
+                            nav.ride.insert((n, m));
+                        } else if !strict {
                             nav.hard.insert((n, m));
                         }
                         if !seen[m] {
@@ -373,6 +410,56 @@ impl Nav {
         Some(ok)
     }
 
+    /// Whether the edge from node `n` to node `m` is a ride edge: the two
+    /// floors lie on different objects, one of them a mover, and at some
+    /// point of the movers' travel the far floor is within RIDE_DROP below
+    /// or RIDE_CLIMB above the near one. An edge already walkable now
+    /// (`walkable`) counts too: the mover will not wait for the bot.
+    fn ride_edge(&self, c: &mut CollisionWorld, n: usize, m: usize, walkable: bool) -> bool {
+        let (oa, ob) = (self.obj[n], self.obj[m]);
+        if oa == ob {
+            return false;
+        }
+        let travel = |o: usize| self.movers.get(&o).map_or((0.0, 0.0), |&(lo, hi, cur)| (cur - lo, hi - cur));
+        let ((ad, au), (bd, bu)) = (travel(oa), travel(ob));
+        if ad + au + bd + bu < MOVER_MIN {
+            return false;
+        }
+        if walkable {
+            return true;
+        }
+        let (a, b) = (self.pts[n], self.pts[m]);
+        let (lo, hi) = ((b[1] - bd) - (a[1] + au), (b[1] + bu) - (a[1] - ad));
+        if hi < -RIDE_DROP || RIDE_CLIMB < lo {
+            return false;
+        }
+        // Nothing in the way above both floors at their highest.
+        let top = (a[1] + au).max(b[1] + bu) + 1.5;
+        let wall = c.world_collide(Query {
+            radius: self.radius,
+            first: [a[0], top, a[2]],
+            last: [b[0], top, b[2]],
+            check_flags: 7,
+            min_normal_y: f32::from_bits(0xbf5d_b22d),
+            max_normal_y: f32::from_bits(0x3f5d_b22d),
+            object_mask: 0x13a,
+            exclusion_mask: 1,
+        });
+        matches!(wall, Ok((ref w, _)) if w.solid.is_none())
+    }
+
+    /// Node `n` where its floor is now: moved with its object when that is
+    /// a mover of the build.
+    pub fn live(&self, g: &Game, n: usize) -> V3 {
+        let mut q = self.pts[n];
+        if let Some(&(_, _, built)) = self.movers.get(&self.obj[n])
+            && let Ok(m) = g.collision.object_matrix(self.obj[n])
+        {
+            q[1] += m[3][1] - built;
+        }
+        q
+    }
+
     fn edge_ok(c: &mut CollisionWorld, a: V3, b: V3, radius: f32) -> bool {
         // PlayerMotion tests walls one unit above the current floor; hits on
         // step objects (+0x10 & 0x38) go to the floor stage instead.
@@ -420,12 +507,19 @@ impl Nav {
     pub fn place(&self, n: usize) -> Place {
         let p = self.pts[n];
         let k = key(p[0], p[2]);
+        // A mover's floor by its object, whatever height the build caught it
+        // at: blocks learnt there outlast rebuilds (no-assist G2, lg9: the
+        // step off bridge 1054 by pad 407 failed 60 times, each rebuild
+        // placing the bridge's nodes at another height).
+        if self.movers.contains_key(&self.obj[n]) {
+            return (k.0, MOVER_PLACE + self.obj[n] as i32, k.1);
+        }
         (k.0, p[1].round() as i32, k.1)
     }
 
     /// Why each edge from the node at `p` to its neighbour columns passes or fails (diagnostics).
     pub fn explain(c: &mut CollisionWorld, p: V3, radius: f32, top: f32, bottom: f32) -> Vec<serde_json::Value> {
-        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top, bottom, radius, reached: 0 };
+        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), ride: HashSet::new(), movers: HashMap::new(), cols: HashMap::new(), top, bottom, radius, reached: 0 };
         let Some(n) = nav.locate(c, p) else { return Vec::new() };
         let a = nav.pts[n];
         let k = key(a[0], a[2]);
@@ -496,10 +590,25 @@ impl Nav {
                 // Edges the player-like test rejects: nearly closed (with
                 // the 1.2 radius they cross walls the player cannot, G2's
                 // stair wall); kept for gaps the sweep misjudges.
-                let k = if self.hard.contains(&(n, m)) { HARD_COST } else { 1.0 };
+                let k = if self.hard.contains(&(n, m)) {
+                    HARD_COST
+                } else if self.ride.contains(&(n, m)) {
+                    RIDE_COST
+                } else {
+                    1.0
+                };
                 // Drops lose height that may have taken lifts to gain.
                 let drop = if self.pts[m][1] < self.pts[n][1] - 2.0 { 15.0 } else { 0.0 };
-                let drop = drop + if avoid.soft.contains(&m) { 25.0 } else if avoid.cheap.contains(&m) { 4.0 } else { 0.0 };
+                let drop = drop
+                    + if avoid.soft.contains(&m) {
+                        25.0
+                    } else if avoid.hazard.contains(&m) {
+                        avoid.hazard_cost
+                    } else if avoid.cheap.contains(&m) {
+                        4.0
+                    } else {
+                        0.0
+                    };
                 // Clearance: a node missing neighbours lies by a wall or a
                 // ledge; the player (radius 1.5) slides there.
                 let drop = drop + (8usize.saturating_sub(self.adj[m].len())) as f32 * 0.6;
@@ -528,6 +637,9 @@ pub struct Avoid {
     pub closed: HashSet<usize>,
     /// Nodes no route enters except as its goal (exit portals).
     pub forbidden: HashSet<usize>,
+    /// Hazards' nodes (kind 8: spikes, flames) and what entering one costs.
+    pub hazard: HashSet<usize>,
+    pub hazard_cost: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -537,6 +649,20 @@ enum Goal {
     Point(usize),
     /// A reachable graph node in a column the player has not stood in.
     Explore(usize),
+}
+
+/// A moving object as the bot has seen it (sampled every 5 updates): the
+/// lowest and highest translation y, the last y and direction, and how often
+/// the direction reversed. Only objects that came back (a reversal) are
+/// movers for ride edges: one that rose once and stays (G1's platform by
+/// (62, 21, −157), b60: 183 ride timeouts) is level geometry again.
+#[derive(Clone, Copy, Debug)]
+struct MoverSeen {
+    lo: f32,
+    hi: f32,
+    last: f32,
+    dir: i8,
+    reversals: u32,
 }
 
 /// One route hint (bot=1 hints=FILE): steps taken in order before the
@@ -813,6 +939,22 @@ pub struct Bot {
     gen_fire: HashMap<usize, (usize, u16)>,
     /// Generators the bot no longer fires at (no damage in 300 updates).
     gen_skip: HashSet<usize>,
+    /// Objects whose node can move (a run-time y, rotation or animation
+    /// matrix on it or an ancestor; rescanned every 300 updates), the
+    /// lowest and highest translation y seen of each (sampled every 5
+    /// updates) and when the bot began waiting at a ride edge.
+    mover_candidates: Vec<usize>,
+    mover_scan_at: usize,
+    movers: HashMap<usize, MoverSeen>,
+    ride_wait: Option<usize>,
+    /// Updates spent fighting in place while stuck (no assist), since the
+    /// last progress.
+    fight_hold: usize,
+    /// The collision copy of the last graph build (line tests) and each
+    /// generator's last line test (update, clear).
+    coll: Option<CollisionWorld>,
+    gen_seen: HashMap<usize, (usize, bool)>,
+    last_health: f32,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -870,7 +1012,7 @@ impl Bot {
     fn blank(g: &Game) -> Bot {
         let start = g.players[0].v3(0x50);
         Bot {
-            nav: Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top: 0.0, bottom: 0.0, radius: 0.0, reached: 0 },
+            nav: Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), ride: HashSet::new(), movers: HashMap::new(), cols: HashMap::new(), top: 0.0, bottom: 0.0, radius: 0.0, reached: 0 },
             collision_at_build: 0,
             path: Vec::new(),
             at: 0,
@@ -939,6 +1081,14 @@ impl Bot {
             gen_fire: HashMap::new(),
             gen_skip: HashSet::new(),
             delay: 0,
+            mover_candidates: Vec::new(),
+            mover_scan_at: 0,
+            movers: HashMap::new(),
+            ride_wait: None,
+            fight_hold: 0,
+            coll: None,
+            gen_seen: HashMap::new(),
+            last_health: f32::NAN,
         }
     }
 
@@ -972,8 +1122,58 @@ impl Bot {
         // walk are blocked when the bot gets stuck on them.
         let mut seeds = vec![p];
         seeds.extend(self.nav.pts.iter().zip(&self.nav.adj).filter(|(_, a)| !a.is_empty()).map(|(q, _)| *q));
-        self.nav = Nav::build(&mut c, &seeds, bottom, top, 0.3);
+        let movers = self
+            .movers
+            .iter()
+            .filter(|(_, m)| MOVER_MIN <= m.hi - m.lo && 1 <= m.reversals)
+            .filter_map(|(&o, s)| g.collision.object_matrix(o).ok().map(|m| (o, (s.lo, s.hi, m[3][1]))))
+            .collect();
+        self.nav = Nav::build_with_movers(&mut c, &seeds, bottom, top, 0.3, movers);
         self.collision_at_build = Self::collision_state(g);
+        self.coll = Some(c);
+    }
+
+    /// Movers' travel: the objects that can move (rescanned every 300
+    /// updates) and their translation y range, every 5 updates.
+    fn sample_movers(&mut self, f: usize, g: &Game) {
+        if !f.is_multiple_of(5) {
+            return;
+        }
+        let c = &g.collision;
+        if self.mover_scan_at <= f {
+            self.mover_scan_at = f + 300;
+            let own = |o: usize| c.node_y.get(o).is_some_and(Option::is_some) || c.node_local[o].is_some() || c.node_rot[o].is_some();
+            self.mover_candidates = (0..c.objects.len())
+                .filter(|&o| {
+                    let mut k = Some(o);
+                    for _ in 0..32 {
+                        let Some(x) = k else { break };
+                        if own(x) {
+                            return true;
+                        }
+                        k = c.objects[x].parent;
+                    }
+                    false
+                })
+                .collect();
+        }
+        for &o in &self.mover_candidates {
+            if let Ok(m) = c.object_matrix(o) {
+                let y = m[3][1];
+                let e = self.movers.entry(o).or_insert(MoverSeen { lo: y, hi: y, last: y, dir: 0, reversals: 0 });
+                e.lo = e.lo.min(y);
+                e.hi = e.hi.max(y);
+                let dy = y - e.last;
+                if 0.01 < dy.abs() {
+                    let d = if 0.0 < dy { 1 } else { -1 };
+                    if e.dir != 0 && d != e.dir {
+                        e.reversals += 1;
+                    }
+                    e.dir = d;
+                }
+                e.last = y;
+            }
+        }
     }
 
     /// Reachable graph nodes within 2 units of each item (slot, node).
@@ -1055,7 +1255,10 @@ impl Bot {
     /// is held (not entered: use_key opens a gate on contact).
     fn obstacle_nodes(&self, g: &Game) -> Avoid {
         let keys = g.players[0].i32_(KEYS);
-        let mut out = Avoid::default();
+        // Hazards cost what other obstacles do with the DEBUG assist; without
+        // it a detour of up to 150 units is cheaper (no-assist G2 in lg7: 36
+        // to 146 health a try lost by its SPIKES, e.g. by (−64, 0, −5)).
+        let mut out = Avoid { hazard_cost: if self.assist_enabled { 25.0 } else { 150.0 }, ..Avoid::default() };
         if !self.dead_nodes.is_empty() {
             for n in 0..self.nav.pts.len() {
                 if self.dead_nodes.contains(&self.nav.place(n)) {
@@ -1069,11 +1272,17 @@ impl Bot {
             // Generators (kind 3) once three attacks did not damage them.
             let spent = k == 3 && self.break_tries.get(&s).is_some_and(|&(n, _)| 3 <= n);
             // Hazards (kind 8: spikes, traps) too, at the soft cost.
-            if !r.active() || !(k == 2 || k == 8 || k == 10 || spent || (k == 7 && keys < 1)) {
+            // Without the assist statues (kind 4) cost what hazards do:
+            // contact or a hit wakes them (+0xf8 bit 0), and their creatures
+            // did 290 of the 790 health hurt-g2-easy-v2 lost (G2 holds 53
+            // statues). Closed, with 2.5 units around, they shut lg11's try 2
+            // in by (−89, 1, −26) for 155,000 updates.
+            let statue = k == 4 && !self.assist_enabled;
+            if !r.active() || !(k == 2 || k == 8 || k == 10 || spent || (k == 7 && keys < 1) || statue) {
                 continue;
             }
             let q = r.v3(0x40);
-            let reach = r.f32_(0xe8).clamp(0.5, 4.0) + 1.0;
+            let reach = r.f32_(0xe8).clamp(0.5, 4.0) + if statue { 1.5 } else { 1.0 };
             let c = key(q[0], q[2]);
             let span = (reach / CELL).ceil() as i32;
             for dx in -span..=span {
@@ -1083,10 +1292,42 @@ impl Bot {
                         if dist_xz(pn, q) < reach && in_height(g, s, q[1], pn[1]) {
                             if k == 7 {
                                 out.closed.insert(n);
-                            } else if k == 10 && (43..=45).contains(&item_kind(g, s).1) {
+                            } else if k == 8 || statue {
+                                out.hazard.insert(n);
+                            } else if k == 10 && (43..=45).contains(&item_kind(g, s).1) && (self.assist_enabled || item_kind(g, s).1 == 43) {
+                                // Without the assist explosive and poison
+                                // barrels (BAREXP 44, BARPOI 45) are not
+                                // broken on the way: their blasts (12 and 6.5
+                                // units, the poison cloud lingering) hurt.
                                 out.cheap.insert(n);
                             } else {
                                 out.soft.insert(n);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Without the assist the nodes inside a live poison cloud (an effect
+        // with damage flags 0x800: StartExplosion kind 0x19, a broken BARPOI,
+        // blast 6.5) are closed (lg11 try 1: 230 health lost to 4.1-point
+        // ticks every 31 updates).
+        if !self.assist_enabled {
+            for (i, node) in g.effects.nodes.iter().enumerate() {
+                let (Some(node), Some(r)) = (node, g.effects.slots.get(i)) else { continue };
+                if r.u32_(gdl_core::game::effects::fx::DAMAGE_FLAGS) & 0x800 == 0 || r.f32_(gdl_core::game::effects::fx::DAMAGE) <= 0.0 {
+                    continue;
+                }
+                let q = node.position;
+                let reach = r.f32_(gdl_core::game::effects::fx::BLAST).clamp(1.0, 12.0) + 1.5;
+                let c = key(q[0], q[2]);
+                let span = (reach / CELL).ceil() as i32;
+                for dx in -span..=span {
+                    for dz in -span..=span {
+                        for &n in self.nav.cols.get(&(c.0 + dx, c.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
+                            let pn = self.nav.pts[n];
+                            if dist_xz(pn, q) < reach && (pn[1] - q[1]).abs() < 4.0 {
+                                out.closed.insert(n);
                             }
                         }
                     }
@@ -1151,7 +1392,14 @@ impl Bot {
         }
         let avoid = self.obstacle_nodes(g);
         // Routes to anything but an exit stay out of the exits' reach.
-        let avoid_x = Avoid { soft: avoid.soft.clone(), cheap: avoid.cheap.clone(), closed: avoid.closed.clone(), forbidden: self.exit_nodes(g) };
+        let avoid_x = Avoid {
+            soft: avoid.soft.clone(),
+            cheap: avoid.cheap.clone(),
+            closed: avoid.closed.clone(),
+            forbidden: self.exit_nodes(g),
+            hazard: avoid.hazard.clone(),
+            hazard_cost: avoid.hazard_cost,
+        };
         let is_exit = |s: usize| item_kind(g, s).0 == 9;
         if 0 < g.players[0].i32_(KEYS) {
             self.gate_blocked.clear();
@@ -1402,7 +1650,8 @@ impl Bot {
                 .filter(|s| !self.optional_skip.contains(s))
                 .filter(|&s| {
                     let q = g.items.records[s].v3(0x40);
-                    g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT" && dist_xz(q, p) < LOOT_RANGE && (q[1] - p[1]).abs() < 5.0
+                    // Food with a negative amount (+0xf4) poisons too.
+                    g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT" && !(item_kind(g, s) == (1, 3) && g.items.records[s].i32_(0xf4) < 0) && dist_xz(q, p) < LOOT_RANGE && (q[1] - p[1]).abs() < 5.0
                 })
                 .collect();
             if !loot.is_empty() {
@@ -1415,7 +1664,7 @@ impl Bot {
         if g.players[0].f32_(HEALTH) < self.start_health * 0.6 {
             let food = active(g, &|k, t| k == 1 && t == 3)
                 .into_iter()
-                .filter(|&s| g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT")
+                .filter(|&s| g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT" && g.items.records[s].i32_(0xf4) >= 0)
                 .filter(|s| !self.optional_skip.contains(s))
                 .collect::<Vec<_>>();
             if !food.is_empty() {
@@ -1504,7 +1753,47 @@ impl Bot {
         if self.exit_update.is_some() || g.players[0].i32_(0xfc) != 1 {
             return pad;
         }
+        self.sample_movers(f, g);
         let health = g.players[0].f32_(HEALTH);
+        // Health lost since the last update (diagnostics, report `hurt`):
+        // the foes within 30 units (type, distance, height, health) and
+        // hazards within 5, for losses of 3 or more.
+        if health + 3.0 <= self.last_health {
+            let p = g.players[0].v3(0x50);
+            let mut foes: Vec<(f32, i32, f32, f32)> = g
+                .enemies
+                .iter()
+                .filter(|e| e.i32_(0xc8) != 0 && dist_xz(e.v3(0x40), p) < 30.0)
+                .map(|e| (dist_xz(e.v3(0x40), p), e.i32_(0), e.v3(0x40)[1] - p[1], e.f32_(0x214)))
+                .collect();
+            // Critters (bosses, statues' creatures) as type −1, any distance
+            // within 40.
+            foes.extend(g.critters.iter().flatten().filter(|c| dist_xz(c.rec.v3(0x40), p) < 40.0).map(|c| (dist_xz(c.rec.v3(0x40), p), -1, c.rec.v3(0x40)[1] - p[1], c.rec.f32_(0x4f4))));
+            foes.sort_by(|a, b| a.0.total_cmp(&b.0));
+            foes.truncate(3);
+            let hazards: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 8 && dist_xz(g.items.records[s].v3(0x40), p) < 5.0).collect();
+            let r1 = |v: f32| (v * 10.0).round() / 10.0;
+            self.log.push(serde_json::json!({"update": f, "hurt": r1(self.last_health - health), "at": p.map(r1), "foes": foes.iter().map(|x| [r1(x.0), x.1 as f32, r1(x.2), r1(x.3)]).collect::<Vec<_>>(), "hazards": hazards}));
+        }
+        self.last_health = health;
+        // Without the assist, inside a poison cloud: walk straight out of it
+        // (away from its centre) and re-plan with its nodes closed.
+        if !self.assist_enabled && f.is_multiple_of(10) && self.backoff.is_none() {
+            let p = g.players[0].v3(0x50);
+            let cloud = g.effects.nodes.iter().zip(&g.effects.slots).filter_map(|(n, r)| {
+                let n = n.as_ref()?;
+                let blast = r.f32_(gdl_core::game::effects::fx::BLAST);
+                (r.u32_(gdl_core::game::effects::fx::DAMAGE_FLAGS) & 0x800 != 0 && 0.0 < r.f32_(gdl_core::game::effects::fx::DAMAGE) && dist_xz(n.position, p) < blast + 0.5 && (n.position[1] - p[1]).abs() < 4.0).then_some(n.position)
+            }).next();
+            if let Some(q) = cloud {
+                let d = dist_xz(p, q).max(0.1);
+                let away = [p[0] + (p[0] - q[0]) / d * 8.0, p[1], p[2] + (p[2] - q[2]) / d * 8.0];
+                self.backoff = Some((f + 30, away));
+                self.force_rebuild = false;
+                self.log.push(serde_json::json!({"update": f, "poison_cloud": q}));
+                self.choose(f, g);
+            }
+        }
         if self.assist_enabled && health < self.start_health * 0.4 {
             g.players[0].set_f32(HEALTH, self.start_health);
             self.assists += 1;
@@ -1679,7 +1968,20 @@ impl Bot {
             self.dwell = (f, p);
         }
         if STUCK <= f - self.progress.0 {
-            if dist_xz(p, self.progress.1) < 0.5 || 4 * STUCK <= f - self.dwell.0 {
+            let stuck = dist_xz(p, self.progress.1) < 0.5 || 4 * STUCK <= f - self.dwell.0;
+            // Without the assist, foes in the way are fought where the bot
+            // stands, not routed around (lg7's G2 tries took about two thirds
+            // of their damage in stretches with stuck events, re-planning
+            // with knights at their backs): up to FIGHT_HOLD updates, then
+            // the ordinary stuck handling.
+            let fight = stuck && !self.assist_enabled && self.fight_hold < FIGHT_HOLD && Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE).is_some();
+            if fight {
+                self.fight_hold += f - self.progress.0;
+                self.dwell = (f, p);
+            } else if !stuck {
+                self.fight_hold = 0;
+            }
+            if stuck && !fight {
                 // At a closed gate the key count decides (obstacle_nodes), not
                 // a blocked edge that would outlast the next key.
                 let at_gate = (0..g.items.records.len())
@@ -1749,7 +2051,7 @@ impl Bot {
                     // edge within 3 units heading the same way.
                     let (qa, qb) = (self.nav.pts[a], self.nav.pts[b]);
                     let dir = [qb[0] - qa[0], qb[2] - qa[2]];
-                    let near: Vec<(usize, usize)> = self.nav.hard.iter().copied().filter(|&(n, m)| {
+                    let near: Vec<(usize, usize)> = self.nav.hard.iter().chain(self.nav.ride.iter()).copied().filter(|&(n, m)| {
                         let (u, v) = (self.nav.pts[n], self.nav.pts[m]);
                         dist_xz(u, p) < 3.0 && (u[1] - p[1]).abs() < 1.5 && 0.5 < ((v[0] - u[0]) * dir[0] + (v[2] - u[2]) * dir[1]) / (dist_xz(u, v) * (dir[0].hypot(dir[1])).max(1e-3))
                     }).collect();
@@ -1933,17 +2235,53 @@ impl Bot {
             }
             self.backoff = None;
         }
-        // Waypoint following.
+        // Waypoint following (nodes on movers where their floors are now).
         while let Some(&n) = self.path.get(self.at) {
-            let w = self.nav.pts[n];
+            let w = self.nav.live(g, n);
             if dist_xz(p, w) < 0.9 && (p[1] - w[1]).abs() < 2.5 {
                 self.at += 1;
             } else {
                 break;
             }
         }
+        // A ride edge next: wait at its near end until the mover brings the
+        // far floor within a step (a foe within reach is fought meanwhile).
+        if let (Some(&a), Some(&b)) = (self.at.checked_sub(1).and_then(|i| self.path.get(i)), self.path.get(self.at))
+            && self.nav.ride.contains(&(a, b))
+        {
+            let (wa, wb) = (self.nav.live(g, a), self.nav.live(g, b));
+            if (-RIDE_DROP..=RIDE_CLIMB).contains(&(wb[1] - p[1])) {
+                self.ride_wait = None;
+            } else {
+                let since = *self.ride_wait.get_or_insert(f);
+                if RIDE_WAIT <= f - since {
+                    self.log.push(serde_json::json!({"update": f, "ride_timeout": [wa, wb]}));
+                    self.blocked.insert((self.nav.place(a), self.nav.place(b)));
+                    // Every ride edge onto the same object within 4 units: the
+                    // mover does not come (I2, i2r1: 228 timeouts, eight at
+                    // each of a dozen edges onto one platform by (193, 28, 64)).
+                    let ob = self.nav.obj[b];
+                    let same: Vec<(usize, usize)> = self.nav.ride.iter().copied().filter(|&(n, m)| self.nav.obj[m] == ob && dist_xz(self.nav.pts[n], p) < 4.0).collect();
+                    for (n, m) in same {
+                        let (pn, pm) = (self.nav.place(n), self.nav.place(m));
+                        self.blocked.insert((pn, pm));
+                    }
+                    self.ride_wait = None;
+                    self.choose(f, g);
+                    return pad;
+                }
+                self.progress = (f, p);
+                self.dwell = (f, p);
+                if Self::nearest_foe(g, p, ATTACK_RANGE).is_none() {
+                    self.holds[2] += 1;
+                    return if 0.6 < dist_xz(p, wa) { Self::steer(pad, g, p, wa) } else { pad };
+                }
+            }
+        } else {
+            self.ride_wait = None;
+        }
         let target = match (self.path.get(self.at), self.goal) {
-            (Some(&n), _) => Some(self.nav.pts[n]),
+            (Some(&n), _) => Some(self.nav.live(g, n)),
             // On a stand-on trigger's object: stay at the path's end.
             (None, Some(Goal::Item(s))) if item_kind(g, s).0 == 5 && g.items.records[s].u16_(0xf4) & 0x100 != 0 => self.path.last().map(|&n| self.nav.pts[n]),
             (None, Some(Goal::Item(s))) => Some(g.items.records[s].v3(0x40)),
@@ -2023,12 +2361,30 @@ impl Bot {
         // (+0xe4) has not dropped in 300 updates of fire, or with armour −1
         // (+0xe3), is left alone.
         if !self.assist_enabled && Self::nearest_foe(g, p, 2.0).is_none() {
-            let gen_target = (0..g.items.records.len())
+            // Also up to GEN_RANGE along a clear line (lg8's fastest G2
+            // death fought the knights of generators 123 and 125, 11–23
+            // units off, from health 700 to 370 by update 1800).
+            let mut gens: Vec<usize> = (0..g.items.records.len())
                 .filter(|&s| {
                     let r = &g.items.records[s];
-                    r.active() && item_kind(g, s).0 == 3 && 0 <= r.i8_(0xe3) && !self.gen_skip.contains(&s) && dist_xz(r.v3(0x40), p) < SHOOT_RANGE && (r.v3(0x40)[1] - p[1]).abs() < 3.0
+                    r.active() && item_kind(g, s).0 == 3 && 0 <= r.i8_(0xe3) && !self.gen_skip.contains(&s) && dist_xz(r.v3(0x40), p) < GEN_RANGE && (r.v3(0x40)[1] - p[1]).abs() < 3.0
                 })
-                .min_by(|&a, &b| dist_xz(g.items.records[a].v3(0x40), p).total_cmp(&dist_xz(g.items.records[b].v3(0x40), p)));
+                .collect();
+            gens.sort_by(|&a, &b| dist_xz(g.items.records[a].v3(0x40), p).total_cmp(&dist_xz(g.items.records[b].v3(0x40), p)));
+            let gen_target = gens.into_iter().find(|&s| {
+                let q = g.items.records[s].v3(0x40);
+                if dist_xz(q, p) < SHOOT_RANGE {
+                    return true;
+                }
+                if let Some(&(at, ok)) = self.gen_seen.get(&s)
+                    && f < at + 60
+                {
+                    return ok;
+                }
+                let ok = clear_line(&mut self.coll, g, p, q);
+                self.gen_seen.insert(s, (f, ok));
+                ok
+            });
             if let Some(s) = gen_target {
                 let h = g.items.records[s].u16_(0xe4);
                 let e = self.gen_fire.entry(s).or_insert((f, h));
@@ -2056,9 +2412,14 @@ impl Bot {
         // moment, then fire — thrown weapons leave beyond it (K2 in the
         // campaign: a type-0x15 creature, never knocked back, held the player
         // for 100,000 updates at health 14 without a hit).
+        // Without the assist from 3.2 units, every other 20-update window:
+        // knights (type 13) strike from about 3 (hurt-g2-easy-v2: 382 of
+        // 790 health lost to knights 3 to 3.5 units off).
+        let (close, every) = if self.assist_enabled { (2.0, 3) } else { (3.2, 2) };
+        let window = if self.assist_enabled { 30 } else { 20 };
         if let Some((d, at)) = near
-            && d < 2.0
-            && (f / 30).is_multiple_of(3)
+            && d < close
+            && (f / window).is_multiple_of(every)
         {
             return Self::steer(pad, g, p, [2.0 * p[0] - at[0], p[1], 2.0 * p[2] - at[2]]);
         }
@@ -2244,7 +2605,7 @@ impl Bot {
     /// All floors of the level at the current collision state (bot=2).
     pub fn floors(&mut self, g: &Game, min: V3, max: V3) -> Vec<V3> {
         let mut c = g.collision.clone();
-        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), cols: HashMap::new(), top: max[1] + 5.0, bottom: min[1] - 5.0, radius: 0.0, reached: 0 };
+        let mut nav = Nav { pts: Vec::new(), obj: Vec::new(), adj: Vec::new(), hard: HashSet::new(), ride: HashSet::new(), movers: HashMap::new(), cols: HashMap::new(), top: max[1] + 5.0, bottom: min[1] - 5.0, radius: 0.0, reached: 0 };
         nav.sample_all(&mut c, min, max).into_iter().map(|p| p.map(|v| (v * 10.0).round() / 10.0)).collect()
     }
 

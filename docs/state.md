@@ -445,6 +445,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    onward. Bot regression b57 (f102: line test for goal nodes) — the
    eight ended levels checked all end. Legitimate chain lg2 died in G2 (all six tries, then the
    search); lg3 runs with the Death rule.
+   2026-10-25 (later): standalone searches s1 for D3 I4 J3 J6 K1 did not
+   end any; lg7 (no assist, larger search) died in G2 again (progress 22);
+   t33 stopped at I2 — its hints need lift 47 between the walkway and the
+   ground, which the graph lost with the 4-unit drop limit (playtest.md
+   "2026-10-25 runs"). Bot: ride edges for vertically moving objects (in
+   test).
 
 ---
 

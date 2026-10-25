@@ -122,6 +122,7 @@ def main():
     ap.add_argument('--turbo', help='DEBUG: player 0 turbo (+0x800)')
     ap.add_argument('--front', action='store_true', help='DEBUG: player 1 stands 2 ahead of player 0 (with --players 2)')
     ap.add_argument('--flyby', action='store_true', help='the attract flyby on this level (no players; old camera)')
+    ap.add_argument('--difficulty', type=int, choices=(0, 1, 2), help='Game Options difficulty: 0 Easy, 1 Medium (the fixture\'s), 2 Hard (a game setting, not DEBUG)')
     ap.add_argument('--bot', action='store_true', help='with --pads: the traversal bot drives port 0 (gdl_tools bot.rs; health assist labelled DEBUG)')
     ap.add_argument('--spawn', help='DEBUG: generate_enemy TYPE:LEVEL:AI:UPDATE[:DX:DZ[:DY]] beside player 0 (DY: floor probe height)')
     a = ap.parse_args()
@@ -283,6 +284,8 @@ def main():
         cmd += [f'shop={shop}', f'shop_buy={a.shop_buy}']
     if a.require:
         cmd += ['require=1']
+    if a.difficulty is not None:
+        cmd += [f'difficulty={a.difficulty}']
     if a.players:
         cmd += [f'players={a.players}']
     if a.spawn:

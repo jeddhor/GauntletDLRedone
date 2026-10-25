@@ -28,6 +28,8 @@ different input); the first that wins counts; reports -bot.json,
 -bot2.json, ...
 --require: a level counts as ended only with its rune stone and legend item
 taken (the bot's run otherwise falls back to the search with require=1).
+--difficulty N plays every level at the Game Options difficulty N (0 Easy,
+1 Medium — the fixture's, 2 Hard), an ordinary game setting.
 """
 import argparse
 import json
@@ -58,6 +60,7 @@ def main():
     ap.add_argument('--loot', action='store_true', help='bot runs pick up nearby gold, food and potions (game_run.py --loot)')
     ap.add_argument('--shop-buy', help='chained starts: the Tower shop purchases (game_run.py --shop-buy, e.g. heal,potion)')
     ap.add_argument('--require', action='store_true', help='rune stones and legend items must be taken')
+    ap.add_argument('--difficulty', type=int, choices=(0, 1, 2), help='Game Options difficulty for every level: 0 Easy, 1 Medium, 2 Hard (a game setting, game_run.py --difficulty)')
     a = ap.parse_args()
     if not a.tag.replace('-', '').isalnum():
         raise SystemExit('tag must be alphanumeric')
@@ -84,6 +87,8 @@ def main():
             common += ['--legend']
         if a.no_assist:
             common += ['--no-assist']
+        if a.difficulty is not None:
+            common += ['--difficulty', str(a.difficulty)]
         if a.loot:
             common += ['--loot']
         step = {'level': code, 'start': start}
@@ -169,6 +174,7 @@ def main():
         start = str(end.relative_to(ROOT))
     summary_path.write_text(json.dumps({'scope': 'DEBUG chained state-search runs (campaign_chain.py); the exit flow between levels is not simulated',
                                         'health_assist': not a.no_assist,
+                                        'difficulty': a.difficulty,
                                         'levels': a.levels, 'steps': steps}, indent=1) + '\n')
     print(summary_path)
 
