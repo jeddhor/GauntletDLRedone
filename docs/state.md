@@ -420,7 +420,14 @@ original (PCSX2 reference on Xvfb :191, private captures):
    61 (H2 in chain t21, I3 the newest); C3 ended without its bellows; not
    yet D3 D4 H3 I4 J3 J6 K1. Later: the bot's drops limited to what
    PlayerCollideFloor allows (3 units, 4 on one object; the graph had 12)
-   — D4 ends with its sword (b53), 54 of 61; G1, K2, D2, B5 end faster. Legitimate chain lg2 died in G2 (all six tries, then the
+   — D4 ends with its sword (b53), 54 of 61; G1, K2, D2, B5 end faster.
+   Disk: the data volume filled (208 of 220 GB; chain t27 crashed reading
+   a truncated report). Freed: target-dev2 (cargo clean, 2.4 GB), the
+   losing tries of chained bot runs (1.46 GB; summary
+   private/reports/campaign-bot-tries-summary-v1.json) and the scratch
+   bot batches' losing runs (summary bot-batches-summary-v1.json). Chain
+   t29 runs D4 onward from D2's end state (D3 skipped while it does not
+   end); keep an eye on free space (bot reports are 25–40 MB each). Legitimate chain lg2 died in G2 (all six tries, then the
    search); lg3 runs with the Death rule.
 
 ---
