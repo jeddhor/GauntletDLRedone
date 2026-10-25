@@ -500,7 +500,61 @@ GDL_DEBUG_CAMERA):
     lg2's G2 try 2 health fell 99 → 25 while the bot sought food beside
     G2's DEATH statue by the secret exit (−176, 11.9, −200); it died at
     update 18,886 (the enemies doing the damage are not in the report).
-    Hazards (kind 8: spikes) are soft obstacles.
+    Hazards (kind 8: spikes) are soft obstacles. lg3 (with this rule): all
+    six G2 tries still died (17,870–22,286), no Death met.
+  - Platforms: a ride ends 10 updates after the platform stops (was 30)
+    and the bot does not fight for 120 updates after it. J6's rune room
+    (y 116.7, x 15–29, z 84–102: the rune, a LOW generator, a GENERAL
+    statue, chests, barrels) is reached only by lift 694 (pad 31 at (20.8,
+    82.2, 77.0), 81.2 → 115.9 and back); it stays level with the room for
+    about 30 updates. From a teleport onto the pad the bot now walks into
+    the room (f93; before, it fought from the lift and rode it down).
+  - Without the assist, generators (kind 3, armour ≥ 0) within 9 units
+    come first while no foe is within 2 units; one whose health (+0xe4)
+    has not dropped in 300 updates of fire is left. lg3's tries died
+    fighting the spawns of four generators (GRU 232, LOW 201 and 204, KNI
+    200) by (−184, 0, −165) on G2's route, health 383 → 0 in 1800 updates.
+  - Drops: PlayerCollideFloor (0x145218, native player_collision.rs)
+    refuses a move whose floor lies more than 3 units from the current
+    floor (4 on the same object), and one with no floor within the
+    player's height + 3 below; the player stops at the edge. The graph
+    took drops of up to 12 units (DROP), none of which a walking player
+    can take: D4's pit rim, H3's ledge 8.7 above trigger 504 (the bot's
+    only way to it in b43, given up after six stuck events; 504 lowers
+    bridge 51 between lift 287's top and the exit plateau), D1's walkway.
+    DROP is now 4; deeper descents only on a ramp, as climbs (f95). b53
+    (f95): D4 ends for the first time with its sword (pads 342 → 55 → 355,
+    the sword at update 25,286, exit at 36,377; route hints in
+    tools/bot-routes/D4.json).
+  - Death: stepping away from it within 6 units (f91–f97) held A1's bot by
+    the fenced Death statue for the whole of b54 (3200 stuck events); now
+    it is only no fight target, with a potion within 4 units (f98: A1 past
+    that point again).
+  - Without the assist the start delay (0–541 updates per try) is spent
+    fighting foes within reach in place (f96). lg4 (generators first, f94):
+    four of six G2 tries died by update 28,450 — try 6 lost 123 health
+    idling out its delay and was down to 88 by update 5400.
+  - State search without the assist (f97): a cell keeps the healthier of
+    two states (by over 25 health), else the earlier; cells are chosen
+    with weight × health/600 (at least 0.05). lg2's no-assist search had
+    run 129 iterations without a survivor.
+- Level structures found (teleport checks and wobj tables, 2026-10-24
+  late):
+  - H3: the exit (1, 20.7, −118.8) stands on a plateau. Pads 479 (on the
+    lift, stand-on), 497 (top, on) and 498 (bottom, off) drive lift 287
+    (y 0.6 → 18.6 at (9.7, −78.6)); trigger 504 at (−107.7, 7.5, −64.6)
+    lowers bridge 51 (y 24 → 18, (−6.4, −97.6)) between the lift's top and
+    the plateau. b47 took the rune (wall 8 broken) but never reached 504.
+  - J6: the rune room (y 116.7) by lift 694 (pad 31, see above).
+  - D4: pad 55 (y 16, (−81, −164)) raises the pit floor 333 to the
+    corridor's level; trigger 355 on it raises the sword's pedestal 735 at
+    (−192.8, 11.9 → 17.9, −102.4).
+  - K1's rune area: pads 19–30 switch objects 1278, 1280 and 1281 on
+    (flags 0xa: 20/26, 21/24/28, 23/27) or off (0x9: 19/22/25, 30, 29),
+    TRIGGER2 47 raises 1046 beside the rune; with every object switched on
+    (k1-h4, f82) a dip 4 units deep stays between the bot and the rune
+    (−192.0, −28.9, −44.2). Eight on/off combinations through route hints
+    (f91) did not bring the rune within reach either; open.
  Chain lg1 plays from a new game with --no-assist
   --loot --shop-buy heal,potion.
 

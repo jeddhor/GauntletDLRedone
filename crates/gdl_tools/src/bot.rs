@@ -47,7 +47,12 @@ const HARD_COST: f32 = 20.0;
 /// level line from within SHOT_FAR.
 const SHOOT_RANGE: f32 = 9.0;
 const SHOT_FAR: f32 = 30.0;
-const DROP: f32 = 12.0;
+/// The largest drop walked off a ledge: PlayerCollideFloor 0x145218 refuses
+/// a floor change of over 3 units (4 on the same object) and the player
+/// stops at the edge (D4's pit rim, H3's ledge 8.7 above trigger 504, D1's
+/// walkway); steeper descents only on a ramp, as climbs. (12 before: the
+/// graph held drops no player can take.)
+const DROP: f32 = 4.0;
 const STUCK: usize = 45;
 const DWELL: f32 = 2.0;
 /// Floor probes for columns and edge midpoints.
@@ -245,16 +250,18 @@ impl Nav {
     /// player walks); edges the bot cannot walk are blocked when stuck.
     fn edge_class(c: &mut CollisionWorld, a: V3, b: V3, radius: f32) -> Option<bool> {
         let dy = b[1] - a[1];
-        // Steeper than STEP_UP only on a ramp: floors (normal y ≥ 0.5, at
-        // most 60°) and a floor under the midpoint near the mean height.
-        let ramp = STEP_UP < dy && dy <= dist_xz(a, b) * 1.7;
-        if (STEP_UP < dy && !ramp) || dy < -DROP {
+        // Climbs steeper than STEP_UP and descents deeper than DROP only on
+        // a ramp: floors (normal y ≥ 0.5, at most 60°) and a floor under the
+        // midpoint near the mean height.
+        let span = dy.abs();
+        let ramp = (STEP_UP < dy || dy < -DROP) && span <= dist_xz(a, b) * 1.7;
+        if (STEP_UP < dy || dy < -DROP) && !ramp {
             return None;
         }
         if ramp {
-            let mid = [(a[0] + b[0]) * 0.5, b[1] + 1.0, (a[2] + b[2]) * 0.5];
+            let mid = [(a[0] + b[0]) * 0.5, a[1].max(b[1]) + 1.0, (a[2] + b[2]) * 0.5];
             let mean = (a[1] + b[1]) * 0.5;
-            if !matches!(c.floor_collide(0.3, 0.0, -(dy + 2.0), mid, true, 0), Ok((f, _)) if f.solid.is_some_and(|h| (h.position[1] - mean).abs() < 0.4 * dy)) {
+            if !matches!(c.floor_collide(0.3, 0.0, -(span + 2.0), mid, true, 0), Ok((f, _)) if f.solid.is_some_and(|h| (h.position[1] - mean).abs() < 0.4 * span)) {
                 return None;
             }
         }
@@ -701,6 +708,12 @@ pub struct Bot {
     /// Long attacks spent on each blocking item (slot) and the update of
     /// the last.
     break_tries: HashMap<usize, (u32, f32)>,
+    /// No fighting before this update: just carried by a platform.
+    disembark_until: usize,
+    /// Generators under fire: (update of the last health drop, health).
+    gen_fire: HashMap<usize, (usize, u16)>,
+    /// Generators the bot no longer fires at (no damage in 300 updates).
+    gen_skip: HashSet<usize>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -822,6 +835,9 @@ impl Bot {
             loot: false,
             require: false,
             break_tries: HashMap::new(),
+            disembark_until: 0,
+            gen_fire: HashMap::new(),
+            gen_skip: HashSet::new(),
             delay: 0,
         }
     }
@@ -1402,7 +1418,17 @@ impl Bot {
         }
         if 0 < self.delay {
             self.delay -= 1;
-            self.progress = (f, g.players[0].v3(0x50));
+            let p = g.players[0].v3(0x50);
+            self.progress = (f, p);
+            // Standing still, not defenceless: a foe within reach is fought
+            // in place (no-assist G2, lg4 try 6: health 600 → 477 while it
+            // waited out its 541-update delay at the start).
+            if !self.assist_enabled
+                && let Some((_, at)) = Self::nearest_foe(g, p, ATTACK_RANGE)
+            {
+                pad.press(0xd);
+                return Self::steer(pad, g, p, at);
+            }
             return pad;
         }
         // On an exit portal (contact item +0x884, kind 9): DoExit counts only
@@ -1433,7 +1459,7 @@ impl Bot {
                     if k == 5 {
                         // Stay on the pad while its platform moves (lifts,
                         // bridges, rafts): until the player has been still
-                        // for 30 updates after moving, 90 updates without
+                        // for 10 updates after moving, 90 updates without
                         // moving, or 600 updates.
                         self.visited_triggers.insert(s);
                         *self.trigger_visits.entry(s).or_insert(0) += 1;
@@ -1523,10 +1549,16 @@ impl Bot {
             // Co-op: pads may need every player on them (+0xf4 0x400) and
             // lifts carry only those aboard — wait for the followers.
             let apart = (1..4).any(|k| g.globals.active_players >> k & 1 != 0 && g.players[k].i32_(0xfc) == 1 && 3.0 < dist_xz(g.players[k].v3(0x50), p));
-            let done = (!apart && if moved == since { 90 <= f - since } else { 30 <= f - moved }) || 600 <= f - since;
+            // Carried: off as soon as the platform has stopped for 10
+            // updates (J6's lift 694 stays at the rune room's level for
+            // about 30 updates; waiting 30 left the bot aboard going down).
+            let done = (!apart && if moved == since { 90 <= f - since } else { 10 <= f - moved }) || 600 <= f - since;
             if done {
                 self.wait = None;
                 self.force_rebuild = true;
+                if moved != since {
+                    self.disembark_until = f + 120;
+                }
                 self.log.push(serde_json::json!({"update": f, "waited": f - since, "rose": p[1] - self.start[1]}));
                 self.progress = (f, p);
                 self.choose(f, g);
@@ -1826,6 +1858,16 @@ impl Bot {
         // (held attack keeps the player in its attack actions, so it never
         // walked away; H4's Garm took no damage from 5.8 units for 48,000
         // updates in b12).
+        // Just carried by a platform (a lift's top, a ferry's landing): walk
+        // off before fighting. J6's lift 694 (pad 31) stays level with the
+        // rune room for a few seconds; the bot fought the room's generator
+        // from the lift and rode it back down (teleport check, f91).
+        if f < self.disembark_until {
+            return match target {
+                Some(t) => Self::steer(pad, g, p, t),
+                None => pad,
+            };
+        }
         let boss = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|b| g.critters.get(b)).and_then(Option::as_ref).filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40));
         if let Some(bp) = boss.filter(|bp| dist_xz(*bp, p) < self.boss_range) {
             if dist_xz(bp, p) < 8.0 && (f / 20).is_multiple_of(2) {
@@ -1854,25 +1896,50 @@ impl Bot {
         // closed) or, without the assist, when health runs low. At most one
         // every 600 updates.
         // Death (enemy type 0x1e) takes no weapon damage and drains health
-        // on contact (death_touch); a magic blast kills it. Within 6 units:
-        // a potion if one is held (one every 150 updates), else away from it
-        // (legitimate chain lg2, G2: the bot fought the Death by the secret
-        // exit at (−176, 11.9, −200) from health 99 to 25).
+        // on contact (death_touch); a magic blast kills it. It is no fight
+        // target (nearest_foe); within 4 units a potion if one is held (one
+        // every 150 updates). Stepping away from it held A1's bot by the
+        // fenced Death statue for 150,000 updates (b54).
         let death = g
             .enemies
             .iter()
             .filter(|e| e.i32_(0xc8) != 0 && e.i32_(0) == 0x1e && (e.v3(0x40)[1] - p[1]).abs() < 4.0)
             .map(|e| (dist_xz(e.v3(0x40), p), e.v3(0x40)))
-            .filter(|&(d, _)| d < 6.0)
+            .filter(|&(d, _)| d < 4.0)
             .min_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some((_, at)) = death {
-            if 0 < g.players[0].i32_(0x1a18) && self.potion_at.is_none_or(|u| u + 150 <= f) {
-                self.potion_at = Some(f);
-                self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18), "death": at}));
-                pad.press(0xb);
-                return pad;
+        if let Some((_, at)) = death
+            && 0 < g.players[0].i32_(0x1a18)
+            && self.potion_at.is_none_or(|u| u + 150 <= f)
+        {
+            self.potion_at = Some(f);
+            self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18), "death": at}));
+            pad.press(0xb);
+            return pad;
+        }
+        // Without the assist, generators (kind 3) within SHOOT_RANGE come
+        // first while no foe is within 2 units: they spawn the crowds (lg3's
+        // G2 tries died in a nest of four by (−184, 0, −165), fighting the
+        // spawns from health 383 to 0 in 1800 updates). One whose health
+        // (+0xe4) has not dropped in 300 updates of fire, or with armour −1
+        // (+0xe3), is left alone.
+        if !self.assist_enabled && Self::nearest_foe(g, p, 2.0).is_none() {
+            let gen_target = (0..g.items.records.len())
+                .filter(|&s| {
+                    let r = &g.items.records[s];
+                    r.active() && item_kind(g, s).0 == 3 && 0 <= r.i8_(0xe3) && !self.gen_skip.contains(&s) && dist_xz(r.v3(0x40), p) < SHOOT_RANGE && (r.v3(0x40)[1] - p[1]).abs() < 3.0
+                })
+                .min_by(|&a, &b| dist_xz(g.items.records[a].v3(0x40), p).total_cmp(&dist_xz(g.items.records[b].v3(0x40), p)));
+            if let Some(s) = gen_target {
+                let h = g.items.records[s].u16_(0xe4);
+                let e = self.gen_fire.entry(s).or_insert((f, h));
+                if h < e.1 {
+                    *e = (f, h);
+                } else if 300 <= f - e.0 {
+                    self.gen_skip.insert(s);
+                }
+                pad.press(0xd);
+                return Self::steer(pad, g, p, g.items.records[s].v3(0x40));
             }
-            return Self::steer(pad, g, p, [2.0 * p[0] - at[0], p[1], 2.0 * p[2] - at[2]]);
         }
         let crowd = Self::nearest_foe(g, p, 6.0).is_some();
         let low_health = !self.assist_enabled && g.players[0].f32_(HEALTH) < self.start_health * 0.35;

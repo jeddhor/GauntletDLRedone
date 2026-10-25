@@ -493,13 +493,17 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
     let mut evicted = 0usize;
     while used < budget && found.is_none() {
         iterations += 1;
-        // Choose a cell: weight PROGRESS_BIAS^(progress − best) / √(1 + chosen).
+        // Choose a cell: weight PROGRESS_BIAS^(progress − best) / √(1 + chosen),
+        // without the assist also × the player's health (as a fraction of
+        // 600, at least 0.05): a branch near death rarely survives the next
+        // macro (legitimate G2 searches, lg2/lg3).
         let keys: Vec<Key> = archive.keys().copied().collect();
         let weights: Vec<f64> = keys
             .iter()
             .map(|k| {
                 let c = &archive[k];
-                PROGRESS_BIAS.powi(c.progress as i32 - best_progress as i32) / (1.0 + f64::from(c.chosen)).sqrt()
+                let w = PROGRESS_BIAS.powi(c.progress as i32 - best_progress as i32) / (1.0 + f64::from(c.chosen)).sqrt();
+                if start_health == 0.0 { w * (f64::from(c.state.players[0].f32_(HEALTH)) / 600.0).clamp(0.05, 2.0) } else { w }
             })
             .collect();
         let total: f64 = weights.iter().sum();
@@ -595,7 +599,15 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
             }
             match archive.get_mut(&k) {
                 Some(c) => {
-                    if updates < c.updates {
+                    // Without the assist a cell keeps the healthier state
+                    // (by over 25), else the earlier one.
+                    let better = if start_health == 0.0 {
+                        let (h, hc) = (state.players[0].f32_(HEALTH), c.state.players[0].f32_(HEALTH));
+                        hc + 25.0 < h || (hc <= h + 25.0 && updates < c.updates)
+                    } else {
+                        updates < c.updates
+                    };
+                    if better {
                         c.state = state;
                         c.node = Some(node);
                         c.updates = updates;
