@@ -3712,6 +3712,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         let mut level_end: Option<usize> = None;
         let mut assists = 0usize;
         for f in 0..frames {
+            // DEBUG teleport with the bot: placed before the bot is made, so
+            // its graph and the planner (plan=1) start from there.
+            if f == 0
+                && opts.contains_key("bot")
+                && opts.contains_key("pads")
+                && let Some(t) = opts.get("teleport")
+            {
+                let v: Vec<f32> = t.split(',').map(str::parse).collect::<Result<_, _>>()?;
+                let at = [*v.first().ok_or("teleport x")?, *v.get(1).ok_or("teleport y")?, *v.get(2).ok_or("teleport z")?];
+                let yaw = game.players[0].f32_(0x86c);
+                game.place_player(0, at, yaw).map_err(|e| e.0)?;
+            }
             if opts.contains_key("bot") && opts.contains_key("pads") {
                 if traversal.is_none() {
                     let mut b = bot::Bot::new(&game);
@@ -3769,6 +3781,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             if opts.contains_key("pads") {
                 if f == 0
+                    && !opts.contains_key("bot")
                     && let Some(t) = opts.get("teleport")
                 {
                     // DEBUG: the record-based player 0 at x,y,z (place_player:
