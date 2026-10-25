@@ -654,6 +654,15 @@ GDL_DEBUG_CAMERA):
   - Checks on c38: G1 J4 C1 end (b61), H1 H2 J2 end at 300,000 (b63), J6
     ends (b62); E1 F1 I3 do not (E1 identically on c33 and c38: 4,406
     stuck events at (0, 0, 80.3)).
+  - A trigger hint whose state an earlier touch left set counts only on
+    contact (+0xe2): I3's hint 8, trigger 533 (it raises the rune's
+    platform 566 about 6 units, after which the rune is taken from y −2.6;
+    b48 took it 2,640 updates after the touch), counted as reached from
+    184 nodes away in b65 (c41) and the rune stayed down.
+  - b64 (c39, start delays 0/149/397, 300,000 updates): C3 ends with its
+    bellows in two of three (128,846 and 269,205: lift 741, y 30 ↔ 45,
+    then the y-40 walkways to the region by platform 854); D3 J3 K1 I4 do
+    not (I4 takes its lamp in two).
   - Without the assist only (legitimate play): stuck with a foe within 10
     units the bot fights in place for up to 600 updates; hazards (kind 8)
     and statues (kind 4, within reach + 1.5; contact or a hit wakes them)

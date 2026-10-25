@@ -1465,6 +1465,11 @@ impl Bot {
                 // triggers move floors) until the next re-plan.
                 let Some(path) = path else { break };
                 self.goal = Some(Goal::Item(s));
+                // A trigger whose state an earlier touch left set counts only
+                // on contact (+0xe2): I3's hint 8 (trigger 533, which raises
+                // the rune's platform 566 for a while) counted as reached from
+                // 184 nodes away, and the rune stayed down (b65).
+                self.revisiting = (item_kind(g, s).0 == 5 && g.items.records[s].i8_(0xde) != 0).then_some(s);
                 self.path = path;
                 self.at = 0;
                 let outline: Vec<V3> = self.path.iter().step_by(8).map(|&n| self.nav.pts[n]).collect();

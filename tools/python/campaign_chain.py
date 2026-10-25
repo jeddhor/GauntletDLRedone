@@ -70,10 +70,15 @@ def main():
         raise SystemExit(f'{summary_path} exists')
     start = a.start
     steps = []
+    seen = {}
     for code in a.levels:
         world, level = code[0], code[1:]
-        report = reports / f'campaign-{a.tag}-{code}.json'
-        end = reports / f'campaign-{a.tag}-{code}-end.json'
+        # A level played again (a replay from the Tower, e.g. G1 G1 G2): its
+        # reports take the play count (campaign-TAG-G1-2.json).
+        seen[code] = seen.get(code, 0) + 1
+        name = code if seen[code] == 1 else f'{code}-{seen[code]}'
+        report = reports / f'campaign-{a.tag}-{name}.json'
+        end = reports / f'campaign-{a.tag}-{name}-end.json'
         if report.exists() or end.exists():
             raise SystemExit(f'{report} or its end state exists')
         common = []
@@ -91,13 +96,13 @@ def main():
             common += ['--difficulty', str(a.difficulty)]
         if a.loot:
             common += ['--loot']
-        step = {'level': code, 'start': start}
+        step = {'level': code, 'play': seen[code], 'start': start}
         won_by_bot = False
         tries = []
         for t in range(min(a.bot_tries, len(BOT_DELAYS)) if a.bot_first else 0):
             sfx = '' if t == 0 else str(t + 1)
-            bot_report = reports / f'campaign-{a.tag}-{code}-bot{sfx}.json'
-            bot_end = reports / f'campaign-{a.tag}-{code}-bot{sfx}-end.json'
+            bot_report = reports / f'campaign-{a.tag}-{name}-bot{sfx}.json'
+            bot_end = reports / f'campaign-{a.tag}-{name}-bot{sfx}-end.json'
             cmd = [sys.executable, 'tools/python/game_run.py', str(bot_report), '--frames', str(a.bot_first), '--world', world, '--level', level,
                    '--pads', '0:1', '--bot', '--end-state', str(bot_end)] + common
             if BOT_DELAYS[t]:

@@ -21,3 +21,4 @@ ordinary pad path; the hints only choose its goals. Not game data.
 | J2 | private/reports/bot-b37-J2.json (assisted bot) |
 | J4 | private/reports/bot-b37-J4.json (assisted bot) |
 | J6 | private/reports/bot-b62-J6.json (assisted bot c38 with ride edges, the rune taken, exit at update 146,631) |
+| C3 | private/reports/bot-b64b-C3.json (assisted bot c39, start delay 149, the bellows taken, exit at update 128,846) |

@@ -450,8 +450,8 @@ original (PCSX2 reference on Xvfb :191, private captures):
    t33 stopped at I2 — its hints need lift 47 between the walkway and the
    ground, which the graph lost with the 4-unit drop limit (playtest.md
    "2026-10-25 runs"). Bot: ride edges for vertically moving objects
-   (playtest.md "Rules added 2026-10-25"): J6 ends for the first time (b62,
-   56 of 61); D3 I4 J3 K1 and C3's bellows open. Legitimate play: the game's
+   (playtest.md "Rules added 2026-10-25"): J6 ends for the first time (b62)
+   and C3 with its bellows (b64b) — 57 of 61; D3 I4 J3 K1 open. Legitimate play: the game's
    Easy difficulty (Game Options) roughly doubles the no-assist G2
    survival; every try still dies (lg13); chain lg14 (Easy, search) runs.
 
