@@ -573,6 +573,10 @@ pub struct Bot {
     given_up: HashSet<usize>,
     /// Stuck events per item goal since it was last (re)opened.
     stuck_goal_counts: HashMap<usize, usize>,
+    /// Optional pickups (gold, food, potions, chests) the bot got stuck on
+    /// three times: never goals again (no-assist G2: 328 tries at one food
+    /// item out of reach while health drained from 600 to 0).
+    optional_skip: HashSet<usize>,
     /// When a given-up goal was last reopened for being near.
     reopened_at: HashMap<usize, usize>,
     /// Steering at a closed gate's centre until the update (key held).
@@ -715,6 +719,7 @@ impl Bot {
             idle_rebuild_at: 0,
             given_up: HashSet::new(),
             stuck_goal_counts: HashMap::new(),
+            optional_skip: HashSet::new(),
             reopened_at: HashMap::new(),
             gate_push: None,
             stuck_waypoints: HashMap::new(),
@@ -1172,6 +1177,7 @@ impl Bot {
             let loot: Vec<usize> = active(g, &|k, t| (k == 1 && (t == 1 || (t == 3 && hurt) || (t == 4 && potions_left))) || (k == 2 && (0x2e..=0x30).contains(&t)))
                 .into_iter()
                 .filter(|&s| item_kind(g, s).0 != 2 || chest(s))
+                .filter(|s| !self.optional_skip.contains(s))
                 .filter(|&s| {
                     let q = g.items.records[s].v3(0x40);
                     g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT" && dist_xz(q, p) < LOOT_RANGE && (q[1] - p[1]).abs() < 5.0
@@ -1188,6 +1194,7 @@ impl Bot {
             let food = active(g, &|k, t| k == 1 && t == 3)
                 .into_iter()
                 .filter(|&s| g.items.definitions[g.items.records[s].definition()].name() != b"BADMEAT")
+                .filter(|s| !self.optional_skip.contains(s))
                 .collect::<Vec<_>>();
             if !food.is_empty() {
                 order.insert(0, food);
@@ -1529,6 +1536,10 @@ impl Bot {
                     *n += 1;
                     if 40 < *n {
                         self.given_up.insert(s);
+                    }
+                    let optional = matches!(item_kind(g, s), (1, 1) | (1, 3) | (1, 4) | (2, 0x2e..=0x30));
+                    if optional && 3 <= *n && self.optional_skip.insert(s) {
+                        self.log.push(serde_json::json!({"update": f, "skip_optional": s}));
                     }
                 }
                 // The same waypoint stuck at five times is closed to routes

@@ -198,6 +198,17 @@ Report private/reports/scenarios-m13-v2.json and -m13-v3.json; all pass:
   second client loading save0001: in the Tower with the same completion
   bytes, experience, gold and keys.
 
+- ending-h4 (M15, scenarios-m15-v1.json, 2026-10-24; PASS): a new
+  character in H4; at update 150 the DEBUG boss_kill action (labelled:
+  Game::debug_damage_boss, lethal CritterDamage on Garm); then the game's
+  own BossDeath, good wizard and auto exit, game_main's BossType 0x2c level
+  end with /MPEG/victory.pss (frame 003: the movie), the shop and panels
+  (the menu script's Done and back presses), the Tower (frame 004,
+  experience 11038, level 9). The Sorceress's completed-level bytes gain
+  0x08 for world 8 (H4); the Tower save (card file 0) loads in a second
+  client with the same bytes. The reference comparison of the same path
+  (Garm's death through the victory movie's start) is in bosses.md.
+
 ## Traversal bot (M14/M15/M16 tooling, in development 2026-10-23)
 
 `game_run.py --pads 0:1 --bot` (gdl_tools bot.rs) drives port 0 through the
