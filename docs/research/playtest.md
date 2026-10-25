@@ -443,6 +443,17 @@ GDL_DEBUG_CAMERA):
 - Treasure supports found: C3's bellows on object 854 (triggers 433, 434,
   435), I4's lamp on 1518 (trigger 527); H3's and J6's runes rest on
   objects no trigger is bound to (2748 → 2176; 933 → 811).
+- K1's way (teleport checks, DEBUG): pad 9 is a lift (object 494 carries
+  the player from (−213.7, −10, 19.6) to (−226.5, −35.8, 19.6), the far-west
+  low region with triggers 10, 14, 39); pad 10 lifts object 320 from y
+  −35.8 to −29.0 and 3.4 units east while stood on, level with the western
+  low area (triggers 15, 19–32, 47–49; the rune RUNEA3 at (−192, −28.9,
+  −44.2) on the platforms of pads 19–32); trigger 48's bridge 1093 joins
+  that area to the ledge region of the exit. With the lock [7, 40, 41, 66]
+  and bridge 8 to the far-west mid region (pads 9, 56, 57) that is the
+  whole route; the rune's pads are the open part (planner from a teleport
+  into the area).
+- I4: the planner's plan is [527] (the lamp's platform 1518).
  Chain lg1 plays from a new game with --no-assist
   --loot --shop-buy heal,potion.
 
