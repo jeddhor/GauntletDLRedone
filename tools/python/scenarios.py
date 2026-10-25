@@ -128,6 +128,12 @@ SCENARIOS.update({
         checks=[("made", "health", "==", 123.0), ("p1", "players.0.file", "==", 0), ("both", "players.0.file", "==", 0),
                 ("both", "players.1.file", "==", 1), ("both", "players.1.health", "==", 123.0), ("both", "players.1.port", "==", 1),
                 ("both", "players.0.health", "==", 500.0)]),
+    # Exploration (no checks): the Sorceress throwing in G1, frames every
+    # second (the thrown wand's textures come from another package).
+    'throw-g1': dict(
+        level='G1', updates=420, actions=[], menu=[], script=presses(CROSS, 160, 12, 18, hold=6),
+        steps=[["wait", 4.5]] + [s for k in range(16) for s in (["shot", f"throw{k:02d}"], ["wait", 0.6])],
+        checks=[]),
     # M15 ending (DEBUG boss_kill: lethal CritterDamage on Garm, labelled):
     # BossDeath, the good wizard and the auto exit run natively, then
     # game_main's BossType 0x2c level end plays /MPEG/victory.pss
