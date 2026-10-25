@@ -374,10 +374,27 @@ fn nav_walk(g: &mut Game, nav: &Nav, blocked: &mut Blocked, rng: &mut Rng, start
 }
 
 /// A bot macro (see the module note): the segments filed on the way.
-fn bot_walk(g: &mut Game, shared: &mut (Nav, u64), rng: &mut Rng, start_health: f32, assists: &mut usize) -> Vec<Segment> {
+/// Route hints (GDL_BOT_HINTS, route_hints.py): the first one not yet done
+/// in this state and the rest of the route.
+fn route_rest(g: &Game, route: &[Hint]) -> Vec<Hint> {
+    let done = |h: &Hint| match h.item {
+        Some(s) => g.items.records.get(s).is_none_or(|r| {
+            let d = &g.items.definitions[r.definition()];
+            !r.active() || (d.kind() == 5 && (r.i8_(0xde) != 0 || r.u8_(0xe2) != 0))
+        }),
+        None => false,
+    };
+    let first = route.iter().position(|h| !done(h)).unwrap_or(route.len());
+    route[first..].to_vec()
+}
+
+fn bot_walk(g: &mut Game, shared: &mut (Nav, u64), rng: &mut Rng, start_health: f32, assists: &mut usize, route: &[Hint]) -> Vec<Segment> {
     let items = interest_items(g);
     let x = rng.unit();
-    let hints = if x < 0.4 {
+    // With a known route, half the macros follow its remaining hints.
+    let hints = if !route.is_empty() && rng.unit() < 0.5 {
+        route_rest(g, route)
+    } else if x < 0.4 {
         Vec::new()
     } else if !items.is_empty() && x < 0.75 {
         vec![Hint { item: Some(items[rng.below(items.len() as u32) as usize]), goto: None, radius: None, wait: None }]
@@ -426,7 +443,10 @@ pub struct Outcome {
 /// `assist` no health is given (a branch whose player dies is dropped).
 /// With `require` a level end counts only once the rune stone and legend
 /// item present at the start (kind 1 subtypes 10 and 0xd) are taken.
-pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u32, assist: bool, require: bool) -> Outcome {
+/// `route`: the level's known route hints (tools/bot-routes, route_hints.py)
+/// that half the bot macros follow from where the state stands.
+#[allow(clippy::too_many_arguments)]
+pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u32, assist: bool, require: bool, route: Vec<Hint>) -> Outcome {
     let mut rng = Rng(seed.max(1).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     // The assist rule's reference health; 0 disables it.
     let start_health = if assist { crate::bot::assist_baseline(start) } else { 0.0 };
@@ -502,7 +522,7 @@ pub fn explore(start: &Game, budget: usize, seed: u64, max_cells: usize, mode: u
         if guided && mode == 2 {
             bot_macros += 1;
             let shared = nav.as_mut().expect("graph");
-            segments = bot_walk(&mut g, shared, &mut rng, start_health, &mut assists);
+            segments = bot_walk(&mut g, shared, &mut rng, start_health, &mut assists, &route);
         } else {
             let mut runs: Runs = Vec::new();
             let mut n = 0u32;

@@ -3697,7 +3697,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 // nav=1: graph-guided macros; nav=2: bot macros.
                 let mode: u32 = opts.get("nav").map(|s| s.parse()).transpose()?.unwrap_or(0);
                 // require=1: the level's rune stone and legend item must be taken.
-                let out = explore::explore(&game, budget, seed, cells, mode, assist_on, opts.contains_key("require"));
+                let route: Vec<bot::Hint> = match opts.get("hints") {
+                    Some(h) => serde_json::from_slice(&bounded_read(Path::new(h), 1024 * 1024)?)?,
+                    None => Vec::new(),
+                };
+                let out = explore::explore(&game, budget, seed, cells, mode, assist_on, opts.contains_key("require"), route);
                 let mut r = out.report;
                 let (digital, text) = explore::script_text(&out.script);
                 r["script_format"] = serde_json::json!(if digital { "pads" } else { "padfile" });

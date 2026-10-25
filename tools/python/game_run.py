@@ -242,6 +242,12 @@ def main():
         cmd += [f'vplayers={a.vplayers}']
     if a.explore:
         cmd += [f'explore={a.explore}']
+        # The search's bot macros follow the level's route hints too
+        # (tools/bot-routes/<W><L>.json, or GDL_BOT_HINTS=FILE; 0: none).
+        env_hints = os.environ.get('GDL_BOT_HINTS')
+        route = pathlib.Path(env_hints) if env_hints not in (None, '0') else pathlib.Path('tools/bot-routes') / f'{a.world}{a.level}.json'
+        if route.exists() and env_hints != '0' and not a.bot:
+            cmd += [f'hints={route}']
     if a.seed is not None:
         cmd += [f'seed={a.seed}']
     if a.cells:
