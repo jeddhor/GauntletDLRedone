@@ -917,8 +917,9 @@ fn present_distance_fade(sim: Res<Sim>, q: Query<(&DistanceFade, &MeshMaterial3d
         let depth = (fade.at - eye).dot(forward);
         let alpha = ((255.0 / fade.max) * depth).clamp(0.0, 255.0).floor();
         let a = alpha * 0.5019608 / 128.0;
-        if let Some(mat) = materials.get_mut(&m.0)
-            && (mat.params.tint.w - a).abs() > 1e-4
+        // Compare before get_mut: it marks the material modified (re-prepared).
+        if materials.get(&m.0).is_some_and(|mat| (mat.params.tint.w - a).abs() > 1e-4)
+            && let Some(mat) = materials.get_mut(&m.0)
         {
             mat.params.tint.w = a;
         }
@@ -1219,15 +1220,15 @@ fn apply_material_requests(
             m.0 = materials.add(own);
             commands.entity(e).insert(MatOverride { base: base.clone() });
         }
-        if let Some(own) = materials.get_mut(&m.0) {
+        // Assets::get_mut marks the material modified (re-prepared for the
+        // GPU) whether or not a field changes: compare first and take it
+        // mutably only for a change. Every overridden material — an effect
+        // tree's nodes with an alpha, a tint or a texture modifier — was
+        // re-prepared every frame (the Sorceress's square attack, effects
+        // 0x77/0x78: about twice the frame time of a cross throw).
+        if let Some(cur) = materials.get(&m.0) {
             let replaced = image.is_some();
             let img = image.or_else(|| b.base.clone());
-            if own.base != img {
-                own.base = img;
-            }
-            if own.overlay != overlay {
-                own.overlay = overlay.clone();
-            }
             // The shared material's scene state, then this tree's.
             let mut p = b.params;
             if replaced {
@@ -1253,8 +1254,19 @@ fn apply_material_requests(
             } else {
                 p.scale.x += ambient;
             }
-            if own.params.tint != p.tint || own.params.scale != p.scale || own.params.light != p.light || own.params.light_dir != p.light_dir || own.params.options != p.options || own.params.extra != p.extra || own.params.chrome_u != p.chrome_u || own.params.chrome_v != p.chrome_v || own.params.uv_xform != p.uv_xform {
-                own.params = p;
+            let params_changed = cur.params.tint != p.tint || cur.params.scale != p.scale || cur.params.light != p.light || cur.params.light_dir != p.light_dir || cur.params.options != p.options || cur.params.extra != p.extra || cur.params.chrome_u != p.chrome_u || cur.params.chrome_v != p.chrome_v || cur.params.uv_xform != p.uv_xform;
+            if (cur.base != img || cur.overlay != overlay || params_changed)
+                && let Some(own) = materials.get_mut(&m.0)
+            {
+                if own.base != img {
+                    own.base = img;
+                }
+                if own.overlay != overlay {
+                    own.overlay = overlay.clone();
+                }
+                if params_changed {
+                    own.params = p;
+                }
             }
         }
     }
@@ -1438,7 +1450,7 @@ fn present_scene_light(sim: Res<Sim>, mut last: Local<Option<([f32; 8], usize)>>
 /// dark-level light), nearest 8 to the camera, on every material
 /// (pbDrawObject runs pbSetupPosLights for each object). HYPOTHESIS: the
 /// life fade of the radius is not applied.
-fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, queue: Res<bevy::render::renderer::RenderQueue>) {
     let g = &sim.game;
     let mut lights: Vec<[f32; 8]> = Vec::new();
     for (i, n) in g.effects.nodes.iter().enumerate() {
@@ -1476,13 +1488,7 @@ fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, mut mater
         pos[k] = Vec4::new(l[0], l[1], l[2], l[3]);
         col[k] = Vec4::new(l[4], l[5], l[6], l[7]);
     }
-    let stale: Vec<_> = materials.iter().filter(|(_, m)| m.params.plight_pos != pos || m.params.plight_col != col).map(|(id, _)| id).collect();
-    for id in stale {
-        if let Some(m) = materials.get_mut(id) {
-            m.params.plight_pos = pos;
-            m.params.plight_col = col;
-        }
-    }
+    gdl_client::write_point_lights(&queue, &pos, &col);
 }
 
 /// pbTraverseDrawObjects: MB flag 2 skips a node and its subtree, flag 1
@@ -2174,6 +2180,27 @@ fn frame_limiter(mut next: Local<Option<std::time::Instant>>, mut count: Local<(
         std::thread::sleep(due - now);
     }
     *next = Some(due.max(now) + period);
+}
+
+/// DIAGNOSTIC (performance): GDL_FRAME_LOG=PATH appends one line per
+/// rendered frame — frame, milliseconds since the previous frame, entity
+/// count, the simulation's update count and player 0's current action —
+/// for frame-time comparisons of game situations. Not a game feature.
+fn frame_log(mut state: Local<Option<(std::fs::File, std::time::Instant, u64)>>, entities: Query<Entity>, sim: Option<Res<Sim>>) {
+    use std::io::Write;
+    if state.is_none() {
+        let Some(path) = std::env::var_os("GDL_FRAME_LOG") else { return };
+        let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(path) else { return };
+        *state = Some((f, std::time::Instant::now(), 0));
+        return;
+    }
+    let (f, last, n) = state.as_mut().unwrap();
+    let now = std::time::Instant::now();
+    let ms = now.duration_since(*last).as_secs_f64() * 1000.0;
+    *last = now;
+    *n += 1;
+    let (updates, action) = sim.map_or((0, 0), |s| (s.updates, s.game.players[0].u32_(0x1e0)));
+    let _ = writeln!(f, "{} {:.2} {} {} {}", n, ms, entities.iter().count(), updates, action);
 }
 
 #[derive(Component)]
@@ -3495,6 +3522,7 @@ fn present_streaks(
             base: Some(tex),
             lightmap: None,
             overlay: None,
+            lights: gdl_client::point_light_buffer(),
             alpha_mode: AlphaMode::Blend,
             draw: gdl_client::GsDraw {
                 additive: false,
@@ -3740,6 +3768,7 @@ fn present_particles(
                 base: named,
                 lightmap: None,
                 overlay: None,
+                lights: gdl_client::point_light_buffer(),
                 alpha_mode: if blend == gdl_core::psys::Blend::Additive { AlphaMode::Add } else { AlphaMode::Blend },
                 draw: gdl_client::GsDraw {
                     additive: blend == gdl_core::psys::Blend::Additive,
@@ -7852,7 +7881,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<MenuIcon>()
         .add_systems(Startup, (setup_static, setup_menu_icon).chain())
         .insert_resource(TestHarness::from_env())
-        .add_systems(Last, (frame_limiter, ui_trace))
+        .add_systems(Last, (frame_limiter, ui_trace, frame_log))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
             Update,

@@ -14,10 +14,11 @@ use bevy::{
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     render::render_resource::{
-        AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, ColorWrites, CompareFunction, Extent3d,
-        PrimitiveTopology, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDimension,
-        TextureFormat,
+        AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer, BufferDescriptor, BufferUsages,
+        ColorWrites, CompareFunction, Extent3d, PrimitiveTopology, RenderPipelineDescriptor, ShaderType,
+        SpecializedMeshPipelineError, TextureDimension, TextureFormat,
     },
+    render::renderer::{RenderDevice, RenderQueue},
     shader::ShaderRef,
 };
 use gdl_formats::{animation::Animations, objects::Objects, texdef::TextureTable};
@@ -104,6 +105,46 @@ impl Plugin for GsMaterialPlugin {
         app.add_plugins(MaterialPlugin::<GsMaterial>::default());
         app.add_plugins(bevy::sprite_render::Material2dPlugin::<BlitMaterial>::default());
     }
+
+    /// The point-light buffer every GsMaterial binds (the RenderPlugin's
+    /// finish has put the RenderDevice into the main world by now).
+    fn finish(&self, app: &mut App) {
+        if let Some(device) = app.world().get_resource::<RenderDevice>() {
+            let _ = POINT_LIGHTS.set(device.create_buffer(&BufferDescriptor {
+                label: Some("gs point lights"),
+                size: POINT_LIGHT_BYTES,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+    }
+}
+
+/// Point lights (MBPosLightNew from ProcessEffects) for every GsMaterial:
+/// one storage buffer of eight positions (xyz render space, w radius; w 0:
+/// unused) then eight colours (rgb, a attenuation), bound by every material
+/// (binding 7) and written once per change (write_point_lights). In each
+/// material's uniform they made every material re-prepared whenever an
+/// effect's light moved (the Sorceress's square attack: the frame time
+/// doubled).
+static POINT_LIGHTS: std::sync::OnceLock<Buffer> = std::sync::OnceLock::new();
+pub const POINT_LIGHT_BYTES: u64 = 16 * 16;
+
+/// The shared point-light buffer (GsMaterialPlugin::finish creates it).
+pub fn point_light_buffer() -> Buffer {
+    POINT_LIGHTS.get().expect("GsMaterialPlugin creates the point-light buffer before materials").clone()
+}
+
+/// Write the eight point lights.
+pub fn write_point_lights(queue: &RenderQueue, pos: &[Vec4; 8], col: &[Vec4; 8]) {
+    let Some(buffer) = POINT_LIGHTS.get() else { return };
+    let mut bytes = Vec::with_capacity(POINT_LIGHT_BYTES as usize);
+    for v in pos.iter().chain(col.iter()) {
+        for c in v.to_array() {
+            bytes.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    queue.write_buffer(buffer, 0, &bytes);
 }
 
 /// The final pass of the last camera: the frame holds GS display values
@@ -244,10 +285,6 @@ pub struct GsParams {
     /// z: TEX1 K (part lod_k / 16), w: 1 when the base texture has mips and
     /// is sampled at the GS LOD log2(1/Q) + K (LCM 0, L 0).
     pub scale: Vec4,
-    /// Point lights (MBPosLightNew from ProcessEffects): xyz render-space
-    /// position, w radius; colour rgb, a attenuation (w = 0: unused).
-    pub plight_pos: [Vec4; 8],
-    pub plight_col: [Vec4; 8],
     /// x: the keep-A overlay bound, y: chrome (MBTreeSetAltTex −3), z:
     /// `uv_xform` applies, w: the 16-bit frame writes are modelled (the
     /// base write before the lightmap pass; GDL_NO_DITHER clears it).
@@ -287,6 +324,9 @@ pub struct GsMaterial {
     #[texture(5)]
     #[sampler(6)]
     pub overlay: Option<Handle<Image>>,
+    /// The shared point-light buffer (point_light_buffer).
+    #[storage(7, read_only, buffer, visibility(fragment))]
+    pub lights: Buffer,
     pub alpha_mode: AlphaMode,
     pub draw: GsDraw,
 }
@@ -364,6 +404,7 @@ impl GsMaterial {
             base: None,
             lightmap: None,
             overlay: None,
+            lights: point_light_buffer(),
             alpha_mode,
             draw: GsDraw::default(),
         }
@@ -665,7 +706,8 @@ pub fn materials_for(
                     lit: false,
                     base: Some(image),
                     lightmap: None,
-                overlay: None,
+                    overlay: None,
+                    lights: point_light_buffer(),
                     alpha_mode: AlphaMode::Blend,
                     draw: GsDraw { cull: true, ..default() },
                 }),
@@ -704,6 +746,7 @@ pub fn materials_for(
                 base: Some(image),
                 lightmap: None,
                 overlay: None,
+                lights: point_light_buffer(),
                 alpha_mode,
                 draw: GsDraw { cull: true, ..default() },
             }),

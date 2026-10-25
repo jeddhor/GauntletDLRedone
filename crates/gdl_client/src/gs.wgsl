@@ -19,9 +19,6 @@ struct GsParams {
     // x: unlit colour add (× (1 + x)), y: lit ambient add, z: TEX1 K,
     // w: mipmapped base sampled at the GS LOD.
     scale: vec4<f32>,
-    // Point lights: position + radius, colour + attenuation.
-    plight_pos: array<vec4<f32>, 8>,
-    plight_col: array<vec4<f32>, 8>,
     // x: keep-A overlay bound (MBTreeSetAltTex −4), y: chrome (−3), z:
     // uv_xform applies, w: the GS frame's 16-bit writes are modelled.
     extra: vec4<f32>,
@@ -40,6 +37,13 @@ struct GsParams {
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var lightmap_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var overlay_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(6) var overlay_sampler: sampler;
+// Point lights, shared by every material: position + radius, colour +
+// attenuation (lib.rs POINT_LIGHTS).
+struct PointLights {
+    pos: array<vec4<f32>, 8>,
+    col: array<vec4<f32>, 8>,
+};
+@group(#{MATERIAL_BIND_GROUP}) @binding(7) var<storage, read> plights: PointLights;
 
 // Point lights: VU1 microcode (Tower state vu1MicroMem.bin, pairs 652..716
 // and 1026..1090; docs/research/rendering.md). Per light, skipped when the
@@ -50,15 +54,15 @@ struct GsParams {
 fn point_lights(n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
     var pl = vec3(0.0);
     for (var i = 0u; i < 8u; i = i + 1u) {
-        let lp = params.plight_pos[i];
+        let lp = plights.pos[i];
         if lp.w > 0.0 {
             let v = lp.xyz - p;
             let d = max(length(v), 0.001);
             let fall = 1.0 - (d * d) / (lp.w * lp.w);
             let cos_t = dot(n, v / d);
             if fall > 0.0 && cos_t > 0.0 {
-                let k = min(7.5 * params.plight_col[i].a * fall * cos_t / d, 1.0);
-                pl = pl + params.plight_col[i].rgb * k;
+                let k = min(7.5 * plights.col[i].a * fall * cos_t / d, 1.0);
+                pl = pl + plights.col[i].rgb * k;
             }
         }
     }

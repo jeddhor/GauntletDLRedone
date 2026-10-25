@@ -33,7 +33,7 @@ def presses(entry, first, count, gap, hold=3):
     return [[first + k * gap, first + k * gap + hold - 1, [entry]] for k in range(count)]
 
 
-CROSS, TRIANGLE, UP = 0xd, 0xc, 2
+CROSS, TRIANGLE, UP, SQUARE = 0xd, 0xc, 2, 0xa
 
 SCENARIOS = {
     # A key picked up in G1 does not survive a death: TowerWave restores the
@@ -130,6 +130,23 @@ SCENARIOS.update({
                 ("both", "players.0.health", "==", 500.0)]),
     # Exploration (no checks): the Sorceress throwing in G1, frames every
     # second (the thrown wand's textures come from another package).
+    # Frame time (DIAGNOSTIC, GDL_FRAME_LOG: <run>/frames.log, one line per
+    # rendered frame): the Sorceress's square attack (DMotion 0x10) against
+    # cross throws and standing, all in G1 after the level start.
+    'perf-square-g1': dict(
+        level='G1', updates=900, actions=[], menu=[], script=presses(SQUARE, 160, 24, 30, hold=8), frame_log=True,
+        steps=[["wait", 6]] + [s for k in range(8) for s in (["shot", f"sq{k:02d}"], ["wait", 2])], checks=[]),
+    'perf-cross-g1': dict(
+        level='G1', updates=900, actions=[], menu=[], script=presses(CROSS, 160, 24, 30, hold=8), frame_log=True,
+        steps=[["wait", 6]] + [s for k in range(8) for s in (["shot", f"cr{k:02d}"], ["wait", 2])], checks=[]),
+    # Frozen frame at update 175 (GDL_FREEZE_AT from the environment) with
+    # the square attack's bolt and its point light alive: compare runs with
+    # and without GDL_NO_POINT_LIGHTS.
+    'freeze-square-g1': dict(
+        level='G1', updates=900, actions=[], menu=[], script=presses(SQUARE, 160, 2, 30, hold=8),
+        steps=[["wait", 45], ["shot", "frozen-a"], ["wait", 3], ["shot", "frozen-b"], ["quit"]], checks=[]),
+    'perf-idle-g1': dict(
+        level='G1', updates=900, actions=[], menu=[], script=[], frame_log=True, steps=[], checks=[]),
     'throw-g1': dict(
         level='G1', updates=420, actions=[], menu=[], script=presses(CROSS, 160, 12, 18, hold=6),
         steps=[["wait", 4.5]] + [s for k in range(16) for s in (["shot", f"throw{k:02d}"], ["wait", 0.6])],
@@ -199,6 +216,8 @@ def run(tag, name, sc, saves_from=None, mutations=()):
                GDL_EXIT_AFTER=str(sc['updates']), GDL_STATE_OUT=str(out))
     if sc.get('level'):
         env['GDL_DEBUG_LEVEL'] = sc['level']
+    if sc.get('frame_log'):
+        env['GDL_FRAME_LOG'] = str(d / 'frames.log')
     if sc.get('load_slot'):
         env['GDL_TEST_LOAD_SLOT'] = str(sc['load_slot'])
     if sc.get('level') is None:

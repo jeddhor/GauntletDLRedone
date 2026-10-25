@@ -65,3 +65,41 @@ and multi-player coverage (M16).
 3. Start again, load the character: the Tower should show the completed
    level and the delivered crystals.
 4. Die in a level: back to the Tower with the level-start state.
+
+## Acceptance (2026-10-24, night)
+
+The user: "the M12 acceptance looks good now -- lighting issues are gone,
+crystals and NPC are there, everything that I complained about at first
+seems resolved." Two issues reported with it:
+
+1. A green potion could not be picked up. Potions (item kind 1 subtype 4)
+   are refused at MaxPotionsPerPlayer, 9 in every captured game state
+   (private/reference/start-states/poison-fields-game-v3..v6); the
+   pickup then raises help 3 and leaves the item (game/pickups.rs, ported
+   from the instructions). Most likely the character held nine. Not yet
+   checked in the reference with a full count.
+2. The Sorceress's square attack (DMotion 0x10, action 99: effect trees
+   0x77/0x78) slowed the frame rate. Reproduced on the private Xvfb with
+   the client's DIAGNOSTIC frame log (GDL_FRAME_LOG; scenarios
+   perf-square-g1, perf-cross-g1, perf-idle-g1, run perf1): mean frame
+   time 262 ms against 156 (cross throws) and 135 (standing), the
+   simulation itself as fast in all three (headless 2000 updates ≈ 2 s).
+   Cause found in the client: Assets::get_mut marks a material modified
+   whether or not it changes, and apply_material_requests and
+   present_distance_fade took every overridden material mutably every
+   frame, so all of them were re-prepared each frame; point lights
+   (present_point_lights) re-prepare every material when an effect light
+   moves. Fixed (2026-10-24 night): materials are taken mutably only for
+   a change, and the eight point lights live in one storage buffer every
+   GsMaterial binds (binding 7, lib.rs POINT_LIGHTS), written once per
+   change. Frame times (run perf4, same scenarios): square 180 ms mean
+   (p50 135) against 262 before, cross 148, standing 126; with the point
+   lights switched off (GDL_NO_POINT_LIGHTS, run perf3) square was 172.
+   The lights still apply: frozen frames at update 175 with the attack's
+   light alive (scenario freeze-square-g1, GDL_FREEZE_AT=175) repeat
+   exactly and differ from the same frame without point lights in
+   226,918 pixels (the green glow on the ground around the Sorceress).
+   These are software-rendered timings on the private Xvfb under a busy
+   machine (llvmpipe); the share each cause takes on a GPU is not
+   measured.
+

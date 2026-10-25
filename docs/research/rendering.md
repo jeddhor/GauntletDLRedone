@@ -800,3 +800,18 @@ write) — screenshot ref-b4-flash-v1.png and GS dump …20261024040218,
 replayed by tools/python/gs_replay.py (gsreplay-b4flash-v1): the silhouette
 averages 183/220/183. Native frames of B4, C3 and J6 (scene batch
 2026-10-24) show the same silhouette at 179/219/179.
+
+## Client performance: material preparation (2026-10-24, night)
+
+Reported with the M12 acceptance: the Sorceress's square attack (effect
+trees 0x77/0x78 with a moving point light) slowed the frame rate. Two client
+causes, both renderer bookkeeping, no change to what is drawn:
+`Assets::get_mut` marks a material modified (re-prepared for the GPU) even
+when no field changes — apply_material_requests and present_distance_fade
+now compare first; and the eight point lights were part of every
+GsMaterial's uniform, so a moving effect light re-prepared every material
+each frame — they are now one storage buffer bound by every material
+(binding 7; lib.rs `POINT_LIGHTS`, `write_point_lights`). Measured with the
+client's DIAGNOSTIC frame log (GDL_FRAME_LOG) in scenarios perf-*-g1:
+square attack 262 → 180 ms mean frame time on the private Xvfb, standing
+126, cross throws 148 (m12-acceptance.md "Acceptance").
