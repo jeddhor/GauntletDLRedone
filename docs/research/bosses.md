@@ -91,8 +91,8 @@ good wizard.
 |---|---|---|---|
 | G5 lich | 261 | replay-frame-G5kill-v1 | 250/250, every part |
 | C5 djinn | 225 | replay-frame-C5kill-v2 | 250/250 (v1: effects 249 — AddExp's level-up effect, now ported) |
-| E2 Skorne 1 | 226 | replay-frame-E2kill-v1 | 250/250 |
-| F2 Skorne 2 | 196 | replay-frame-F2kill-v1 | 250/250 |
+| E2 Skorne 1 | 226 | replay-frame-E2kill-v1, then w5l2-bosskill-v2..v7: -E2wiz2-v1, -E2wiz3-v1, -E2wiz4567-v1 (v4..v7 joined: the wizard 4 → 11 and game_main's level end, mode 0x4012, at step 1700) | 250/250, 250/250, 250/250, 849/849: every part |
+| F2 Skorne 2 | 196 | replay-frame-F2kill-v1, then w6l2-bosskill-v2..v6: -F2wiz2-v1, -F2wiz3456-v1 (v3..v6 joined: the wizard 2 → 11 and mode 0x400e — the "garm" movie — at step 1580) | 250/250, 250/250, 789/789: every part |
 | H4 Garm | 251 | replay-frame-H4kill-v1, then the chained captures w8l4-bosskill-v2..v5: -H4wiz2-v1 (death move), -H4wiz3-v1 (BossDeath's good wizard 0 → 2), -H4wiz45-v1 (trace-H4-goodwiz-v4 and v5 joined at their link: the wizard 2 → 11, auto_exit_flag, game_main's mode 0x400e — init_gamemovie's "victory" — at step 905) | 250/250, 250/250, 250/250, 452/452: every part, the good wizard included |
 | K5 pboss | 220 | replay-frame-K5kill-v1 | 250/250 |
 | I5 yeti | 246 | replay-frame-I5kill-v2 | 250/250 |
