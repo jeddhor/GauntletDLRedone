@@ -854,3 +854,9 @@ Ported (gdl_core::game::hints; the client's ShowHint). NATIVE: the lines
 are one centred block (the original steps stringtext_y + 16 from y 0x70).
 GUI: the four categories at a new game in the Tower (The Lich / Book of
 Protection / The First Runestone).
+
+QUEST_ICON (the panel's legend-item marker, hud.rs, MBOX_FindTexture by
+name) exists only in the boss levels' item packages (levelA5, levelB6, levelC5, levelD5, levelE2, levelG5, levelI5, levelJ5, levelK5
+TEXDEF/OBJECTS, 2026-10-24 scan of the decoded WAD entries): elsewhere the
+original's lookup finds nothing as well, so the client's "panel textures
+not found: QUEST_ICON" note in ordinary levels is expected.
