@@ -663,6 +663,8 @@ struct MoverSeen {
     last: f32,
     dir: i8,
     reversals: u32,
+    /// The update the object last moved.
+    moved_at: usize,
 }
 
 /// One route hint (bot=1 hints=FILE): steps taken in order before the
@@ -1160,7 +1162,7 @@ impl Bot {
         for &o in &self.mover_candidates {
             if let Ok(m) = c.object_matrix(o) {
                 let y = m[3][1];
-                let e = self.movers.entry(o).or_insert(MoverSeen { lo: y, hi: y, last: y, dir: 0, reversals: 0 });
+                let e = self.movers.entry(o).or_insert(MoverSeen { lo: y, hi: y, last: y, dir: 0, reversals: 0, moved_at: 0 });
                 e.lo = e.lo.min(y);
                 e.hi = e.hi.max(y);
                 let dy = y - e.last;
@@ -1170,6 +1172,7 @@ impl Bot {
                         e.reversals += 1;
                     }
                     e.dir = d;
+                    e.moved_at = f;
                 }
                 e.last = y;
             }
@@ -2254,7 +2257,12 @@ impl Bot {
                 self.ride_wait = None;
             } else {
                 let since = *self.ride_wait.get_or_insert(f);
-                if RIDE_WAIT <= f - since {
+                // A mover standing still for 300 updates is not coming (a
+                // lift that moves only while stood on: K1's by (−71, 74),
+                // 31 units below the ledge, waited for 16 times in
+                // k1rune-c38-v1).
+                let still = [b, a].iter().filter_map(|&n| self.movers.get(&self.nav.obj[n])).all(|m| 300 < f - m.moved_at.min(f));
+                if RIDE_WAIT <= f - since || still {
                     self.log.push(serde_json::json!({"update": f, "ride_timeout": [wa, wb]}));
                     self.blocked.insert((self.nav.place(a), self.nav.place(b)));
                     // Every ride edge onto the same object within 4 units: the
