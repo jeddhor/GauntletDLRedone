@@ -571,6 +571,15 @@ GDL_DEBUG_CAMERA):
     lowers bridge 51 (y 24 → 18, (−6.4, −97.6)) between the lift's top and
     the plateau. b47 took the rune (wall 8 broken) but never reached 504.
   - J6: the rune room (y 116.7) by lift 694 (pad 31, see above).
+  - C3: trigger 434 at (−38.2, 30.1, 60.0) fires 433 and 435 by its chain
+    and raises the bellows' platform 854 from y 22.8 to 31.6 within ~150
+    updates (hint run, f101, watch 854); the bellows (47.1, 31.7, 33.8) is
+    then level with a region at y 30 (x 35–68, z 21–57) that the graph
+    from the start never joins (a trench at y 19 runs beside it); its way
+    in is not found yet.
+  - J3: trigger 502 stands 1.4 behind the static wall 1512 (object flags
+    2) from the floor the bot reaches; graph nodes on that side no longer
+    count as within reach of an item (line test, f102).
   - D4: pad 55 (y 16, (−81, −164)) raises the pit floor 333 to the
     corridor's level; trigger 355 on it raises the sword's pedestal 735 at
     (−192.8, 11.9 → 17.9, −102.4).

@@ -599,8 +599,28 @@ fn shot_node(nav: &Nav, g: &Game, q: V3) -> Option<usize> {
     near
 }
 
+/// No wall between floor node `p` and item `q` one unit above the node
+/// (PlayerWallCollide's query, radius 0.3).
+fn clear_line(coll: &mut Option<CollisionWorld>, g: &Game, p: V3, q: V3) -> bool {
+    let c = coll.get_or_insert_with(|| g.collision.clone());
+    let h = p[1] + 1.0;
+    let hit = c.world_collide(Query {
+        radius: 0.3,
+        first: [p[0], h, p[2]],
+        last: [q[0], h, q[2]],
+        check_flags: 7,
+        min_normal_y: f32::from_bits(0xbf5d_b22d),
+        max_normal_y: f32::from_bits(0x3f5d_b22d),
+        object_mask: 0x13a,
+        exclusion_mask: 1,
+    });
+    !matches!(hit, Ok((ref w, _)) if w.solid.is_some_and(|h| c.runtime_flags[h.object] & 0x38 == 0))
+}
+
 /// Reachable graph nodes within 2 units of each item (slot, node).
 pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
+    // A collision copy for the wall checks, made on first use.
+    let mut coll: Option<CollisionWorld> = None;
     let mut out = Vec::new();
     for &s in slots {
         // A trigger that counts only players standing on its bound object
@@ -642,7 +662,11 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
                         continue;
                     }
                     let d = dist_xz(p, q);
-                    if d < 2.5 && best.is_none_or(|b| d < b.0) {
+                    // Not through a wall: J3's trigger 502 stands 1.4 behind
+                    // the static wall 1512 from the floor the bot reached; a
+                    // node 2.2 away on that side was taken as within reach
+                    // (2521 stuck events in b56).
+                    if d < 2.5 && best.is_none_or(|b| d < b.0) && (d <= 1.0 || clear_line(&mut coll, g, p, q)) {
                         best = Some((d, n));
                     }
                 }
