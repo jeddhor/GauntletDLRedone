@@ -43,6 +43,10 @@ run $R/replay-frame-K5kill-$V.json --world K --level 5 --enemy-replay $R/trace-K
 run $R/replay-frame-I5kill-$V.json --world I --level 5 --enemy-replay $R/trace-I5-bosskill-v2.json --frame-replay
 run $R/replay-frame-D5kill-$V.json --world D --level 5 --enemy-replay $R/trace-D5-bosskill-v2.json --frame-replay
 run $R/replay-frame-A5kill-$V.json --world A --level 5 --enemy-replay $R/trace-A5-bosskill-v2.json --frame-replay
+run $R/replay-frame-J5kill-$V.json --world J --level 5 --enemy-replay $R/trace-J5-bosskill-v2.json --frame-replay
+run $R/replay-frame-H4wiz2-$V.json --world H --level 4 --enemy-replay $R/trace-H4-goodwiz-v2.json --frame-replay
+run $R/replay-frame-H4wiz3-$V.json --world H --level 4 --enemy-replay $R/trace-H4-goodwiz-v3.json --frame-replay
+run $R/replay-frame-H4wiz45-$V.json --world H --level 4 --enemy-replay $R/trace-H4-goodwiz-v45.json --frame-replay
 for g in 2 3 4; do run $R/replay-frame-B6wiz$g-$V.json --world B --level 6 --enemy-replay $R/trace-B6-goodwiz-v$g.json --frame-replay; done
 run $R/replay-frame-A1golem-$V.json --world A --level 1 --enemy-replay $R/trace-A1-golem-v2.json --frame-replay
 run $R/replay-frame-A1death-$V.json --world A --level 1 --enemy-replay $R/trace-A1-death-v1.json --frame-replay
@@ -89,7 +93,7 @@ run $R/replay-frame-G14p-$V.json --world G --level 1 --enemy-replay $R/trace-G1-
 run $R/replay-frame-G1team-$V.json --world G --level 1 --enemy-replay $R/trace-G1-team-v3 --frame-replay --vplayers 2
 # Two players at B6's boss (WARPED w2l6-2p-v1: tower-2p-v2 warped by the wave skip, 500 vblanks of both players' moves and attacks).
 run $R/replay-frame-B6two-$V.json --world B --level 6 --enemy-replay $R/trace-B6-2p-v1 --frame-replay --vplayers 2
-for f in frame-fight-g1 frame-combat-g1 frame-varied-g1 frame-tower enemies-g1 enemies-fight-g1 player-g1 player-combat-g1 player-fight-g1 frame-a1 frame-b1 frame-k2 frame-g1new frame-b6 frame-g5 frame-C5 frame-D5 frame-I5 frame-J5 frame-K5 frame-E2 frame-F2 frame-H4 frame-A5 frame-A1statue frame-A1golem frame-A1death frame-B6kill frame-G5kill frame-C5kill frame-E2kill frame-F2kill frame-H4kill frame-K5kill frame-I5kill frame-D5kill frame-A5kill frame-B6wiz2 frame-B6wiz3 frame-B6wiz4 frame-G1exit frame-C1water frame-C1water2 frame-G1potion frame-G1xbow frame-A1trans frame-D1new frame-E1new frame-F1new frame-H1new frame-I1new frame-J1new frame-D3start frame-D3leaf frame-I2start frame-B2start $(for L in $SWEEP; do echo frame-${L}start; done) $(for L in $SWEEP; do echo frame-${L}combat; done) frame-B6two frame-tower2p frame-G12p frame-tower4p frame-G14p frame-G1team; do
+for f in frame-fight-g1 frame-combat-g1 frame-varied-g1 frame-tower enemies-g1 enemies-fight-g1 player-g1 player-combat-g1 player-fight-g1 frame-a1 frame-b1 frame-k2 frame-g1new frame-b6 frame-g5 frame-C5 frame-D5 frame-I5 frame-J5 frame-K5 frame-E2 frame-F2 frame-H4 frame-A5 frame-A1statue frame-A1golem frame-A1death frame-B6kill frame-G5kill frame-C5kill frame-E2kill frame-F2kill frame-H4kill frame-K5kill frame-I5kill frame-D5kill frame-A5kill frame-J5kill frame-H4wiz2 frame-H4wiz3 frame-H4wiz45 frame-B6wiz2 frame-B6wiz3 frame-B6wiz4 frame-G1exit frame-C1water frame-C1water2 frame-G1potion frame-G1xbow frame-A1trans frame-D1new frame-E1new frame-F1new frame-H1new frame-I1new frame-J1new frame-D3start frame-D3leaf frame-I2start frame-B2start $(for L in $SWEEP; do echo frame-${L}start; done) $(for L in $SWEEP; do echo frame-${L}combat; done) frame-B6two frame-tower2p frame-G12p frame-tower4p frame-G14p frame-G1team; do
 python3 -c "
 import json, pathlib
 p = pathlib.Path('$R/replay-$f-$V.json')

@@ -93,13 +93,18 @@ good wizard.
 | C5 djinn | 225 | replay-frame-C5kill-v2 | 250/250 (v1: effects 249 — AddExp's level-up effect, now ported) |
 | E2 Skorne 1 | 226 | replay-frame-E2kill-v1 | 250/250 |
 | F2 Skorne 2 | 196 | replay-frame-F2kill-v1 | 250/250 |
-| H4 Garm | 251 | replay-frame-H4kill-v1; -H4wiz2-v1 (the next 500 vblanks, death move) | 250/250, 250/250 |
+| H4 Garm | 251 | replay-frame-H4kill-v1, then the chained captures w8l4-bosskill-v2..v5: -H4wiz2-v1 (death move), -H4wiz3-v1 (BossDeath's good wizard 0 → 2), -H4wiz45-v1 (trace-H4-goodwiz-v4 and v5 joined at their link: the wizard 2 → 11, auto_exit_flag, game_main's mode 0x400e — init_gamemovie's "victory" — at step 905) | 250/250, 250/250, 250/250, 452/452: every part, the good wizard included |
 | K5 pboss | 220 | replay-frame-K5kill-v1 | 250/250 |
 | I5 yeti | 246 | replay-frame-I5kill-v2 | 250/250 |
 | J5 wraith | 88 | replay-frame-J5kill-v2 | 244/244 |
 | D5 drider | 179 | replay-frame-D5kill-v2 | 250/250 but critters 249: step 185, collision node 1's rotation (+0x5b0..+0x5d8) differs in the third decimal for one update, six updates into the death move |
 | A5 chimera | 107 | replay-frame-A5kill-v3 | 244/244 but effects 240: every 15 updates an effect's node starts 0.025 units off (the dead chimera's node pose); v2's coins fixed (below) |
 | B6 dragon | 203 | replay-frame-B6kill (2026-10-22) | 250/250, and the good wizard and auto exit after it |
+
+The joined trace: v5 alone starts with the wizard's speech already queued
+in v4, and the replay carries native's own EE voice queue (it is not in the
+trace), so state 9 (AudioStillPlaying) ended at once; from v4 the speech is
+queued natively and runs its 76 vblanks as in the reference.
 
 Fixed on the way: AddExp's StartLevelUpFX (a level up in play started no
 level-up effect natively; the Tower had it), and ProcessSpewItems'
