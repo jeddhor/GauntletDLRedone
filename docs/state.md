@@ -406,6 +406,20 @@ original (PCSX2 reference on Xvfb :191, private captures):
    K1. K1's route traced from navdumps (the exit region is reached from the
    ledge region above (−66, −32, −78), which bridge 1093 — trigger 48 —
    joins to the western low area; hints under test).
+   2026-10-24 (late evening): D5's legend-item phase compared with the
+   reference (bosses.md; WARPED w4l5-legend-v1): the drider's node scale
+   0.8 now scales CritterDoDamageFX/CritterDoSfx offsets natively; the
+   frame replay seeds QuestWeaponSfx, QuestItemState from the sample
+   before the update and restores QuestItemTimer per retry (regression
+   r85: D5legend critters 294/300, B6legend players 290/290, the other
+   144 unchanged). Bot (playtest.md "Rules added 2026-10-24 (late)"):
+   island limit (G1 back to ending with its rune), breakable-wall height
+   window, per-visit break tries, post-trigger unblock, Death avoided or
+   dispelled with a potion, hazards soft. I3 ended for the first time
+   (b48). Ended alive with their rune and legend item in some run: 53 of
+   61 (H2 in chain t21, I3 the newest); C3 ended without its bellows; not
+   yet D3 D4 H3 I4 J3 J6 K1. Legitimate chain lg2 died in G2 (all six tries, then the
+   search); lg3 runs with the Death rule.
 
 ---
 
