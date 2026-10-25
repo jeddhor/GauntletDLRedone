@@ -587,6 +587,11 @@ pub struct Bot {
     /// The collision object each treasure rests on (a floor query on a
     /// copy of the collision state, once per treasure).
     support_cache: HashMap<usize, Option<usize>>,
+    /// The graph region around a treasure the bot cannot reach (built once
+    /// from the treasure's position): triggers whose bound objects lie by
+    /// it may be the way in (H3's rune island; trigger 503's object 350 at
+    /// its edge).
+    islands: HashMap<usize, Vec<V3>>,
     /// When a given-up goal was last reopened for being near.
     reopened_at: HashMap<usize, usize>,
     /// Steering at a closed gate's centre until the update (key held).
@@ -744,6 +749,7 @@ impl Bot {
             stuck_goal_counts: HashMap::new(),
             optional_skip: HashSet::new(),
             support_cache: HashMap::new(),
+            islands: HashMap::new(),
             reopened_at: HashMap::new(),
             gate_push: None,
             stuck_waypoints: HashMap::new(),
@@ -1196,10 +1202,30 @@ impl Bot {
                     o = g.collision.objects.get(x).and_then(|c| c.parent);
                 }
             }
+            // A treasure out of reach: its island's edge objects too.
+            for &t in &treasures {
+                if self.islands.contains_key(&t) || !self.item_nodes(g, &[t]).is_empty() {
+                    continue;
+                }
+                let q = g.items.records[t].v3(0x40);
+                let mut c = g.collision.clone();
+                let nav = Nav::build(&mut c, &[q], g.globals.world_bottom - 2.0, q[1] + 80.0, 0.3);
+                let pts: Vec<V3> = (0..nav.pts.len()).filter(|&n| !nav.adj[n].is_empty()).map(|n| nav.pts[n]).collect();
+                self.log.push(serde_json::json!({"update": f, "island": t, "nodes": pts.len()}));
+                self.islands.insert(t, pts);
+            }
+            let by_island = |o: usize| {
+                g.collision.object_matrix(o).ok().map(|m| m[3]).is_some_and(|w| {
+                    self.islands.values().any(|pts| pts.iter().any(|p| dist_xz(*p, [w[0], w[1], w[2]]) < 12.0 && (p[1] - w[1]).abs() < 10.0))
+                })
+            };
             let bound: Vec<usize> = near
                 .iter()
                 .copied()
-                .filter(|&s| item_kind(g, s).0 == 5 && g.items.records[s].u32_(0xf0).checked_sub(1).is_some_and(|o| support.contains(&(o as usize))))
+                .filter(|&s| {
+                    item_kind(g, s).0 == 5
+                        && g.items.records[s].u32_(0xf0).checked_sub(1).is_some_and(|o| support.contains(&(o as usize)) || by_island(o as usize))
+                })
                 .collect();
             // (The revisits start one list later.)
             first_revisit += 1;
