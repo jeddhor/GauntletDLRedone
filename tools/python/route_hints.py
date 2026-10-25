@@ -39,8 +39,22 @@ def main():
             continue
         seen.add(s)
         hints.append({'item': s, 'goto': None, 'radius': None, 'wait': None})
+    # The way from the last of them to the exit, as the run walked it: its
+    # sampled positions every 8 units (goto hints, 2-unit radius). The bot's
+    # graph may hold a route the player cannot take there (G2's exit stair).
+    last = max((e['update'] for e in bot.get('log', []) if e.get('reached') in seen), default=0)
+    end = bot['exit_update']
+    trail = []
+    # The bot's own route (every 2 units) when the report has it, else the
+    # report's position samples.
+    points = [(r[0], r[1:]) for r in bot['route']] if bot.get('route') else [(x['frame'], x['pos']) for x in report.get('samples', [])]
+    for frame, q in points:
+        if last <= frame <= end:
+            if not trail or max(abs(q[0] - trail[-1][0]), abs(q[2] - trail[-1][2])) >= 8.0 or abs(q[1] - trail[-1][1]) >= 2.0:
+                trail.append(q)
+    hints += [{'item': None, 'goto': q, 'radius': 2.0, 'wait': None} for q in trail[1:]]
     out.write_text(json.dumps(hints))
-    print(out, len(hints), [h['item'] for h in hints])
+    print(out, len(hints), [h['item'] for h in hints if h['item'] is not None], len(trail), 'trail points')
 
 
 if __name__ == '__main__':

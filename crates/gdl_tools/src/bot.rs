@@ -640,6 +640,9 @@ pub struct Bot {
     /// The leader's positions every 10 updates (walkable by construction):
     /// followers walk this trail.
     trail: Vec<V3>,
+    /// The player's way (update, position) every 2 units for the report
+    /// (route_hints.py takes a winning run's approach to the exit from it).
+    route: Vec<(usize, V3)>,
     backoff: Option<(usize, V3)>,
     attack_at: Option<V3>,
     /// Updates held without input: stage start/camera wait, exit portal,
@@ -769,6 +772,7 @@ impl Bot {
             follow_nav: Default::default(),
             follow_stuck: Default::default(),
             trail: Vec::new(),
+            route: Vec::new(),
             backoff: None,
             attack_at: None,
             holds: [0; 3],
@@ -1416,6 +1420,9 @@ impl Bot {
         }
         let p = g.players[0].v3(0x50);
         self.visited_cols.insert(key(p[0], p[2]));
+        if f.is_multiple_of(10) && self.route.last().is_none_or(|(_, q)| 2.0 < dist_xz(*q, p) || 1.5 < (q[1] - p[1]).abs()) {
+            self.route.push((f, p));
+        }
         if f.is_multiple_of(10) && self.trail.last().is_none_or(|q| 1.0 < dist_xz(*q, p) || 1.0 < (q[1] - p[1]).abs()) {
             self.trail.push(p);
         }
@@ -1995,6 +2002,7 @@ impl Bot {
             "static_exit_reachable": self.static_exit_reachable, "exit_update": self.exit_update, "exit_wave": self.exit_wave.map(|w| format!("{w:#x}")), "exit_state": self.exit_state,
             "health_assists": self.assists, "hints": self.hints.len(), "hints_done": self.hint_at, "replans": self.replans, "rebuilds": self.rebuilds, "holds": {"stage_or_camera": self.holds[0], "exit_portal": self.holds[1], "riding": self.holds[2], "cam_wait_now": g.globals.cam_wait, "start_of_stage_now": g.globals.start_of_stage}, "given_up": self.given_up.iter().collect::<Vec<_>>(),
             "log": self.log,
+            "route": self.route.iter().map(|&(f, q)| [f as f32, (q[0] * 10.0).round() / 10.0, (q[1] * 10.0).round() / 10.0, (q[2] * 10.0).round() / 10.0]).collect::<Vec<_>>(),
         })
     }
 }
