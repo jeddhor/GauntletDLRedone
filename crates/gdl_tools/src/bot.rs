@@ -130,7 +130,7 @@ const RIDE_COST: f32 = 10.0;
 const RIDE_WAIT: usize = 600;
 const STUCK: usize = 45;
 /// Updates spent striking at one trigger out of touch (strike_reach).
-const STRIKE_FOR: usize = 600;
+const STRIKE_FOR: usize = 900;
 /// No-assist runs: updates a stuck bot may spend fighting foes in place.
 const FIGHT_HOLD: usize = 600;
 const DWELL: f32 = 2.0;
@@ -2430,8 +2430,7 @@ impl Bot {
             _ => None,
         };
         // At the end of the path to a trigger out of touch (behind a wall):
-        // strike toward it — face it for 6 updates, then attack with the
-        // stick released for 18 (strike_reach), at most STRIKE_FOR updates.
+        // strike toward it (strike_reach), at most STRIKE_FOR updates.
         if let Some(Goal::Item(s)) = self.goal
             && self.at >= self.path.len()
             && let Some(sr) = strike_reach(g, s)
@@ -2450,10 +2449,27 @@ impl Bot {
                 if f - since < STRIKE_FOR {
                     self.progress = (f, p);
                     self.dwell = (f, p);
-                    if (f - since) % 24 < 6 {
+                    // Face it, then: with turbo +0x800 at 40 or more, the turbo
+                    // attack (triangle edge: a melee with event bits 0xf0)
+                    // with the stick released; otherwise attack with the stick
+                    // released — a melee swing (event 2) only when a target
+                    // lies within the player's radius + 1, else a throw (0x5c,
+                    // event bit 1), which does not probe (J3's 502 from 2.86
+                    // units: throws only, state unchanged). Turbo refills by
+                    // 2 × spf an update.
+                    let t = (f - since) % 40;
+                    if t < 6 {
                         return Self::steer(pad, g, p, q);
                     }
-                    pad.press(0xd);
+                    if 40.0 <= g.players[0].f32_(0x800) {
+                        if t == 6 {
+                            pad.press(0xc);
+                        }
+                        return pad;
+                    }
+                    if t < 30 {
+                        pad.press(0xd);
+                    }
                     return pad;
                 }
             }

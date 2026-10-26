@@ -705,6 +705,20 @@ GDL_DEBUG_CAMERA):
     (i4strike-v1, DEBUG teleport to (−6.8, −41.9, 189.8), hint [534]): the
     strike began at 2.3 units (update 123) and 534's state went 0 → 2 at
     update 125; the bot then took lift 524.
+  - Which attacks probe: PlayerMotion's attack code 0xf makes a melee swing
+    (0x27…, event 2) only with a target within the player's radius + 1,
+    otherwise the throw 0x5c (and 0x5f/0x61; 0x5e/0x60/0x62 moving), whose
+    events (bit 1, or 0x100) fail the probe's & 0xfe test. In J3 (b69, c47)
+    the strike at trigger 502 from 2.86 units threw for 900 updates and the
+    state stayed 0 (j3strike-v2: +0xd8 0x4010). The strike now uses the
+    turbo attack (triangle edge, a melee) when +0x800 ≥ 40 (it refills by
+    2 × spf an update), else attacks with the stick released (a swing when
+    a foe comes within reach); 900 updates at most (c49). Replay j3strike-v4
+    (delay 263): the turbo swing at update 31,992 did not reach it; a melee
+    swing with a foe near at 32,070–32,082 did — 502's state 2, reached at
+    update 32,080.
+  - Chain t35 (c47, from t34's I3 end): I4 (29,560), I5 (boss), J1, J2 end;
+    J3 not (search progress 9); t36 (c49) runs J3 onward.
   - Without the assist only (legitimate play): stuck with a foe within 10
     units the bot fights in place for up to 600 updates; hazards (kind 8)
     and statues (kind 4, within reach + 1.5; contact or a hit wakes them)
