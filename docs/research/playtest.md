@@ -767,6 +767,9 @@ GDL_DEBUG_CAMERA):
     goes back down once left) and the 'off' pads 19, 30, 29: delay 149
     takes the rune at update 51,873 and exits at 97,949; delays 0 and 263
     do not (hint 5, pad 8, unreachable in time; the rune's barriers up).
+    On c56 with the same hints (tools/bot-routes/K1.json; the route_hints.py
+    list made from the win, 50 entries, did not win in b76k): delays 149
+    and 397 end (94,708 and 89,420), 0 and 263 do not.
   - Strike nodes are a last resort for ordinary goals (c56): a pass over
     every goal list with plain target nodes first, then only the items
     that gained a strike node. C1 (bisect c41/c44/c47/c49: ends on c44 at
