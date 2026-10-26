@@ -2552,18 +2552,15 @@ impl Bot {
                 // target within their radius + 1 in front; a strong
                 // character's throws kill every foe before it comes that near
                 // (J3's 502 from the chain's J2 end: none of 12 tries). Back
-                // off to 3.8 units from the trigger, keep facing it and attack
+                // off to 4.5 units from the trigger, keep facing it and attack
                 // only when a foe within 3.5 units lies within 60° of it, so
                 // the swing's probe (2 radii ahead) lands by the trigger
-                // (b70-263 touched 502 from 5.0 units with a foe near). The
-                // reference agrees that plain attacks there do not touch it
-                // (WARPED j3-strike-ref-v1: four presses from 2.9 units,
-                // 502's state 0).
+                // (b70-263 touched 502 from 5.0 units with a foe near).
                 if STRIKE_FOR <= f - since && f - since < STRIKE_FOR + LURE_FOR {
                     self.progress = (f, p);
                     self.dwell = (f, p);
                     let d0 = dist_xz(p, q).max(0.1);
-                    let off = *self.strike_off.get_or_insert([q[0] + (p[0] - q[0]) / d0 * 3.8, p[1], q[2] + (p[2] - q[2]) / d0 * 3.8]);
+                    let off = *self.strike_off.get_or_insert([q[0] + (p[0] - q[0]) / d0 * 4.5, p[1], q[2] + (p[2] - q[2]) / d0 * 4.5]);
                     let to_q = [q[0] - p[0], q[2] - p[2]];
                     let lq = to_q[0].hypot(to_q[1]).max(0.1);
                     let foe_ahead = g.enemies.iter().filter(|e| e.i32_(0xc8) != 0 && 0.0 < e.f32_(0x214)).map(|e| e.v3(0x40)).chain(g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40))).any(|e| {
@@ -2587,7 +2584,19 @@ impl Bot {
                     if lure_t < 90 && 0.8 < dist_xz(p, off) {
                         return Self::steer(pad, g, p, off);
                     }
-                    if lure_t % 20 == 0 {
+                    // Any stick input moves the player, so turn only when the
+                    // facing (PlayerMotion's atan2 of matrix row +0x40/+0x48,
+                    // the probe's direction) is off by over 0.3 rad (c58/c59:
+                    // the taps walked the bot back to the wall, leaving no room
+                    // for a foe in front).
+                    let r = &g.players[0];
+                    let facing = r.f32_(0x40).atan2(r.f32_(0x48));
+                    let want = to_q[0].atan2(to_q[1]);
+                    let mut diff = (facing - want).abs();
+                    if std::f32::consts::PI < diff {
+                        diff = 2.0 * std::f32::consts::PI - diff;
+                    }
+                    if 0.3 < diff && lure_t % 10 == 0 {
                         return Self::steer(pad, g, p, q);
                     }
                     return pad;

@@ -758,10 +758,12 @@ GDL_DEBUG_CAMERA):
     event (& 0xfe), square (99) none for class 6 below +0x80c 2. b70-263's
     touch came from (67.0, 145.5), 5.0 units off, when a foe was near.
     Reference (WARPED j3-strike-ref-v1 from lvl-J3-play-v1: player 0
-    written to (64.87, 20.88, 147.11), +0xdc poked to −0.073 toward 502,
-    four cross presses with no direction): 502's +0xde stays 0, its +0xd8
-    goes 0x10 → 0x4010 as natively (j3strike-v2) — plain attacks there do
-    not touch it in the original either. J3's four switches 499–502 are
+    written to (64.87, 20.88, 147.11), four cross presses with no
+    direction): 502's +0xde stays 0, its +0xd8 goes 0x10 → 0x4010 as
+    natively (j3strike-v2). INCONCLUSIVE as to facing: the poke went to
+    +0xdc, but the probe's direction is atan2(+0x40, +0x48), the matrix
+    row PlayerMotion resets from the player's node, so the player's facing
+    in that test is unknown. J3's four switches 499–502 are
     all behind walls (TRIGGER2, reach 0.7). The strike now has a lure
     phase after its 900 updates (c57/c58): back off toward 3.8 units, face
     the trigger, attack only with a foe within 2.5 units inside 25° of it.
