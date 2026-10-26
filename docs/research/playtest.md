@@ -777,6 +777,14 @@ GDL_DEBUG_CAMERA):
     into the water pit by (−20, −12, 52) and never left it; on c56 C1 ends
     at 80,278, D3 at 52,432 and I4 at 174,576 (b76). Hints keep strike
     nodes.
+  - Full campaign chain tfull1 (c56, from the Tower of a new game, levels
+    in the order the gates allow — bosses.md "The critical path"; --require,
+    no legend-item precondition, DEBUG health assist): L1, G1–G5, B1–B6,
+    A1 A6 A2 A3 A4 A5, K1–K5 (K1 on its sixth try at update 291,502), D1–D5,
+    C1–C5, I1–I5, J1, J2 — 40 levels in one carried campaign — then J3
+    stopped it (six tries and the search; the Sorceress's strike). Twelve
+    more J3 tries from its J2 end and the tail J6 … H4 with J3 skipped
+    (tskip1, labelled DEBUG) run.
   - Ride waits are timed per edge (waiting and crossing together, 1200
     updates at most): J6's bot held at one bobbing floor from update
     30,000 to 300,000 in b74 (c52), the per-wait timer restarting each time
