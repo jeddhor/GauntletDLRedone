@@ -24,3 +24,4 @@ ordinary pad path; the hints only choose its goals. Not game data.
 | C3 | private/reports/bot-b64b-C3.json (assisted bot c39, start delay 149, the bellows taken, exit at update 128,846) |
 | I4 | private/reports/bot-b68a-I4.json (assisted bot c47: trigger 534 struck through wall 2644, the lamp taken, exit at update 131,440) |
 | J3 | private/reports/bot-b70-263-J3.json (assisted bot c49, start delay 263: trigger 502 struck through wall 1512, exit at update 123,052) |
+| D3 | private/reports/bot-b73b-D3.json (assisted bot c52 with run-ups at step-ups, start delay 149: up the bridge pieces raised by pads 50–47, regular exit at update 43,203; b73a left by the secret exit at 32,207) |

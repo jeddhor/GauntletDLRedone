@@ -772,6 +772,28 @@ pub fn explain_item(nav: &Nav, g: &Game, s: usize) -> serde_json::Value {
     serde_json::json!({"slot": s, "pos": q, "bound": bound, "kind": item_kind(g, s), "flags_f4": g.items.records[s].u16_(0xf4), "nodes": item_nodes(nav, g, &[s]), "candidates": out})
 }
 
+/// Graph edges with over `min_dy` of height change inside an x/z box
+/// (DIAGNOSTIC): whether the game's own displacement walks each one
+/// (walk_reaches) and both floors' objects.
+pub fn explain_walks(nav: &Nav, g: &Game, lo: [f32; 2], hi: [f32; 2], min_dy: f32) -> serde_json::Value {
+    let mut c = g.collision.clone();
+    let inside = |p: V3| lo[0] <= p[0] && p[0] <= hi[0] && lo[1] <= p[2] && p[2] <= hi[1];
+    let mut out = Vec::new();
+    for a in 0..nav.pts.len() {
+        if !inside(nav.pts[a]) {
+            continue;
+        }
+        for &b in &nav.adj[a] {
+            let (pa, pb) = (nav.pts[a], nav.pts[b]);
+            if (pb[1] - pa[1]).abs() < min_dy {
+                continue;
+            }
+            out.push(serde_json::json!({"from": pa, "to": pb, "objs": [nav.obj[a], nav.obj[b]], "hard": nav.is_hard(a, b), "walks": walk_reaches(&mut c, pa, pb)}));
+        }
+    }
+    serde_json::json!(out)
+}
+
 /// `clear_line`, a hit on object `skip` (an item's own bound object) not
 /// counting.
 fn clear_line_skip(coll: &mut Option<CollisionWorld>, g: &Game, p: V3, q: V3, skip: Option<usize>) -> bool {
@@ -1066,6 +1088,8 @@ pub struct Bot {
     last_health: f32,
     /// The trigger being struck at and since when.
     strike: Option<(usize, usize)>,
+    /// Run-ups at each step-up edge (by place) before it is blocked.
+    run_ups: HashMap<(Place, Place), u32>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1218,6 +1242,7 @@ impl Bot {
             gen_seen: HashMap::new(),
             last_health: f32::NAN,
             strike: None,
+            run_ups: HashMap::new(),
         }
     }
 
@@ -2175,8 +2200,29 @@ impl Bot {
                     *last = f as f32;
                     *n <= 3
                 });
+                // A step up (over a unit) is run at again before it is
+                // blocked: three times, backing off 15 updates first. D3's
+                // bridge pieces (70.2 → 71.9 → 73.4 → 74.7) are climbed by a
+                // moving player (d3dir2-6: one diagonal hold from 71.9 to
+                // 76.3) and refused from a standstill (the bot's 162 stuck
+                // events at 71.9 → 73.4).
+                let run_up = match (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at)) {
+                    (Some(&a), Some(&b)) if 1.0 < self.nav.pts[b][1] - self.nav.pts[a][1] => {
+                        let n = self.run_ups.entry((self.nav.place(a), self.nav.place(b))).or_insert(0);
+                        *n += 1;
+                        *n <= 3
+                    }
+                    _ => false,
+                };
+                if run_up && let Some(&b) = self.path.get(self.at) {
+                    let q = self.nav.live(g, b);
+                    let d = dist_xz(p, q).max(0.1);
+                    self.backoff = Some((f + 15, [p[0] + (p[0] - q[0]) / d * 3.0, p[1], p[2] + (p[2] - q[2]) / d * 3.0]));
+                    self.log.push(serde_json::json!({"update": f, "run_up": q}));
+                }
                 if !at_gate
                     && !breakable
+                    && !run_up
                     && let (Some(&a), Some(&b)) = (self.path.get(self.at.saturating_sub(1)), self.path.get(self.at))
                 {
                     let (pa, pb) = (self.nav.place(a), self.nav.place(b));
@@ -2228,7 +2274,7 @@ impl Bot {
                 }
                 self.attack_until = f + if breakable { 150 } else { 40 };
                 // Back off briefly (away from the blocked waypoint) before the new route.
-                if let (Some(&b), false) = (self.path.get(self.at), breakable) {
+                if let (Some(&b), false, false) = (self.path.get(self.at), breakable, run_up) {
                     let q = self.nav.pts[b];
                     self.backoff = Some((f + 10, [2.0 * p[0] - q[0], p[1], 2.0 * p[2] - q[2]]));
                 }
@@ -2393,7 +2439,12 @@ impl Bot {
                 // lift that moves only while stood on: K1's by (−71, 74),
                 // 31 units below the ledge, waited for 16 times in
                 // k1rune-c38-v1).
-                let still = [b, a].iter().filter_map(|&n| self.movers.get(&self.nav.obj[n])).all(|m| 300 < f - m.moved_at.min(f));
+                // Standing on the mover itself: a stand-on lift starts once
+                // stood on (K1's lift 122 by pad 7: 438 timeouts at once in
+                // b71k), so 200 updates first.
+                let floor = g.players[0].u32_(0x89c).checked_sub(1).map(|o| o as usize);
+                let aboard = [a, b].iter().any(|&n| floor == Some(self.nav.obj[n]) && self.movers.contains_key(&self.nav.obj[n]));
+                let still = !(aboard && f - since < 200) && [b, a].iter().filter_map(|&n| self.movers.get(&self.nav.obj[n])).all(|m| 300 < f - m.moved_at.min(f));
                 if RIDE_WAIT <= f - since || still {
                     self.log.push(serde_json::json!({"update": f, "ride_timeout": [wa, wb]}));
                     self.blocked.insert((self.nav.place(a), self.nav.place(b)));
@@ -2421,7 +2472,18 @@ impl Bot {
             self.ride_wait = None;
         }
         let target = match (self.path.get(self.at), self.goal) {
-            (Some(&n), _) => Some(self.nav.live(g, n)),
+            // A step up next: aim past its top, so the player reaches it
+            // moving (see run_ups).
+            (Some(&n), _) => {
+                let w = self.nav.live(g, n);
+                match self.at.checked_sub(1).and_then(|i| self.path.get(i)) {
+                    Some(&a) if 1.0 < w[1] - self.nav.live(g, a)[1] => {
+                        let v = self.nav.live(g, a);
+                        Some([2.0 * w[0] - v[0], w[1], 2.0 * w[2] - v[2]])
+                    }
+                    _ => Some(w),
+                }
+            }
             // On a stand-on trigger's object: stay at the path's end.
             (None, Some(Goal::Item(s))) if item_kind(g, s).0 == 5 && g.items.records[s].u16_(0xf4) & 0x100 != 0 => self.path.last().map(|&n| self.nav.pts[n]),
             (None, Some(Goal::Item(s))) => Some(g.items.records[s].v3(0x40)),

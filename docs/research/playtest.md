@@ -723,6 +723,31 @@ GDL_DEBUG_CAMERA):
     contact; a turbo swing facing it from 3.15 units (j3strike-v4, update
     31,992, action 0x56) did not touch it either — whether +0x880 held
     another item then is not checked.
+  - D3's bridge pieces against the reference (WARPED: player 0 written onto
+    pads 50/366 at (−129.9, 59.3, −5.2) in w4l3-start-v1, the reference
+    relaunched with the multitap the capture was made with — without it
+    the game holds on "A multitap(PS2) has been removed"; then Down held,
+    ref-d3climb-down-v5): the player rides object 463 from 59.3 to 69.05,
+    steps up to 70.2 and stops at (−133.4, 70.2, −13.9) — native with
+    d-pad mask 8 from the same teleport (d3climb-m-8) stops at the same
+    point. Chained warps (captures w4l3-climb-b/c/d-v1) are INVALID: the
+    player stood on a moving object, and reference_warp.py writes the
+    node's local translation as world (positions doubled, (−261, 140,
+    −17)). Natively the pads ride on the pieces (50 lifts pad 49 to 71.3,
+    49 lifts 48 to 73.0, 48 lifts 47 to 74.5, 47 lifts 354 to 75.8;
+    d3pads-v1), and a moving player climbs the whole staircase: holds of
+    mask a (2|8) then 6 (2|4) from the teleport press 49, 48, 47 and 354
+    and reach (−104.5, 76.3, −12.9) (d3dir2-6, crossing 71.9 → 73.4 near
+    x −122 heading +x). The bot stalls there because it arrives at each
+    step slowing for its waypoint. The b22-era binary climbed it
+    (d3-b22bin-v1, secret exit 0xc01 at update 55,840); the native
+    dyngrid (d360160) added the pieces to the wall test since.
+  - Run-ups (c52): the steering target for a step up (over a unit) lies
+    past the step's top, and a stuck step up is run at again three times
+    (15 updates' back-off) before its edge is blocked. b73 (c52): D3 ends
+    in both tries — delay 0 by the secret exit (wave 0xc01) at update
+    32,207, delay 149 by the regular exit at 43,203 (pads 50 49 48 47 and
+    354 by updates 12,245 / 13,667; 10 and 17 run-ups).
   - Chain t35 (c47, from t34's I3 end): I4 (29,560), I5 (boss), J1, J2 end;
     J3 not (search progress 9); t36 (c49) runs J3 onward.
   - Without the assist only (legitimate play): stuck with a foe within 10

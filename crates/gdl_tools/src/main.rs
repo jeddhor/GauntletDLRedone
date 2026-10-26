@@ -3929,6 +3929,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                             }
                             v["explain"] = serde_json::json!(out);
                         }
+                        if let Some(bx) = opts.get("explain_walks") {
+                            let v4: Vec<f32> = bx.split(',').map(str::parse).collect::<Result<_, _>>()?;
+                            if v4.len() == 5 {
+                                v["explain_walks"] = bot::explain_walks(&b.nav, &game, [v4[0], v4[1]], [v4[2], v4[3]], v4[4]);
+                            }
+                        }
                         if let Some(list) = opts.get("explain_items") {
                             let slots: Vec<usize> = list.split(',').map(str::parse).collect::<Result<_, _>>()?;
                             v["explain_items"] = serde_json::json!(slots.iter().map(|&s| bot::explain_item(&b.nav, &game, s)).collect::<Vec<_>>());
