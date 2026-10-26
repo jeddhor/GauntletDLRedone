@@ -57,13 +57,30 @@ def main():
         g = dict(line.split('=', 1) for line in xdo('getwindowgeometry', '--shell', w).splitlines() if '=' in line)
         return int(g['X']), int(g['Y']), int(g['X']) + int(g['WIDTH']), int(g['Y']) + int(g['HEIGHT'])
     rx0, ry0, rx1, ry1 = rect(render[0])
+    covering = []
     for w in xdo('search', '--onlyvisible', '--name', '.').split():
         if w in windows or not w.isdigit():
             continue
         x0, y0, x1, y1 = rect(w)
         if x0 < rx1 and rx0 < x1 and y0 < ry1 and ry0 < y1 and 1 < x1 - x0 and 1 < y1 - y0:
-            raise ValueError(f'window {w} ({xdo("getwindowname", w).strip()}) covers the reference render window')
+            covering.append(int(w))
+    # Another window over it (e.g. a gdl_play window left on the display):
+    # raise the reference's own top-level windows (Xvfb has no window
+    # manager), then require each of them above every covering window in
+    # the root's stacking order (xwininfo lists the top-most first).
+    def stacking():
+        out = subprocess.run(['xwininfo', '-root', '-children'], env=env, check=True, capture_output=True, text=True, timeout=5).stdout
+        return [int(line.split()[0], 16) for line in out.splitlines() if line.strip().startswith('0x')]
+    own = [w for w in stacking() if str(w) in windows]
+    for w in reversed(own):
+        xdo('windowraise', str(w))
     xdo('windowraise', render[0])
+    if covering:
+        order = stacking()
+        top = [order.index(w) for w in own if w in order]
+        for w in covering:
+            if w in order and (not top or order.index(w) < max(top)):
+                raise ValueError(f'window {w} ({xdo("getwindowname", str(w)).strip()}) stays above the reference render window')
     xdo('windowfocus', '--sync', render[0])
     held = []
     with socket.socket(socket.AF_UNIX) as connection:

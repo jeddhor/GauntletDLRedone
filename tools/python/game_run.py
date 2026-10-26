@@ -26,6 +26,16 @@ GAME_START = 'private/reference/start-states/poison-fields-game-v6.json'
 SIM_START = 'private/reference/start-states/poison-fields-sor-v2.json'
 
 
+CLASS_TAGS = ['WAR', 'VAL', 'WIZ', 'ARC', 'DWF', 'KNI', 'SOR', 'JES', 'MIN', 'FAL', 'JAC', 'TIG', 'OGR', 'UNI', 'MED', 'HYE', 'SUM']
+COLOUR_TAGS = ['YEL', 'BLU', 'RED', 'GRE']
+
+
+def player0_class(start):
+    """Player 0's class (+0xc) and colour (+4) in a start state."""
+    rec = bytes.fromhex(json.loads(pathlib.Path(start).read_text())['players'][0][:0x20])
+    return struct.unpack_from('<I', rec, 0xc)[0], struct.unpack_from('<I', rec, 4)[0]
+
+
 def level_index(wdata, code):
     import struct
     directory, count = struct.unpack_from('<II', wdata, 0)
@@ -126,6 +136,7 @@ def main():
     ap.add_argument('--turbo', help='DEBUG: player 0 turbo (+0x800)')
     ap.add_argument('--front', action='store_true', help='DEBUG: player 1 stands 2 ahead of player 0 (with --players 2)')
     ap.add_argument('--flyby', action='store_true', help='the attract flyby on this level (no players; old camera)')
+    ap.add_argument('--new-character', help='with --next-level: player 0 a new character of class CLS[:COLOUR] (e.g. WAR:YEL) as the select screen makes one — a new game with another class')
     ap.add_argument('--difficulty', type=int, choices=(0, 1, 2), help='Game Options difficulty: 0 Easy, 1 Medium (the fixture\'s), 2 Hard (a game setting, not DEBUG)')
     ap.add_argument('--bot', action='store_true', help='with --pads: the traversal bot drives port 0 (gdl_tools bot.rs; health assist labelled DEBUG)')
     ap.add_argument('--spawn', help='DEBUG: generate_enemy TYPE:LEVEL:AI:UPDATE[:DX:DZ[:DY]] beside player 0 (DY: floor probe height)')
@@ -157,10 +168,23 @@ def main():
     # LoadEnemy loop, GetEnemyDir by the slot subtype).
     from run_play import level_monsters  # noqa: E402
     monsters = level_monsters(level, known)
-    ia, wp, pw, clips, rom, pdata, *mons = resolve([items, 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2', 'PLAYERS/SOR/ANIM/ANIM.PS2',
-                                                    'AUDIO/AUDATPS2.ROM', 'PDATA/SOR.WAD'] + [f'{d}/ANIM.PS2' for _, _, d in monsters])
+    # Player 0's class packages (gdl_play character_assets: the base class's
+    # clips and SFX<colour>, PDATA/<class>.WAD): from --new-character, else
+    # the start state's player 0 record (+0xc class, +4 colour).
+    cls, col = player0_class(a.start or GAME_START)
+    if a.new_character:
+        tag, _, colour = a.new_character.upper().partition(':')
+        cls, col = CLASS_TAGS.index(tag), COLOUR_TAGS.index(colour or 'YEL')
+    base = CLASS_TAGS[cls if cls < 8 else cls - 8]
+    ia, wp, pw, clips, rom, pdata, sfx_pkg, *mons = resolve([items, 'WEAPONS/ANIM.PS2', 'POWERUPS/ANIM.PS2', f'PLAYERS/{base}/ANIM/ANIM.PS2',
+                                                             'AUDIO/AUDATPS2.ROM', f'PDATA/{CLASS_TAGS[cls]}.WAD', f'PLAYERS/{base}/SFX{COLOUR_TAGS[col]}/ANIM.PS2']
+                                                            + [f'{d}/ANIM.PS2' for _, _, d in monsters])
     cmd = [TOOLS, 'game-run', str(w), str(wd), str(index), str(ELF), a.start or GAME_START, str(ia),
            str(a.frames), a.report, f'weapons={wp}', f'powerups={pw}', f'rom={rom}', f'pdata={pdata}']
+    if a.new_character:
+        if not a.next_level:
+            raise SystemExit('--new-character needs --next-level')
+        cmd += [f'new_character={cls}:{col}', 'pdatas=' + ','.join(str(x) for x in resolve([f'PDATA/{t}.WAD' for t in CLASS_TAGS[:16]]))]
     cmd += [f'{t}={path}:{p}' for (t, p, _), path in zip(monsters, mons)]
     [text] = resolve(['TEXT/ENGLISH.ROM'])
     cmd += [f'text={text}']
@@ -184,8 +208,7 @@ def main():
     if a.script:
         cmd += [f'sim={SIM_START}', f'clips={clips}', f'script={a.script}']
     if a.pads:
-        [sfx] = resolve(['PLAYERS/SOR/SFXYEL/ANIM.PS2'])
-        cmd += [f'clips={clips}', f'pads={a.pads}', f'sfx={sfx}']
+        cmd += [f'clips={clips}', f'pads={a.pads}', f'sfx={sfx_pkg}']
         if a.bot:
             cmd += [f"bot={os.environ.get('GDL_BOT', '1')}"]
             # Route hints (tools/bot-routes/<W><L>.json); GDL_BOT_HINTS=0 runs

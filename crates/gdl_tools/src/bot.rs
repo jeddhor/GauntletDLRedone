@@ -47,6 +47,9 @@ const STEP_MAX: f32 = 3.0;
 /// bottom, set when a bot is made: steps and drops of the graph are walked
 /// with the game's own displacement (walk_reaches).
 static PLAYER_DIMS: std::sync::OnceLock<(f32, f32, f32)> = std::sync::OnceLock::new();
+/// Without the health assist, steering keeps off dormant statues and
+/// live hazards (steer); set at each Bot::step.
+static AVOID_CONTACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether a player walking from floor point `a` towards `b` gets there:
 /// PlayerMotion's static displacement (player_collision::player_displacement:
@@ -953,6 +956,145 @@ fn strike_reach(g: &Game, s: usize) -> Option<f32> {
     (trigger || treasure).then(|| 2.0 * player_radius() + trigger_touch(g, s) - 0.5)
 }
 
+/// Without the assist: the stick direction (dx, dz) turned by the least of
+/// ±30°, ±60°, ±90°, ±120° that keeps the points 0.5, 1.0 and 1.5 units
+/// ahead out of contact with every dormant statue (kind 4, shown, +0xf8
+/// bit 0 clear: contact or a hit wakes it, and G2's KNI statues' creatures
+/// hit for 29–39 from 6–20 units — 290–540 of the 850–960 health each
+/// Easy G2 try lost, sg2e) and every live hazard (kind 8 in state 2 or 4
+/// with +0xd8 bit 0, as PlayerSkipItem leaves them); contact = the player's
+/// radius + the item's reach (+0xc) + 0.4. Unchanged when already in
+/// contact or when no turn helps. Path costs keep the routes off them; this
+/// covers stepping away from foes, back-offs and corner cutting (sg2e-d541:
+/// statues 113 and 114 passed at 1.0 units before the first burst).
+fn keep_off(g: &Game, p: V3, dx: f32, dz: f32) -> (f32, f32) {
+    let l = dx.hypot(dz);
+    if l < 1e-3 {
+        return (dx, dz);
+    }
+    let rad = player_radius();
+    let near: Vec<(V3, f32)> = (0..g.items.records.len())
+        .filter_map(|s| {
+            let r = &g.items.records[s];
+            if !r.active() || r.u8_(0xe1) != 0 {
+                return None;
+            }
+            let (k, _) = item_kind(g, s);
+            let live = match k {
+                4 => r.u32_(0xf8) & 1 == 0 && r.u16_(0xd8) & 1 == 0,
+                8 => matches!(r.i8_(0xdc), 2 | 4) && r.u16_(0xd8) & 1 != 0,
+                _ => false,
+            };
+            let q = r.v3(0x40);
+            let c = rad + g.items.definitions[r.definition()].f32_(0xc).clamp(0.0, 4.0) + 0.4;
+            (live && dist_xz(q, p) < c + 2.0 && (q[1] - p[1]).abs() < 3.0).then_some((q, c))
+        })
+        .collect();
+    if near.is_empty() || near.iter().any(|&(q, c)| dist_xz(q, p) < c) {
+        return (dx, dz);
+    }
+    let safe = |a: f32| {
+        let (u, v) = (dx / l, dz / l);
+        let (s, c0) = a.sin_cos();
+        let (ux, uz) = (u * c0 + v * s, -u * s + v * c0);
+        [0.5, 1.0, 1.5].iter().all(|&k| near.iter().all(|&(q, c)| c <= dist_xz([p[0] + ux * k, p[1], p[2] + uz * k], q)))
+            .then_some((ux * l, uz * l))
+    };
+    for deg in [0.0f32, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0, 120.0, -120.0] {
+        if let Some(d) = safe(deg.to_radians()) {
+            return d;
+        }
+    }
+    (dx, dz)
+}
+
+/// The absolute difference of two angles (radians, at most π).
+fn angle_diff(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(2.0 * std::f32::consts::PI);
+    d.min(2.0 * std::f32::consts::PI - d)
+}
+
+/// Whether the attack probe facing `w` (atan2 of x over z) from `p` touches
+/// item `s`: PlayerMotion probes PlayerCollideItems at the position + 2
+/// radii along the facing; item_coll_sub takes the probe within radius +
+/// reach of the item's +0x60 in x/z and, for box shape 3, within radius +
+/// the definition's +0x14/+0x18 along the item's rows +0x10/+0x30 (J3's 502:
+/// reach 0.7, half extents 0.5 — the probe within 2.0 of it on both axes).
+/// Each bound less `margin`; the other shapes as the circle (approximate).
+fn probe_touches(g: &Game, s: usize, p: V3, w: f32, margin: f32) -> bool {
+    let r = &g.items.records[s];
+    let d = &g.items.definitions[r.definition()];
+    let rad = player_radius();
+    let c = r.v3(0x60);
+    let e = [p[0] + 2.0 * rad * w.sin() - c[0], p[2] + 2.0 * rad * w.cos() - c[2]];
+    if trigger_touch(g, s) - margin < e[0].hypot(e[1]) {
+        return false;
+    }
+    let circle = d.i16_(8) != 3 || (item_kind(g, s).0 == 5 && (0.0 < r.f32_(0xfc) || d.subtype() == 0x1b));
+    let (m0, m2) = (r.v3(0x10), r.v3(0x30));
+    circle || ((e[0] * m0[0] + e[1] * m0[2]).abs() <= rad + d.f32_(0x14) - margin && (e[0] * m2[0] + e[1] * m2[2]).abs() <= rad + d.f32_(0x18) - margin)
+}
+
+/// The nearest enemy within melee reach with attack held, by PlayerMotion's
+/// measure (PlayerGetTarget/closest_enemy: +0x70 to the enemy's +0x60 less
+/// its width +0x24c, state 1 or 6; melee while that is under radius + 1 +
+/// the held-attack extra 1), less a 0.2 margin: its +0x60.
+fn melee_foe(g: &Game, p: V3) -> Option<V3> {
+    use gdl_core::game::enemies::e;
+    let r = &g.players[0];
+    let o = r.v3(0x70);
+    let reach = r.f32_(0x828) + 2.0 - 0.2;
+    g.enemies
+        .iter()
+        .filter(|en| matches!(en.i32_(e::STATE), 1 | 6) && 0.0 < en.f32_(e::HEALTH) && !matches!(en.i32_(e::TYPE), 0x1e | 0x1f))
+        .map(|en| {
+            let c = en.v3(e::COLLISION);
+            let v = [c[0] - o[0], c[1] - o[1], c[2] - o[2]];
+            ((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt() - en.f32_(e::WIDTH), v[1], c)
+        })
+        .filter(|&(d, dy, c)| d < reach && dy.abs() <= 10.0 && 0.01 < dist_xz(c, p))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, _, c)| c)
+}
+
+/// A facing from which an attack swings in melee and its probe touches item
+/// `s`, the one nearest `cur` (2° steps), or None. PlayerMotion's attack
+/// (code 0xf) swings in melee only with a target within the player's radius
+/// + 1 (closest_enemy: the distance from +0x70 to the enemy's +0x60 less its
+/// width +0x24c, the enemy in state 1 or 6, inside the cone 0.707 + the
+/// distance × 0.293/30 of the facing; target_cone_mode 0: 0.5), else it
+/// throws; the swing does not turn the player (+0x8dc picks a side or back
+/// swing), so the probe goes along the facing, not toward the foe. Margins:
+/// 0.1 off the reach, 0.05 on the cone, 0.25 off the probe's bounds.
+fn melee_facing(g: &Game, s: usize, p: V3, cur: f32) -> Option<f32> {
+    use gdl_core::game::enemies::e;
+    let origin = g.players[0].v3(0x70);
+    let reach = player_radius() + 1.0 - 0.1;
+    let cone = if 0 < g.target_cone_mode { f32::from_bits(0x3f34_fdf4) } else { 0.5 };
+    let foes: Vec<([f32; 2], f32)> = g
+        .enemies
+        .iter()
+        .filter(|en| matches!(en.i32_(e::STATE), 1 | 6) && !matches!(en.i32_(e::TYPE), 0x1e | 0x1f) && 0.0 < en.f32_(e::HEALTH))
+        .filter_map(|en| {
+            let c = en.v3(e::COLLISION);
+            let v = [c[0] - origin[0], c[1] - origin[1], c[2] - origin[2]];
+            let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            let d = l - en.f32_(e::WIDTH);
+            (v[1].abs() <= 10.0 && d < reach && 0.0 < l).then(|| {
+                let h = v[0].hypot(v[2]).max(1e-6);
+                ([v[0] / h, v[2] / h], cone + d.max(0.0) * (1.0 - cone) / 30.0 + 0.05)
+            })
+        })
+        .collect();
+    if foes.is_empty() {
+        return None;
+    }
+    (0..180)
+        .map(|k| (k as f32 * 2.0 - 180.0).to_radians())
+        .filter(|&w| foes.iter().any(|(u, c)| u[0] * w.sin() + u[1] * w.cos() >= *c) && probe_touches(g, s, p, w, 0.25))
+        .min_by(|&a, &b| angle_diff(a, cur).total_cmp(&angle_diff(b, cur)))
+}
+
 pub struct Bot {
     pub nav: Nav,
     collision_at_build: u64,
@@ -1107,8 +1249,14 @@ pub struct Bot {
     strike: Option<(usize, usize)>,
     /// Run-ups at each step-up edge (by place) before it is blocked.
     run_ups: HashMap<(Place, Place), u32>,
-    /// The strike's lure point (see the strike routine).
-    strike_off: Option<V3>,
+    /// The strike's melee swing: the stick released until this update.
+    melee_until: usize,
+    /// Melee swings started by the strike (the first 40 logged).
+    melee_swings: usize,
+    /// Strike foe diagnostics logged (at most 200).
+    strike_logs: usize,
+    /// Attack-branch diagnostics logged (tag).
+    attack_tags: usize,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1262,7 +1410,10 @@ impl Bot {
             last_health: f32::NAN,
             strike: None,
             run_ups: HashMap::new(),
-            strike_off: None,
+            melee_until: 0,
+            melee_swings: 0,
+            strike_logs: 0,
+            attack_tags: 0,
         }
     }
 
@@ -1927,6 +2078,7 @@ impl Bot {
 
     /// Port 0 for update `f`; also applies the health assist.
     pub fn step(&mut self, f: usize, g: &mut Game) -> PadStatus {
+        AVOID_CONTACT.store(!self.assist_enabled, std::sync::atomic::Ordering::Relaxed);
         let mut pad = PadStatus { connected: true, analog: true, has_stick: true, ..Default::default() };
         for e in 4..8 {
             pad.entries[e] = [3, 0];
@@ -2541,62 +2693,102 @@ impl Bot {
                 let since = match self.strike {
                     Some((t, since)) if t == s => since,
                     _ => {
-                        self.strike_off = None;
                         self.log.push(serde_json::json!({"update": f, "strike": s, "from": p, "d": d}));
                         f
                     }
                 };
                 self.strike = Some((s, since));
-                // Lure phase after STRIKE_FOR: some classes (the Sorceress)
-                // swing in melee — the only attack that probes — only with a
-                // target within their radius + 1 in front; a strong
-                // character's throws kill every foe before it comes that near
-                // (J3's 502 from the chain's J2 end: none of 12 tries). Back
-                // off to 4.5 units from the trigger, keep facing it and attack
-                // only when a foe within 3.5 units lies within 60° of it, so
-                // the swing's probe (2 radii ahead) lands by the trigger
-                // (b70-263 touched 502 from 5.0 units with a foe near).
-                if STRIKE_FOR <= f - since && f - since < STRIKE_FOR + LURE_FOR {
+                if f - since < STRIKE_FOR + LURE_FOR {
                     self.progress = (f, p);
                     self.dwell = (f, p);
-                    let d0 = dist_xz(p, q).max(0.1);
-                    let off = *self.strike_off.get_or_insert([q[0] + (p[0] - q[0]) / d0 * 4.5, p[1], q[2] + (p[2] - q[2]) / d0 * 4.5]);
-                    let to_q = [q[0] - p[0], q[2] - p[2]];
-                    let lq = to_q[0].hypot(to_q[1]).max(0.1);
-                    let foe_ahead = g.enemies.iter().filter(|e| e.i32_(0xc8) != 0 && 0.0 < e.f32_(0x214)).map(|e| e.v3(0x40)).chain(g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40))).any(|e| {
-                        let v = [e[0] - p[0], e[2] - p[2]];
-                        let lv = v[0].hypot(v[1]);
-                        // The game's test is radius + 1 against the distance
-                        // less the foe's width, its cone 60° (tfj3c-d0: type-22
-                        // foes 2.8 units off hit the bot 79 times while this
-                        // waited for 2.5).
-                        lv < 3.5 && 0.0 < lv && (v[0] * to_q[0] + v[1] * to_q[1]) / (lv * lq) > 0.5
-                    });
-                    if foe_ahead {
-                        pad.press(0xd);
+                    // A melee swing under way: the stick stays released (the
+                    // probe needs it at the swing's event), attack held for
+                    // 20 of 30 updates.
+                    if f < self.melee_until {
+                        if f + 10 < self.melee_until {
+                            pad.press(0xd);
+                        }
                         return pad;
                     }
-                    // Back off for at most 90 updates (a wall behind may stop
-                    // it short: tfj3b-d0 held at 3.78 units, steering away
-                    // and so facing away for 2400 updates), then face the
-                    // trigger with one-update taps every 20 updates.
-                    let lure_t = f - since - STRIKE_FOR;
-                    if lure_t < 90 && 0.8 < dist_xz(p, off) {
-                        return Self::steer(pad, g, p, off);
-                    }
-                    // Any stick input moves the player, so turn only when the
-                    // facing (PlayerMotion's atan2 of matrix row +0x40/+0x48,
-                    // the probe's direction) is off by over 0.3 rad (c58/c59:
-                    // the taps walked the bot back to the wall, leaving no room
-                    // for a foe in front).
+                    // A foe within melee reach: turn to a facing whose cone
+                    // holds it and whose probe lands on the trigger, then
+                    // attack with the stick released (melee_facing). The
+                    // Sorceress swings — the only attack that probes — only
+                    // so (J3's 502 from the chain's J2 end: 0 of 30 tries
+                    // facing the trigger; tfj3e: no melee request in any strike
+                    // window, the foes beside or behind). The facing is
+                    // PlayerMotion's atan2 of matrix row +0x40/+0x48.
                     let r = &g.players[0];
                     let facing = r.f32_(0x40).atan2(r.f32_(0x48));
-                    let want = to_q[0].atan2(to_q[1]);
-                    let mut diff = (facing - want).abs();
-                    if std::f32::consts::PI < diff {
-                        diff = 2.0 * std::f32::consts::PI - diff;
+                    // DIAGNOSTIC: the foes within 4 units every 60 updates
+                    // (closest_enemy's distance less the width, the angle
+                    // from the trigger's direction in degrees, the type).
+                    if (f - since).is_multiple_of(60) && self.strike_logs < 200 {
+                        use gdl_core::game::enemies::e;
+                        let o = r.v3(0x70);
+                        let qa = (q[0] - p[0]).atan2(q[2] - p[2]);
+                        let near: Vec<_> = g
+                            .enemies
+                            .iter()
+                            .filter(|en| en.i32_(e::STATE) != 0 && 0.0 < en.f32_(e::HEALTH))
+                            .filter_map(|en| {
+                                let c = en.v3(e::COLLISION);
+                                let v = [c[0] - o[0], c[1] - o[1], c[2] - o[2]];
+                                let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                                let a = (v[0].atan2(v[2]) - qa + std::f32::consts::PI).rem_euclid(2.0 * std::f32::consts::PI) - std::f32::consts::PI;
+                                (l < 4.0).then(|| serde_json::json!([(l * 100.0).round() / 100.0, en.f32_(e::WIDTH), a.to_degrees().round(), en.i32_(e::TYPE), en.i32_(e::STATE)]))
+                            })
+                            .collect();
+                        if !near.is_empty() {
+                            self.strike_logs += 1;
+                            self.log.push(serde_json::json!({"update": f, "strike_foes": near, "facing_rel": ((facing - qa + std::f32::consts::PI).rem_euclid(2.0 * std::f32::consts::PI) - std::f32::consts::PI).to_degrees().round(), "d": dist_xz(p, q)}));
+                        }
                     }
-                    if 0.3 < diff && lure_t % 10 == 0 {
+                    // A foe within melee reach at any angle while the facing's
+                    // probe lands on the trigger: flick the stick at the foe
+                    // for one update with attack pressed, then release it.
+                    // PlayerMotion's targeting tests the cone along the
+                    // stick's direction (want), and the swing does not turn
+                    // the player (+0x8dc picks a side or back swing); one
+                    // update turns the facing by at most spf × 5π × +0x968
+                    // (about 30°), inside the probe's window (tfj3g: type-24
+                    // foes 3.9 units off, width 2.0, at 112°–178° from the
+                    // trigger's direction, held still for hundreds of
+                    // updates; no single facing covered both).
+                    if probe_touches(g, s, p, facing, 0.3)
+                        && let Some(t) = melee_foe(g, p)
+                    {
+                        self.melee_until = f + 30;
+                        self.melee_swings += 1;
+                        if self.melee_swings <= 40 {
+                            self.log.push(serde_json::json!({"update": f, "melee_at": s, "from": p, "facing": facing, "flick": t}));
+                        }
+                        pad.press(0xd);
+                        return Self::steer(pad, g, p, t);
+                    }
+                    if let Some(w) = melee_facing(g, s, p, facing) {
+                        if angle_diff(facing, w) <= 0.1 {
+                            self.melee_until = f + 30;
+                            self.melee_swings += 1;
+                            if self.melee_swings <= 40 {
+                                self.log.push(serde_json::json!({"update": f, "melee_at": s, "from": p, "facing": facing}));
+                            }
+                            pad.press(0xd);
+                            return pad;
+                        }
+                        return Self::steer(pad, g, p, [p[0] + 3.0 * w.sin(), p[1], p[2] + 3.0 * w.cos()]);
+                    }
+                }
+                // Lure phase after STRIKE_FOR: stand and face the trigger
+                // (one-update taps when off by over 0.3 rad — any stick input
+                // moves the player; c58/c59), waiting for a foe to come
+                // within melee reach (above).
+                if STRIKE_FOR <= f - since && f - since < STRIKE_FOR + LURE_FOR {
+                    let lure_t = f - since - STRIKE_FOR;
+                    let r = &g.players[0];
+                    let facing = r.f32_(0x40).atan2(r.f32_(0x48));
+                    let want = (q[0] - p[0]).atan2(q[2] - p[2]);
+                    if 0.3 < angle_diff(facing, want) && lure_t % 10 == 0 {
                         return Self::steer(pad, g, p, q);
                     }
                     return pad;
@@ -2668,6 +2860,7 @@ impl Bot {
         // campaign (level 25 by K2) a crowd by K2's barrels held the bot.
         let recent = self.log.iter().rev().take_while(|e| e["update"].as_u64().is_some_and(|u| u + 2000 >= f as u64)).filter(|e| e.get("stuck").is_some()).count();
         let ranged = !self.assist_enabled || 5 <= recent;
+        let melee_class = !self.assist_enabled && g.players[0].f32_(0x120) < g.players[0].f32_(0x118);
         // A potion (circle, entry 0xb: the magic blast) against a crowd that
         // holds the bot (K2 in the campaign: level-scaled LOW creatures
         // under the thrown weapons' height kept the corridor by generator 333
@@ -2700,14 +2893,21 @@ impl Bot {
         // spawns from health 383 to 0 in 1800 updates). One whose health
         // (+0xe4) has not dropped in 300 updates of fire, or with armour −1
         // (+0xe3), is left alone.
-        if !self.assist_enabled && Self::nearest_foe(g, p, 2.0).is_none() {
+        // A melee class fights the foes first (wg1c: the Warrior throwing at
+        // generator 123 while its knights struck from 4 units).
+        if !self.assist_enabled && Self::nearest_foe(g, p, if melee_class { ATTACK_RANGE } else { 2.0 }).is_none() {
             // Also up to GEN_RANGE along a clear line (lg8's fastest G2
             // death fought the knights of generators 123 and 125, 11–23
             // units off, from health 700 to 370 by update 1800).
             let mut gens: Vec<usize> = (0..g.items.records.len())
                 .filter(|&s| {
                     let r = &g.items.records[s];
-                    r.active() && item_kind(g, s).0 == 3 && 0 <= r.i8_(0xe3) && !self.gen_skip.contains(&s) && dist_xz(r.v3(0x40), p) < GEN_RANGE && (r.v3(0x40)[1] - p[1]).abs() < 3.0
+                    // Shown only (+0xe1 0): ProcessItems, closest_generator and
+                    // ItemCollSub skip the others — a generator in state 2
+                    // (shown once off screen) stays hidden while the bot
+                    // stands at it (wg1g: the Warrior beside generator 170,
+                    // +0xe1 2, PlayerGetTarget finding nothing).
+                    r.active() && r.u8_(0xe1) == 0 && item_kind(g, s).0 == 3 && 0 <= r.i8_(0xe3) && !self.gen_skip.contains(&s) && dist_xz(r.v3(0x40), p) < GEN_RANGE && (r.v3(0x40)[1] - p[1]).abs() < 3.0
                 })
                 .collect();
             gens.sort_by(|&a, &b| dist_xz(g.items.records[a].v3(0x40), p).total_cmp(&dist_xz(g.items.records[b].v3(0x40), p)));
@@ -2733,8 +2933,13 @@ impl Bot {
                 } else if 300 <= f - e.0 {
                     self.gen_skip.insert(s);
                 }
-                pad.press(0xd);
-                return Self::steer(pad, g, p, g.items.records[s].v3(0x40));
+                // A melee class walks up to it first (its throws are weak).
+                let gq = g.items.records[s].v3(0x40);
+                if !melee_class || dist_xz(gq, p) < 3.0 {
+                    pad.press(0xd);
+                    self.tag(f, "generator");
+                }
+                return Self::steer(pad, g, p, gq);
             }
         }
         let crowd = Self::nearest_foe(g, p, 6.0).is_some();
@@ -2744,6 +2949,48 @@ impl Bot {
             self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18)}));
             pad.press(0xb);
             return pad;
+        }
+        // Without the assist, a class whose melee damage (+0x118) exceeds
+        // its throw's (+0x120: the Warrior 14 against 10.4, the Dwarf 14
+        // against 10.4; the Sorceress 8 against 22.4) closes in and swings:
+        // attack (a melee swing with a target within radius + 1 in front,
+        // PlayerMotion's attack request) only within 2.6 units of the
+        // nearest foe, walking at it otherwise, the turbo attack (its melee
+        // triples the damage) every 40 updates at 40 or more; no stepping
+        // away (lgw1: the Warrior kiting from knights threw 247 times and
+        // swung 33, dead in G1 by update 8,085 in all six tries).
+        if melee_class && let Some((_, at)) = Self::nearest_foe(g, p, ATTACK_RANGE) {
+            // In reach by the game's measure (closest_enemy: +0x70 to the
+            // enemy's +0x60 less its width +0x24c, under radius + 1; a
+            // knight's body stops the player about 3 units off in x/z, so an
+            // x/z test never fired: wg1b) or a critter within 3.5 units.
+            use gdl_core::game::enemies::e;
+            let r = &g.players[0];
+            let o = r.v3(0x70);
+            let reach = r.f32_(0x828) + 1.0 - 0.1;
+            let in_reach = g
+                .enemies
+                .iter()
+                .filter(|en| matches!(en.i32_(e::STATE), 1 | 6) && 0.0 < en.f32_(e::HEALTH) && !matches!(en.i32_(e::TYPE), 0x1e | 0x1f))
+                .map(|en| {
+                    let c = en.v3(e::COLLISION);
+                    let v = [c[0] - o[0], c[1] - o[1], c[2] - o[2]];
+                    ((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt() - en.f32_(e::WIDTH), c)
+                })
+                .filter(|(dg, _)| *dg < reach)
+                .min_by(|x, y| x.0.total_cmp(&y.0))
+                .map(|(_, c)| c)
+                .or_else(|| g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4) && dist_xz(c.rec.v3(0x40), p) < 3.5).map(|c| c.rec.v3(0x40)).next());
+            if let Some(t) = in_reach {
+                self.tag(f, "melee");
+                if 40.0 <= r.f32_(0x800) && f.is_multiple_of(40) {
+                    pad.press(0xc);
+                } else {
+                    pad.press(0xd);
+                }
+                return Self::steer(pad, g, p, t);
+            }
+            return Self::steer(pad, g, p, at);
         }
         let near = Self::nearest_foe(g, p, ATTACK_RANGE);
         let enemy = if ranged { near.or_else(|| Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE)) } else { near };
@@ -2783,11 +3030,13 @@ impl Bot {
             }
             Some((_, at)) => {
                 pad.press(0xd);
+                self.tag(f, "ranged");
                 Some(at)
             }
             None => {
                 if f < self.attack_until {
                     pad.press(0xd);
+                    self.tag(f, "stuck");
                     if let Some(at) = self.attack_at {
                         return Self::steer(pad, g, p, at);
                     }
@@ -2814,11 +3063,22 @@ impl Bot {
         enemies.chain(critters).filter(|(d, _)| *d < range).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
+    /// DIAGNOSTIC: which branch pressed attack (every 5th update, at most 600).
+    fn tag(&mut self, f: usize, name: &str) {
+        if f.is_multiple_of(5) && self.attack_tags < 600 {
+            self.attack_tags += 1;
+            self.log.push(serde_json::json!({"update": f, "atk": name}));
+        }
+    }
+
     /// The left stick toward `t`: PlayerMotion's heading is the camera yaw
     /// (atan2(camera_90, camera_98) + π) plus the stick angle
     /// (calc_analog_stick: atan2(left − right, down − up)).
     fn steer(mut pad: PadStatus, g: &Game, p: V3, t: V3) -> PadStatus {
-        let (dx, dz) = (t[0] - p[0], t[2] - p[2]);
+        let (mut dx, mut dz) = (t[0] - p[0], t[2] - p[2]);
+        if AVOID_CONTACT.load(std::sync::atomic::Ordering::Relaxed) {
+            (dx, dz) = keep_off(g, p, dx, dz);
+        }
         if 1e-3 < dx.abs() + dz.abs() {
             let cam = g.globals.camera_90.atan2(g.globals.camera_98) + std::f32::consts::PI;
             let a = dx.atan2(dz) - cam;

@@ -1928,8 +1928,41 @@ fn run() -> Result<(), Box<dyn Error>> {
             // CurLevel of the level entered (world= sets it for other realms).
             start.globals.cur_level = level as i32;
             let (cw, cl) = (start.globals.cur_world, start.globals.cur_level);
-            for h in start.players.iter_mut() {
+            // new_character=CLASS:COLOUR (with pdatas=, the 16 PDATA/<CLS>.WAD
+            // PDATs in CLASS_TAGS order): player 0 a new character as the
+            // select screen makes one (profile::new_character: new_player, the
+            // colour, change_player; profile-new-check equals a card the
+            // original wrote) — the start of a new game with another class.
+            // pdata=/clips=/sfx= must be that class's packages.
+            let fresh = match opts.get("new_character") {
+                Some(v) => {
+                    let (c, col) = v.split_once(':').ok_or("new_character=CLASS:COLOUR")?;
+                    let (class, colour): (u32, u8) = (c.parse()?, col.parse()?);
+                    let mut all = Vec::new();
+                    for path in opts.get("pdatas").ok_or("new_character needs pdatas=")?.split(',') {
+                        all.push(gdl_formats::pdata::PlayerData::parse(&bounded_read(Path::new(path), 1024 * 1024)?)?.pdat);
+                    }
+                    Some(profile::new_character(0, "BOT", class, colour, &profile::Pdats(all), &tables).map_err(|e| e.to_string())?)
+                }
+                None => None,
+            };
+            if fresh.is_some() {
+                // The class record from its PDAT, as gdl_play's class_data_of
+                // (the start state's is the fixture Sorceress's capture).
+                let c = gdl_core::game::pickups::ClassData::from_pdat(&pdat).map_err(|e| e.to_string())?;
+                match start.classes.get_mut(0) {
+                    Some(slot) => *slot = Some(c),
+                    None => start.classes.push(Some(c)),
+                }
+            }
+            for (k, h) in start.players.iter_mut().enumerate() {
                 let mut r = gdl_core::game::record::Record((0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16)).collect::<Result<_, _>>()?);
+                if let Some(n) = fresh.as_ref().filter(|_| k == 0) {
+                    if n.0.len() != r.0.len() {
+                        return Err("new_character: record size differs from the start state's".into());
+                    }
+                    r = n.clone();
+                }
                 if r.i32_(0xfc) == 0 {
                     continue;
                 }

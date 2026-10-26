@@ -60,6 +60,7 @@ def main():
     ap.add_argument('--loot', action='store_true', help='bot runs pick up nearby gold, food and potions (game_run.py --loot)')
     ap.add_argument('--shop-buy', help='chained starts: the Tower shop purchases (game_run.py --shop-buy, e.g. heal,potion)')
     ap.add_argument('--require', action='store_true', help='rune stones and legend items must be taken')
+    ap.add_argument('--new-character', help='without --start: the first level entered by a new character of class CLS[:COLOUR] (game_run.py --new-character, e.g. WAR:YEL)')
     ap.add_argument('--difficulty', type=int, choices=(0, 1, 2), help='Game Options difficulty for every level: 0 Easy, 1 Medium, 2 Hard (a game setting, game_run.py --difficulty)')
     a = ap.parse_args()
     if not a.tag.replace('-', '').isalnum():
@@ -88,6 +89,10 @@ def main():
             common += ['--start', start, '--next-level', '--tower-shop']
             if a.shop_buy:
                 common += ['--shop-buy', a.shop_buy]
+        elif a.new_character:
+            # A new game with another class: player 0 made as the select
+            # screen makes a new character, entering the first level.
+            common += ['--next-level', '--new-character', a.new_character]
         if a.legend_bosses and code in BOSSES:
             common += ['--legend']
         if a.no_assist:
@@ -180,6 +185,7 @@ def main():
     summary_path.write_text(json.dumps({'scope': 'DEBUG chained state-search runs (campaign_chain.py); the exit flow between levels is not simulated',
                                         'health_assist': not a.no_assist,
                                         'difficulty': a.difficulty,
+                                        'new_character': a.new_character,
                                         'levels': a.levels, 'steps': steps}, indent=1) + '\n')
     print(summary_path)
 

@@ -853,7 +853,76 @@ GDL_DEBUG_CAMERA):
     both builds from the fixture's own G1 start (level 1: c29 at 24,907,
     c44 at 64,386); lg1's four G1 exits (f94-era build, 2026-10-24) were
     the lucky end of a wide spread, not a better bot.
-
+- 2026-10-26 runs (c60–c63; J3 tries from tfull1's J2 end, delays 0, 61,
+  149, 263, 397 and 541, 300,000 updates each; DEBUG health assist):
+  - What the Sorceress's strike at 502 needs (instructions read, not a
+    reference test): the probe (PlayerCollideItems at the position + 2
+    radii along the facing, radius +0x828 1.5) touches a box-shape-3
+    TRIGGER2 within radius + reach (0.7) of its +0x60 and within radius +
+    half extent (+0x14/+0x18, 0.5) along its rows +0x10/+0x30 — for 502
+    the probe point within 2.0 of (64.66, 149.97) on both axes, so from
+    the bot's spot (64.7, 147.1) a facing within about 41° of the trigger.
+    A melee swing (the only Sorceress attack whose events pass the probe's
+    & 0xfe) needs a target: PlayerMotion's targeting stage tests the
+    enemies (closest_enemy: +0x70 to the enemy's +0x60 less its width
+    +0x24c, state 1 or 6, inside the cone 0.707 + distance × 0.293/30 —
+    target_cone_mode 0: 0.5) along `want`, the stick's direction, and
+    swings while that distance is under radius + 1 + extra (1 while attack
+    is held); the swing does not turn the player (+0x8dc picks the side
+    swings 0x2c/0x30 or the back swings 0x34/0x38), and the probe follows
+    the facing (atan2 of +0x40/+0x48). Triggers are not melee targets
+    (DamageItem kind 5 acts only on subtype 0x1f).
+  - c60 (lure 4.5 units off, attack with a foe within 3.5 units inside
+    60° of the trigger): no melee request (0x27) in any strike window of
+    the six tries (tfj3e), only throws (0x5c).
+  - c61 (melee_facing: a facing whose cone holds a foe within reach and
+    whose probe lands on the trigger, the turn by stick taps): no swing in
+    six tries (tfj3f). c62 diagnostics (tfj3g, foes within 4 units every
+    60 updates of a strike): type-24 foes 3.9 units off (width 2.0, so
+    1.9 by the game's measure, within reach) held still for hundreds of
+    updates at 112°–178° from the trigger's direction — behind the bot,
+    out of any facing that also probes the trigger.
+  - c63: with the facing on the trigger and a foe within reach at any
+    angle, the stick flicks at the foe for one update with attack pressed
+    (the targeting cone follows the stick), then is released for 30
+    updates with attack held (a facing turn is at most spf × 5π × +0x968
+    an update, about 30°, inside the probe's window). Batch tfj3h: five
+    of six tries touch 502 at the first flick or within a few (updates
+    9,827–87,292) and end J3 by the regular exit (item 125, exit state 5)
+    at updates 36,192 (delay 397), 41,613, 46,620, 101,600 and 108,379,
+    with 1–2 health assists (b70-263: 86); delay 61 never struck. The
+    chain's tail is rerun from tfj3h-d397's end (tfull2).
+- Hidden generators (bot fix, c63): the no-assist generator targets
+  included generators with +0xe1 2 (player-count items waiting to show
+  until off screen); ProcessItems, closest_generator and ItemCollSub skip
+  them, and one beside the bot stays hidden. wg1g: the Warrior stood at
+  G1's generator 170 (+0xe1 2) attacking — PlayerGetTarget on a clone
+  found no target, every attack a throw. Generator targets now need +0xe1
+  0 (item goals already did).
+- Another class for legitimate play (tooling, c63): game_run.py
+  --new-character CLS[:COLOUR] (with --next-level; campaign_chain.py
+  --new-character for the first level) makes player 0 a new character as
+  the select screen does (profile::new_character; class data from the
+  class's PDAT as gdl_play's class_data_of) and loads that class's clips,
+  SFX<colour> and PDATA; later chained runs take the class from the start
+  state's player 0 (+0xc class, +4 colour). Level-1 derived words
+  (+0x118 melee, +0x11c armour, +0x120 throw): Warrior 14 / 1.5 / 10.4,
+  Valkyrie 9.5 / 2.25 / 15.2, Wizard 8.75 / 0.75 / 22.4, Archer 8.75 /
+  1.0 / 15.2, Dwarf 14 / 1.75 / 10.4, Knight 10.25 / 2.25 / 14.0, Jester
+  8 / 1.0 / 16.4, Sorceress 8 / 0.75 / 22.4; health 500. Armour is taken
+  off each hit (ModifyDamage: d − armour).
+  - lgw1 (Warrior, new game, no assist, --loot --shop-buy heal,potion
+    --require): L1 ends (update 30,183); all six G1 tries die by update
+    8,085 (247 throws to 33 swings: the kiting rules keep knights 3–4 units
+    off). Melee tactics for a class whose melee beats its throw (no
+    assist: no stepping away; attack within reach by the game's measure,
+    walking at the foe otherwise; generators fought only with no foe within
+    5 units, struck from 3): wg1c–wg1i still die in G1 (4,965–12,180;
+    knights within 3–4 units 400–600 of 600–760 health lost; levels 2–3).
+  - The Sorceress, legitimate G2 from lg1's G1 end with the generator fix
+    (Medium, sg2a): five of six die (18,135–23,625); the sixth stands
+    unhurt at (−90, 0.9, −135) from update 10,000 to 200,000 (a route
+    problem, not a fight).
 
 ## State search (M14/M15 tooling, 2026-10-24)
 
