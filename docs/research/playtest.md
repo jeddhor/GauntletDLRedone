@@ -748,6 +748,21 @@ GDL_DEBUG_CAMERA):
     in both tries — delay 0 by the secret exit (wave 0xc01) at update
     32,207, delay 149 by the regular exit at 43,203 (pads 50 49 48 47 and
     354 by updates 12,245 / 13,667; 10 and 17 run-ups).
+  - J3 in the chain (t36, t37, and six more tries from t35's J2 end with
+    delays 700–1777, c49–c54): none touch 502. Its strip lies between two
+    reachable floors (z 147.75 and 152.25), walk_reaches false from both
+    (j3dbg2). The Sorceress (the tools' class) probes only with a melee
+    swing, which needs a target (foe, critter, generator) within her
+    radius + 1 (attack_request; PlayerGetTarget): her throws (0x5c/0x5f/
+    0x61, 0x5e/0x60/0x62 moving) and her turbo attack (0x56) raise no probe
+    event (& 0xfe), square (99) none for class 6 below +0x80c 2. b70-263's
+    touch came from (67.0, 145.5), 5.0 units off, when a foe was near.
+    Chain t38 (c54, from t35's J2 end; J3 skipped, labelled DEBUG): J6
+    (120,030), J4 (65,322) and J5's boss (7,756) end.
+  - Ride waits are timed per edge (waiting and crossing together, 1200
+    updates at most): J6's bot held at one bobbing floor from update
+    30,000 to 300,000 in b74 (c52), the per-wait timer restarting each time
+    the step came within range.
   - Chain t35 (c47, from t34's I3 end): I4 (29,560), I5 (boss), J1, J2 end;
     J3 not (search progress 9); t36 (c49) runs J3 onward.
   - Without the assist only (legitimate play): stuck with a foe within 10

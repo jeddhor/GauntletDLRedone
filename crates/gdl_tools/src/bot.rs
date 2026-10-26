@@ -913,7 +913,9 @@ fn player_radius() -> f32 {
 fn trigger_touch(g: &Game, s: usize) -> f32 {
     let r = &g.items.records[s];
     let d = &g.items.definitions[r.definition()];
-    let reach = if 0.0 < r.f32_(0xfc) {
+    let reach = if item_kind(g, s).0 != 5 {
+        d.f32_(0xc)
+    } else if 0.0 < r.f32_(0xfc) {
         r.f32_(0xfc)
     } else if d.subtype() == 0x1b {
         2.0 * d.f32_(0xc)
@@ -930,10 +932,16 @@ fn trigger_touch(g: &Game, s: usize) -> f32 {
 /// trigger behind a wall within 2 radii + its contact distance (less 0.5)
 /// is touched by striking toward it (I4's trigger 534, three nodes behind
 /// wall 2644; J3's 502 behind wall 1512). Stand-on triggers (+0xf4 0x100)
-/// and shot switches (subtype 0x1f) excluded.
+/// and shot switches (subtype 0x1f) excluded; rune stones and legend items
+/// included (picked up by the probe).
 fn strike_reach(g: &Game, s: usize) -> Option<f32> {
     let r = &g.items.records[s];
-    (item_kind(g, s).0 == 5 && r.u16_(0xf4) & 0x100 == 0 && item_kind(g, s).1 != 0x1f).then(|| 2.0 * player_radius() + trigger_touch(g, s) - 0.5)
+    let trigger = item_kind(g, s).0 == 5 && r.u16_(0xf4) & 0x100 == 0 && item_kind(g, s).1 != 0x1f;
+    // Rune stones and legend items too: the probe's PlayerItemCollision picks
+    // them up (K1's rune 192, 3.8 units across a gap from the floor the bot
+    // reached, at its height; k1h-a-d149).
+    let treasure = matches!(item_kind(g, s), (1, 10) | (1, 13));
+    (trigger || treasure).then(|| 2.0 * player_radius() + trigger_touch(g, s) - 0.5)
 }
 
 pub struct Bot {
@@ -1077,7 +1085,7 @@ pub struct Bot {
     mover_candidates: Vec<usize>,
     mover_scan_at: usize,
     movers: HashMap<usize, MoverSeen>,
-    ride_wait: Option<usize>,
+    ride_wait: Option<((usize, usize), usize)>,
     /// Updates spent fighting in place while stuck (no assist), since the
     /// last progress.
     fight_hold: usize,
@@ -2431,10 +2439,16 @@ impl Bot {
             && self.nav.ride.contains(&(a, b))
         {
             let (wa, wb) = (self.nav.live(g, a), self.nav.live(g, b));
-            if (-RIDE_DROP..=RIDE_CLIMB).contains(&(wb[1] - p[1])) {
-                self.ride_wait = None;
-            } else {
-                let since = *self.ride_wait.get_or_insert(f);
+            // Timed per edge, waiting and crossing alike: a mover bobbing in
+            // and out of step range restarted a per-wait timer, and J6's bot
+            // held at one edge from update 30,000 to 300,000 (b74).
+            let since = match self.ride_wait {
+                Some((e, s)) if e == (a, b) => s,
+                _ => f,
+            };
+            self.ride_wait = Some(((a, b), since));
+            let in_range = (-RIDE_DROP..=RIDE_CLIMB).contains(&(wb[1] - p[1]));
+            if !in_range || 2 * RIDE_WAIT <= f - since {
                 // A mover standing still for 300 updates is not coming (a
                 // lift that moves only while stood on: K1's by (−71, 74),
                 // 31 units below the ledge, waited for 16 times in
@@ -2445,7 +2459,7 @@ impl Bot {
                 let floor = g.players[0].u32_(0x89c).checked_sub(1).map(|o| o as usize);
                 let aboard = [a, b].iter().any(|&n| floor == Some(self.nav.obj[n]) && self.movers.contains_key(&self.nav.obj[n]));
                 let still = !(aboard && f - since < 200) && [b, a].iter().filter_map(|&n| self.movers.get(&self.nav.obj[n])).all(|m| 300 < f - m.moved_at.min(f));
-                if RIDE_WAIT <= f - since || still {
+                if RIDE_WAIT <= f - since || still || 2 * RIDE_WAIT <= f - since {
                     self.log.push(serde_json::json!({"update": f, "ride_timeout": [wa, wb]}));
                     self.blocked.insert((self.nav.place(a), self.nav.place(b)));
                     // Every ride edge onto the same object within 4 units: the
