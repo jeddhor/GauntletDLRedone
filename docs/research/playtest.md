@@ -767,6 +767,13 @@ GDL_DEBUG_CAMERA):
     goes back down once left) and the 'off' pads 19, 30, 29: delay 149
     takes the rune at update 51,873 and exits at 97,949; delays 0 and 263
     do not (hint 5, pad 8, unreachable in time; the rune's barriers up).
+  - Strike nodes are a last resort for ordinary goals (c56): a pass over
+    every goal list with plain target nodes first, then only the items
+    that gained a strike node. C1 (bisect c41/c44/c47/c49: ends on c44 at
+    134,752, not from c47 on) had followed trigger 342's new strike node
+    into the water pit by (−20, −12, 52) and never left it; on c56 C1 ends
+    at 80,278, D3 at 52,432 and I4 at 174,576 (b76). Hints keep strike
+    nodes.
   - Ride waits are timed per edge (waiting and crossing together, 1200
     updates at most): J6's bot held at one bobbing floor from update
     30,000 to 300,000 in b74 (c52), the per-wait timer restarting each time
@@ -797,6 +804,15 @@ GDL_DEBUG_CAMERA):
     lg14 (Easy, six tries then a 600,000-update search) did not end G2:
     the search reached progress 7 in 256 iterations and 93 bot macros
     (lg7 on Medium, before these rules: 22, 299 and 176).
+  - Kiting (c55, no assist: always back away from foes within 4 units
+    unless held by stuck events): lg16's six Easy G2 tries still died
+    (24,185–110,686), knights within 6 units 312–497 a try. G2 holds 114
+    generators (KNI ×72, LOW ×29); the tries destroyed 12. Four players
+    (lg17, --players 4: copies of player 0, labelled DEBUG; the followers'
+    bot steps): no wipe in three tries (followers at 267–625 health; the
+    leader alive at 288 in one) but no exit by update 200,000 — every
+    hint skipped and the leader stuck by (−46, 0, −89) for thousands of
+    updates (the shared camera holds the players together).
   - Enemies do not scale with the player's level in the ported code (the
     enemy keeps PlayersAverageLevel at +0x384, read by nothing ported);
     damage dealt to enemies does (× (1 + 0.1 × (level − LEVL +0x9c)) above

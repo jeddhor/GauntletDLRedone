@@ -814,6 +814,12 @@ fn clear_line_skip(coll: &mut Option<CollisionWorld>, g: &Game, p: V3, q: V3, sk
 
 /// Reachable graph nodes within 2 units of each item (slot, node).
 pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
+    item_nodes_ex(nav, g, slots, true)
+}
+
+/// `item_nodes`; `strike` admits strike nodes (strike_reach) for items with
+/// no node within touch.
+pub fn item_nodes_ex(nav: &Nav, g: &Game, slots: &[usize], strike: bool) -> Vec<(usize, usize)> {
     // A collision copy for the wall checks, made on first use.
     let mut coll: Option<CollisionWorld> = None;
     let mut out = Vec::new();
@@ -882,6 +888,7 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
         // No node within touch: a trigger is struck instead (strike_reach),
         // from the nearest node in range.
         if best.is_none()
+            && strike
             && let Some(sr) = strike_reach(g, s)
         {
             for dx in -3..=3 {
@@ -1841,9 +1848,21 @@ impl Bot {
             }
         }
         self.revisiting = None;
-        for (li, list) in order.into_iter().enumerate() {
+        // Strike nodes only after every ordinary list found no path: C1's
+        // trigger 342, given a strike node (c47), led the bot into the water
+        // pit by (−20, −12, 52), which it never left (c44 ended C1 at update
+        // 134,752 without going for 342).
+        let mut passes: Vec<(usize, Vec<usize>, bool)> = order.iter().cloned().enumerate().map(|(li, l)| (li, l, false)).collect();
+        passes.extend(order.into_iter().enumerate().map(|(li, l)| (li, l, true)));
+        for (li, list, strike) in passes {
             let list: Vec<usize> = list.into_iter().filter(|s| !self.given_up.contains(s)).collect();
-            let targets = self.item_nodes(g, &list);
+            let targets = if strike {
+                // The strike pass only for items that gained a strike node.
+                let plain: HashSet<usize> = item_nodes_ex(&self.nav, g, &list, false).iter().map(|&(s, _)| s).collect();
+                item_nodes_ex(&self.nav, g, &list, true).into_iter().filter(|(s, _)| !plain.contains(s)).collect()
+            } else {
+                item_nodes_ex(&self.nav, g, &list, false)
+            };
             if targets.is_empty() {
                 continue;
             }
@@ -2676,7 +2695,17 @@ impl Bot {
         // Without the assist from 3.2 units, every other 20-update window:
         // knights (type 13) strike from about 3 (hurt-g2-easy-v2: 382 of
         // 790 health lost to knights 3 to 3.5 units off).
-        let (close, every) = if self.assist_enabled { (2.0, 3) } else { (3.2, 2) };
+        // Without the assist and not held by repeated stuck events: always
+        // back away from foes within 4 units (kiting) — lg13's tries took
+        // 173–278 of their knight damage throwing on the spot (Easy halves
+        // nothing but enemy speed and aggression: × 0.667).
+        let (close, every) = if self.assist_enabled {
+            (2.0, 3)
+        } else if recent < 5 {
+            (4.0, 1)
+        } else {
+            (3.2, 2)
+        };
         let window = if self.assist_enabled { 30 } else { 20 };
         if let Some((d, at)) = near
             && d < close
