@@ -759,6 +759,14 @@ GDL_DEBUG_CAMERA):
     touch came from (67.0, 145.5), 5.0 units off, when a foe was near.
     Chain t38 (c54, from t35's J2 end; J3 skipped, labelled DEBUG): J6
     (120,030), J4 (65,322) and J5's boss (7,756) end.
+  - K1 (c54, hints [38 7 40 41 66 8 9 10 19 30 29 192 48 15]): the rune's
+    floor 1279 is fenced by the switchable objects (1280's face at y −28
+    by (−192, −46.2) in k1dbg3; translations 1278 −25.6, 1280 −26.4, 1281
+    −18.9); the bot had pressed only the 'on' pads (26 21 27 20 28 23).
+    With trigger 38 first (it sits at the bottom of stand-on lift 7, which
+    goes back down once left) and the 'off' pads 19, 30, 29: delay 149
+    takes the rune at update 51,873 and exits at 97,949; delays 0 and 263
+    do not (hint 5, pad 8, unreachable in time; the rune's barriers up).
   - Ride waits are timed per edge (waiting and crossing together, 1200
     updates at most): J6's bot held at one bobbing floor from update
     30,000 to 300,000 in b74 (c52), the per-wait timer restarting each time

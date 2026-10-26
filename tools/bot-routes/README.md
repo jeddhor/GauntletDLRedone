@@ -25,3 +25,4 @@ ordinary pad path; the hints only choose its goals. Not game data.
 | I4 | private/reports/bot-b68a-I4.json (assisted bot c47: trigger 534 struck through wall 2644, the lamp taken, exit at update 131,440) |
 | J3 | private/reports/bot-b70-263-J3.json (assisted bot c49, start delay 263: trigger 502 struck through wall 1512, exit at update 123,052) |
 | D3 | private/reports/bot-b73b-D3.json (assisted bot c52 with run-ups at step-ups, start delay 149: up the bridge pieces raised by pads 50–47, regular exit at update 43,203; b73a left by the secret exit at 32,207) |
+| K1 | private/reports/k1h-c-d149.json (assisted bot c54, start delay 149, hand-made hints [38 7 40 41 66 8 9 10 19 30 29 192 48 15]: trigger 38 before lift 7, the rune barriers 1278/1280/1281 switched off by pads 19, 30, 29; the rune taken, exit at update 97,949) |

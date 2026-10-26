@@ -453,7 +453,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (playtest.md "Rules added 2026-10-25"): J6 ends for the first time (b62)
    and C3 with its bellows (b64b); I4 with its lamp by striking trigger 534
    through a wall (b68), J3 by striking trigger 502 (b70) and D3 by
-   running at the bridge pieces' steps (b73) — 60 of 61; K1 open. The chained campaign passes I2 (i2r4), I3 (t34), I4 I5 J1
+   running at the bridge pieces' steps (b73) and K1 with hand-made hints
+   (rune barriers switched off) — 61 of 61 levels traversed with their
+   rune and legend items. Open reliability: C1 and J6 fail on c52/c54
+   (ended on c38), J3 ends in 1 of 13 tries. The chained campaign passes I2 (i2r4), I3 (t34), I4 I5 J1
    J2 (t35); t36 runs J3 onward. Legitimate play: the game's
    Easy difficulty (Game Options) roughly doubles the no-assist G2
    survival; every try still dies (lg13); chain lg14 (Easy, search) runs.
