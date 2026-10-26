@@ -103,8 +103,9 @@ byte-identical copy of some preserved capture, so no state is ever lost.
 reference_trace.py and reference_screenshot.py accept these slots; each run
 first checks the PCSX2 slot file against its preserved capture.
 
-reference_screenshot.py captures the virtual display's root window, so the
-render window must be uncovered. Xvfb has no window manager: when another
+reference_screenshot.py and reference_warp.py --shot capture the virtual
+display's root window, so the render window must be uncovered
+(tools/python/reference_window.py). Xvfb has no window manager: when another
 window overlaps it (2026-10-26: a gdl_play window, 1280 × 896 at +0+0, left
 on the display), the tool raises the reference's own top-level windows and
 then requires each of them above every overlapping window in the root's

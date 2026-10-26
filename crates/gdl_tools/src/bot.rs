@@ -3103,8 +3103,10 @@ impl Bot {
         if g.players[k].i32_(0xfc) != 1 {
             return pad;
         }
+        // The DEBUG health assist for followers only when the leader has it
+        // (no-assist co-op is legitimate play).
         let health = g.players[k].f32_(HEALTH);
-        if health < self.start_health * 0.4 {
+        if self.assist_enabled && health < self.start_health * 0.4 {
             g.players[k].set_f32(HEALTH, self.start_health);
             self.assists += 1;
         }

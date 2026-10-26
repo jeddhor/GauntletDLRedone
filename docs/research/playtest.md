@@ -923,6 +923,29 @@ GDL_DEBUG_CAMERA):
     (Medium, sg2a): five of six die (18,135–23,625); the sixth stands
     unhurt at (−90, 0.9, −135) from update 10,000 to 200,000 (a route
     problem, not a fight).
+  - Easy (Game Options difficulty 0), sg2e: five of six die (20,871–
+    41,629; 850–960 health lost a try). Knights within 6 units cost under
+    100 a try; hits of 19 or more (the KNI statues' creatures: 29–39 from
+    6–20 units, plus 6-point ticks; 277 and 450 health) 420–540, hazards
+    174–293. Statues wake on contact or a hit (gameplay.md "Statues"), and
+    sg2e-d541 passed statues 113 and 114 (KNI) at 1.0 units just before
+    its first burst (statue 57, a DEATH statue, at 1.1).
+  - Contact avoidance (c64, no assist): the stick direction is turned by
+    the least of ±30°, ±60°, ±90°, ±120° that keeps the points 0.5, 1.0
+    and 1.5 units ahead out of contact (the player's radius + the item's
+    reach + 0.4) with every dormant statue (kind 4, +0xf8 and +0xd8 bit 0
+    clear) and every live hazard (kind 8 in state 2 or 4 with +0xd8 bit
+    0); route costs already kept the paths off them, this covers stepping
+    away from foes, back-offs and corner cutting. sg2f (Easy, no assist,
+    from lg1's G1 end, the shop's cherries bought with the character's
+    gold): two of six end G2 by its regular exit — delay 541 at update
+    27,949 (health 560) and delay 61 at 143,117 — with no health assist;
+    three die (17,229–39,789), one is alive at 200,000. The first
+    legitimate G2 ends. Chain lg20 (a new game, Easy, no assist, --loot
+    --shop-buy heal,potion --require, the critical path L1 … H4 with J3)
+    runs.
+  - Followers (co-op runs) take the DEBUG health assist only when the
+    leader has it.
 
 ## State search (M14/M15 tooling, 2026-10-24)
 

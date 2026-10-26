@@ -35,6 +35,7 @@ import time
 from pine_probe import Pine, configured_socket
 from reference_player import elf_symbols
 from reference_slots import SLOTS, STAGE_SLOT, resolve, stage_is_preserved, state_file
+from reference_window import raise_render  # noqa: E402
 from virtual_display import environment
 
 # Pad 2 (private ini [Pad2], 2026-10-23): Y/B/V/N up/down/left/right, M cross,
@@ -116,7 +117,9 @@ def main():
     render = [w for w in windows if xdo('getwindowname', w).strip() == 'pcsx2-qt']
     if len(render) != 1:
         raise ValueError('reference render window is ambiguous')
-    xdo('windowraise', render[0])
+    # A screenshot captures the screen: the render window uncovered
+    # (reference_window), verified only when one is asked for.
+    raise_render(env, xdo, windows, render[0], verify=bool(args.shot))
     xdo('windowfocus', '--sync', render[0])
     held = []
     log = []
