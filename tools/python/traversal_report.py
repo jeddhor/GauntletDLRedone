@@ -51,25 +51,36 @@ def main():
         raise SystemExit(f'{target} exists')
     levels = {}
     for p in sys.argv[2:]:
-        code = pathlib.Path(p).stem.rsplit('-', 1)[-1].upper()
-        if not (len(code) == 2 and code[0] in 'ABCDEFGHIJKLS' and code[1].isdigit()):
+        # The last "-XY" part that is a level code (campaign chains add
+        # -bot, -bot2 … after it).
+        parts = [x.upper() for x in pathlib.Path(p).stem.split('-')]
+        codes = [x for x in parts if len(x) == 2 and x[0] in 'ABCDEFGHIJKLS' and x[1].isdigit()]
+        if not codes:
             continue
+        code = codes[-1]
         try:
             s = summary(p)
         except (OSError, ValueError, KeyError, TypeError) as e:
             s = dict(source=p, error=str(e)[:200], ended=False)
         old = levels.get(code)
-        better = old is None or (s['ended'] and not old['ended']) or (
-            not s['ended'] and not old['ended'] and (s.get('closest_exit_ratio') or 9) < (old.get('closest_exit_ratio') or 9))
+
+        def rank(v):
+            # Ended with every rune stone and legend item taken, ended, closest.
+            taken = all(t.get('taken') for t in (v.get('treasures') or []))
+            return (v['ended'] and taken, v['ended'], -(v.get('closest_exit_ratio') or 9))
+        better = old is None or rank(s) > rank(old)
         if better:
             levels[code] = s
     out = dict(scope='traversal bot (game_run.py --bot) and state search (game_run.py --explore, replayed): port 0 through the ordinary pad '
                      'path; health assists, the boss levels\' legend item, a raised start level (pexp, ModifyExp) and route hints '
                      '(tools/bot-routes) are labelled DEBUG/preconditions; unfinished levels are not evidence either way',
-               levels_ended=sorted(k for k, v in levels.items() if v['ended']), levels=levels)
+               levels_ended=sorted(k for k, v in levels.items() if v['ended']),
+               levels_ended_with_treasures=sorted(k for k, v in levels.items() if v['ended'] and all(t.get('taken') for t in (v.get('treasures') or []))),
+               levels=levels)
     with target.open('x') as f:
         json.dump(out, f, indent=1)
     print(len(out['levels_ended']), 'of', len(levels), 'levels ended:', ' '.join(out['levels_ended']))
+    print(len(out['levels_ended_with_treasures']), 'with their rune stone and legend item:', ' '.join(out['levels_ended_with_treasures']))
 
 
 if __name__ == '__main__':
