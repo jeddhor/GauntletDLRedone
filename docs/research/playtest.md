@@ -791,8 +791,15 @@ GDL_DEBUG_CAMERA):
     A1 A6 A2 A3 A4 A5, K1–K5 (K1 on its sixth try at update 291,502), D1–D5,
     C1–C5, I1–I5, J1, J2 — 40 levels in one carried campaign — then J3
     stopped it (six tries and the search; the Sorceress's strike). Twelve
-    more J3 tries from its J2 end and the tail J6 … H4 with J3 skipped
-    (tskip1, labelled DEBUG) run.
+    more J3 tries from its J2 end did not touch 502 (none of 12, then six
+    with the lure). The tail from tfull1's J2 end with J3 skipped (tskip1,
+    labelled DEBUG: J3 not played; it holds no rune) ends J6, J4, J5, E1,
+    E2 (Skorne 1), F1, F2 (Skorne 2), H1, H2, H3 (the rune, sixth try,
+    update 280,050) and H4 — Garm, the ending — at update 6,848 (boss auto
+    exit). One carried campaign from a new game to the ending: 51 of the
+    52 non-secret levels played in the gated order with every rune stone
+    and legend item taken, no legend-item precondition; DEBUG health
+    assist throughout, J3 skipped.
   - Ride waits are timed per edge (waiting and crossing together, 1200
     updates at most): J6's bot held at one bobbing floor from update
     30,000 to 300,000 in b74 (c52), the per-wait timer restarting each time

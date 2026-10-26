@@ -456,7 +456,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    running at the bridge pieces' steps (b73) and K1 with hand-made hints
    (rune barriers switched off) — 61 of 61 levels traversed with their
    rune and legend items. Open reliability: C1 and J6 fail on c52/c54
-   (ended on c38), J3 ends in 1 of 13 tries. The chained campaign passes I2 (i2r4), I3 (t34), I4 I5 J1
+   (ended on c38), J3 ends in 1 of 13 tries. 2026-10-26: one carried
+   assisted campaign from a new game to the ending (tfull1 + tskip1:
+   every non-secret level but J3 in order, runes and legend items taken,
+   Garm's level ends); legitimate (no-assist) play still dies in G2. The chained campaign passes I2 (i2r4), I3 (t34), I4 I5 J1
    J2 (t35); t36 runs J3 onward. Legitimate play: the game's
    Easy difficulty (Game Options) roughly doubles the no-assist G2
    survival; every try still dies (lg13); chain lg14 (Easy, search) runs.
