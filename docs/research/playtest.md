@@ -717,6 +717,12 @@ GDL_DEBUG_CAMERA):
     (delay 263): the turbo swing at update 31,992 did not reach it; a melee
     swing with a foe near at 32,070–32,082 did — 502's state 2, reached at
     update 32,080.
+  - J3 standalone on c49 (b70, delays 0/263/397): delay 263 ends at update
+    123,052 (502 reached at 32,080 and again at 38,060; exit 125); delay
+    397 struck at 502 from (64, 21, 147) for over 360 stuck events without
+    contact; a turbo swing facing it from 3.15 units (j3strike-v4, update
+    31,992, action 0x56) did not touch it either — whether +0x880 held
+    another item then is not checked.
   - Chain t35 (c47, from t34's I3 end): I4 (29,560), I5 (boss), J1, J2 end;
     J3 not (search progress 9); t36 (c49) runs J3 onward.
   - Without the assist only (legitimate play): stuck with a foe within 10

@@ -452,8 +452,9 @@ original (PCSX2 reference on Xvfb :191, private captures):
    "2026-10-25 runs"). Bot: ride edges for vertically moving objects
    (playtest.md "Rules added 2026-10-25"): J6 ends for the first time (b62)
    and C3 with its bellows (b64b); I4 with its lamp by striking trigger 534
-   through a wall (b68) — 58 of 61; D3 J3 K1 open. The chained campaign
-   passes I2 (i2r4) and I3 (t34); t35 runs I4 onward. Legitimate play: the game's
+   through a wall (b68) and J3 by striking trigger 502 (b70) — 59 of 61;
+   D3 K1 open. The chained campaign passes I2 (i2r4), I3 (t34), I4 I5 J1
+   J2 (t35); t36 runs J3 onward. Legitimate play: the game's
    Easy difficulty (Game Options) roughly doubles the no-assist G2
    survival; every try still dies (lg13); chain lg14 (Easy, search) runs.
 
