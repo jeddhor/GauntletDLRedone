@@ -129,6 +129,8 @@ const RIDE_CLIMB: f32 = STEP_UP;
 const RIDE_COST: f32 = 10.0;
 const RIDE_WAIT: usize = 600;
 const STUCK: usize = 45;
+/// Updates spent striking at one trigger out of touch (strike_reach).
+const STRIKE_FOR: usize = 600;
 /// No-assist runs: updates a stuck bot may spend fighting foes in place.
 const FIGHT_HOLD: usize = 600;
 const DWELL: f32 = 2.0;
@@ -753,7 +755,17 @@ pub fn explain_item(nav: &Nav, g: &Game, s: usize) -> serde_json::Value {
                 let h = p[1] + 1.0;
                 let hit = c.world_collide(Query { radius: 0.3, first: [p[0], h, p[2]], last: [q[0], h, q[2]], check_flags: 7, min_normal_y: f32::from_bits(0xbf5d_b22d), max_normal_y: f32::from_bits(0x3f5d_b22d), object_mask: 0x13a, exclusion_mask: 1 });
                 let first = match hit { Ok((w, _)) => w.solid.map(|h| (h.object, format!("{:#x}", c.runtime_flags[h.object]))), Err(_) => None };
-                out.push(serde_json::json!({"node": p, "obj": nav.obj[n], "d": d, "dy": q[1] - p[1], "reachable": !nav.adj[n].is_empty(), "hit": first}));
+                // An unreachable node: whether the game's own displacement
+                // walks into it from the nearest reachable node (walk_reaches).
+                let walk = if nav.adj[n].is_empty() {
+                    (0..nav.pts.len())
+                        .filter(|&m| !nav.adj[m].is_empty() && dist_xz(nav.pts[m], p) < 2.2 && (nav.pts[m][1] - p[1]).abs() < 1.5)
+                        .min_by(|&a, &b| dist_xz(nav.pts[a], p).total_cmp(&dist_xz(nav.pts[b], p)))
+                        .map(|m| (nav.pts[m], walk_reaches(&mut c, nav.pts[m], p)))
+                } else {
+                    None
+                };
+                out.push(serde_json::json!({"node": p, "obj": nav.obj[n], "d": d, "dy": q[1] - p[1], "reachable": !nav.adj[n].is_empty(), "hit": first, "walk_from": walk}));
             }
         }
     }
@@ -819,18 +831,7 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
         // nearer than that, less 0.3, counts even when the line test fails. I2's
         // trigger 495 fires through wall 1192 from 1.1 units (b37 took it so);
         // J3's 502, 2.2 from the nearest node behind wall 1512, never did.
-        let touch = (item_kind(g, s).0 == 5).then(|| {
-            let r = &g.items.records[s];
-            let d = &g.items.definitions[r.definition()];
-            let reach = if 0.0 < r.f32_(0xfc) {
-                r.f32_(0xfc)
-            } else if d.subtype() == 0x1b {
-                2.0 * d.f32_(0xc)
-            } else {
-                d.f32_(0xc)
-            };
-            PLAYER_DIMS.get().map_or(1.5, |p| p.0) + reach - 0.3
-        });
+        let touch = (item_kind(g, s).0 == 5).then(|| trigger_touch(g, s) - 0.3);
         let k = key(q[0], q[2]);
         // The item's bound object (+0xf0) is no wall for its own line test:
         // I2's trigger 495 sits on door 262, which it opens (c38: no target
@@ -856,11 +857,61 @@ pub fn item_nodes(nav: &Nav, g: &Game, slots: &[usize]) -> Vec<(usize, usize)> {
                 }
             }
         }
+        // No node within touch: a trigger is struck instead (strike_reach),
+        // from the nearest node in range.
+        if best.is_none()
+            && let Some(sr) = strike_reach(g, s)
+        {
+            for dx in -3..=3 {
+                for dz in -3..=3 {
+                    for &n in nav.cols.get(&(k.0 + dx, k.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
+                        let p = nav.pts[n];
+                        let d = dist_xz(p, q);
+                        if !nav.adj[n].is_empty() && (-3.0..=3.0).contains(&(q[1] - p[1])) && d < sr && best.is_none_or(|b| d < b.0) {
+                            best = Some((d, n));
+                        }
+                    }
+                }
+            }
+        }
         if let Some((_, n)) = best {
             out.push((s, n));
         }
     }
     out
+}
+
+/// The player radius (+0x828; 1.5 when no bot set it).
+fn player_radius() -> f32 {
+    PLAYER_DIMS.get().map_or(1.5, |p| p.0)
+}
+
+/// A trigger's contact distance: item_coll_sub's player radius + reach
+/// (+0xc of the definition, +0xfc when set, doubled for subtype 0x1b).
+fn trigger_touch(g: &Game, s: usize) -> f32 {
+    let r = &g.items.records[s];
+    let d = &g.items.definitions[r.definition()];
+    let reach = if 0.0 < r.f32_(0xfc) {
+        r.f32_(0xfc)
+    } else if d.subtype() == 0x1b {
+        2.0 * d.f32_(0xc)
+    } else {
+        d.f32_(0xc)
+    };
+    player_radius() + reach
+}
+
+/// How far a trigger can be struck from: an attack (action event & 0xfe)
+/// with the stick released and no item in contact (+0x880 0) probes the
+/// items at the player's position + 2 radii along the facing
+/// (PlayerMotion, PlayerCollideItems at `probe`), walls not tested — so a
+/// trigger behind a wall within 2 radii + its contact distance (less 0.5)
+/// is touched by striking toward it (I4's trigger 534, three nodes behind
+/// wall 2644; J3's 502 behind wall 1512). Stand-on triggers (+0xf4 0x100)
+/// and shot switches (subtype 0x1f) excluded.
+fn strike_reach(g: &Game, s: usize) -> Option<f32> {
+    let r = &g.items.records[s];
+    (item_kind(g, s).0 == 5 && r.u16_(0xf4) & 0x100 == 0 && item_kind(g, s).1 != 0x1f).then(|| 2.0 * player_radius() + trigger_touch(g, s) - 0.5)
 }
 
 pub struct Bot {
@@ -1013,6 +1064,8 @@ pub struct Bot {
     coll: Option<CollisionWorld>,
     gen_seen: HashMap<usize, (usize, bool)>,
     last_health: f32,
+    /// The trigger being struck at and since when.
+    strike: Option<(usize, usize)>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1164,6 +1217,7 @@ impl Bot {
             coll: None,
             gen_seen: HashMap::new(),
             last_health: f32::NAN,
+            strike: None,
         }
     }
 
@@ -2375,6 +2429,35 @@ impl Bot {
             (None, Some(Goal::Point(h))) => self.hints.get(h).and_then(|x| x.goto),
             _ => None,
         };
+        // At the end of the path to a trigger out of touch (behind a wall):
+        // strike toward it — face it for 6 updates, then attack with the
+        // stick released for 18 (strike_reach), at most STRIKE_FOR updates.
+        if let Some(Goal::Item(s)) = self.goal
+            && self.at >= self.path.len()
+            && let Some(sr) = strike_reach(g, s)
+        {
+            let q = g.items.records[s].v3(0x40);
+            let d = dist_xz(p, q);
+            if trigger_touch(g, s) - 0.3 <= d && d < sr + 0.5 && (q[1] - p[1]).abs() < 3.0 {
+                let since = match self.strike {
+                    Some((t, since)) if t == s => since,
+                    _ => {
+                        self.log.push(serde_json::json!({"update": f, "strike": s, "from": p, "d": d}));
+                        f
+                    }
+                };
+                self.strike = Some((s, since));
+                if f - since < STRIKE_FOR {
+                    self.progress = (f, p);
+                    self.dwell = (f, p);
+                    if (f - since) % 24 < 6 {
+                        return Self::steer(pad, g, p, q);
+                    }
+                    pad.press(0xd);
+                    return pad;
+                }
+            }
+        }
         // The nearest live enemy in range: face it and hold attack (cross,
         // DMotion 0xf, acts on the level); stuck: hold attack along the path.
         // A boss (critter kind 4) in range: fight from a distance — hold

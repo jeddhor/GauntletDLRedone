@@ -106,6 +106,7 @@ def main():
     ap.add_argument('--end-state', help='write the run\'s end as a start state JSON (new file; chained runs)')
     ap.add_argument('--navdump', help='DEBUG: write the bot graph and floor samples at the start (new file; level_map.py)')
     ap.add_argument('--explain-items', help='with --navdump-at and --bot: item slots S,... whose target nodes are explained in the bot dump')
+    ap.add_argument('--navdump-from', help='with --navdump: grow the graph from X,Y,Z instead of player 0')
     ap.add_argument('--explain-at', help='with --navdump-at and --bot: X,Y,Z;... points whose graph edges are explained in the bot dump')
     ap.add_argument('--navdump-at', type=int, help='with --navdump: after this many updates instead of at the start')
     ap.add_argument('--next-level', action='store_true', help='enter the level from --start as init_next_level does (level_start and PlayerSaveState on the carried records, start locator); needs --pads')
@@ -267,6 +268,8 @@ def main():
         cmd += [f'navdump_at={a.navdump_at}']
     if a.explain_at:
         cmd += [f'explain_at={a.explain_at}']
+    if a.navdump_from:
+        cmd += [f'navdump_from={a.navdump_from}']
     if a.explain_items:
         cmd += [f'explain_items={a.explain_items}']
     if a.next_level:

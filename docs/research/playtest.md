@@ -673,6 +673,38 @@ GDL_DEBUG_CAMERA):
     bellows in two of three (128,846 and 269,205: lift 741, y 30 ↔ 45,
     then the y-40 walkways to the region by platform 854); D3 J3 K1 I4 do
     not (I4 takes its lamp in two).
+  - D3 (d3dbg1, c44, update 80,000; item dump d3items-v1): two exits —
+    138 EXIT_PORTAL at (−67.8, 27.4, −34.2), on a floor region (y 20–78)
+    that no floor within 12 units of height adjoins, and 398 SECRET_ICON
+    at (35.6, 52.5, 62.7) (b22 left by it, wave 0xc01). The secret region
+    (y 52–80) lies 9–12 above the bridge-pad area (y 67–70) by objects 463
+    (wobj: 10 up; triggers 365, 366 and 358 bound to it, 366 and 358 on
+    it) and 5.4 above a floor at (15.8, 47, 65.3), beside pad 360 on object
+    624 (wobj: 5 up; pad 353 too). The bot reached 366 by its state from
+    32 units away (update 10,773) and never rode 463; no graph node near
+    360 in that run. Not ended (b62–b66).
+  - I4: door 1261 (flags 0x80103002, wobj 5 down) closes the south side of
+    the ledge at y −62 by (−40, −62, 82), above the exit 181 at (−84.2,
+    −77.1, 75.0); trigger 534 at (−8.1, −41.7, 192.0) is bound to it, in
+    the region lift pad 523 (24.8, −31.6, 86.2) takes the bot down to.
+    No run has touched 534; route hints tools/bot-routes/I4.json (b64b's
+    trigger order with 534 after 523, hand-made) were skipped in turn
+    before the bot got there (b67, c44).
+  - Striking triggers behind walls (PlayerMotion, pmotion.rs's event stage):
+    an attack (action event & 0xfe: melee 2, throws 4) with the stick
+    released and no item in contact (+0x880 0) runs PlayerCollideItems at
+    the player's position + 2 radii along the facing, walls not tested.
+    I4's trigger 534 lies in a three-node strip behind wall 2644, which
+    the game's own displacement does not walk into from the floor beside
+    it (walk_reaches false for all three; growing the graph from the
+    strip at the start reaches the rest of the region only outward, the
+    wall one-sided). The bot now takes target nodes within 2 radii + the
+    trigger's contact distance − 0.5 when none is within touch, and at
+    such a path end faces the trigger for 6 updates and attacks with the
+    stick released for 18, at most 600 updates (strike_reach, c47). Check
+    (i4strike-v1, DEBUG teleport to (−6.8, −41.9, 189.8), hint [534]): the
+    strike began at 2.3 units (update 123) and 534's state went 0 → 2 at
+    update 125; the bot then took lift 524.
   - Without the assist only (legitimate play): stuck with a foe within 10
     units the bot fights in place for up to 600 updates; hazards (kind 8)
     and statues (kind 4, within reach + 1.5; contact or a hit wakes them)

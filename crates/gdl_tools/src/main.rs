@@ -3702,7 +3702,15 @@ fn run() -> Result<(), Box<dyn Error>> {
         let navdump_at: usize = opts.get("navdump_at").map(|v| v.parse()).transpose()?.unwrap_or(0);
         let write_navdump = |game: &gdl_core::game::Game, path: &str, f: usize| -> Result<(), Box<dyn Error>> {
             let mut c = game.collision.clone();
-            let p = game.players[0].v3(0x50);
+            // navdump_from=X,Y,Z: the graph grown from that point instead of
+            // the player (the walkable region on a wall's far side).
+            let p = match opts.get("navdump_from") {
+                Some(v) => {
+                    let q: Vec<f32> = v.split(',').map(str::parse).collect::<Result<_, _>>()?;
+                    [*q.first().ok_or("x")?, *q.get(1).ok_or("y")?, *q.get(2).ok_or("z")?]
+                }
+                None => game.players[0].v3(0x50),
+            };
             let mut nav = bot::Nav::build(&mut c, &[p], game.globals.world_bottom - 2.0, p[1] + 80.0, 0.3);
             let reach: Vec<usize> = (0..nav.pts.len()).filter(|&k| !nav.adj[k].is_empty()).collect();
             let r1 = |v: f32| (v * 10.0).round() / 10.0;
