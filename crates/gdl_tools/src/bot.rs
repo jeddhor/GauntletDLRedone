@@ -2552,8 +2552,8 @@ impl Bot {
                 // target within their radius + 1 in front; a strong
                 // character's throws kill every foe before it comes that near
                 // (J3's 502 from the chain's J2 end: none of 12 tries). Back
-                // off to 4.3 units from the trigger, keep facing it and attack
-                // only when a foe within 2.5 units lies within 25° of it, so
+                // off to 3.8 units from the trigger, keep facing it and attack
+                // only when a foe within 3.5 units lies within 60° of it, so
                 // the swing's probe (2 radii ahead) lands by the trigger
                 // (b70-263 touched 502 from 5.0 units with a foe near). The
                 // reference agrees that plain attacks there do not touch it
@@ -2569,7 +2569,11 @@ impl Bot {
                     let foe_ahead = g.enemies.iter().filter(|e| e.i32_(0xc8) != 0 && 0.0 < e.f32_(0x214)).map(|e| e.v3(0x40)).chain(g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40))).any(|e| {
                         let v = [e[0] - p[0], e[2] - p[2]];
                         let lv = v[0].hypot(v[1]);
-                        lv < 2.5 && 0.0 < lv && (v[0] * to_q[0] + v[1] * to_q[1]) / (lv * lq) > 0.906
+                        // The game's test is radius + 1 against the distance
+                        // less the foe's width, its cone 60° (tfj3c-d0: type-22
+                        // foes 2.8 units off hit the bot 79 times while this
+                        // waited for 2.5).
+                        lv < 3.5 && 0.0 < lv && (v[0] * to_q[0] + v[1] * to_q[1]) / (lv * lq) > 0.5
                     });
                     if foe_ahead {
                         pad.press(0xd);
