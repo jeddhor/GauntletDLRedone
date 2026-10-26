@@ -22,4 +22,4 @@ ordinary pad path; the hints only choose its goals. Not game data.
 | J4 | private/reports/bot-b37-J4.json (assisted bot) |
 | J6 | private/reports/bot-b62-J6.json (assisted bot c38 with ride edges, the rune taken, exit at update 146,631) |
 | C3 | private/reports/bot-b64b-C3.json (assisted bot c39, start delay 149, the bellows taken, exit at update 128,846) |
-| I4 | hand-made from private/reports/bot-b64b-I4.json's reached order (c39, the lamp taken, stuck above the exit) with trigger 534 (bound to door 1261, which it lowers 5 units: the way south from the -62 ledge to the exit) after lift pad 523; not yet a winning run |
+| I4 | private/reports/bot-b68a-I4.json (assisted bot c47: trigger 534 struck through wall 2644, the lamp taken, exit at update 131,440) |
