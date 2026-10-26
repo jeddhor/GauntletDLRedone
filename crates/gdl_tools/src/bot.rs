@@ -131,6 +131,8 @@ const RIDE_WAIT: usize = 600;
 const STUCK: usize = 45;
 /// Updates spent striking at one trigger out of touch (strike_reach).
 const STRIKE_FOR: usize = 900;
+/// The strike's lure phase after STRIKE_FOR (see the strike routine).
+const LURE_FOR: usize = 2400;
 /// No-assist runs: updates a stuck bot may spend fighting foes in place.
 const FIGHT_HOLD: usize = 600;
 const DWELL: f32 = 2.0;
@@ -1105,6 +1107,8 @@ pub struct Bot {
     strike: Option<(usize, usize)>,
     /// Run-ups at each step-up edge (by place) before it is blocked.
     run_ups: HashMap<(Place, Place), u32>,
+    /// The strike's lure point (see the strike routine).
+    strike_off: Option<V3>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1258,6 +1262,7 @@ impl Bot {
             last_health: f32::NAN,
             strike: None,
             run_ups: HashMap::new(),
+            strike_off: None,
         }
     }
 
@@ -2536,11 +2541,53 @@ impl Bot {
                 let since = match self.strike {
                     Some((t, since)) if t == s => since,
                     _ => {
+                        self.strike_off = None;
                         self.log.push(serde_json::json!({"update": f, "strike": s, "from": p, "d": d}));
                         f
                     }
                 };
                 self.strike = Some((s, since));
+                // Lure phase after STRIKE_FOR: some classes (the Sorceress)
+                // swing in melee — the only attack that probes — only with a
+                // target within their radius + 1 in front; a strong
+                // character's throws kill every foe before it comes that near
+                // (J3's 502 from the chain's J2 end: none of 12 tries). Back
+                // off to 4.3 units from the trigger, keep facing it and attack
+                // only when a foe within 2.5 units lies within 25° of it, so
+                // the swing's probe (2 radii ahead) lands by the trigger
+                // (b70-263 touched 502 from 5.0 units with a foe near). The
+                // reference agrees that plain attacks there do not touch it
+                // (WARPED j3-strike-ref-v1: four presses from 2.9 units,
+                // 502's state 0).
+                if STRIKE_FOR <= f - since && f - since < STRIKE_FOR + LURE_FOR {
+                    self.progress = (f, p);
+                    self.dwell = (f, p);
+                    let d0 = dist_xz(p, q).max(0.1);
+                    let off = *self.strike_off.get_or_insert([q[0] + (p[0] - q[0]) / d0 * 3.8, p[1], q[2] + (p[2] - q[2]) / d0 * 3.8]);
+                    let to_q = [q[0] - p[0], q[2] - p[2]];
+                    let lq = to_q[0].hypot(to_q[1]).max(0.1);
+                    let foe_ahead = g.enemies.iter().filter(|e| e.i32_(0xc8) != 0 && 0.0 < e.f32_(0x214)).map(|e| e.v3(0x40)).chain(g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40))).any(|e| {
+                        let v = [e[0] - p[0], e[2] - p[2]];
+                        let lv = v[0].hypot(v[1]);
+                        lv < 2.5 && 0.0 < lv && (v[0] * to_q[0] + v[1] * to_q[1]) / (lv * lq) > 0.906
+                    });
+                    if foe_ahead {
+                        pad.press(0xd);
+                        return pad;
+                    }
+                    // Back off for at most 90 updates (a wall behind may stop
+                    // it short: tfj3b-d0 held at 3.78 units, steering away
+                    // and so facing away for 2400 updates), then face the
+                    // trigger with one-update taps every 20 updates.
+                    let lure_t = f - since - STRIKE_FOR;
+                    if lure_t < 90 && 0.8 < dist_xz(p, off) {
+                        return Self::steer(pad, g, p, off);
+                    }
+                    if lure_t % 20 == 0 {
+                        return Self::steer(pad, g, p, q);
+                    }
+                    return pad;
+                }
                 if f - since < STRIKE_FOR {
                     self.progress = (f, p);
                     self.dwell = (f, p);

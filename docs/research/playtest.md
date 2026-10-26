@@ -757,6 +757,14 @@ GDL_DEBUG_CAMERA):
     0x61, 0x5e/0x60/0x62 moving) and her turbo attack (0x56) raise no probe
     event (& 0xfe), square (99) none for class 6 below +0x80c 2. b70-263's
     touch came from (67.0, 145.5), 5.0 units off, when a foe was near.
+    Reference (WARPED j3-strike-ref-v1 from lvl-J3-play-v1: player 0
+    written to (64.87, 20.88, 147.11), +0xdc poked to −0.073 toward 502,
+    four cross presses with no direction): 502's +0xde stays 0, its +0xd8
+    goes 0x10 → 0x4010 as natively (j3strike-v2) — plain attacks there do
+    not touch it in the original either. J3's four switches 499–502 are
+    all behind walls (TRIGGER2, reach 0.7). The strike now has a lure
+    phase after its 900 updates (c57/c58): back off toward 3.8 units, face
+    the trigger, attack only with a foe within 2.5 units inside 25° of it.
     Chain t38 (c54, from t35's J2 end; J3 skipped, labelled DEBUG): J6
     (120,030), J4 (65,322) and J5's boss (7,756) end.
   - K1 (c54, hints [38 7 40 41 66 8 9 10 19 30 29 192 48 15]): the rune's
