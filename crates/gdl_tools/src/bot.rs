@@ -2260,7 +2260,10 @@ impl Bot {
             foes.truncate(3);
             let hazards: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 8 && dist_xz(g.items.records[s].v3(0x40), p) < 5.0).collect();
             let r1 = |v: f32| (v * 10.0).round() / 10.0;
-            self.log.push(serde_json::json!({"update": f, "hurt": r1(self.last_health - health), "at": p.map(r1), "foes": foes.iter().map(|x| [r1(x.0), x.1 as f32, r1(x.2), r1(x.3)]).collect::<Vec<_>>(), "hazards": hazards}));
+            // The boss's current move (+0x124), pattern (+0x128) and move-done
+            // flag (+0x12e).
+            let boss_move = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|b| g.critters.get(b)).and_then(Option::as_ref).map(|c| (c.rec.i16_(0x124), c.rec.i16_(0x128), c.rec.i16_(0x12e)));
+            self.log.push(serde_json::json!({"update": f, "hurt": r1(self.last_health - health), "at": p.map(r1), "foes": foes.iter().map(|x| [r1(x.0), x.1 as f32, r1(x.2), r1(x.3)]).collect::<Vec<_>>(), "hazards": hazards, "boss_move": boss_move}));
         }
         self.last_health = health;
         // Danger: without the assist, 8 % of the level-start health lost in
@@ -3106,6 +3109,18 @@ impl Bot {
             {
                 self.tag(f, "boss_close_in");
                 return Self::steer(pad, g, p, q);
+            }
+            // EXPERIMENT GDL_BOT_BOSS_STRAFE=1 (no assist): hurt within the
+            // last 30 updates, a step sideways (across the line to the boss,
+            // alternating sides) for 15 of every 40 updates. lg35's J5 tries
+            // stood firing while the wraith's hits came every 8 updates
+            // (117.5 each), all twelve dead with it at 1,593–2,889 of 5,000.
+            if !self.assist_enabled && std::env::var("GDL_BOT_BOSS_STRAFE").is_ok_and(|v| v == "1") && self.hurt_at.is_some_and(|h| f < h + 30) && f % 40 < 15 {
+                let (dx, dz) = (bp[0] - p[0], bp[2] - p[2]);
+                let d = dx.hypot(dz).max(0.1);
+                let side = if (f / 40).is_multiple_of(2) { 1.0 } else { -1.0 };
+                self.tag(f, "boss_strafe");
+                return Self::steer(pad, g, p, [p[0] - dz / d * 3.0 * side, p[1], p[2] + dx / d * 3.0 * side]);
             }
             // A child (A5's chimera heads) low enough to be hit, the weakest
             // first: CritterDamage takes a child's damage from the root too,

@@ -1273,7 +1273,21 @@ GDL_DEBUG_CAMERA):
     exit at 8,011, first try) and I5 (the yeti killed, auto exit at
     11,829, try 2), all without the assist. The J gate needs set 8 at
     250: the I levels hold 48/44/45/54, and the character held 129 after
-    I5 (level 66); the first I4 replay +41 (170).
+    I5 (level 66); the I4 replays +41, +28, +38, +14 → 250 (level 68).
+    J1 (try 8), J2 (try 12, the lantern), J3 (try 3), J6 (try 6, rune), J4
+    (try 3, rune). J5: all twelve tries died with the wraith at
+    1,593–2,889 of 5,000 (updates 3,418–5,175). The wraith (fixed at (0,
+    −11.9, −35)) did all the damage, hits of 97.5–157.5 at 9–39 units (most
+    of the fight at 12, the closest node), from many of its moves (hurt-log
+    boss_move, j5m-d1061: moves 7–11, 13, 17, 18, 20, 22); the legend window
+    (QuestItemState 1–3) took the first ~1,000, then 0.6 an update against
+    the player's 2.2. Neither a sideways step when hurt (c97 EXPERIMENT
+    GDL_BOT_BOSS_STRAFE=1, j5s: all dead, 1,135–2,782) nor two strength
+    upgrades bought instead of potions (j5f: all dead, 1,756–2,828)
+    changed it. The assisted wins (tfull2, level 70, four health assists)
+    took ~7,700 updates, about 14,600 damage. J5's target level is 70
+    (LEVL +0x9c; J1–J4 62–67): above it the player's damage gains 10 % a
+    level and health 100, so the chain grinds J4 (target 67).
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.
