@@ -1287,7 +1287,18 @@ GDL_DEBUG_CAMERA):
     changed it. The assisted wins (tfull2, level 70, four health assists)
     took ~7,700 updates, about 14,600 damage. J5's target level is 70
     (LEVL +0x9c; J1–J4 62–67): above it the player's damage gains 10 % a
-    level and health 100, so the chain grinds J4 (target 67).
+    level and health 100, so the chain grinds J4 (target 67). The first J4
+    grind (85,920 updates) took the character from 68 to 73, but J5 again
+    killed all twelve (1,707–2,982, no potions: 300 gold): CritterDamage
+    applies no level scaling to bosses (kind 4), and the throw damage
+    +0x120 grows little (30.92 at 72, 31.04 at 73). DEBUG powerup probes
+    (--powerup reflect/invulnerability) gave the same runs update for
+    update: the powerup does not survive the level entry. The distance:
+    c99 GDL_BOT_BOSS_KEEP=R (back away inside R, no walk back to the fight
+    node), six tries each from the grind's end — 22: none, 26: two (boss
+    killed, 47 and 117 health left), 30: one, 34: one. c100: the wraith
+    (BossType 0x28) is fought from 26 units without the assist. lg35
+    stopped; lg36 (c100, --grind 4) runs J5 onward from the grind's end.
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.

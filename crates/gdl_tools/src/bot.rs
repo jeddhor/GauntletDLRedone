@@ -3094,8 +3094,22 @@ impl Bot {
         }
         let boss_inst = usize::try_from(g.boss_crit_inst - 1).ok();
         let boss = boss_inst.and_then(|b| g.critters.get(b)).and_then(Option::as_ref).filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40));
-        if let Some(bp) = boss.filter(|bp| dist_xz(*bp, p) < self.boss_range) {
-            if dist_xz(bp, p) < 8.0 && (f / 20).is_multiple_of(2) {
+        // Without the assist, the wraith (J5, BossType 0x28) is fought from
+        // 26 units — backing away inside that, no walk back to the fight
+        // node: lg35's J5 tries took about 39 health a sample at 12 units
+        // (the closest node) and 15 at 25–28, and all twelve died with it
+        // at 1,593–2,889; from the J4 grind's end (level 73, six tries each)
+        // keeping 22 won none, 26 two (47 and 117 health left), 30 one, 34
+        // one (j5k*). GDL_BOT_BOSS_KEEP=R overrides it for any boss
+        // (EXPERIMENT).
+        let keep = if self.assist_enabled {
+            None
+        } else {
+            std::env::var("GDL_BOT_BOSS_KEEP").ok().and_then(|v| v.parse::<f32>().ok()).or((g.globals.boss_type == 0x28).then_some(26.0))
+        };
+        let range = keep.map_or(self.boss_range, |k| self.boss_range.max(k + 8.0));
+        if let Some(bp) = boss.filter(|bp| dist_xz(*bp, p) < range) {
+            if dist_xz(bp, p) < keep.unwrap_or(8.0) && (f / 20).is_multiple_of(2) {
                 return Self::steer(pad, g, p, [2.0 * p[0] - bp[0], p[1], 2.0 * p[2] - bp[2]]);
             }
             // Knocked back past the fight node (the foe goal): walk back to it
@@ -3103,6 +3117,7 @@ impl Bot {
             // 12.4–12.8 from 24–28 units of Skorne, but 17–20 against 2.3–3.7
             // from 32–36, where they spent a quarter of the fight (e2t).
             if let Some(Goal::Explore(n)) = self.goal
+                && keep.is_none()
                 && let Some(&q) = self.nav.pts.get(n)
                 && dist_xz(bp, q) + 2.0 < dist_xz(bp, p)
                 && (f / 20).is_multiple_of(2)
