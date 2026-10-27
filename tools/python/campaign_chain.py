@@ -79,6 +79,7 @@ def main():
     ap.add_argument('--replay-pool', nargs='*', default=[], help='--gates: levels that may be replayed for crystals')
     ap.add_argument('--max-replays', type=int, default=8, help='--gates: replays per closed gate before the chain stops')
     ap.add_argument('--played', nargs='*', default=[], help='--gates: pool levels already played before --start (only played levels are replayed)')
+    ap.add_argument('--grind', type=int, default=0, help='when every bot try at a level dies: replay the last level ended (not a boss level) for experience and gold, at most N times per level, then try the level again (before the search)')
     a = ap.parse_args()
     if not a.tag.replace('-', '').isalnum():
         raise SystemExit('tag must be alphanumeric')
@@ -93,6 +94,8 @@ def main():
     replays = set()
     probes = {}
     gate_replays = {}
+    grinds = {}
+    last_ended = a.played[-1] if a.played else None
 
     def probe(code, from_start):
         # Two updates of the level from the carried state: the report's
@@ -234,6 +237,8 @@ def main():
                         print(json.dumps(step), flush=True)
                         start = str(bot_end.relative_to(ROOT))
                         won_by_bot = True
+                        if code not in BOSSES:
+                            last_ended = code
                 else:
                     step[key] = {'error': (err.strip().splitlines() or [''])[-1][:300]}
         for t, bot_report, bot_end, err_path, proc in pending:
@@ -252,6 +257,17 @@ def main():
             step['ended'] = False
             steps.append(step)
             print(json.dumps(step), flush=True)
+            continue
+        if a.grind and start and last_ended and grinds.get(code, 0) < a.grind:
+            # Every try died: play the last level ended again (experience,
+            # gold for the shop; a player's own choice from the Tower), then
+            # this level again.
+            grinds[code] = grinds.get(code, 0) + 1
+            step.update(ended=False, grind=last_ended, grinds=grinds[code])
+            steps.append(step)
+            print(json.dumps(step), flush=True)
+            replays.add((last_ended, seen.get(last_ended, 0) + 1))
+            queue[:0] = [last_ended, code]
             continue
         cmd = [sys.executable, 'tools/python/game_run.py', str(report), '--frames', '10', '--world', world, '--level', level,
                '--pads', '0:1', '--explore', str(a.budget), '--cells', str(a.cells), '--nav', '2', '--end-state', str(end)] + common
@@ -273,11 +289,13 @@ def main():
         if not (step.get('ended') and step.get('replay_level_end') is not None and end.exists()):
             break
         start = str(end.relative_to(ROOT))
+        if code not in BOSSES:
+            last_ended = code
     summary_path.write_text(json.dumps({'scope': 'DEBUG chained state-search runs (campaign_chain.py); the exit flow between levels is not simulated',
                                         'health_assist': not a.no_assist,
                                         'difficulty': a.difficulty,
                                         'new_character': a.new_character,
-                                        'crystals': a.crystals, 'gates': a.gates, 'replay_pool': a.replay_pool,
+                                        'crystals': a.crystals, 'gates': a.gates, 'replay_pool': a.replay_pool, 'grind': a.grind,
                                         'levels': a.levels, 'steps': steps}, indent=1) + '\n')
     print(summary_path)
 

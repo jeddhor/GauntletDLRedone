@@ -3048,7 +3048,12 @@ impl Bot {
         // (+0xe3), is left alone.
         // A melee class fights the foes first (wg1c: the Warrior throwing at
         // generator 123 while its knights struck from 4 units).
-        if !self.assist_enabled && Self::nearest_foe(g, p, if melee_class { ATTACK_RANGE } else { 2.0 }).is_none() {
+        // A ranged class leaves the generators for foes within 4 units, or
+        // within ATTACK_RANGE after a hit in the last 30 updates: C1's tries
+        // took most of their damage standing at generators while type-7
+        // creatures struck from 2.3–3.7 units (c1n-d61-tag).
+        let gen_guard = if melee_class || self.hurt_at.is_some_and(|h| f < h + 30) { ATTACK_RANGE } else { 4.0 };
+        if !self.assist_enabled && Self::nearest_foe(g, p, gen_guard).is_none() {
             // Also up to GEN_RANGE along a clear line (lg8's fastest G2
             // death fought the knights of generators 123 and 125, 11–23
             // units off, from health 700 to 370 by update 1800).

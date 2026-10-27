@@ -1108,6 +1108,24 @@ GDL_DEBUG_CAMERA):
     down under a fifth, the player 800 or more) skips that foe for 6,000
     updates; c80: hurt within 60 updates with no foe within 10, a live
     critter within 20 units is the ranged target.
+  - C1 again (six tries each, all die): c80 retaliation (c1r, deaths
+    9,258–27,354), without crystal seeking (c1n, 11,575–35,573: crystals
+    are not the cause, though c1r-d149 lost 2,700 in a pit trying for
+    crystals 388/389 between GRU generators 148 and 234). 61 % of the
+    damage lands while the player stands (moved under 0.5 in a 15-update
+    sample); tags (c1n-d61-tag) put most of it in the generator branch,
+    which fought generators until a foe came within 2 units while type-7
+    creatures struck from 2.3–3.7. c81: the guard is 4 units (5 after a
+    hit within 30 updates) for a ranged class — c1g: still six deaths
+    (16,861–30,519). The assisted chain took 4–6 assists on every C
+    level (Medium).
+  - lg27 (c76) ended L1 and G1 (level 3, 29 health, no gold after G1:
+    the Tower's refill gives 500 for G2); all six G2 tries died (26,339–
+    60,472) and the search ran — stopped. campaign_chain --grind N: when
+    every bot try at a level dies, the last level ended (not a boss
+    level) is played again for experience and gold (a replay, before the
+    search), at most N times per level. Chain lg28 (c81, --grind 4) runs
+    G2 onward from lg27's G1 end with the same plan.
   - Chain lg26 (c75) was stopped in L1 (its end states would not have
     recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
     crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2
