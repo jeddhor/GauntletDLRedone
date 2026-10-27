@@ -1056,6 +1056,34 @@ GDL_DEBUG_CAMERA):
     updates 7,195–9,063, 280–701 health left); one dies at 7,011.
   - lg24 was stopped in its second G1 replay and restarted as lg25 on
     c71 from lg24's G1 replay end (the same arguments).
+  - Completion record: game-run's end states never ran game_main's level
+    end, so no chain recorded a completion (every wave byte 0 through
+    tfull3's H4 end). Since c76 the end state of a level that ended (a
+    player through do_exit or the boss's auto exit — level_done, which
+    stops the traversal about 20 updates before do_players reports done —
+    or do_players done and the exit test) runs game_main_level_end:
+    PlayersSetWaveFinished (wave bit, the realm-progress hint words) and
+    the destination (end state field level_end_flow). Check: B2 from
+    lg25's B1 end ends at update 8,812 as before; its end state has B's
+    wave byte 0x2 and the probe opens B3's portal (B2's stays closed: B1
+    was played before the change). The hint words and B's other bits feed
+    only presentation (Sumner's hint menu, the rune thermometer; hints.rs,
+    thermometer.rs), so earlier chains' play is unchanged. A normal exit
+    returns to the Tower (the shop) whatever the exit's destination; only
+    E1, F1 and world 12 go on by the map.
+  - Portals (the Tower's 49 EXIT_PORTAL items, +0xf0 the wave; HideExits:
+    level n needs bit n−1 of the world's wave byte, E/F the realm, H4 all
+    runes); game-run reports level_open at load and campaign_chain --gates
+    stops on a closed portal in an open realm. LEVL record order is the
+    portal order: A1 A6 A2 A3 A4 A5, J1 J2 J3 J6 J4 J5 and K2 K3 K4 K1 K5
+    — every chain so far played K1 first, which the Tower does not open
+    before K4.
+  - Chain lg26 (c75) was stopped in L1 (its end states would not have
+    recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
+    crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2
+    K3 K4 G5 K1 K5 D1–D4 A5 C1–C4 D5 I1–I4 C5 I5 J1 J2 J3 J6 J4 J5 E1 E2
+    F1 F2 H1–H4. lg25 (c71, no completion record, K1 before K2) goes on
+    as a reconnaissance chain only.
   - Feasibility probes (one no-assist try each from the assisted chains'
     end states, c71, capability checks only): F2's Skorne 2 and H4's
     Garm die (the level ends alive: 2,119 and 5,768 health left); E2's

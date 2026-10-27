@@ -32,9 +32,9 @@ taken (the bot's run otherwise falls back to the search with require=1).
 1 Medium — the fixture's, 2 Hard), an ordinary game setting.
 --crystals: bot runs collect the crystals of the sets not yet full
 (game_run.py --seek-crystals).
---gates: before each level the Tower's door test (WorldOpen, from a
-two-update probe of the level from the carried state: the report's
-realms_open) must pass; a realm opened by a crystal set (WorldCrystal) that
+--gates: before each level the Tower's tests (from a two-update probe of the level from the carried
+state: the report's realms_open — WorldOpen — and level_open — HideExits'
+portal rule) must pass; a closed portal in an open realm stops the chain; a realm opened by a crystal set (WorldCrystal) that
 is not full yet is filled by replays — the --replay-pool level with the
 most crystals of that set shown at load, played again (bot, --crystals,
 no --require: its rune or legend item is already held) — at most
@@ -113,8 +113,20 @@ def main():
     while queue:
         code = queue.pop(0)
         world, level = code[0], code[1:]
+        # game_main's level end returns a normal exit to the Tower (the
+        # shop), whatever the exit's destination; only E1/F1 (to E2/F2, which
+        # have no portal) and world 12 go on by the map, which the probe's
+        # level_open covers (Temple and Hell: the realm only; secret levels:
+        # none).
         if a.gates and start:
             r = probe(code, start)
+            if r.get('level_open') is False and WORLDS[world] in r['realms_open']:
+                # The realm is open but the portal is not (level n needs
+                # bit n−1 of the world's wave byte; Battle 4 all runes).
+                gate = {'level': code, 'gate': 'level closed', 'start': start}
+                steps.append(gate)
+                print(json.dumps(gate), flush=True)
+                break
             if WORLDS[world] not in r['realms_open']:
                 need = r['world_crystal'][WORLDS[world]]
                 gate = {'level': code, 'gate': 'closed', 'set': need, 'start': start}

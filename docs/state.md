@@ -473,7 +473,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    no-assist try without D4's scimitar; legend items serve other realms'
    bosses (bosses.md, corrected: bosses die without them natively). Bot
    seek_crystals, campaign_chain --gates with crystal replays; chain lg24
-   (from lg21's G4 end, bosses after their item's realm) runs.
+   (from lg21's G4 end, bosses after their item's realm) runs. Later the
+   same night: game-run end states never ran game_main's level end (no
+   completion recorded by any chain); c76 runs it, the probe also tests the
+   Tower portal (K's records are K2 K3 K4 K1 K5); clean campaign lg27
+   from a new game runs.
 
 ---
 

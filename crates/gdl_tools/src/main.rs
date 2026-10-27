@@ -2046,6 +2046,24 @@ fn run() -> Result<(), Box<dyn Error>> {
         // The realms the Tower's doors would open with the players' progress
         // at load (WorldOpen; the chained campaign's door order).
         let realms_open: Vec<i32> = (1..=0xc).filter(|&w| game.world_open(w)).collect();
+        // The Tower's portal to this level (HideExits): level n needs bit n−1
+        // of the world's wave byte in some present player's record (Temple and
+        // Hell: the realm only; Battle 4 — index 3 — all thirteen runes), and
+        // the realm open. None for the Tower and the secret levels (reached
+        // by their exits, not a portal).
+        let level_open: Option<bool> = {
+            let (w, l) = (game.globals.cur_world, game.globals.cur_level);
+            let waves = (0..4).filter(|&k| game.players[k].i32_(0xfc) != 0).fold(0u32, |v, k| {
+                v | usize::try_from(w).map_or(0, |w| u32::from(game.players[k].u8_(0x182c + 0xe * game.players[k].u32_(0xc) as usize + w)))
+            });
+            let bit = l < 1 || (waves >> ((l - 1) & 0x1f)) & 1 != 0;
+            match w {
+                0xc | 0xd => None,
+                5 | 6 => Some(game.world_open(w)),
+                8 if l == 3 => Some(game.world_open(8) && game.player_has_rune(-1, 0x1fff)),
+                _ => Some(game.world_open(w) && bit),
+            }
+        };
         // The level's crystals at load (kind 1 subtype 0xf; +0xf4 the set,
         // PlayerGiveCrystal's n): per set [shown for this player count
         // (+0xe1 0), all].
@@ -4089,7 +4107,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             .filter(|(n, _)| !n.is_empty() && !game.item_anim_lib.contains_key(n))
             .map(|(n, k)| format!("{n} kind {k}"))
             .collect();
-        let mut report = serde_json::json!({"carried_at_load":carried_at_load,"realms_open":realms_open,"crystals_at_load":crystals_at_load,"world_crystal":game.world_crystal,"max_crystals":game.items.tables.max_crystals,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"plan":plan_report,"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
+        let mut report = serde_json::json!({"carried_at_load":carried_at_load,"realms_open":realms_open,"level_open":level_open,"crystals_at_load":crystals_at_load,"world_crystal":game.world_crystal,"max_crystals":game.items.tables.max_crystals,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"plan":plan_report,"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
             "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
                 "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
@@ -4112,6 +4130,19 @@ fn run() -> Result<(), Box<dyn Error>> {
             // Leaving the Tower runs EndTower (as gdl_play's level change).
             if game.globals.cur_world == 0xd {
                 game.end_tower();
+            }
+            // game_main's level end once the level ended (a player through
+            // do_exit or the boss's auto exit — level_done, which ends the
+            // traversal and the search about 20 updates before do_players
+            // reports done —, or do_players done and the exit test,
+            // Game::exit_ready): game_main_level_end —
+            // PlayersSetWaveFinished, the completed-level wave bit and the
+            // realm-progress hint words — as gdl_play runs it before the tally
+            // and shop, a boss's movie or the map (it skips all-dead players).
+            // Chains before 2026-10-27 lacked it: no completion was recorded.
+            if game.globals.cur_world != 0xd && (game.level_done.is_some() || (game.players_done && game.exit_ready)) {
+                let end = game.game_main_level_end();
+                st["level_end_flow"] = serde_json::json!(format!("{end:?}"));
             }
             st["players"] = serde_json::json!(game.players.iter().map(|r| r.0.iter().map(|b| format!("{b:02x}")).collect::<String>()).collect::<Vec<_>>());
             // The session globals gdl_play carries into the next level; the
