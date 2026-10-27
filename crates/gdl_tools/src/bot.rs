@@ -1787,6 +1787,10 @@ impl Bot {
                     self.log.push(serde_json::json!({"update": f, "hint_done": self.hint_at}));
                     self.hint_at += 1;
                     self.hint_reached.clear();
+                    // Each hint counts its own stuck events: K1's rune hint
+                    // (11) was skipped 180 updates after hint 10 was done,
+                    // the earlier hints' events carried over (lg29 K1 tries).
+                    self.hint_stuck = 0;
                     continue;
                 }
                 let targets = self.item_nodes(g, &[s]);

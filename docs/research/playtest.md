@@ -1146,6 +1146,17 @@ GDL_DEBUG_CAMERA):
     (iceaxe) A3 A4, B6 (the dragon killed at 4,186 with the iceaxe), the
     K gate by two A1 replays, K2 K3 K4 (goodbook), G5 (the lich at 5,493
     with it) — no assist, every portal and realm gate passed.
+  - lg28 was stopped in K1 and continued as lg29 (c83) from its G5
+    end. K1 (the portal order's fourth K level): five tries alive at
+    300,000 without the rune, one dead (77,346). Four of them did hints
+    0–10 and 12–13 but skipped hint 11 (the rune, 192) — the hint's stuck
+    count carried the earlier hints' events (bot5 skipped it 180 updates
+    after hint 10) — and timed out 84–88 times on one ride edge by the
+    rune ((−189.75, −29, −47.25) → (−189.75, −33.2, −45.75)); delay 541
+    skipped hints 2–4 (loot and crystal goals while hint 2's target had
+    no path) and timed out 442 times on lift (−69.75, −33.7, 74.25).
+    lg29 was stopped in its K4 grind replay. c84: the hint stuck count
+    starts again with each hint.
   - Chain lg26 (c75) was stopped in L1 (its end states would not have
     recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
     crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2
