@@ -1157,6 +1157,20 @@ GDL_DEBUG_CAMERA):
     no path) and timed out 442 times on lift (−69.75, −33.7, 74.25).
     lg29 was stopped in its K4 grind replay. c84: the hint stuck count
     starts again with each hint.
+  - K1 on c84 (k1a, 150,000 updates): delay 263 takes the rune and exits
+    at update 89,383 (1,082 health) — the first no-assist K1 end; three
+    tries skip the rune hint again (ride timeouts by it), one dies, one
+    idles at the lift. lg30 (c84, from lg28's G5 end, --grind 2): K1 (the
+    same delay-263 win), K5 (the boss at 4,714 with B5's javelin), the D
+    gate filled by two K4 replays, D1, D2 (rune).
+  - H3 without the assist (h3n, c83, 600,000 updates, from tfull2's H2
+    end): both tries alive (6,023 and 4,139 health) without the rune; of
+    H3's 183 route hints (36 items, then goto waypoints) they skipped
+    every goto hint after 60 stuck events (one per ~10,000 updates), which
+    the assisted win had done 15–25 updates apart. c85: no contact
+    avoidance (keep_off) while a goto hint is the goal — the statues and
+    hazards beside H3's route turned the stick off its waypoints.
+    campaign_chain's BOT_DELAYS run to twelve (--bot-tries up to 12).
   - Chain lg26 (c75) was stopped in L1 (its end states would not have
     recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
     crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2

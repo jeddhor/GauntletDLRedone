@@ -2163,7 +2163,12 @@ impl Bot {
 
     /// Port 0 for update `f`; also applies the health assist.
     pub fn step(&mut self, f: usize, g: &mut Game) -> PadStatus {
-        AVOID_CONTACT.store(!self.assist_enabled, std::sync::atomic::Ordering::Relaxed);
+        // Not along a goto route hint (Goal::Point): a hand-made route is
+        // walked as written — H3's no-assist tries, turned off its waypoints
+        // by the statues and hazards beside them, skipped every goto hint
+        // after 60 stuck events each (h3n: one hint per ~10,000 updates;
+        // the assisted win did them 15–25 updates apart).
+        AVOID_CONTACT.store(!self.assist_enabled && !matches!(self.goal, Some(Goal::Point(_))), std::sync::atomic::Ordering::Relaxed);
         FOE_SKIP.with(|s| s.borrow_mut().1 = f);
         let mut pad = PadStatus { connected: true, analog: true, has_stick: true, ..Default::default() };
         for e in 4..8 {

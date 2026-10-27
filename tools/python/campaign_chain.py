@@ -53,7 +53,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BOSSES = {'A5', 'B6', 'C5', 'D5', 'E2', 'F2', 'G5', 'H4', 'I5', 'J5', 'K5'}
 # Idle updates before the bot starts, per try (arbitrary variations).
-BOT_DELAYS = [0, 61, 149, 263, 397, 541]
+BOT_DELAYS = [0, 61, 149, 263, 397, 541, 683, 811, 937, 1061, 1193, 1327]
 # game_run.py's world letters (ELF worlddatas 0x23deb0).
 WORLDS = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7, 'H': 8, 'I': 9, 'J': 10, 'K': 11, 'S': 12, 'L': 0xd}
 
