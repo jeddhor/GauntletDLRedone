@@ -1243,7 +1243,15 @@ GDL_DEBUG_CAMERA):
     65,000 over the twelve tries; 12,312 from beyond 10 units. c94: a climb
     (over a unit) not taken after its run-ups blocks every climb from the
     same object onto the same object within 12 units (the drop rule's
-    counterpart). lg32 stopped; lg33 (c94) runs C2 onward.
+    counterpart). lg32 stopped; lg33 (c94) repeated lg32's twelve deaths
+    update for update: the stuck edges were not climbs but rim object
+    1196's drops of 1.9 onto the pit floor, and only four such gateway
+    edges (from the nodes c91 reaches; c2p dumps) let c92 into the pit.
+    c95: the step-object rule only on edges that do not drop (b no lower
+    than a − 0.5); the pit graph is c91's again (5,007 nodes), the stairs
+    still reach the exit, and the start graph differs from c91's by three
+    edges. Nav::explain also reports the permissive sweep's hit (loose).
+    lg33 stopped; lg34 (c95) runs C2 onward.
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.

@@ -486,8 +486,9 @@ original (PCSX2 reference on Xvfb :191, private captures):
    keeps chain bots off secret exits and does not count a world-12 end;
    c92 puts C2's stairs (1.25 risers, step objects) on the bot's graph, so
    the regular exit is a goal. H3 ends without the assist on c85 (2 of 3).
-   c94 blocks failed climbs per object pair (C2's west pit). Chain lg33
-   (c94) runs C2 onward from lg31's C1 end.
+   c94 blocks failed climbs per object pair; c95 keeps c92's rule off
+   drops (C2's west pit). Chain lg34 (c95) runs C2 onward from lg31's C1
+   end.
 
 ---
 

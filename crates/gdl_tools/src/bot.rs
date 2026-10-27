@@ -402,12 +402,14 @@ impl Nav {
         // it swept 0.297 from the riser's top corner, so the stairs had
         // edges down only (the regular exit out of the graph; every c90 win
         // took the secret exit; holding Up there climbs them, c2-step-m4).
-        // It also joins C2's west pit floor (object 1181 at 5.7, under a step
-        // object: 35,559 more edges, walked by the game's displacement).
+        // Not on a drop: rim object 1196's drops of 1.9 onto C2's west pit
+        // floor (object 1181 at 5.7) passed so and were not taken in play
+        // (lg32/lg33's tries, c92–c94: stuck events at y 7–9 aiming at 5.7
+        // for 10,000 updates; the 35,559 pit edges behind them).
         let stepped = match &loose {
             Ok((w, _)) => match w.solid {
                 None => Some(false),
-                Some(h) if c.runtime_flags[h.object] & 0x38 != 0 => Some(true),
+                Some(h) if c.runtime_flags[h.object] & 0x38 != 0 && a[1] - 0.5 <= b[1] => Some(true),
                 Some(_) => None,
             },
             Err(_) => None,
@@ -571,7 +573,14 @@ impl Nav {
                 let mid = [(a[0] + b[0]) * 0.5, h, (a[2] + b[2]) * 0.5];
                 let depth = h - a[1].min(b[1]) + 1.0;
                 let floor = matches!(c.floor_collide(FLOOR_RADIUS, 0.0, -depth, mid, true, 0), Ok((f, _)) if f.solid.is_some());
-                out.push(serde_json::json!({"from": a, "to": b, "dy": dy, "wall": hit, "mid_floor": floor, "class": Self::edge_class(c, a, b, radius)}));
+                // edge_class's permissive sweep (1.5 above the higher floor).
+                let top = a[1].max(b[1]) + 1.5;
+                let loose = c.world_collide(Query {
+                    radius, first: [a[0], top, a[2]], last: [b[0], top, b[2]], check_flags: 7,
+                    min_normal_y: f32::from_bits(0xbf5d_b22d), max_normal_y: f32::from_bits(0x3f5d_b22d), object_mask: 0x13a, exclusion_mask: 1,
+                });
+                let loose = match &loose { Ok((w, _)) => w.solid.map(|h| (h.object, format!("{:#x}", c.runtime_flags[h.object]), h.position)), Err(_) => None };
+                out.push(serde_json::json!({"from": a, "to": b, "dy": dy, "wall": hit, "loose": loose, "mid_floor": floor, "class": Self::edge_class(c, a, b, radius)}));
             }
         }
         out
