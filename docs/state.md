@@ -463,6 +463,17 @@ original (PCSX2 reference on Xvfb :191, private captures):
    J2 (t35); t36 runs J3 onward. Legitimate play: the game's
    Easy difficulty (Game Options) roughly doubles the no-assist G2
    survival; every try still dies (lg13); chain lg14 (Easy, search) runs.
+   2026-10-26 (night): J3 in the chain (tfj3h: 5 of 6 tries) and the
+   assisted tail from it (tfull2 J6…H2, tf2h3 H3, tfull3 H4: Garm killed,
+   auto exit at 6,848). Legitimate play reached A4 (lg21, a4t) but the
+   chains never checked the Tower's realm gates: WorldOpen needs crystal
+   sets (B 100 … J 250; a play of every level holds just enough for I and
+   J), and lg21 entered B1 with 60 of 100 — only L1–G4 are a legitimate
+   campaign. A5 (chimera, 0.2 damage with its heads up) killed every
+   no-assist try without D4's scimitar; legend items serve other realms'
+   bosses (bosses.md, corrected: bosses die without them natively). Bot
+   seek_crystals, campaign_chain --gates with crystal replays; chain lg24
+   (from lg21's G4 end, bosses after their item's realm) runs.
 
 ---
 

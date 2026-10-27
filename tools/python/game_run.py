@@ -126,6 +126,7 @@ def main():
     ap.add_argument('--shop-buy', help="with --next-level: the Tower shop's purchases with the character's own gold, cheapest first per kind until refused (heal,potion,key,fight,magic,speed,armor; e.g. heal,potion)")
     ap.add_argument('--tower-shop', action='store_true', help='with --next-level: PlayersRestoreHealth as the Tower shop opened from its menu (the Tower is not simulated between chained levels)')
     ap.add_argument('--loot', action='store_true', help='with --bot: gold, food (when hurt) and potions within 25 units are goals first')
+    ap.add_argument('--seek-crystals', action='store_true', help="with --bot: every crystal of a set the player has not filled is a goal first (the Tower's realm doors open on full sets)")
     ap.add_argument('--plan', action='store_true', help='with --bot: the DEBUG trigger planner (puzzle.rs) gives the route hints')
     ap.add_argument('--bot-delay', type=int, help='with --bot: stand idle N updates after the stage start (a variation for retries)')
     ap.add_argument('--no-assist', action='store_true', help='with --explore: no DEBUG health assist in the search or its replay')
@@ -312,6 +313,8 @@ def main():
         cmd += ['plan=1']
     if a.loot:
         cmd += ['loot=1']
+    if a.seek_crystals:
+        cmd += ['seek_crystals=1']
     if a.tower_shop:
         cmd += ['tower_shop=1']
     if a.shop_buy:

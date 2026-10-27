@@ -1220,6 +1220,13 @@ pub struct Bot {
     /// economy a campaign without the DEBUG assist lives on (the Tower
     /// shop's healing costs 2.5 gold a point).
     pub loot: bool,
+    /// seek_crystals=1: every reachable crystal (kind 1 subtype 0xf) of a set
+    /// the player has not filled is a goal before the others. The Tower's
+    /// realm doors open on full sets (WorldOpen: class record +0xd0a + 2n
+    /// at MAX_CRYSTALS[n], or −1 once delivered); one play of every level
+    /// holds 125 of B's 100, 140 of A's 125, 160 of K's 150, 180 of D's
+    /// 175, 203 of C's 200, 225 of I's 225 and 250 of J's 250.
+    pub crystals: bool,
     /// require=1: a level counts only with its rune stone and legend item,
     /// so exits are not goals while one is left (E1: the bot took the exit
     /// at update 113,924 without the soul, which needs pads 134/135 first).
@@ -1408,6 +1415,7 @@ impl Bot {
             no_goal_since: None,
             assist_enabled: true,
             loot: false,
+            crystals: false,
             require: false,
             break_tries: HashMap::new(),
             disembark_until: 0,
@@ -2006,6 +2014,25 @@ impl Bot {
                 first_revisit += 1;
             }
         }
+        // seek_crystals=1: the crystals of unfilled sets, nearest by path, before
+        // the other lists (after three stuck events one is skipped like the
+        // other optional pickups; a replay of the level makes up for it —
+        // PlayerGiveCrystal counts every pickup up to the set's maximum).
+        if self.crystals {
+            let cls = 0xb4 * g.players[0].u32_(0xc) as usize;
+            let unfilled = |n: i32| {
+                let c = usize::try_from(n).ok().map(|n| g.players[0].i16_(0xd0a + cls + 2 * n));
+                c.is_some_and(|c| 0 <= c && g.items.tables.max_crystals.get(n as usize).is_some_and(|&m| i32::from(c) < m))
+            };
+            let want: Vec<usize> = active(g, &|k, t| k == 1 && t == 0xf)
+                .into_iter()
+                .filter(|&s| unfilled(g.items.records[s].i32_(0xf4)) && !self.optional_skip.contains(&s))
+                .collect();
+            if !want.is_empty() {
+                order.insert(0, want);
+                first_revisit += 1;
+            }
+        }
         // Hungry (under 60 % of the start health): food first (kind 1
         // subtype 3; BADMEAT poisons).
         if g.players[0].f32_(HEALTH) < self.start_health * 0.6 {
@@ -2514,7 +2541,7 @@ impl Bot {
                     if 40 < *n {
                         self.given_up.insert(s);
                     }
-                    let optional = matches!(item_kind(g, s), (1, 1) | (1, 3) | (1, 4) | (2, 0x2e..=0x30));
+                    let optional = matches!(item_kind(g, s), (1, 1) | (1, 3) | (1, 4) | (1, 0xf) | (2, 0x2e..=0x30));
                     if optional && 3 <= *n && self.optional_skip.insert(s) {
                         self.log.push(serde_json::json!({"update": f, "skip_optional": s}));
                     }

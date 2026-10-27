@@ -8,13 +8,22 @@ critical move, 3 after 1–3 s, 4 on the legend item's hit, 5, 6 when the item
 expires after 29 s for 0x24/0x26/0x27/0x28/0x2a, 99 once the boss is dead),
 the good wizard (goodwiz.rs) and the auto exit to TowerWave (0xd00).
 
-Phase rule seen in every boss: without the realm's legend item
-(QuestItemState 0 at the level start; GauntWorldInit sets 1 when a player
-holds it), the boss's health stops at its critical value (B6's dragon at
-104 of 2000) and the fight cannot end. Legend items are collected in the
-realm's levels (their movies: A2 iceaxe, B5 javelin, C3 bellows, D4
-scimitar, E1 soulsave, G3 fscroll, I4 lamp, J2 lantern, K4 goodbook).
-Skorne 2 (F2) and Garm (H4) take no realm legend item (BossType ≥ 0x2b).
+Legend item (QuestItemState 0 at the level start; GauntWorldInit sets 1
+when a player holds the item for CurWorld). The 2026-10-23 note here said
+a boss without it stops at its critical health (B6's dragon at 104 of
+2000, batch b8) and the fight cannot end; later native runs contradict
+that: lg21 (no assist) killed G5's lich and B6's dragon with
+QuestItemState 0 throughout (0 → 99), and the ported CritterDamage has no
+health floor — outside states 1–4 it scales a boss's damage by 1, 1, 0.5,
+0.3, 0.2 for 0–4 active critters. b8's stop is unexplained (hypothesis,
+not checked: a bot limitation of that build). Not compared: no reference
+capture of a boss fight without its item. The items are
+collected in other realms' levels (their movies: A2 iceaxe, B5 javelin,
+C3 bellows, D4 scimitar, E1 soulsave, G3 fscroll, I4 lamp, J2 lantern,
+K4 goodbook); the pickup's +0xf4 is the world it serves (A2 → B, B5 → K,
+C3 → D, D4 → A, G3 → I, I4 → C, J2 → J; playtest.md "2026-10-26
+(night)"). Skorne 2 (F2) and Garm (H4) take no realm legend item
+(BossType ≥ 0x2b).
 
 Evidence:
 - Reference: every boss compared update by update from before activation
@@ -190,7 +199,12 @@ critter_ai.rs BossDeath; pickups.rs PlayerGiveRune):
   player) lie in A3 B1 C1 D2 G1 G4 H3 I2 I3 J4 J6 K1 K3; legend items
   (subtype 0xd) in A2 B5 C3 D4 E1 G3 I4 J2 K4 (item survey of all 61
   levels' loads, game-run treasures).
-So the ending needs every realm's levels in order, each boss with its
-legend item, and all thirteen runes before H4: in effect every non-secret
-level. The traversal tools seek runes and legend items before exits and
+So the ending needs every realm's levels in order, every ordinary boss,
+and all thirteen runes before H4: in effect every non-secret level. The
+realm doors also need the crystal sets (WorldCrystal: B 100 of set 2, A
+125 of set 3, K 150, D 175, C 200, I 225, J 250 of sets 4–8; one play of
+every level holds 125, 140, 160, 180, 203, 225 and 250 — playtest.md
+"2026-10-26 (night)"), so I and J take every crystal of theirs or
+replays. A legend item serves another realm's boss, which may be fought
+after that realm (K and D open on crystals before A5). The traversal tools seek runes and legend items before exits and
 campaign_chain.py --require makes a level count only with them taken.

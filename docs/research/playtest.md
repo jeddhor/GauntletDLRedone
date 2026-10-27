@@ -974,6 +974,69 @@ GDL_DEBUG_CAMERA):
     45,025). Chain lg23 runs A5 onward from a4t-d263's end.
   - Followers (co-op runs) take the DEBUG health assist only when the
     leader has it.
+  - Assisted campaign tail with the real J3 win (tfull2, from tfj3h-d397's
+    J3 end, bot binary c64, DEBUG health assist counted): J6 (update
+    103,015), J4, J5 (boss), E1, E2 (Skorne 1), F1, F2 (Skorne 2), H1, H2
+    end in order; H3 took its rune in two tries but did not exit within
+    300,000 updates. tf2h3 (six H3 tries, 600,000 updates): delays 541 and
+    61 exit by wave 0x803 (state 5) at updates 340,673 and 400,632 with
+    rune 545 taken (3 assists each); the other four are alive at 600,000
+    without the rune. tfull3: H4 (Garm) from tf2h3-d541's
+    end — Garm killed and the auto exit (wave 0xd00, state 1) at update
+    6,848, one assist. With tfull1 (new game … J2) and tfj3h, every
+    non-secret level is ended in campaign order with its rune and legend
+    item, DEBUG assist included.
+- 2026-10-26 (night): the Tower's realm gates were not checked by the
+  chains (lg1–lg23, tfull1–3 load each level directly).
+  - WorldOpen (tower.rs) opens an ordinary realm when a player holds the
+    full count of its WorldCrystal set (class record +0xd0a + 2n at
+    MAX_CRYSTALS[n], or −1 once delivered). From the ELF tables (game-run
+    report fields world_crystal, max_crystals): G set 1 (15, the Tower's
+    own crystals), B set 2 (100), A set 3 (125), K set 4 (150), D set 5
+    (175), C set 6 (200), I set 7 (225), J set 8 (250); Temple, Hell and
+    Battle open on shards (and Hell on runes).
+  - Crystals per level (kind 1 subtype 0xf, +0xf4 the set; survey of all
+    61 levels at load from a4t-d263's end, one player — game-run report
+    field crystals_at_load, private scratch): set 2 in G1–G4 (40, 35, 35,
+    15: 125); set 3 in G (44) and B1–B5 (96): 140; set 4: 25 + 21 + A's
+    114 = 160; set 5: 5 + 7 + 28 + K1–K4's 140 = 180; set 6: 8 + 15 + 30
+    + D1–D4's 150 = 203; set 7: 5 + 20 + 60 + C1–C4's 140 = 225; set 8:
+    5 + 13 + 41 + I1–I4's 191 = 250. I and J need every crystal of their
+    set in one play of each level; PlayerGiveCrystal counts every pickup up
+    to the maximum, so replays make up the rest. Boss levels, J, E, F, H
+    and S hold none.
+  - The legitimate chain was past every gate: lg21 entered B1 with 60 of
+    the 100 set-2 crystals and A4's end held 60/57/82 of sets 2–4 (the
+    probe's realms_open: only G and S). The assisted chain likewise
+    (tfull2's H2 end: 55/54/70/63/91/60/74). Those runs show the levels
+    can be traversed; they are not a legitimate campaign.
+  - Legend items serve another realm's boss: the pickup sets class-word
+    bit +0xf4 (PlayerGiveLegendItem) and GauntWorldInit tests bit
+    CurWorld. Bits seen: G3 → 9 (I5), B5 → 11 (K5), A2 → 2 (B6), C3 → 4
+    (D5), D4 → 1 (A5), I4 → 3 (C5), J2 → 10 (J5); the bit is cleared at
+    its boss (tfull1: bit 9 at I5). Crystals open K and D before A5 is
+    fought, so D4's scimitar can be carried to the chimera.
+  - A5 without the scimitar (lg23, six no-assist tries, Easy): every try
+    died by update 4,667; the chimera (4500 body, heads 900/1125/900) lost
+    at most 758. CritterDamage scales a boss's damage by 1, 1, 0.5, 0.3,
+    0.2 for 0–4 active critters outside QuestItemState 1–4 (0.2 with the
+    body and three heads), and a head's damage is also taken from the
+    body. The bot never used its boss branch: the heads (the nearest
+    foes) set the attack range to 18 and the body stood 18.1 from the
+    nearest node; it threw at the heads, mostly 10–20 units above it.
+  - Bot (c69): seek_crystals=1 (game_run.py --seek-crystals) makes every
+    crystal of an unfilled set a goal before the other lists (optional
+    after three stuck events, like gold and food). campaign_chain.py
+    --gates probes each level for two updates from the carried state and
+    requires its realm in realms_open; a closed crystal gate is filled by
+    replays (bot, --seek-crystals, no --require) of the played
+    --replay-pool level with the most crystals of that set, at most
+    --max-replays per gate; a closed shard gate stops the chain.
+  - Chain lg24 (no assist, Easy, loot, crystals, gates; from lg21's G4
+    end — L1 G1 G2 G3 G4 legitimate so far) runs the bosses after the
+    realm that holds their legend item: B1–B5, A1 A6 A2 A3 A4, B6, K1–K4,
+    G5, K5, D1–D4, A5, C1–C4, D5, I1–I4, C5, I5, J1 J2 J3 J6 J4 J5, E1
+    E2, F1 F2, H1–H4.
 
 ## State search (M14/M15 tooling, 2026-10-24)
 

@@ -2043,6 +2043,21 @@ fn run() -> Result<(), Box<dyn Error>> {
             .filter(|(_, r)| r.active() && game.items.definitions[r.definition()].kind() == 4 && 0 <= r.i16_(0x102))
             .map(|(k, r)| (k, r.i16_(0x102)))
             .collect();
+        // The realms the Tower's doors would open with the players' progress
+        // at load (WorldOpen; the chained campaign's door order).
+        let realms_open: Vec<i32> = (1..=0xc).filter(|&w| game.world_open(w)).collect();
+        // The level's crystals at load (kind 1 subtype 0xf; +0xf4 the set,
+        // PlayerGiveCrystal's n): per set [shown for this player count
+        // (+0xe1 0), all].
+        let mut crystals_at_load = std::collections::BTreeMap::<i32, [usize; 2]>::new();
+        for r in game.items.records.iter().filter(|r| r.active()) {
+            let d = &game.items.definitions[r.definition()];
+            if d.kind() == 1 && d.subtype() == 0xf {
+                let e = crystals_at_load.entry(r.i32_(0xf4)).or_default();
+                e[0] += usize::from(r.u8_(0xe1) == 0);
+                e[1] += 1;
+            }
+        }
         // Replays of traces that start mid-level keep the start state's
         // RuneDispTimer rather than init_next_level's 300 (traces since
         // trace-a1-newgame-v2 seed their own per update).
@@ -3812,6 +3827,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     b.assist_enabled = !opts.contains_key("no_assist");
                     // loot=1: the bot picks up gold, food and potions near it.
                     b.loot = opts.contains_key("loot");
+                    // seek_crystals=1: crystals of the sets not yet full anywhere.
+                    b.crystals = opts.contains_key("seek_crystals");
                     // require=1: exits wait for the rune stone and legend item.
                     b.require = opts.contains_key("require");
                     if let Some(d) = opts.get("bot_delay") {
@@ -4072,7 +4089,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             .filter(|(n, _)| !n.is_empty() && !game.item_anim_lib.contains_key(n))
             .map(|(n, k)| format!("{n} kind {k}"))
             .collect();
-        let mut report = serde_json::json!({"carried_at_load":carried_at_load,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"plan":plan_report,"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
+        let mut report = serde_json::json!({"carried_at_load":carried_at_load,"realms_open":realms_open,"crystals_at_load":crystals_at_load,"world_crystal":game.world_crystal,"max_crystals":game.items.tables.max_crystals,"missing_trees":missing_trees,"bot":traversal.as_ref().map(|b| b.report(&game)),"plan":plan_report,"floors":floors,"exits":exits,"frames":frames,"samples":samples,"events":events,"sounds":sounds,"generators":generators,"placed":placed,"spawned":spawned,"rumble":rumble,"team":team,
             "attract_transmitters":game.std_camera.as_ref().map(|c| serde_json::json!({"start_att":c.start_att,
                 "list":c.transmitters.iter().enumerate().filter(|(_, t)| t.flag == 1).map(|(k, t)| serde_json::json!([k, t.pos, t.pitch, t.yaw, t.id])).collect::<Vec<_>>()})),
             "level_multipliers_cc":(0..5).map(|k| game.level_f32(0xcc + 4 * k)).collect::<Vec<_>>(),
