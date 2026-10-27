@@ -50,6 +50,11 @@ static PLAYER_DIMS: std::sync::OnceLock<(f32, f32, f32)> = std::sync::OnceLock::
 /// Without the health assist, steering keeps off dormant statues and
 /// live hazards (steer); set at each Bot::step.
 static AVOID_CONTACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+thread_local! {
+    /// Items keep_off no longer steers around: a dormant statue the bot got
+    /// stuck by three times (its passage needs contact).
+    static CONTACT_OK: std::cell::RefCell<HashSet<usize>> = std::cell::RefCell::new(HashSet::new());
+}
 
 /// Whether a player walking from floor point `a` towards `b` gets there:
 /// PlayerMotion's static displacement (player_collision::player_displacement:
@@ -976,7 +981,7 @@ fn keep_off(g: &Game, p: V3, dx: f32, dz: f32) -> (f32, f32) {
     let near: Vec<(V3, f32)> = (0..g.items.records.len())
         .filter_map(|s| {
             let r = &g.items.records[s];
-            if !r.active() || r.u8_(0xe1) != 0 {
+            if !r.active() || r.u8_(0xe1) != 0 || CONTACT_OK.with(|c| c.borrow().contains(&s)) {
                 return None;
             }
             let (k, _) = item_kind(g, s);
@@ -1257,6 +1262,8 @@ pub struct Bot {
     strike_logs: usize,
     /// Attack-branch diagnostics logged (tag).
     attack_tags: usize,
+    /// Stuck events beside each dormant statue (keep_off's CONTACT_OK).
+    statue_stuck: HashMap<usize, u32>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1284,6 +1291,7 @@ impl Bot {
 
     pub fn new(g: &Game) -> Bot {
         set_player_dims(g);
+        CONTACT_OK.with(|c| c.borrow_mut().clear());
         let mut b = Self::blank(g);
         b.rebuild(g);
         let exits: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9).collect();
@@ -1414,6 +1422,7 @@ impl Bot {
             melee_swings: 0,
             strike_logs: 0,
             attack_tags: 0,
+            statue_stuck: HashMap::new(),
         }
     }
 
@@ -2324,6 +2333,27 @@ impl Bot {
                 self.dwell = (f, p);
             } else if !stuck {
                 self.fight_hold = 0;
+            }
+            if stuck && !fight && !self.assist_enabled {
+                // A dormant statue within contact + 1.5 units at three stuck
+                // events: keep_off lets the bot touch it (lg21's A4: tries
+                // held for 150,000 updates beside the GENERAL statue 54, the
+                // way to goal 262 passing within its contact).
+                let rad = player_radius();
+                for s2 in 0..g.items.records.len() {
+                    let r = &g.items.records[s2];
+                    if r.active() && item_kind(g, s2).0 == 4 && r.u32_(0xf8) & 1 == 0 {
+                        let c = rad + g.items.definitions[r.definition()].f32_(0xc).clamp(0.0, 4.0) + 0.4;
+                        if dist_xz(r.v3(0x40), p) < c + 1.5 && (r.v3(0x40)[1] - p[1]).abs() < 3.0 {
+                            let n = self.statue_stuck.entry(s2).or_insert(0);
+                            *n += 1;
+                            if *n == 3 {
+                                CONTACT_OK.with(|c| c.borrow_mut().insert(s2));
+                                self.log.push(serde_json::json!({"update": f, "contact_ok": s2}));
+                            }
+                        }
+                    }
+                }
             }
             if stuck && !fight {
                 // At a closed gate the key count decides (obstacle_nodes), not

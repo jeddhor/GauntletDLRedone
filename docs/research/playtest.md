@@ -891,7 +891,11 @@ GDL_DEBUG_CAMERA):
     9,827–87,292) and end J3 by the regular exit (item 125, exit state 5)
     at updates 36,192 (delay 397), 41,613, 46,620, 101,600 and 108,379,
     with 1–2 health assists (b70-263: 86); delay 61 never struck. The
-    chain's tail is rerun from tfj3h-d397's end (tfull2).
+    chain's tail is rerun from tfj3h-d397's end (tfull2). Regression
+    b78 (c64, the eleven levels whose traversal wins logged strikes, from
+    their own starts, delay 0): A2 A4 C2 D3 F1 G2 G4 I2 I4 end at the same
+    updates as b77; J3 and K1 do not end, as in b77 (their v8 wins came
+    from other delays; J3 here swung twice at 502 without touching it).
 - Hidden generators (bot fix, c63): the no-assist generator targets
   included generators with +0xe1 2 (player-count items waiting to show
   until off screen); ProcessItems, closest_generator and ItemCollSub skip
@@ -943,7 +947,22 @@ GDL_DEBUG_CAMERA):
     three die (17,229–39,789), one is alive at 200,000. The first
     legitimate G2 ends. Chain lg20 (a new game, Easy, no assist, --loot
     --shop-buy heal,potion --require, the critical path L1 … H4 with J3)
-    runs.
+    ended L1 and G1 (level 3, no gold) and stopped at G2: six tries died
+    (17,190–70,366), the search reached progress 20. lg1's character had
+    entered G2 at level 5 with 400 gold (eight cherries: health 660).
+  - Chain lg21 (no assist, Easy, from sg2f-d541's end: the legitimate
+    campaign so far is lg1's L1 and G1 on Medium, then sg2f-d541's G2):
+    G3 (legend item), G4 (rune), G5 (the lich killed at update 7,155 with
+    19 health left, auto exit), B1 (rune), B2, B3, B4, B5 (legend item),
+    B6 (the dragon killed at 3,045), A1, A6, A2 (legend item), A3 (rune) —
+    13 levels, no health assist; A4 stopped it: three tries died, three
+    were held to update 300,000, two of them beside the GENERAL statue 54
+    by (−18.8, 0, −2.6) (516 stuck events; the way to goal 262 passes
+    within its contact), and the search reached progress 14.
+  - Contact allowed (c66): three stuck events within contact + 1.5 units
+    of a dormant statue let keep_off pass it (logged `contact_ok`); the
+    bot then wakes and fights it. Chain lg22 runs A4 onward from lg21's
+    A3 end.
   - Followers (co-op runs) take the DEBUG health assist only when the
     leader has it.
 
