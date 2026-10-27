@@ -121,6 +121,14 @@ FLOWS = {
         expect=[r'playing .*\| select world 13', r'paused=true Paused \{ tower: true, at: 0', r'Paused \{ tower: true, at: 1 \} \| select',
                 r'Paused \{ tower: true, at: 2 \} \| select\+shop', r'paused=true Inventory', r'InventoryClose', r'paused=true ConfirmQuit',
                 r'paused=false Paused \{ tower: true, at: 4']),
+    # In the Tower: pause → Settings (tower_options) → back to the pause
+    # menu (pause-tower's entry 0 showed Sumner's unlock scroll and no page
+    # change, 2026-10-23).
+    'pause-settings': dict(
+        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Return') + [["wait", 3]] + k('space', 8, gap=1.5) + [["wait", 12]]
+        + k('i', 6, gap=1.5) + [["wait", 2]] + k('Escape') + [["wait", 1], ["shot", "paused"]] + k('Return') + [["wait", 1], ["shot", "settings"]]
+        + k('BackSpace') + [["wait", 1], ["shot", "back"]],
+        expect=[r'paused=true Paused \{ tower: true, at: 0', r'paused=true Options \{ at: 0', r'paused=true Paused \{ tower: true, at: 0']),
     # In a realm (G1, TEST autostart): pause → Quit Level → "Abort Level?"
     # (quitlevel_question) → Yes → back in the Tower.
     'pause-realm': dict(

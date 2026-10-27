@@ -1428,8 +1428,13 @@ private/reports/menu-flows-m17-v1.json (actual disc), all five pass:
   page) — each opened and backed out of.
 - pause-realm: G1 (TEST autostart) → pause → Quit Level → the Tower.
 
-Open: with entry 0 (Settings) selected in the Tower's pause menu, the frame
-shows Sumner's unlock scroll and the trace no page change; not yet explained.
+Resolved 2026-10-27: with entry 0 (Settings) selected in the Tower's pause
+menu, pause-tower's frame had shown Sumner's unlock scroll and the trace no
+page change — the flow dismissed four of the Tower's scrolls, and the
+unlock scroll still up took the accept. pause-settings (six dismissals)
+opens Settings (tower_options: Audio, Compass, Controls, Screen) and backs
+out to the pause menu: menu-flows-m17-v26 PASS (actual disc, the client on
+the private display).
 
 ## Co-op matrix (M16, 2026-10-23)
 
