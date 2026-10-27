@@ -2091,7 +2091,14 @@ impl Bot {
                     let d = |n: usize| foes.iter().map(|q| dist_xz(self.nav.pts[n], *q)).fold(f32::MAX, f32::min);
                     d(a).total_cmp(&d(b))
                 });
-            let near = |n: usize| foes.iter().any(|q| dist_xz(self.nav.pts[n], *q) < 4.0) || Some(n) == close;
+            // Or any node within 3 units of the closest node's distance: E2's
+            // Skorne stands in a pit 15 units under the floor, and after a
+            // knockback and stuck events by the one closest node (9.75, −10,
+            // 0.75) no path reached it again; the bot explored for 4,000
+            // updates with Skorne at 2,171 of 6,000 (feas-E2).
+            let foe_d = |n: usize| foes.iter().map(|q| dist_xz(self.nav.pts[n], *q)).fold(f32::MAX, f32::min);
+            let close_d = close.map(foe_d).unwrap_or(f32::MAX);
+            let near = |n: usize| foes.iter().any(|q| dist_xz(self.nav.pts[n], *q) < 4.0) || Some(n) == close || foe_d(n) < close_d + 3.0;
             if let Some(path) = self.nav.path(here, &near, &blocked, &avoid_x) {
                 let n = *path.last().unwrap();
                 self.goal = Some(Goal::Explore(n));
@@ -2922,6 +2929,18 @@ impl Bot {
             if dist_xz(bp, p) < 8.0 && (f / 20).is_multiple_of(2) {
                 return Self::steer(pad, g, p, [2.0 * p[0] - bp[0], p[1], 2.0 * p[2] - bp[2]]);
             }
+            // Knocked back past the fight node (the foe goal): walk back to it
+            // in alternate windows. E2's tries took 8.6–10.6 a sample and dealt
+            // 12.4–12.8 from 24–28 units of Skorne, but 17–20 against 2.3–3.7
+            // from 32–36, where they spent a quarter of the fight (e2t).
+            if let Some(Goal::Explore(n)) = self.goal
+                && let Some(&q) = self.nav.pts.get(n)
+                && dist_xz(bp, q) + 2.0 < dist_xz(bp, p)
+                && (f / 20).is_multiple_of(2)
+            {
+                self.tag(f, "boss_close_in");
+                return Self::steer(pad, g, p, q);
+            }
             // A child (A5's chimera heads) low enough to be hit, the weakest
             // first: CritterDamage takes a child's damage from the root too,
             // and each dead child lifts the boss's active-critter scaling
@@ -2938,6 +2957,18 @@ impl Bot {
                 .min_by(|a, b| a.0.total_cmp(&b.0))
                 .map(|(_, q)| q);
             let aim = child.unwrap_or(bp);
+            // Without the assist: a potion (circle, entry 0xb, the magic
+            // blast) every 300 updates while one is held. The potion rule
+            // below never ran at a boss (this branch returns first): E2's
+            // tries held nine bought potions and died with Skorne at 119–347
+            // of 6000 (e2t).
+            if !self.assist_enabled && 0 < g.players[0].i32_(0x1a18) && self.potion_at.is_none_or(|u| u + 300 <= f) {
+                self.potion_at = Some(f);
+                let bh = boss_inst.and_then(|b| g.critters.get(b)).and_then(Option::as_ref).map(|c| c.rec.f32_(0x4f4));
+                self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18), "boss_health": bh}));
+                pad.press(0xb);
+                return pad;
+            }
             // Turbo (triangle, entry 0xc) every 40 updates at +0x800 >= 40:
             // the meter otherwise sat full through the fight (lg23).
             if 40.0 <= g.players[0].f32_(0x800) && f.is_multiple_of(40) {

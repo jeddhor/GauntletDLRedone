@@ -1056,6 +1056,22 @@ GDL_DEBUG_CAMERA):
     updates 7,195–9,063, 280–701 health left); one dies at 7,011.
   - lg24 was stopped in its second G1 replay and restarted as lg25 on
     c71 from lg24's G1 replay end (the same arguments).
+  - Feasibility probes (one no-assist try each from the assisted chains'
+    end states, c71, capability checks only): F2's Skorne 2 and H4's
+    Garm die (the level ends alive: 2,119 and 5,768 health left); E2's
+    Skorne 1 (6000) stood in its pit 15.4 units under the floor at
+    (−0.1, −25.4, −19.6) and the bot, knocked back past the one closest
+    node, explored for 4,000 updates with Skorne at 2,171, then died.
+    Bot c72: on boss levels every node within 3 units of the closest
+    node's foe distance is a foe goal (e2t: two of six kill Skorne, the
+    rest die with it at 119–347). c73: a potion every 300 updates in the
+    boss branch without the assist (the potion rule never ran at a boss);
+    the magic blast barely touches Skorne (e2u: 12–18 potions a try, two
+    of six win). c74: back to the fight node in alternate windows when
+    knocked more than 2 units past it — E2's tries had taken 8.6–10.6 a
+    sample and dealt 12.4–12.8 from 24–28 units, but 17–20 against
+    2.3–3.7 from 32–36 units, a quarter of the fight (e2v: two of six;
+    a5v, A5 at A4 strength with the DEBUG item: one of six, the first).
 
 ## State search (M14/M15 tooling, 2026-10-24)
 
