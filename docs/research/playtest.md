@@ -1264,7 +1264,10 @@ GDL_DEBUG_CAMERA):
     each skipped 34–42 of its 44 crystal goals after one stuck event (the
     c82 limit). c96: crystal_stuck=N (game_run.py --crystal-stuck; default
     1) and campaign_chain --replay-crystal-stuck N for crystal replays only
-    (a death there costs one try of twelve).
+    (a death there costs one try of twelve). lg34's fourth replay +15
+    (171), then lg34 was stopped; lg35 (c96, --replay-crystal-stuck 3,
+    --max-replays 16) from that end: C2 replays +15, +29, +10 → set 7 at
+    225 (character level 61), the I realm open.
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.
