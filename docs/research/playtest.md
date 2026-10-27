@@ -1267,7 +1267,13 @@ GDL_DEBUG_CAMERA):
     (a death there costs one try of twelve). lg34's fourth replay +15
     (171), then lg34 was stopped; lg35 (c96, --replay-crystal-stuck 3,
     --max-replays 16) from that end: C2 replays +15, +29, +10 → set 7 at
-    225 (character level 61), the I realm open.
+    225 (character level 61), the I realm open. Then I1 (try 4, update
+    41,493), I2 (try 10, 46,062, rune), I3 (try 2, 167,585, rune), I4
+    (try 2, 36,133, the lamp), C5 (the lamp carried: the boss killed, auto
+    exit at 8,011, first try) and I5 (the yeti killed, auto exit at
+    11,829, try 2), all without the assist. The J gate needs set 8 at
+    250: the I levels hold 48/44/45/54, and the character held 129 after
+    I5 (level 66); the first I4 replay +41 (170).
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.
