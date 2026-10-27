@@ -1092,6 +1092,22 @@ GDL_DEBUG_CAMERA):
     class 0's (fixed; save-reload passes again on the fixed client,
     scenarios-m13gold1). run_play.py takes GDL_PLAY for another client
     build.
+  - No-assist probes of C1 and F1 (from the assisted chains' D5 and E2
+    ends): F1 — 181 HEL generators — drains 0.37 health an update
+    (types 2/20/24/25 at 4.4–7.2 units; 8,100 of 7,900 + food by update
+    22,000–28,000 in every try), where the assisted win needed about
+    52,000 updates; the worst stretch is by generator 170 (−105, 13,
+    −114). Firing every update out to 10 units (c77, GDL_BOT_RANGED_FAR,
+    an experiment switch) changed nothing (f1x: all die by 28,205).
+    Powerups (kind 1 subtypes 5–9; c79) are loot now — taken always but
+    a second size potion — yet few lie within LOOT_RANGE of the route
+    (f1p: the same deaths); the Tower shop's powerups last 15–45 s
+    (shop_buy). C1: a critter hit the bot for 8–43 from 10–19 units, out
+    of its 10-unit fire range, for 6,000 updates (305 → 268 health, the
+    player 3,400). c78: a losing exchange (900 updates of fire, the foe
+    down under a fifth, the player 800 or more) skips that foe for 6,000
+    updates; c80: hurt within 60 updates with no foe within 10, a live
+    critter within 20 units is the ranged target.
   - Chain lg26 (c75) was stopped in L1 (its end states would not have
     recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
     crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2

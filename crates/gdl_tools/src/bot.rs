@@ -1215,7 +1215,7 @@ pub struct Bot {
     /// The DEBUG health assist (explore.rs applies its own).
     pub assist_enabled: bool,
     /// loot=1: gold, gems, food (below the maximum health), potions (below
-    /// the cap) and chests (with keys to spare) within LOOT_RANGE come
+    /// the cap), powerups and chests (with keys to spare) within LOOT_RANGE come
     /// before the other goals — the
     /// economy a campaign without the DEBUG assist lives on (the Tower
     /// shop's healing costs 2.5 gold a point).
@@ -1276,6 +1276,11 @@ pub struct Bot {
     statue_stuck: HashMap<usize, u32>,
     /// Fire at each foe: (first, last update, health then) (note_fire).
     foe_fire: HashMap<(u8, usize), (usize, usize, f32)>,
+    /// A fight's exchange per foe: (first update, last update, the foe's
+    /// health and the player's at the first).
+    foe_trade: HashMap<(u8, usize), (usize, usize, f32, f32)>,
+    /// The last update the player lost 3 or more health.
+    hurt_at: Option<usize>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1438,6 +1443,8 @@ impl Bot {
             attack_tags: 0,
             statue_stuck: HashMap::new(),
             foe_fire: HashMap::new(),
+            foe_trade: HashMap::new(),
+            hurt_at: None,
         }
     }
 
@@ -1999,8 +2006,20 @@ impl Bot {
                 let r = &g.items.records[s];
                 (spare_keys && r.u16_(0xd8) & 0x11 == 0x10 && r.u8_(0xdc) == 0) || r.u8_(0xdc) == 2
             };
-            let loot: Vec<usize> = active(g, &|k, t| (k == 1 && (t == 1 || (t == 3 && hurt) || (t == 4 && potions_left))) || (k == 2 && (0x2e..=0x30).contains(&t)))
+            // Powerups (kind 1 subtypes 5..=9: weapons, shields and
+            // invulnerability, boosts, turbo and the size potions) are always
+            // taken (add_powerup) except a size potion (subtype 9, +0xf0 &
+            // 0xf000) while one is active (+0x138 & 0xf000), which stays.
+            // F1 holds 2 invulnerability icons, 5 shields, rapid fire and
+            // multi-shot icons and 7 turbo pickups the bot passed (feas-F1).
+            let sized = g.players[0].u32_(0x138) & 0xf000 != 0;
+            let powerup = |s: usize| {
+                let (k, t) = item_kind(g, s);
+                k == 1 && (5..=9).contains(&t) && !(t == 9 && sized && g.items.records[s].u32_(0xf0) & 0xf000 != 0)
+            };
+            let loot: Vec<usize> = active(g, &|k, t| (k == 1 && (t == 1 || (t == 3 && hurt) || (t == 4 && potions_left) || (5..=9).contains(&t))) || (k == 2 && (0x2e..=0x30).contains(&t)))
                 .into_iter()
+                .filter(|&s| item_kind(g, s).0 != 1 || !(5..=9).contains(&item_kind(g, s).1) || powerup(s))
                 .filter(|&s| item_kind(g, s).0 != 2 || chest(s))
                 .filter(|s| !self.optional_skip.contains(s))
                 .filter(|&s| {
@@ -2161,6 +2180,7 @@ impl Bot {
         // the foes within 30 units (type, distance, height, health) and
         // hazards within 5, for losses of 3 or more.
         if health + 3.0 <= self.last_health {
+            self.hurt_at = Some(f);
             let p = g.players[0].v3(0x50);
             let mut foes: Vec<(f32, i32, f32, f32)> = g
                 .enemies
@@ -2555,7 +2575,7 @@ impl Bot {
                     if 40 < *n {
                         self.given_up.insert(s);
                     }
-                    let optional = matches!(item_kind(g, s), (1, 1) | (1, 3) | (1, 4) | (1, 0xf) | (2, 0x2e..=0x30));
+                    let optional = matches!(item_kind(g, s), (1, 1) | (1, 3) | (1, 4) | (1, 5..=9) | (1, 0xf) | (2, 0x2e..=0x30));
                     if optional && 3 <= *n && self.optional_skip.insert(s) {
                         self.log.push(serde_json::json!({"update": f, "skip_optional": s}));
                     }
@@ -3126,8 +3146,29 @@ impl Bot {
             return Self::steer(pad, g, p, at);
         }
         let near = Self::nearest_foe(g, p, ATTACK_RANGE);
-        let enemy = if ranged { near.or_else(|| Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE)) } else { near };
-        let fighting = (f / 12).is_multiple_of(2) || (ranged && near.is_some());
+        let mut enemy = if ranged { near.or_else(|| Self::nearest_foe(g, p, 2.0 * ATTACK_RANGE)) } else { near };
+        // Without the assist, hurt within the last 60 updates and no foe
+        // within twice ATTACK_RANGE: a live critter (an awake statue's
+        // creature) within 20 units is the target — C1's tries were hit for
+        // 8–43 from 10–19 units by one they never fired at (feas-C1).
+        let retaliate = !self.assist_enabled && enemy.is_none() && self.hurt_at.is_some_and(|h| f < h + 60);
+        if retaliate {
+            let skip = |k: usize| FOE_SKIP.with(|s| s.borrow().0.get(&(1, k)).is_some_and(|&until| s.borrow().1 < until));
+            enemy = g
+                .critters
+                .iter()
+                .enumerate()
+                .filter_map(|(k, c)| c.as_ref().map(|c| (k, c)))
+                .filter(|&(k, c)| 0.0 < c.rec.f32_(0x4f4) && 2 <= c.rec.u32_(0x8) && !skip(k) && (c.rec.v3(0x40)[1] - p[1]).abs() < 6.0)
+                .map(|(_, c)| (dist_xz(c.rec.v3(0x40), p), c.rec.v3(0x40)))
+                .filter(|(d, _)| *d < 20.0)
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+        }
+        // EXPERIMENT (GDL_BOT_RANGED_FAR=1, no assist): fire every update at
+        // foes within twice ATTACK_RANGE too (F1's no-assist try took 8,100
+        // damage from types 2/20/24/25 at 4.4–7.2 units, feas-F1).
+        let far = !self.assist_enabled && std::env::var("GDL_BOT_RANGED_FAR").is_ok_and(|v| v == "1");
+        let fighting = (f / 12).is_multiple_of(2) || (ranged && near.is_some()) || (far && enemy.is_some()) || (retaliate && enemy.is_some());
         // An enemy against the player (within 2 units): step away for a
         // moment, then fire — thrown weapons leave beyond it (K2 in the
         // campaign: a type-0x15 creature, never knocked back, held the player
@@ -3217,6 +3258,24 @@ impl Bot {
             .map(|(k, e)| ((0u8, k), e.f32_(0x214)))
             .or_else(|| g.critters.iter().enumerate().find_map(|(k, c)| c.as_ref().filter(|c| dist_xz(c.rec.v3(0x40), at) < 0.01).map(|c| ((1u8, k), c.rec.f32_(0x4f4)))));
         let Some((key, health)) = key else { return };
+        // A losing exchange (without the assist): after 900 updates of fire
+        // (gaps under 100) the foe has lost under a fifth of its health
+        // while the player lost 800 or more — no target for 6000 updates
+        // (logged `foe_losing`). C1's no-assist try fought a critter from
+        // 305 to 268 health for 6,000 updates and lost 3,400 (feas-C1).
+        let me = g.players[0].f32_(HEALTH);
+        let t = self.foe_trade.entry(key).or_insert((f, f, health, me));
+        if 100 < f - t.1 {
+            *t = (f, f, health, me);
+        }
+        t.1 = f;
+        let (first, _, h0, me0) = *t;
+        if !self.assist_enabled && 900 <= f - first && h0 * 0.8 < health && 800.0 <= me0 - me {
+            FOE_SKIP.with(|s| s.borrow_mut().0.insert(key, f + 6000));
+            self.foe_trade.remove(&key);
+            self.log.push(serde_json::json!({"update": f, "foe_losing": [key.0, key.1], "health": [h0, health], "player": [me0, me]}));
+            return;
+        }
         let e = self.foe_fire.entry(key).or_insert((f, f, health));
         if 100 < f - e.1 || health < e.2 {
             *e = (f, f, health);
