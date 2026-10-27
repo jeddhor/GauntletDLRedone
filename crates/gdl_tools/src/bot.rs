@@ -1281,6 +1281,8 @@ pub struct Bot {
     foe_trade: HashMap<(u8, usize), (usize, usize, f32, f32)>,
     /// The last update the player lost 3 or more health.
     hurt_at: Option<usize>,
+    /// An optional goal item the player stands beside, since that update.
+    beside: Option<(usize, usize)>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1445,6 +1447,7 @@ impl Bot {
             foe_fire: HashMap::new(),
             foe_trade: HashMap::new(),
             hurt_at: None,
+            beside: None,
         }
     }
 
@@ -2200,6 +2203,29 @@ impl Bot {
             self.log.push(serde_json::json!({"update": f, "hurt": r1(self.last_health - health), "at": p.map(r1), "foes": foes.iter().map(|x| [r1(x.0), x.1 as f32, r1(x.2), r1(x.3)]).collect::<Vec<_>>(), "hazards": hazards}));
         }
         self.last_health = health;
+        // An optional pickup the player stands beside (1.5 units) for 300
+        // updates without taking it is skipped and the goal chosen again:
+        // C1's try stood 0.5 units from BOOSTICON 78 from update 21,163 to
+        // 36,913 (c1h-d263).
+        if let Some(Goal::Item(s)) = self.goal {
+            let optional = matches!(item_kind(g, s), (1, 1) | (1, 3) | (1, 4) | (1, 5..=9) | (1, 0xf) | (2, 0x2e..=0x30));
+            let q = g.items.records[s].v3(0x40);
+            let p = g.players[0].v3(0x50);
+            if optional && g.items.records[s].active() && dist_xz(q, p) < 1.5 && (q[1] - p[1]).abs() < 3.0 {
+                match self.beside {
+                    Some((b, since)) if b == s => {
+                        if since + 300 <= f && self.optional_skip.insert(s) {
+                            self.log.push(serde_json::json!({"update": f, "skip_unpicked": s}));
+                            self.beside = None;
+                            self.choose(f, g);
+                        }
+                    }
+                    _ => self.beside = Some((s, f)),
+                }
+            } else {
+                self.beside = None;
+            }
+        }
         // Without the assist, inside a poison cloud: walk straight out of it
         // (away from its centre) and re-plan with its nodes closed.
         if !self.assist_enabled && f.is_multiple_of(10) && self.backoff.is_none() {
@@ -3292,7 +3318,9 @@ impl Bot {
             *e = (f, f, health);
         }
         e.1 = f;
-        if 600 <= f - e.0 {
+        // 300 updates without the assist (C1's try spent 5,400 updates on
+        // nine foes behind its fence at 600 each, c1h-d263).
+        if (if self.assist_enabled { 600 } else { 300 }) <= f - e.0 {
             FOE_SKIP.with(|s| s.borrow_mut().0.insert(key, f + 3000));
             self.foe_fire.remove(&key);
             self.log.push(serde_json::json!({"update": f, "foe_skip": [key.0, key.1], "health": health}));

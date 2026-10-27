@@ -1132,6 +1132,14 @@ GDL_DEBUG_CAMERA):
     C1 (c1h): the rune taken in three of six tries and the deaths later
     (17,408–57,941), one try alive past update 60,000; C1's food for one
     player is scarce (its 16 food records include multi-player ones).
+  - c83: an optional goal item stood beside (1.5 units) for 300 updates
+    and still there is skipped (logged `skip_unpicked`; c1h-d263 stood
+    0.5 units from BOOSTICON 78 from update 21,163 to 36,913, firing at
+    foes behind a fence), and without the assist a foe fired at for 300
+    updates (was 600) without losing health is skipped. C1 (c1i, 150,000
+    updates): delay 397 takes the rune and exits (wave 0x301) at update
+    44,133 with 667 health — the first no-assist C1 end; delay 61 alive
+    at 150,000 (2,761 health, no rune); four die (20,018–88,696).
   - lg28 (c81): G2 (try 4, 30,225), G3 (legend item, the sixth try), G4,
     then B1 directly (set 2 full from one play of G1–G4 with crystal
     seeking), B2–B5, the A gate filled by one B4 replay, A1 A6 A2
