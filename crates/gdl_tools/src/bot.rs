@@ -2097,7 +2097,14 @@ impl Bot {
                 self.goal = Some(Goal::Explore(n));
                 self.path = path;
                 self.at = 0;
-                let d = foes.iter().map(|q| dist_xz(self.nav.pts[n], *q)).fold(f32::MAX, f32::min);
+                // The range to the boss itself (BossCritInst), not the nearest
+                // of its children: A5's chimera body stood 18.1 from the node
+                // nearest a head, so the boss branch never fought it (lg23).
+                let boss = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|b| g.critters.get(b)).and_then(Option::as_ref).map(|c| c.rec.v3(0x40));
+                let d = match boss {
+                    Some(b) => dist_xz(self.nav.pts[n], b),
+                    None => foes.iter().map(|q| dist_xz(self.nav.pts[n], *q)).fold(f32::MAX, f32::min),
+                };
                 self.boss_range = (d + 4.0).max(18.0);
                 self.log.push(serde_json::json!({"update": f, "foe": self.nav.pts[n], "nodes": self.path.len()}));
                 return true;
@@ -2909,14 +2916,37 @@ impl Bot {
                 None => pad,
             };
         }
-        let boss = usize::try_from(g.boss_crit_inst - 1).ok().and_then(|b| g.critters.get(b)).and_then(Option::as_ref).filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40));
+        let boss_inst = usize::try_from(g.boss_crit_inst - 1).ok();
+        let boss = boss_inst.and_then(|b| g.critters.get(b)).and_then(Option::as_ref).filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| c.rec.v3(0x40));
         if let Some(bp) = boss.filter(|bp| dist_xz(*bp, p) < self.boss_range) {
             if dist_xz(bp, p) < 8.0 && (f / 20).is_multiple_of(2) {
                 return Self::steer(pad, g, p, [2.0 * p[0] - bp[0], p[1], 2.0 * p[2] - bp[2]]);
             }
-            pad.press(0xd);
-            self.tag(f, "boss");
-            return Self::steer(pad, g, p, bp);
+            // A child (A5's chimera heads) low enough to be hit, the weakest
+            // first: CritterDamage takes a child's damage from the root too,
+            // and each dead child lifts the boss's active-critter scaling
+            // (0.2 with the body and three heads up, then 0.3, 0.5, 1). The
+            // heads idle 10–20 units above the player (lg23, a5L).
+            let child = g
+                .critters
+                .iter()
+                .flatten()
+                // +0x8 state 2 or more: CritterDamage's damageable instances.
+                .filter(|c| c.parent.is_some() && c.parent == boss_inst && 0.0 < c.rec.f32_(0x4f4) && 2 <= c.rec.u32_(0x8))
+                .map(|c| (c.rec.f32_(0x4f4), c.rec.v3(0x40)))
+                .filter(|(_, q)| (q[1] - p[1]).abs() < 6.0 && dist_xz(*q, p) < self.boss_range)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, q)| q);
+            let aim = child.unwrap_or(bp);
+            // Turbo (triangle, entry 0xc) every 40 updates at +0x800 >= 40:
+            // the meter otherwise sat full through the fight (lg23).
+            if 40.0 <= g.players[0].f32_(0x800) && f.is_multiple_of(40) {
+                pad.press(0xc);
+            } else {
+                pad.press(0xd);
+            }
+            self.tag(f, if child.is_some() { "boss_child" } else { "boss" });
+            return Self::steer(pad, g, p, aim);
         }
         // Enemies within ATTACK_RANGE: attack in windows (12 updates
         // fighting, 12 moving; holding attack keeps the player in its attack

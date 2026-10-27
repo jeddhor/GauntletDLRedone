@@ -1036,7 +1036,26 @@ GDL_DEBUG_CAMERA):
     end — L1 G1 G2 G3 G4 legitimate so far) runs the bosses after the
     realm that holds their legend item: B1–B5, A1 A6 A2 A3 A4, B6, K1–K4,
     G5, K5, D1–D4, A5, C1–C4, D5, I1–I4, C5, I5, J1 J2 J3 J6 J4 J5, E1
-    E2, F1 F2, H1–H4.
+    E2, F1 F2, H1–H4. Its first gate: B1 closed (set 2 at 60), G1
+    replayed — 38 of its 40 crystals taken (60 → 98) and the exit at
+    update 26,776 —, B1 still closed, G1 again.
+  - A5 tests (no assist, Easy, 60,000 updates, six delays; scratch
+    reports a5N/a5L/a5M/a5D in private/reports): from a4t-d263's A4 end
+    (level 28, 3200 health) without the scimitar (c70: boss range from
+    BossCritInst) every try dies by 4,503 with the body at 3,108–3,995;
+    with the DEBUG legend item (a5L, c70) every try dies by 6,559 with
+    the body at 1,967–3,198 (QuestItemState 1, 2, 3, 5, 6 by update 450;
+    the same head ends at 0 in every try). Bot c71: in the boss branch
+    the turbo attack every 40 updates at +0x800 ≥ 40, and the weakest
+    child within 6 units of the player's height as the target (a5M: body
+    at 1,775–2,844 at death). Damage taken is spread over the whole fight
+    area (8–15 per 15-update sample from z −20 to +5). From tfull1's D4
+    end (level 43, 4380 health, the scimitar carried — the legitimate
+    order's strength at A5; assisted chain's state, capability check
+    only), c71: five of six tries kill the chimera (auto exit, state 1,
+    updates 7,195–9,063, 280–701 health left); one dies at 7,011.
+  - lg24 was stopped in its second G1 replay and restarted as lg25 on
+    c71 from lg24's G1 replay end (the same arguments).
 
 ## State search (M14/M15 tooling, 2026-10-24)
 
