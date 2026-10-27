@@ -1298,7 +1298,16 @@ GDL_DEBUG_CAMERA):
     node), six tries each from the grind's end — 22: none, 26: two (boss
     killed, 47 and 117 health left), 30: one, 34: one. c100: the wraith
     (BossType 0x28) is fought from 26 units without the assist. lg35
-    stopped; lg36 (c100, --grind 4) runs J5 onward from the grind's end.
+    stopped; lg36 (c100, --grind 4) runs J5 onward from the grind's end:
+    J5 (try 3, the wraith killed, auto exit at 7,970), E1 (try 10, 20,855,
+    the soul; level end by the map to E2), E2 (Skorne 1 killed, auto exit
+    at 11,369, first try), F1 (try 2, 25,857, to F2), F2 (Skorne 2 killed,
+    first try, update 5,208; level end Movie(0x2b), the "garm" movie), H1
+    (try 4, 23,957), H2 (try 7, 48,422) — all without the assist. At H2's
+    end: level 80, 21,510 gold, runes 0xfff (H3's is the thirteenth),
+    shards 2046. The H3 wins of the c85 probes came at 393,292 and 419,376
+    updates, past lg36's --bot-first 300000, so lg36 was stopped at H3 and
+    lg37 (c100, --bot-first 600000) runs H3 and H4 from H2's end.
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.
