@@ -1283,6 +1283,11 @@ pub struct Bot {
     hurt_at: Option<usize>,
     /// An optional goal item the player stands beside, since that update.
     beside: Option<(usize, usize)>,
+    /// (update, health, position) every 60 updates (the danger rule).
+    trail_hp: std::collections::VecDeque<(usize, f32, V3)>,
+    /// Nest mode until this update (the danger rule): generators first
+    /// whatever foes are near, potions against the crowd.
+    nest_until: usize,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1448,6 +1453,8 @@ impl Bot {
             foe_trade: HashMap::new(),
             hurt_at: None,
             beside: None,
+            trail_hp: std::collections::VecDeque::new(),
+            nest_until: 0,
         }
     }
 
@@ -2212,6 +2219,41 @@ impl Bot {
             self.log.push(serde_json::json!({"update": f, "hurt": r1(self.last_health - health), "at": p.map(r1), "foes": foes.iter().map(|x| [r1(x.0), x.1 as f32, r1(x.2), r1(x.3)]).collect::<Vec<_>>(), "hazards": hazards}));
         }
         self.last_health = health;
+        // Danger: without the assist, 8 % of the level-start health lost in
+        // the last 300 updates within 6 units of where the player stood —
+        // an optional goal there is dropped (logged `danger_skip`). C1's
+        // try held crystal 389 in the GRU nest at (−36, −12, 23) for 1,750
+        // updates, fighting in place, and lost 1,400 (c1j-d0).
+        if !self.assist_enabled && f.is_multiple_of(60) {
+            let p = g.players[0].v3(0x50);
+            self.trail_hp.push_back((f, health, p));
+            while self.trail_hp.front().is_some_and(|&(u, _, _)| u + 300 < f) {
+                self.trail_hp.pop_front();
+            }
+            let danger = self.trail_hp.front().is_some_and(|&(u, h0, p0)| u + 240 <= f && self.start_health * 0.08 < h0 - health && dist_xz(p0, p) < 6.0);
+            if danger && self.nest_until <= f {
+                // Nest mode: the spawns' generators are the target (C1's
+                // tries stood firing at type-7 spawns of GRU generators 148
+                // and 234, the generator branch held off by the foes within
+                // 4 units, c1k-d0).
+                self.nest_until = f + 600;
+                self.log.push(serde_json::json!({"update": f, "nest": p}));
+            }
+            if let (true, Some(&(_, h0, _)), Some(Goal::Item(s))) = (danger, self.trail_hp.front(), self.goal)
+                && matches!(item_kind(g, s), (1, 1) | (1, 3) | (1, 4) | (1, 5..=9) | (1, 0xf) | (2, 0x2e..=0x30))
+                && self.optional_skip.insert(s)
+            {
+                // And every optional item within 10 units (the nest's other
+                // crystals and loot).
+                let near: Vec<usize> = (0..g.items.records.len())
+                    .filter(|&t| g.items.records[t].active() && dist_xz(g.items.records[t].v3(0x40), p) < 10.0 && matches!(item_kind(g, t), (1, 1) | (1, 3) | (1, 4) | (1, 5..=9) | (1, 0xf) | (2, 0x2e..=0x30)))
+                    .collect();
+                self.optional_skip.extend(near.iter().copied());
+                self.log.push(serde_json::json!({"update": f, "danger_skip": s, "lost": h0 - health, "near": near}));
+                self.trail_hp.clear();
+                self.choose(f, g);
+            }
+        }
         // An optional pickup the player stands beside (1.5 units) for 300
         // updates without taking it is skipped and the goal chosen again:
         // C1's try stood 0.5 units from BOOSTICON 78 from update 21,163 to
@@ -3094,7 +3136,19 @@ impl Bot {
         // took most of their damage standing at generators while type-7
         // creatures struck from 2.3–3.7 units (c1n-d61-tag).
         let gen_guard = if melee_class || self.hurt_at.is_some_and(|h| f < h + 30) { ATTACK_RANGE } else { 4.0 };
-        if !self.assist_enabled && Self::nearest_foe(g, p, gen_guard).is_none() {
+        // Hurt within 30 updates with an enemy above or below within 12
+        // units (8 of height): that fight first (the ranged branch's
+        // retaliation; lg30's C1 try 2 shot generators under them).
+        let threat_above = self.hurt_at.is_some_and(|h| f < h + 30)
+            && g.enemies.iter().any(|e| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && e.i32_(0) != 0x1e && (e.v3(0x40)[1] - p[1]).abs() < 8.0 && dist_xz(e.v3(0x40), p) < 12.0);
+        let nest = f < self.nest_until;
+        if nest && 0 < g.players[0].i32_(0x1a18) && Self::nearest_foe(g, p, 6.0).is_some() && self.potion_at.is_none_or(|u| u + 300 <= f) {
+            self.potion_at = Some(f);
+            self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18), "nest": true}));
+            pad.press(0xb);
+            return pad;
+        }
+        if !self.assist_enabled && (nest || (!threat_above && Self::nearest_foe(g, p, gen_guard).is_none())) {
             // Also up to GEN_RANGE along a clear line (lg8's fastest G2
             // death fought the knights of generators 123 and 125, 11–23
             // units off, from health 700 to 370 by update 1800).
@@ -3199,16 +3253,30 @@ impl Bot {
         // 8–43 from 10–19 units by one they never fired at (feas-C1).
         let retaliate = !self.assist_enabled && enemy.is_none() && self.hurt_at.is_some_and(|h| f < h + 60);
         if retaliate {
-            let skip = |k: usize| FOE_SKIP.with(|s| s.borrow().0.get(&(1, k)).is_some_and(|&until| s.borrow().1 < until));
+            let skip = |k: (u8, usize)| FOE_SKIP.with(|s| s.borrow().0.get(&k).is_some_and(|&until| s.borrow().1 < until));
             enemy = g
                 .critters
                 .iter()
                 .enumerate()
                 .filter_map(|(k, c)| c.as_ref().map(|c| (k, c)))
-                .filter(|&(k, c)| 0.0 < c.rec.f32_(0x4f4) && 2 <= c.rec.u32_(0x8) && !skip(k) && (c.rec.v3(0x40)[1] - p[1]).abs() < 6.0)
+                .filter(|&(k, c)| 0.0 < c.rec.f32_(0x4f4) && 2 <= c.rec.u32_(0x8) && !skip((1, k)) && (c.rec.v3(0x40)[1] - p[1]).abs() < 6.0)
                 .map(|(_, c)| (dist_xz(c.rec.v3(0x40), p), c.rec.v3(0x40)))
                 .filter(|(d, _)| *d < 20.0)
                 .min_by(|a, b| a.0.total_cmp(&b.0));
+            // Or an enemy above or below within 12 units and 8 of height
+            // (nearest_foe takes 3; closest_enemy's auto-aim 10): C1's type-7
+            // creatures struck from 2–6 units above the pit floor at (−32,
+            // −12, 16) while the bot shot generators (lg30 C1 try 2: 2,600
+            // health in 1,100 updates).
+            enemy = enemy.or_else(|| {
+                g.enemies
+                    .iter()
+                    .enumerate()
+                    .filter(|&(k, e)| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && e.i32_(0) != 0x1e && (e.v3(0x40)[1] - p[1]).abs() < 8.0 && !skip((0, k)))
+                    .map(|(_, e)| (dist_xz(e.v3(0x40), p), e.v3(0x40)))
+                    .filter(|(d, _)| *d < 12.0)
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+            });
         }
         // EXPERIMENT (GDL_BOT_RANGED_FAR=1, no assist): fire every update at
         // foes within twice ATTACK_RANGE too (F1's no-assist try took 8,100

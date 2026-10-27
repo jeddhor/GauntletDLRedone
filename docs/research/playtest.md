@@ -1171,6 +1171,30 @@ GDL_DEBUG_CAMERA):
     avoidance (keep_off) while a goto hint is the goal — the statues and
     hazards beside H3's route turned the stick off its waypoints.
     campaign_chain's BOT_DELAYS run to twelve (--bot-tries up to 12).
+  - lg30 went on: D3, D4 (scimitar), A5 (the chimera killed at update
+    7,539 on the first try, the scimitar carried — legitimate order),
+    the C gate by four D2 replays (set 6: 125 → 200, about 25 of D2's 38
+    a replay), then C1: all six tries died, twice, around two D2 grind
+    replays (level 45–46 against C1's target 47).
+  - LEVL +0x9c is each level's target player level (gdl_tools levl-list):
+    G 1–15, B 12–20, A 19–30, K 28–40, D 0, C 47–55, I 54–60, J 62–70, E
+    73–74, F 75–76, H 77–80. A player's damage to enemies and generators
+    is scaled by 1 − 0.01 per level below it and 1 + 0.1 per level above
+    (EnemyDamage, DamageItem); max health is 500 + 100 per level. Enemy
+    damage does not follow the player's level (the enemy's +0x384 copy of
+    PlayersAverageLevel is not read in the port). A D2 replay gives about
+    3,000 experience (one level at 45), so grinding is slow.
+  - C1 tactics: c86 retaliation also against enemies within 12 units and
+    8 of height (type-7s struck from 2–6 units above the pit floor), the
+    generator branch yielding to them; c87 danger rule (8 % of the start
+    health lost in 300 updates within 6 units: the optional goal and
+    every optional item within 10 units skipped); c88 nest mode on the
+    danger rule — 600 updates of generators first whatever foes are near
+    (the guard had kept the bot firing at the spawns of GRU generators
+    148 and 234, standing at (−35.5, −12, 23.4) for 1,000 updates, c1k)
+    and a potion against a crowd. From lg30's D2-6 end (c1l, c88): delay
+    263 takes the rune and exits (0x301) at update 46,179 (588 health).
+    lg30 stopped; lg31 (c88, --bot-tries 12) runs C1 onward from there.
   - Chain lg26 (c75) was stopped in L1 (its end states would not have
     recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
     crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2

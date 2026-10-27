@@ -1028,7 +1028,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             let cam = w.cameras.get(l.camera_index.max(0) as usize).map(|c| {
                 (i16::from_le_bytes([c.raw[0x26], c.raw[0x27]]), f32::from_le_bytes(c.raw[0x28..0x2c].try_into().unwrap_or([0; 4])))
             });
-            println!("{k} {} movie {:?} flags00 {:#x} flags04 {:#x} cams {} attract_cam {:?} boss {:#x}", l.code, m, l.flags_00, l.word_04, l.camera_index, cam, l.boss_type);
+            // +0x9c: the level's target player level (DamageItem's and
+            // the enemy damage's level scaling).
+            let target = l.raw.get(0x9c..0xa0).map(|b| f32::from_le_bytes(b.try_into().unwrap_or([0; 4])));
+            println!("{k} {} movie {:?} flags00 {:#x} flags04 {:#x} cams {} attract_cam {:?} boss {:#x} target {:?}", l.code, m, l.flags_00, l.word_04, l.camera_index, cam, l.boss_type, target);
         }
         return Ok(());
     }
