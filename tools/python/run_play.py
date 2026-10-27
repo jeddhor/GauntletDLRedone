@@ -303,7 +303,8 @@ def main():
         # The client's GDL_* debug switches pass through.
         env.update({k: v for k, v in os.environ.items() if k.startswith('GDL_')})
         env['GDL_NO_AUDIO'] = '1'  # automated runs must not play on the host's speakers
-    command = ['target/release/gdl_play', str(CONFIG)]
+    # GDL_PLAY: another build of the client (default target/release/gdl_play).
+    command = [os.environ.get('GDL_PLAY', 'target/release/gdl_play'), str(CONFIG)]
     raise SystemExit(subprocess.run(command, env=env).returncode)
 
 

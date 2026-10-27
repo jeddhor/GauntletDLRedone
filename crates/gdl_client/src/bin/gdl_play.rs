@@ -2107,7 +2107,9 @@ fn sim_state_hash(g: &Game) -> String {
 /// Player 1's progression words and save region hash (TEST dumps).
 fn progress_dump(g: &Game, label: &str, update: u64) -> serde_json::Value {
     let r = &g.players[0];
-    let class = r.u32_(0) as usize;
+    // +0xc: the class (dumps before 2026-10-27 read +0, the player index,
+    // so their gold was class 0's).
+    let class = r.u32_(0xc) as usize;
     let rec = profile::CLASS_RECORD + profile::CLASS_STRIDE * class.min(15);
     let waves: Vec<String> = (0..16).map(|c| r.0[0x182c + 0xe * c..0x182c + 0xe * c + 0xe].iter().map(|b| format!("{b:02x}")).collect()).collect();
     let region = profile::save_region(r, &[0, 2, 1, 1]);

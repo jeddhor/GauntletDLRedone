@@ -1152,6 +1152,33 @@ fn run() -> Result<(), Box<dyn Error>> {
         serde_json::to_writer_pretty(&mut file, &report)?;
         return Ok(());
     }
+    if args.len() == 5 && args[0] == "state-save" {
+        // state-save STATE.json SAVE_DIR SLOT NEW_REPORT.json: player 0's save
+        // region from a game-run end state (profile::save_region with
+        // gdl_play's controls [0, 2, 1, 1], as its own saves) stored in a
+        // native save store slot (save<SLOT>.json) for gdl_play's
+        // GDL_TEST_LOAD_SLOT. DEBUG tooling: the chain's state stands in for
+        // the Tower walk between the level end and the save. The slot must be
+        // empty.
+        let st: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?)?;
+        let h = st["players"][0].as_str().ok_or("end state without player 0")?;
+        if !h.len().is_multiple_of(2) {
+            return Err("player 0 hex has an odd length".into());
+        }
+        let bytes = (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16)).collect::<Result<Vec<u8>, _>>()?;
+        let r = gdl_core::game::record::Record(bytes);
+        let region = gdl_core::game::profile::save_region(&r, &[0, 2, 1, 1]);
+        let slot: u32 = args[3].to_str().ok_or("slot is not UTF-8")?.parse()?;
+        let store = gdl_core::save::SaveStore::open(Path::new(&args[2]))?;
+        if store.path(slot).exists() {
+            return Err(format!("{} exists", store.path(slot).display()).into());
+        }
+        let source = format!("game-run end state {} (DEBUG tooling)", gdl_core::save::sha256(&bounded_read(Path::new(&args[1]), 16 * 1024 * 1024)?));
+        let env = store.store(slot, &source, &region)?;
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[4])?;
+        serde_json::to_writer_pretty(&mut file, &serde_json::json!({"state": args[1].to_string_lossy(), "slot": slot, "path": store.path(slot), "region_sha256": gdl_core::save::sha256(&region), "summary": env.summary()}))?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "textrom-inspect" {
         // textrom-inspect ROM NEW_REPORT.json: fonts, entries and lists.
         let b = bounded_read(Path::new(&args[1]), 1024 * 1024)?;

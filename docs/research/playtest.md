@@ -1078,6 +1078,20 @@ GDL_DEBUG_CAMERA):
     portal order: A1 A6 A2 A3 A4 A5, J1 J2 J3 J6 J4 J5 and K2 K3 K4 K1 K5
     — every chain so far played K1 first, which the Tower does not open
     before K4.
+  - Completion persistence tooling: gdl_tools state-save (an end state's
+    player 0 save region through profile::save_region with gdl_play's
+    controls, into a native save slot; DEBUG tooling standing in for the
+    walk from the level end to the Tower) and completion_check.py (gdl_play
+    loads the slot into the Tower — GDL_TEST_LOAD_SLOT —, dumps, saves
+    from the Tower, a second run reloads; checks the completed-level bytes,
+    runes, shards and gold against the end state and across the save).
+    Check on lvl-B2-c76's end (completion-b2test1/b2test2): PASS — B's
+    wave byte 0x02, runes 392, gold 20 loaded, saved and reloaded equal.
+    Found on the way: gdl_play's TEST progress dump took the class from
+    +0 (the player index) instead of +0xc, so every scenario's gold was
+    class 0's (fixed; save-reload passes again on the fixed client,
+    scenarios-m13gold1). run_play.py takes GDL_PLAY for another client
+    build.
   - Chain lg26 (c75) was stopped in L1 (its end states would not have
     recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
     crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2
