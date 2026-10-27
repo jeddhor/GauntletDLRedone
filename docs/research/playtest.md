@@ -1308,6 +1308,25 @@ GDL_DEBUG_CAMERA):
     shards 2046. The H3 wins of the c85 probes came at 393,292 and 419,376
     updates, past lg36's --bot-first 300000, so lg36 was stopped at H3 and
     lg37 (c100, --bot-first 600000) runs H3 and H4 from H2's end.
+  - lg37: H3 by try 7 (delay 683, update 320,546, the thirteenth rune),
+    H4 by try 11 (Garm 5,625 → dead, auto exit at update 7,303, 3,799
+    health; level end Movie(0x2c), "victory"). **The legitimate campaign
+    reaches the ending**: lg27 (from a new game: after L1 level 1, no
+    completion bits, runes, shards or gold) → lg28 → lg30 → lg31 → lg34 →
+    lg35 → lg36 → lg37, each chain from the previous one's end state
+    (chain logs private/reports/campaign-lgNN-log.txt), no DEBUG assist.
+    The H4 end (campaign-lg37-H4-bot11-end.json): level 82, runes 0x1fff,
+    shards 4094, 17,820 gold, completion bits 003f3f1f1f03031f0f1f3f1f0000
+    (every non-secret level). completion_check.py on it: state-save into
+    slot 1 of private/runs/completion-lg37h4b/saves, the client (target-dev
+    gdl_play) loads it in the Tower, saves it and reloads it — world,
+    completion bits, runes, shards and gold equal throughout: PASS
+    (private/reports/completion-lg37h4b.json; the screenshot shows PELE,
+    level 82, 17,820 gold, 3,799 health). A first run (completion-lg37h4)
+    failed before any comparison: the private Xvfb's authority file under
+    /tmp had been removed (the session was 11 days old); a new session on
+    :192 replaced it (the old record kept as
+    private/reference/xvfb-session-191-stale.json).
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.

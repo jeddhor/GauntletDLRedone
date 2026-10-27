@@ -487,8 +487,14 @@ original (PCSX2 reference on Xvfb :191, private captures):
    c92 puts C2's stairs (1.25 risers, step objects) on the bot's graph, so
    the regular exit is a goal. H3 ends without the assist on c85 (2 of 3).
    c94 blocks failed climbs per object pair; c95 keeps c92's rule off
-   drops (C2's west pit). Chain lg34 (c95) runs C2 onward from lg31's C1
-   end.
+   drops (C2's west pit). Then lg34 (C2 by its regular exit, C3, C4, D5),
+   lg35 (crystal replays with --replay-crystal-stuck for the I and J gates;
+   I1–I5, C5, J1–J4), lg36 (J5's wraith fought from 26 units, c100; E1 E2
+   F1 F2 H1 H2) and lg37 (H3, H4: Garm killed, the victory movie): **the
+   legitimate campaign reaches the ending** without the assist, and its
+   completion state survives a client save and reload (completion-lg37h4b
+   PASS). M15 complete; the chain's Tower between levels is not simulated
+   (labelled).
 
 ---
 
