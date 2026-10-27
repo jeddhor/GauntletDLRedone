@@ -1251,7 +1251,16 @@ GDL_DEBUG_CAMERA):
     than a − 0.5); the pit graph is c91's again (5,007 nodes), the stairs
     still reach the exit, and the start graph differs from c91's by three
     edges. Nav::explain also reports the permissive sweep's hit (loose).
-    lg33 stopped; lg34 (c95) runs C2 onward.
+    lg33 stopped; lg34 (c95) runs C2 onward: C2 by try 7 (delay 683)
+    through the regular exit 187 (wave 0x302, update 32,272, 544 health,
+    no assist; level end Shop), C3 by try 11 (rune and the bellows, update
+    161,678), C4 by try 11 (41,970), D5 (the bellows carried: the boss
+    killed, auto exit at 8,600, first try). The I gate needs set 7 at 225:
+    B holds 5, C 140, D 60, K 20 (the probes' crystals_at_load), and the
+    character held 107 after D5 — the bot took 13 in C2, 20 in C3 and 6 in
+    C4 (C4: 19 of its 46 crystals made goals, 18 skipped after one stuck
+    event, half the samples under half health). Replays of C2 (36 shown):
+    the first +21 (try 8, update 23,057).
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.
