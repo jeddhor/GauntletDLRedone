@@ -961,8 +961,17 @@ GDL_DEBUG_CAMERA):
     within its contact), and the search reached progress 14.
   - Contact allowed (c66): three stuck events within contact + 1.5 units
     of a dormant statue let keep_off pass it (logged `contact_ok`); the
-    bot then wakes and fights it. Chain lg22 runs A4 onward from lg21's
-    A3 end.
+    bot then wakes and fights it. lg22 (A4 onward from lg21's A3 end)
+    repeated lg21's A4 update for update: statue 54 (and key 179 beside
+    it) are four-player items (+0xe0 4, +0xe1 2 and 1, no collision), so
+    nothing blocked the bot there; it stood throwing at a critter 6.25
+    units off at (−18.8, 0, −8.9) that never lost health (a4dbg3, attack
+    branch tags from GDL_BOT_TAG_FROM). Rule (c67): a fight target fired at
+    for 600 updates (gaps under 100) without its health dropping is no
+    target for 3000 updates (logged `foe_skip`). a4t (six A4 tries from
+    lg21's A3 end): delay 263 ends A4 by its regular exit (wave 0x104) at
+    update 142,182 with 1,284 health and no assist; five die (18,615–
+    45,025). Chain lg23 runs A5 onward from a4t-d263's end.
   - Followers (co-op runs) take the DEBUG health assist only when the
     leader has it.
 

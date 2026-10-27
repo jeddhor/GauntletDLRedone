@@ -51,6 +51,9 @@ static PLAYER_DIMS: std::sync::OnceLock<(f32, f32, f32)> = std::sync::OnceLock::
 /// live hazards (steer); set at each Bot::step.
 static AVOID_CONTACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 thread_local! {
+    /// Foes no fight target until an update (note_fire): fired at for 600
+    /// updates without their health dropping; and the current update.
+    static FOE_SKIP: std::cell::RefCell<(HashMap<(u8, usize), usize>, usize)> = std::cell::RefCell::new((HashMap::new(), 0));
     /// Items keep_off no longer steers around: a dormant statue the bot got
     /// stuck by three times (its passage needs contact).
     static CONTACT_OK: std::cell::RefCell<HashSet<usize>> = std::cell::RefCell::new(HashSet::new());
@@ -1264,6 +1267,8 @@ pub struct Bot {
     attack_tags: usize,
     /// Stuck events beside each dormant statue (keep_off's CONTACT_OK).
     statue_stuck: HashMap<usize, u32>,
+    /// Fire at each foe: (first, last update, health then) (note_fire).
+    foe_fire: HashMap<(u8, usize), (usize, usize, f32)>,
 }
 
 fn item_kind(g: &Game, slot: usize) -> (i32, i32) {
@@ -1292,6 +1297,7 @@ impl Bot {
     pub fn new(g: &Game) -> Bot {
         set_player_dims(g);
         CONTACT_OK.with(|c| c.borrow_mut().clear());
+        FOE_SKIP.with(|s| s.borrow_mut().0.clear());
         let mut b = Self::blank(g);
         b.rebuild(g);
         let exits: Vec<usize> = (0..g.items.records.len()).filter(|&s| g.items.records[s].active() && item_kind(g, s).0 == 9).collect();
@@ -1423,6 +1429,7 @@ impl Bot {
             strike_logs: 0,
             attack_tags: 0,
             statue_stuck: HashMap::new(),
+            foe_fire: HashMap::new(),
         }
     }
 
@@ -2088,6 +2095,7 @@ impl Bot {
     /// Port 0 for update `f`; also applies the health assist.
     pub fn step(&mut self, f: usize, g: &mut Game) -> PadStatus {
         AVOID_CONTACT.store(!self.assist_enabled, std::sync::atomic::Ordering::Relaxed);
+        FOE_SKIP.with(|s| s.borrow_mut().1 = f);
         let mut pad = PadStatus { connected: true, analog: true, has_stick: true, ..Default::default() };
         for e in 4..8 {
             pad.entries[e] = [3, 0];
@@ -2169,6 +2177,7 @@ impl Bot {
                 && let Some((_, at)) = Self::nearest_foe(g, p, ATTACK_RANGE)
             {
                 pad.press(0xd);
+                self.tag(f, "delay");
                 return Self::steer(pad, g, p, at);
             }
             return pad;
@@ -2603,6 +2612,7 @@ impl Bot {
         {
             if (f / 6).is_multiple_of(2) {
                 pad.press(0xd);
+                self.tag(f, "shot");
             }
             return Self::steer(pad, g, p, g.items.records[s].v3(0x40));
         }
@@ -2737,6 +2747,7 @@ impl Bot {
                     if f < self.melee_until {
                         if f + 10 < self.melee_until {
                             pad.press(0xd);
+                            self.tag(f, "strike");
                         }
                         return pad;
                     }
@@ -2794,6 +2805,7 @@ impl Bot {
                             self.log.push(serde_json::json!({"update": f, "melee_at": s, "from": p, "facing": facing, "flick": t}));
                         }
                         pad.press(0xd);
+                        self.tag(f, "strike");
                         return Self::steer(pad, g, p, t);
                     }
                     if let Some(w) = melee_facing(g, s, p, facing) {
@@ -2804,6 +2816,7 @@ impl Bot {
                                 self.log.push(serde_json::json!({"update": f, "melee_at": s, "from": p, "facing": facing}));
                             }
                             pad.press(0xd);
+                            self.tag(f, "strike");
                             return pad;
                         }
                         return Self::steer(pad, g, p, [p[0] + 3.0 * w.sin(), p[1], p[2] + 3.0 * w.cos()]);
@@ -2846,6 +2859,7 @@ impl Bot {
                     }
                     if t < 30 {
                         pad.press(0xd);
+                        self.tag(f, "strike");
                     }
                     return pad;
                 }
@@ -2874,6 +2888,7 @@ impl Bot {
                 return Self::steer(pad, g, p, [2.0 * p[0] - bp[0], p[1], 2.0 * p[2] - bp[2]]);
             }
             pad.press(0xd);
+            self.tag(f, "boss");
             return Self::steer(pad, g, p, bp);
         }
         // Enemies within ATTACK_RANGE: attack in windows (12 updates
@@ -3060,7 +3075,13 @@ impl Bot {
             }
             Some((_, at)) => {
                 pad.press(0xd);
+                self.note_fire(f, g, at);
                 self.tag(f, "ranged");
+                if self.attack_tags < 600 && std::env::var("GDL_BOT_TAG_FROM").is_ok_and(|v| v.parse::<usize>().is_ok_and(|n| n <= f)) && f.is_multiple_of(25) {
+                    // DIAGNOSTIC: the ranged target (enemy type, health, state).
+                    let who: Vec<_> = g.enemies.iter().enumerate().filter(|(_, e)| e.i32_(0xc8) != 0 && dist_xz(e.v3(0x40), at) < 0.01).map(|(k, e)| serde_json::json!([k, e.i32_(0), e.f32_(0x214), e.i32_(0xc8), e.v3(0x40)])).collect();
+                    self.log.push(serde_json::json!({"update": f, "ranged_at": at, "who": who}));
+                }
                 Some(at)
             }
             None => {
@@ -3084,18 +3105,48 @@ impl Bot {
     /// (bosses, statues' creatures: +0x4f4 health), within `range` and 3
     /// units of height.
     fn nearest_foe(g: &Game, p: V3, range: f32) -> Option<(f32, V3)> {
+        let skip = |k: (u8, usize)| FOE_SKIP.with(|s| s.borrow().0.get(&k).is_some_and(|&until| s.borrow().1 < until));
         let enemies = g
             .enemies
             .iter()
-            .filter(|e| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && e.i32_(0) != 0x1e && (e.v3(0x40)[1] - p[1]).abs() < 3.0)
-            .map(|e| (dist_xz(e.v3(0x40), p), e.v3(0x40)));
-        let critters = g.critters.iter().flatten().filter(|c| 0.0 < c.rec.f32_(0x4f4)).map(|c| (dist_xz(c.rec.v3(0x40), p), c.rec.v3(0x40)));
+            .enumerate()
+            .filter(|&(k, e)| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && e.i32_(0) != 0x1e && (e.v3(0x40)[1] - p[1]).abs() < 3.0 && !skip((0, k)))
+            .map(|(_, e)| (dist_xz(e.v3(0x40), p), e.v3(0x40)));
+        let critters = g.critters.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| (k, c))).filter(|&(k, c)| 0.0 < c.rec.f32_(0x4f4) && !skip((1, k))).map(|(_, c)| (dist_xz(c.rec.v3(0x40), p), c.rec.v3(0x40)));
         enemies.chain(critters).filter(|(d, _)| *d < range).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
+    /// A fight target fired at (the foe at `at`): one whose health has not
+    /// dropped through 600 updates of fire (gaps under 100) is no target for
+    /// 3000 updates (a4dbg3: lg21's A4 tries threw at a critter 6.25 units
+    /// off at (−18.8, 0, −8.9) from update 120,600 on without hurting it).
+    fn note_fire(&mut self, f: usize, g: &Game, at: V3) {
+        let key = g
+            .enemies
+            .iter()
+            .enumerate()
+            .find(|(_, e)| e.i32_(0xc8) != 0 && dist_xz(e.v3(0x40), at) < 0.01 && (e.v3(0x40)[1] - at[1]).abs() < 0.01)
+            .map(|(k, e)| ((0u8, k), e.f32_(0x214)))
+            .or_else(|| g.critters.iter().enumerate().find_map(|(k, c)| c.as_ref().filter(|c| dist_xz(c.rec.v3(0x40), at) < 0.01).map(|c| ((1u8, k), c.rec.f32_(0x4f4)))));
+        let Some((key, health)) = key else { return };
+        let e = self.foe_fire.entry(key).or_insert((f, f, health));
+        if 100 < f - e.1 || health < e.2 {
+            *e = (f, f, health);
+        }
+        e.1 = f;
+        if 600 <= f - e.0 {
+            FOE_SKIP.with(|s| s.borrow_mut().0.insert(key, f + 3000));
+            self.foe_fire.remove(&key);
+            self.log.push(serde_json::json!({"update": f, "foe_skip": [key.0, key.1], "health": health}));
+        }
+    }
+
     /// DIAGNOSTIC: which branch pressed attack (every 5th update, at most 600).
+    /// GDL_BOT_TAG_FROM=N (DIAGNOSTIC): tags from update N on.
     fn tag(&mut self, f: usize, name: &str) {
-        if f.is_multiple_of(5) && self.attack_tags < 600 {
+        static FROM: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let from = *FROM.get_or_init(|| std::env::var("GDL_BOT_TAG_FROM").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
+        if from <= f && f.is_multiple_of(5) && self.attack_tags < 600 {
             self.attack_tags += 1;
             self.log.push(serde_json::json!({"update": f, "atk": name}));
         }
