@@ -395,8 +395,25 @@ impl Nav {
             object_mask: 0x13a,
             exclusion_mask: 1,
         });
-        if !matches!(loose, Ok((ref w, _)) if w.solid.is_none()) {
-            return None;
+        // A hit on a step object (+0x10 & 0x38, handed to the floor stage)
+        // passes when the player-like test does: C2's stairs to its exit
+        // (risers of 1.25, object 1340 flags 0xa) — a column centre 0.16
+        // short of a riser samples the lower step, and the level edge onto
+        // it swept 0.297 from the riser's top corner, so the stairs had
+        // edges down only (the regular exit out of the graph; every c90 win
+        // took the secret exit; holding Up there climbs them, c2-step-m4).
+        let stepped = match &loose {
+            Ok((w, _)) => match w.solid {
+                None => Some(false),
+                Some(h) if c.runtime_flags[h.object] & 0x38 != 0 => Some(true),
+                Some(_) => None,
+            },
+            Err(_) => None,
+        };
+        match stepped {
+            None => return None,
+            Some(true) if !Self::edge_ok(c, a, b, radius.max(STRICT_RADIUS)) => return None,
+            Some(_) => {}
         }
         let mid = [(a[0] + b[0]) * 0.5, a[1].max(b[1]) + 1.0, (a[2] + b[2]) * 0.5];
         let depth = mid[1] - a[1].min(b[1]) + 1.0;
@@ -1227,6 +1244,13 @@ pub struct Bot {
     /// holds 125 of B's 100, 140 of A's 125, 160 of K's 150, 180 of D's
     /// 175, 203 of C's 200, 225 of I's 225 and 250 of J's 250.
     pub crystals: bool,
+    /// no_secret=1: secret exits (kind 9 subtype 0x32) are never goals. The
+    /// treasure room they lead to returns to the level (SaveStage, then
+    /// LoadStage on the timer's skip_wave 0xd), whose regular exit is still
+    /// to be reached; a chain that does not play the room and the return
+    /// cannot count the secret exit as the level's end (C2: every c90 win
+    /// left by SECRET_ICON 516 for S1).
+    pub no_secret: bool,
     /// require=1: a level counts only with its rune stone and legend item,
     /// so exits are not goals while one is left (E1: the bot took the exit
     /// at update 113,924 without the soul, which needs pads 134/135 first).
@@ -1428,6 +1452,7 @@ impl Bot {
             assist_enabled: true,
             loot: false,
             crystals: false,
+            no_secret: false,
             require: false,
             break_tries: HashMap::new(),
             disembark_until: 0,
@@ -1635,7 +1660,7 @@ impl Bot {
         }
         for s in 0..g.items.records.len() {
             let r = &g.items.records[s];
-            let (k, _) = item_kind(g, s);
+            let (k, t) = item_kind(g, s);
             // Generators (kind 3) once three attacks did not damage them.
             let spent = k == 3 && self.break_tries.get(&s).is_some_and(|&(n, _)| 3 <= n);
             // Hazards (kind 8: spikes, traps) too, at the soft cost.
@@ -1645,7 +1670,9 @@ impl Bot {
             // statues). Closed, with 2.5 units around, they shut lg11's try 2
             // in by (−89, 1, −26) for 155,000 updates.
             let statue = k == 4 && !self.assist_enabled;
-            if !r.active() || !(k == 2 || k == 8 || k == 10 || spent || (k == 7 && keys < 1) || statue) {
+            // no_secret=1: a secret exit is closed (contact takes it).
+            let secret = k == 9 && self.no_secret && t == 0x32;
+            if !r.active() || !(k == 2 || k == 8 || k == 10 || spent || (k == 7 && keys < 1) || statue || secret) {
                 continue;
             }
             let q = r.v3(0x40);
@@ -1657,7 +1684,7 @@ impl Bot {
                     for &n in self.nav.cols.get(&(c.0 + dx, c.1 + dz)).map(Vec::as_slice).unwrap_or(&[]) {
                         let pn = self.nav.pts[n];
                         if dist_xz(pn, q) < reach && in_height(g, s, q[1], pn[1]) {
-                            if k == 7 {
+                            if k == 7 || secret {
                                 out.closed.insert(n);
                             } else if k == 8 || statue {
                                 out.hazard.insert(n);
@@ -1870,7 +1897,7 @@ impl Bot {
         // Regular exits first; secret exits (subtype 0x32, to the treasure
         // rooms) only when no regular exit is reachable.
         let exits = active(g, &|k, t| k == 9 && t != 0x32);
-        let secret = active(g, &|k, t| k == 9 && t == 0x32);
+        let secret = if self.no_secret { Vec::new() } else { active(g, &|k, t| k == 9 && t == 0x32) };
         // Triggers that switch their bound object on (+0xf4 bit 0 only
         // switches it off) and were not used yet. Bit 0x200: no player can
         // touch it (ItemCollSub skips it; another trigger's chain fires it —
@@ -3135,7 +3162,9 @@ impl Bot {
         // within ATTACK_RANGE after a hit in the last 30 updates: C1's tries
         // took most of their damage standing at generators while type-7
         // creatures struck from 2.3–3.7 units (c1n-d61-tag).
-        let gen_guard = if melee_class || self.hurt_at.is_some_and(|h| f < h + 30) { ATTACK_RANGE } else { 4.0 };
+        // EXPERIMENT GDL_BOT_GEN_GUARD=N: the ranged class's guard distance.
+        let guard_x = std::env::var("GDL_BOT_GEN_GUARD").ok().and_then(|v| v.parse::<f32>().ok());
+        let gen_guard = if melee_class { ATTACK_RANGE } else if let Some(x) = guard_x { x } else if self.hurt_at.is_some_and(|h| f < h + 30) { ATTACK_RANGE } else { 4.0 };
         // Hurt within 30 updates with an enemy above or below within 12
         // units (8 of height): that fight first (the ranged branch's
         // retaliation; lg30's C1 try 2 shot generators under them).
@@ -3197,6 +3226,17 @@ impl Bot {
         }
         let crowd = Self::nearest_foe(g, p, 6.0).is_some();
         let low_health = !self.assist_enabled && g.players[0].f32_(HEALTH) < self.start_health * 0.35;
+        // EXPERIMENT GDL_BOT_CROWD_POTION=1 (no assist): a potion when three
+        // or more foes are within 6 units, at most every 600 updates.
+        if !self.assist_enabled && std::env::var("GDL_BOT_CROWD_POTION").is_ok_and(|v| v == "1") && 0 < g.players[0].i32_(0x1a18) && self.potion_at.is_none_or(|u| u + 600 <= f) {
+            let n = g.enemies.iter().filter(|e| e.i32_(0xc8) != 0 && e.f32_(0x214) > 0.0 && dist_xz(e.v3(0x40), p) < 6.0 && (e.v3(0x40)[1] - p[1]).abs() < 4.0).count();
+            if 3 <= n {
+                self.potion_at = Some(f);
+                self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18), "crowd": n}));
+                pad.press(0xb);
+                return pad;
+            }
+        }
         if crowd && (5 <= recent || low_health) && 0 < g.players[0].i32_(0x1a18) && self.potion_at.is_none_or(|u| u + 600 <= f) {
             self.potion_at = Some(f);
             self.log.push(serde_json::json!({"update": f, "potion": g.players[0].i32_(0x1a18)}));
@@ -3302,8 +3342,17 @@ impl Bot {
             (3.2, 2)
         };
         let window = if self.assist_enabled { 30 } else { 20 };
+        // A weak foe (health at most twice the throw's damage +0x120: one or
+        // two shots) is shot, not kited from: C2's type-7 creatures (20–30
+        // health against a 28 throw) struck from 3–4 units while the bot
+        // backed away without firing, 63 % of its damage taken standing
+        // against walls (lg31 C2, twelve tries dead).
+        let weak = near.is_some_and(|(_, at)| {
+            g.enemies.iter().find(|e| e.i32_(0xc8) != 0 && dist_xz(e.v3(0x40), at) < 0.01).is_some_and(|e| e.f32_(0x214) <= 2.0 * g.players[0].f32_(0x120))
+        });
         if let Some((d, at)) = near
             && d < close
+            && !(weak && !self.assist_enabled)
             && (f / window).is_multiple_of(every)
         {
             return Self::steer(pad, g, p, [2.0 * p[0] - at[0], p[1], 2.0 * p[2] - at[2]]);

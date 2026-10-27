@@ -1195,6 +1195,45 @@ GDL_DEBUG_CAMERA):
     and a potion against a crowd. From lg30's D2-6 end (c1l, c88): delay
     263 takes the rune and exits (0x301) at update 46,179 (588 health).
     lg30 stopped; lg31 (c88, --bot-tries 12) runs C1 onward from there.
+  - lg31: C1 by try 4 (delay 263, update 46,179, rune taken; end state
+    campaign-lg31-C1-bot4-end.json). C2: all twelve tries died (updates
+    7,677–25,063), the C1 grind replay lost all twelve too, and lg31 was
+    stopped. C2's damage: type-7 creatures dealt 54,028 of 64,116, mostly
+    from 3–4 units at the bot's height with 20–30 health each, 63 % of
+    it taken standing still (character level 49, 5,260 health, 440 gold,
+    no potions). Experiment switches (c89, labelled EXPERIMENT in bot.rs,
+    off unless set): GDL_BOT_GEN_GUARD=N (the ranged class's generator
+    guard) and GDL_BOT_CROWD_POTION=1 (a potion when three foes are within
+    6 units); every variant died. c90: a foe with at most twice the
+    throw's damage (+0x120) is shot, not kited — C2 4 of 12 (delays 61,
+    683, 811, 1193; updates 119,161–123,841) and F1 2 of 6 from tfull2's
+    E2 end (f1r, c91: delays 0 and 263 at 105,334 and 28,541, to F2;
+    every earlier no-assist F1 try had died by 28,205).
+  - Every c90 C2 win left by SECRET_ICON 516 (kind 9 subtype 0x32, wave
+    0xc00, S1), as the assisted chains t29 and tfull1 had. A secret exit
+    sets do_exit's destination from skip_wave 3..=11 and SaveStage records
+    C2; game_main's level end runs PlayersSetWaveFinished and goes by the
+    map to the treasure room, whose timer (skip_wave 0xd) returns to C2 by
+    LoadStage — the regular exit is still to be reached. A chain step ended
+    by one skips the room and the return, so c91 no_secret=1 (game_run.py
+    --no-secret; campaign_chain passes it to every bot run and does not
+    count a try that ends in world 12) keeps the bot off secret exits
+    (their nodes closed). No win of lg27–lg31 had ended in world 12.
+  - Why C2's regular exit 187 (234.5, 21.3, −29) was never a goal: its
+    platform is reached up stairs of 1.25-unit risers (object 1340, flags
+    0xa: a step object) from y 10 to 21.3, and the graph (c2x-d683's dump
+    at update 60,000) held the stairs' edges downward only. A column centre
+    0.16 short of a riser samples the lower step, and the level edge onto
+    it, swept 1.5 above at radius 0.3, touched the riser's top corner
+    (0.297). The player climbs them: c2-step-m4 (DEBUG teleport onto the
+    step, Up held) walks from y 13.75 to the exit platform (239.2, 21.19).
+    c92: a permissive-sweep hit on a step object (+0x10 & 0x38) passes
+    when the player-like test does (edge_ok, which already ignores step
+    objects); the graph grown from (190, 10, −28) reaches the exit
+    (c2z-c92; c91 stops at x 207.8).
+  - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
+    delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
+    393,292; 163 and 167 hints done); delay 0 runs out of updates.
   - Chain lg26 (c75) was stopped in L1 (its end states would not have
     recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
     crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2

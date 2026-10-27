@@ -3877,6 +3877,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     b.loot = opts.contains_key("loot");
                     // seek_crystals=1: crystals of the sets not yet full anywhere.
                     b.crystals = opts.contains_key("seek_crystals");
+                    // no_secret=1: secret exits are not goals (the treasure room returns to the level).
+                    b.no_secret = opts.contains_key("no_secret");
                     // require=1: exits wait for the rune stone and legend item.
                     b.require = opts.contains_key("require");
                     if let Some(d) = opts.get("bot_delay") {

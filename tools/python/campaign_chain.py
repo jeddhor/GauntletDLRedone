@@ -31,7 +31,9 @@ taken (the bot's run otherwise falls back to the search with require=1).
 --difficulty N plays every level at the Game Options difficulty N (0 Easy,
 1 Medium — the fixture's, 2 Hard), an ordinary game setting.
 --crystals: bot runs collect the crystals of the sets not yet full
-(game_run.py --seek-crystals).
+(game_run.py --seek-crystals). Bot runs never take a secret exit
+(game_run.py --no-secret): its treasure room returns to the level, and a
+try ended by one (wave 0xc..) does not count.
 --gates: before each level the Tower's tests (from a two-update probe of the level from the carried
 state: the report's realms_open — WorldOpen — and level_open — HideExits'
 portal rule) must pass; a closed portal in an open realm stops the chain; a realm opened by a crystal set (WorldCrystal) that
@@ -188,6 +190,10 @@ def main():
             common += ['--loot']
         if a.crystals:
             common += ['--seek-crystals']
+        # A secret exit leads to a treasure room that returns to the level
+        # (SaveStage/LoadStage), whose regular exit is still needed; the chain
+        # plays neither the room nor the return, so the bot does not take one.
+        common += ['--no-secret']
         step = {'level': code, 'play': seen[code], 'start': start, 'replay': is_replay}
         won_by_bot = False
         tries = []
@@ -230,6 +236,10 @@ def main():
                     # Through the level, not ended by a death (the player dying,
                     # state 8, or waiting to continue, 0xb).
                     won = b.get('exit_update') is not None and b.get('exit_state') not in (8, 11, None)
+                    # Nor by a secret exit to world 12 (the treasure room).
+                    wave = b.get('exit_wave')
+                    if won and isinstance(wave, str) and int(wave, 16) >> 8 == 0xc:
+                        won = False
                     if won and bot_end.exists() and not (a.require and missed and not is_replay):
                         step.update(ended=True, by=key, replay_level_end=b['exit_update'], assists=b.get('health_assists'),
                                     legend_debug=a.legend_bosses and code in BOSSES)
