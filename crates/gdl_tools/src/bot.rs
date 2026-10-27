@@ -2037,7 +2037,9 @@ impl Bot {
         // the other lists (after three stuck events one is skipped like the
         // other optional pickups; a replay of the level makes up for it —
         // PlayerGiveCrystal counts every pickup up to the set's maximum).
-        if self.crystals {
+        // Only with half the level-start health or more (a detour for a
+        // crystal is not worth a death).
+        if self.crystals && self.start_health * 0.5 <= g.players[0].f32_(HEALTH) {
             let cls = 0xb4 * g.players[0].u32_(0xc) as usize;
             let unfilled = |n: i32| {
                 let c = usize::try_from(n).ok().map(|n| g.players[0].i16_(0xd0a + cls + 2 * n));
@@ -2576,7 +2578,11 @@ impl Bot {
                         self.given_up.insert(s);
                     }
                     let optional = matches!(item_kind(g, s), (1, 1) | (1, 3) | (1, 4) | (1, 5..=9) | (1, 0xf) | (2, 0x2e..=0x30));
-                    if optional && 3 <= *n && self.optional_skip.insert(s) {
+                    // A crystal after one stuck event (replays make up for
+                    // it): C1's tries were stuck three times at each of ten
+                    // crystals in its pits, among GRU generators (c1g).
+                    let limit = if item_kind(g, s) == (1, 0xf) { 1 } else { 3 };
+                    if optional && limit <= *n && self.optional_skip.insert(s) {
                         self.log.push(serde_json::json!({"update": f, "skip_optional": s}));
                     }
                 }

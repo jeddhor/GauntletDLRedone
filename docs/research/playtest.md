@@ -1126,6 +1126,18 @@ GDL_DEBUG_CAMERA):
     level) is played again for experience and gold (a replay, before the
     search), at most N times per level. Chain lg28 (c81, --grind 4) runs
     G2 onward from lg27's G1 end with the same plan.
+  - c82: a crystal is skipped after one stuck event (C1's tries were
+    stuck three times at each of ten crystals in its pits; c1g) and
+    crystals are goals only with half the level-start health or more.
+    C1 (c1h): the rune taken in three of six tries and the deaths later
+    (17,408–57,941), one try alive past update 60,000; C1's food for one
+    player is scarce (its 16 food records include multi-player ones).
+  - lg28 (c81): G2 (try 4, 30,225), G3 (legend item, the sixth try), G4,
+    then B1 directly (set 2 full from one play of G1–G4 with crystal
+    seeking), B2–B5, the A gate filled by one B4 replay, A1 A6 A2
+    (iceaxe) A3 A4, B6 (the dragon killed at 4,186 with the iceaxe), the
+    K gate by two A1 replays, K2 K3 K4 (goodbook), G5 (the lich at 5,493
+    with it) — no assist, every portal and realm gate passed.
   - Chain lg26 (c75) was stopped in L1 (its end states would not have
     recorded B1). Chain lg27 (c76, a new game, no assist, Easy, loot,
     crystals, gates with portals): L1 G1–G4 B1–B5 A1 A6 A2 A3 A4 B6 K2
