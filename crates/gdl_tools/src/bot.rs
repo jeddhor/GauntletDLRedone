@@ -402,6 +402,8 @@ impl Nav {
         // it swept 0.297 from the riser's top corner, so the stairs had
         // edges down only (the regular exit out of the graph; every c90 win
         // took the secret exit; holding Up there climbs them, c2-step-m4).
+        // It also joins C2's west pit floor (object 1181 at 5.7, under a step
+        // object: 35,559 more edges, walked by the game's displacement).
         let stepped = match &loose {
             Ok((w, _)) => match w.solid {
                 None => Some(false),
@@ -2657,6 +2659,25 @@ impl Bot {
                             .filter(|&(n, m)| self.nav.pts[m][1] < self.nav.pts[n][1] - STEP_UP && self.nav.obj[m] != from)
                             .collect();
                         for (n, m) in off {
+                            let (pn, pm) = (self.nav.place(n), self.nav.place(m));
+                            self.blocked.insert((pn, pm));
+                        }
+                    }
+                    // A climb (over a unit) not taken after its run-ups:
+                    // every climb from the same object onto the same object
+                    // within 12 units. C2's west pit floor (object 1181 at
+                    // 5.7) has 195 edges onto its rim (objects 1196 and 1201
+                    // at 6.6–8.7) that the game's displacement does not walk;
+                    // with one blocked a stuck event lg32's tries (c92) spent
+                    // 10,000 updates there.
+                    if qa[1] + 1.0 < qb[1] {
+                        let (from, to) = (self.nav.obj[a], self.nav.obj[b]);
+                        let climbs: Vec<(usize, usize)> = (0..self.nav.pts.len())
+                            .filter(|&n| self.nav.obj[n] == from && dist_xz(self.nav.pts[n], p) < 12.0)
+                            .flat_map(|n| self.nav.adj[n].iter().map(move |&m| (n, m)))
+                            .filter(|&(n, m)| self.nav.obj[m] == to && self.nav.pts[n][1] + 1.0 < self.nav.pts[m][1])
+                            .collect();
+                        for (n, m) in climbs {
                             let (pn, pm) = (self.nav.place(n), self.nav.place(m));
                             self.blocked.insert((pn, pm));
                         }

@@ -1231,6 +1231,19 @@ GDL_DEBUG_CAMERA):
     when the player-like test does (edge_ok, which already ignores step
     objects); the graph grown from (190, 10, −28) reaches the exit
     (c2z-c92; c91 stops at x 207.8).
+  - lg32 (c92 from lg31's C1 end): all twelve C2 tries died (updates
+    22,787–39,128). c92 had also joined C2's west pit floor (object 1181
+    at 5.7, under a step object: 35,559 more edges from (−104, 9, −74);
+    explain_walks: the game's displacement walks 5,093 of the 5,234 flat
+    ones), and with it 343 climbs onto the rim (objects 1196 and 1201 at
+    6.6–8.7) that it does not walk; one blocked a stuck event, the tries
+    spent 10,000 updates there (try 7: key 353 the goal from 8,104 to
+    18,634). Most of the damage: type-7 creatures (GRU generators' spawns,
+    15–45 health, EnemyMissile t 7) within 5 units, 29,434 of about
+    65,000 over the twelve tries; 12,312 from beyond 10 units. c94: a climb
+    (over a unit) not taken after its run-ups blocks every climb from the
+    same object onto the same object within 12 units (the drop rule's
+    counterpart). lg32 stopped; lg33 (c94) runs C2 onward.
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.

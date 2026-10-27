@@ -478,6 +478,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    completion recorded by any chain); c76 runs it, the probe also tests the
    Tower portal (K's records are K2 K3 K4 K1 K5); clean campaign lg27
    from a new game runs.
+   2026-10-27: the clean campaign (no assist, Easy, gates, crystals,
+   completions) has ended L1 G1–G5 B1–B6 A1–A6 K1–K5 D1–D4 C1 (lg27, lg28,
+   lg30, lg31). C2 had killed every try; c90 (weak foes shot, not kited)
+   gets through it and F1 (both had died every no-assist try), but C2's
+   wins took the secret exit to S1, whose treasure room returns to C2. c91
+   keeps chain bots off secret exits and does not count a world-12 end;
+   c92 puts C2's stairs (1.25 risers, step objects) on the bot's graph, so
+   the regular exit is a goal. H3 ends without the assist on c85 (2 of 3).
+   c94 blocks failed climbs per object pair (C2's west pit). Chain lg33
+   (c94) runs C2 onward from lg31's C1 end.
 
 ---
 
