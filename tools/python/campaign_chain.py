@@ -76,6 +76,7 @@ def main():
     ap.add_argument('--require', action='store_true', help='rune stones and legend items must be taken')
     ap.add_argument('--new-character', help='without --start: the first level entered by a new character of class CLS[:COLOUR] (game_run.py --new-character, e.g. WAR:YEL)')
     ap.add_argument('--difficulty', type=int, choices=(0, 1, 2), help='Game Options difficulty for every level: 0 Easy, 1 Medium, 2 Hard (a game setting, game_run.py --difficulty)')
+    ap.add_argument('--replay-crystal-stuck', type=int, help='crystal replays: stuck events before a crystal is skipped (game_run.py --crystal-stuck; the bot default is 1)')
     ap.add_argument('--crystals', action='store_true', help='bot runs collect crystals of unfilled sets (game_run.py --seek-crystals)')
     ap.add_argument('--gates', action='store_true', help="each level must pass the Tower's door test (WorldOpen); crystal gates are filled by replays from --replay-pool")
     ap.add_argument('--replay-pool', nargs='*', default=[], help='--gates: levels that may be replayed for crystals')
@@ -194,6 +195,10 @@ def main():
         # (SaveStage/LoadStage), whose regular exit is still needed; the chain
         # plays neither the room nor the return, so the bot does not take one.
         common += ['--no-secret']
+        if is_replay and a.replay_crystal_stuck:
+            # A crystal replay keeps at a crystal through more stuck events
+            # (a death costs one try of the twelve).
+            common += ['--crystal-stuck', str(a.replay_crystal_stuck)]
         step = {'level': code, 'play': seen[code], 'start': start, 'replay': is_replay}
         won_by_bot = False
         tries = []

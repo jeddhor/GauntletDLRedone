@@ -1262,6 +1262,11 @@ pub struct Bot {
     /// cannot count the secret exit as the level's end (C2: every c90 win
     /// left by SECRET_ICON 516 for S1).
     pub no_secret: bool,
+    /// crystal_stuck=N: stuck events before a crystal is skipped (default
+    /// 1). Crystal replays use more: lg34's C2 replays skipped 34–42 of
+    /// their 44 crystal goals after one stuck event each and gained 21, 16
+    /// and 12 of set 7 (225 needed for the I realm).
+    pub crystal_stuck: usize,
     /// require=1: a level counts only with its rune stone and legend item,
     /// so exits are not goals while one is left (E1: the bot took the exit
     /// at update 113,924 without the soul, which needs pads 134/135 first).
@@ -1464,6 +1469,7 @@ impl Bot {
             loot: false,
             crystals: false,
             no_secret: false,
+            crystal_stuck: 1,
             require: false,
             break_tries: HashMap::new(),
             disembark_until: 0,
@@ -2715,7 +2721,7 @@ impl Bot {
                     // A crystal after one stuck event (replays make up for
                     // it): C1's tries were stuck three times at each of ten
                     // crystals in its pits, among GRU generators (c1g).
-                    let limit = if item_kind(g, s) == (1, 0xf) { 1 } else { 3 };
+                    let limit = if item_kind(g, s) == (1, 0xf) { self.crystal_stuck } else { 3 };
                     if optional && limit <= *n && self.optional_skip.insert(s) {
                         self.log.push(serde_json::json!({"update": f, "skip_optional": s}));
                     }

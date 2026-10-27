@@ -1260,7 +1260,11 @@ GDL_DEBUG_CAMERA):
     character held 107 after D5 — the bot took 13 in C2, 20 in C3 and 6 in
     C4 (C4: 19 of its 46 crystals made goals, 18 skipped after one stuck
     event, half the samples under half health). Replays of C2 (36 shown):
-    the first +21 (try 8, update 23,057).
+    the first +21 (try 8, update 23,057), then +16 and +12 (144, 156):
+    each skipped 34–42 of its 44 crystal goals after one stuck event (the
+    c82 limit). c96: crystal_stuck=N (game_run.py --crystal-stuck; default
+    1) and campaign_chain --replay-crystal-stuck N for crystal replays only
+    (a death there costs one try of twelve).
   - H3 without the assist (c85, from tfull2's H2 end, 600,000 updates):
     delays 61 and 541 take the rune and exit to H4 (updates 419,376 and
     393,292; 163 and 167 hints done); delay 0 runs out of updates.

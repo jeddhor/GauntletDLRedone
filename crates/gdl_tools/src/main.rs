@@ -3879,6 +3879,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                     b.crystals = opts.contains_key("seek_crystals");
                     // no_secret=1: secret exits are not goals (the treasure room returns to the level).
                     b.no_secret = opts.contains_key("no_secret");
+                    // crystal_stuck=N: stuck events before a crystal is skipped (default 1).
+                    if let Some(n) = opts.get("crystal_stuck") {
+                        b.crystal_stuck = n.parse()?;
+                    }
                     // require=1: exits wait for the rune stone and legend item.
                     b.require = opts.contains_key("require");
                     if let Some(d) = opts.get("bot_delay") {
