@@ -33,6 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => None,
     };
     let mut out = gdl_client::audio::AudioOut::new(rom, paths("banks"), paths("streams"), dcs.as_deref());
+    out.set_synchronous(true);
     let which = args.get(3).map(String::as_str).unwrap_or("all");
     let vol_sfx: i32 = args.get(4).map(|v| v.parse()).transpose()?.unwrap_or(128);
     out.set_options(vol_sfx, 1);

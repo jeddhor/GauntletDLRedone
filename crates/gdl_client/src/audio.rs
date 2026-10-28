@@ -76,6 +76,11 @@ struct Mixer {
     dcs: Dcs,
     pan_table: PanTable,
     music: Option<Music>,
+    /// The latest stream request (AudioOut::stream decodes off the main
+    /// thread; a load finishing after a newer request or a stop is dropped).
+    music_gen: u64,
+    /// A requested stream still loading (it counts as playing).
+    music_pending: bool,
     /// AudioStreamSetVolume's last value.
     music_vol: i32,
     /// volSFX 0x21f6c4 (AudioSetVolSfx: GamePrefs word 0, 0..255; the
@@ -96,7 +101,7 @@ fn stream_gain(v: i32) -> f32 {
 
 impl Mixer {
     fn new(pan_table: PanTable) -> Self {
-        Self { voices: Vec::new(), dcs: Dcs::default(), pan_table, music: None, music_vol: 0, vol_sfx: 128, mono: false, out_rate: OUT_RATE, env_clock: 0.0 }
+        Self { voices: Vec::new(), dcs: Dcs::default(), pan_table, music: None, music_gen: 0, music_pending: false, music_vol: 0, vol_sfx: 128, mono: false, out_rate: OUT_RATE, env_clock: 0.0 }
     }
 
     fn render(&mut self, out: &mut [f32], channels: usize) {
@@ -241,6 +246,13 @@ pub struct AudioOut {
     bank_paths: HashMap<String, PathBuf>,
     stream_paths: HashMap<String, PathBuf>,
     banks: HashMap<usize, Option<LoadedBank>>,
+    /// Every bank of the ROM decoded ahead on a background thread from
+    /// startup (M20): a sound's first play no longer reads and decodes its
+    /// bank on the frame that plays it (H4's first Garm sound: a 26 ms
+    /// update). A bank not delivered yet still loads at once.
+    preload: Option<std::sync::mpsc::Receiver<(usize, Option<LoadedBank>)>>,
+    /// Streams decode on the calling thread (offline renders, comparisons).
+    synchronous: bool,
     /// The output's keep-alive (the ALSA thread or the cpal stream).
     _stream: Option<Box<dyn std::any::Any>>,
     pub status: String,
@@ -272,19 +284,46 @@ impl AudioOut {
         }
         let stream = stream.map(|(s, _)| s);
         status.push_str(note);
-        Self { mixer, rom, bank_paths, stream_paths, banks: HashMap::new(), _stream: stream, status }
+        let jobs: Vec<(usize, PathBuf)> =
+            rom.banks.iter().enumerate().filter_map(|(k, b)| bank_paths.get(&b.name.to_uppercase()).map(|p| (k, p.clone()))).collect();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let preload = std::thread::Builder::new()
+            .name("gdl-banks".into())
+            .spawn(move || {
+                for (k, path) in jobs {
+                    if tx.send((k, load_bank(&path))).is_err() {
+                        return;
+                    }
+                }
+            })
+            .ok()
+            .map(|_| rx);
+        Self { mixer, rom, bank_paths, stream_paths, banks: HashMap::new(), preload, synchronous: false, _stream: stream, status }
+    }
+
+    /// Streams decode on the calling thread (offline renders: every
+    /// request takes effect before the next rendered frame).
+    pub fn set_synchronous(&mut self, on: bool) {
+        self.synchronous = on;
     }
 
     fn bank(&mut self, b: usize) -> Option<&LoadedBank> {
+        if let Some(rx) = &self.preload {
+            loop {
+                match rx.try_recv() {
+                    Ok((k, v)) => {
+                        self.banks.entry(k).or_insert(v);
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        self.preload = None;
+                        break;
+                    }
+                }
+            }
+        }
         if !self.banks.contains_key(&b) {
-            let loaded = (|| {
-                let name = self.rom.banks.get(b)?.name.to_uppercase();
-                let path = self.bank_paths.get(&name)?;
-                let bytes = std::fs::read(path).ok()?;
-                let vbk = Vbk::parse(&bytes).ok()?;
-                let pcm = (0..vbk.samples.len()).map(|k| Arc::new(vbk.decode(&bytes, k).unwrap_or_default())).collect();
-                Some((vbk, pcm))
-            })();
+            let loaded = self.rom.banks.get(b).and_then(|r| self.bank_paths.get(&r.name.to_uppercase())).and_then(|p| load_bank(p));
             self.banks.insert(b, loaded);
         }
         self.banks.get(&b).and_then(Option::as_ref)
@@ -386,6 +425,8 @@ impl AudioOut {
         if let Ok(mut m) = self.mixer.lock() {
             m.stop_where(|_| true);
             m.music = None;
+            m.music_gen += 1;
+            m.music_pending = false;
         }
     }
 
@@ -401,14 +442,46 @@ impl AudioOut {
 
     /// AudioStreamPlay: a STREAMS/<name> part, looping or once, at
     /// AudioStreamSetVolume(volume). False when the file is missing.
+    /// The part is read and decoded on a background thread (M20: a part is
+    /// up to 7 MB, which stalled the frame that changed the music); until
+    /// it is ready nothing plays and the stream counts as playing.
     pub fn stream(&mut self, name: &str, looping: bool, volume: i32) -> bool {
-        let Some(path) = self.stream_paths.get(&name.to_uppercase()) else { return false };
-        let Ok(bytes) = std::fs::read(path) else { return false };
-        let Ok(ads) = Ads::parse(&bytes) else { return false };
-        let pcm = Arc::new(ads.decode(&bytes));
-        if let Ok(mut m) = self.mixer.lock() {
+        let Some(path) = self.stream_paths.get(&name.to_uppercase()).cloned() else { return false };
+        if !path.is_file() {
+            return false;
+        }
+        let Ok(request) = self.mixer.lock().map(|mut m| {
+            m.music_gen += 1;
+            m.music = None;
+            m.music_pending = true;
             m.music_vol = volume;
-            m.music = Some(Music { pcm, rate: ads.rate, channels: ads.channels, idx: 0, rs: [Resampler::key_on(); 2], value: [0; 2], loops: looping, gain: stream_gain(volume), env: Envelope::key_on(ADSR1, ADSR2) });
+            m.music_gen
+        }) else {
+            return false;
+        };
+        let mixer = self.mixer.clone();
+        let install = move || {
+            let loaded = std::fs::read(&path).ok().and_then(|bytes| {
+                let ads = Ads::parse(&bytes).ok()?;
+                Some((Arc::new(ads.decode(&bytes)), ads.rate, ads.channels))
+            });
+            if let Ok(mut m) = mixer.lock()
+                && m.music_gen == request
+            {
+                m.music_pending = false;
+                if let Some((pcm, rate, channels)) = loaded {
+                    let gain = stream_gain(m.music_vol);
+                    m.music = Some(Music { pcm, rate, channels, idx: 0, rs: [Resampler::key_on(); 2], value: [0; 2], loops: looping, gain, env: Envelope::key_on(ADSR1, ADSR2) });
+                }
+            }
+        };
+        if self.synchronous {
+            install();
+        } else if std::thread::Builder::new().name("gdl-stream".into()).spawn(install).is_err()
+            && let Ok(mut m) = self.mixer.lock()
+        {
+            m.music_pending = false;
+            return false;
         }
         true
     }
@@ -418,6 +491,8 @@ impl AudioOut {
     /// stream volume word of `vol_music` as for AudioStreamPlay.
     pub fn play_pcm(&mut self, pcm: Vec<i16>, rate: u32, channels: u32, vol_music: i32) {
         if let Ok(mut m) = self.mixer.lock() {
+            m.music_gen += 1;
+            m.music_pending = false;
             m.music_vol = vol_music;
             m.music = Some(Music { pcm: Arc::new(pcm), rate, channels, idx: 0, rs: [Resampler::key_on(); 2], value: [0; 2], loops: false, gain: stream_gain(vol_music), env: Envelope::key_on(ADSR1, ADSR2) });
         }
@@ -425,7 +500,7 @@ impl AudioOut {
 
     /// stream_playing(): the stage music still sounds.
     pub fn stream_playing(&self) -> bool {
-        self.mixer.lock().is_ok_and(|m| m.music.is_some())
+        self.mixer.lock().is_ok_and(|m| m.music.is_some() || m.music_pending)
     }
 
     /// AudioStreamSetVolume.
@@ -452,8 +527,18 @@ impl AudioOut {
     pub fn stream_stop(&mut self) {
         if let Ok(mut m) = self.mixer.lock() {
             m.music = None;
+            m.music_gen += 1;
+            m.music_pending = false;
         }
     }
+}
+
+/// A bank's samples, decoded (None: missing or unreadable).
+fn load_bank(path: &std::path::Path) -> Option<LoadedBank> {
+    let bytes = std::fs::read(path).ok()?;
+    let vbk = Vbk::parse(&bytes).ok()?;
+    let pcm = (0..vbk.samples.len()).map(|k| Arc::new(vbk.decode(&bytes, k).unwrap_or_default())).collect();
+    Some((vbk, pcm))
 }
 
 /// The platform's output, fed from the mixer, and its name.

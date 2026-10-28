@@ -4883,6 +4883,19 @@ fn simulate(
     (mut harness, mut exit): (ResMut<TestHarness>, MessageWriter<AppExit>),
     (bindings, overlay): (Res<gdl_client::controls::Bindings>, Res<gdl_client::enhance::Overlay>),
 ) {
+    // DIAGNOSTIC (M20): GDL_SLOW_STEP prints an update of this system over
+    // 8 ms with its sections' times (SLOWSIM) and a step over 8 ms with
+    // its events (SLOWSTEP).
+    struct SlowGuard(std::time::Instant, Vec<(&'static str, f64)>, u64);
+    impl Drop for SlowGuard {
+        fn drop(&mut self) {
+            let total = self.0.elapsed().as_secs_f64() * 1000.0;
+            if 8.0 < total && std::env::var_os("GDL_SLOW_STEP").is_some() {
+                eprintln!("SLOWSIM update {} total {:.1} ms marks {:?}", self.2, total, self.1);
+            }
+        }
+    }
+    let mut guard = SlowGuard(std::time::Instant::now(), Vec::new(), sim.updates);
     let closing = front.ending.active();
     if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started {
         return;
@@ -5242,12 +5255,19 @@ fn simulate(
         sim.frozen = true;
         return;
     }
+    guard.1.push(("before_step", guard.0.elapsed().as_secs_f64() * 1000.0));
     let Sim { game, .. } = &mut *sim;
     let before = game.events.len();
+    let t0 = std::time::Instant::now();
     game.step_with(None, &mut |g| {
         g.update_controls(&ports)?;
         g.do_players().map(|_| ())
     });
+    if std::env::var_os("GDL_SLOW_STEP").is_some() && t0.elapsed().as_secs_f64() > 0.008 {
+        let ev: Vec<String> = game.events[before..].iter().map(|e| format!("{e:?}").chars().take(80).collect()).collect();
+        eprintln!("SLOWSTEP update {} {:.1} ms events {:?}", sim.updates, t0.elapsed().as_secs_f64() * 1000.0, ev);
+    }
+    guard.1.push(("after_step", guard.0.elapsed().as_secs_f64() * 1000.0));
     sim.updates += 1;
     // DIAGNOSTIC (M20 performance report): the time from process start to
     // the first stepped update (loading), on stderr.
@@ -5269,6 +5289,7 @@ fn simulate(
         }
     }
     // game mode 0x4014: do_over after the world, items, enemies, players.
+    guard.1.push(("after_harness", guard.0.elapsed().as_secs_f64() * 1000.0));
     if let Some(mut over) = sim.over.take() {
         if sim.game.do_over(&mut over) {
             sim.over_done = true;
@@ -5390,7 +5411,9 @@ fn simulate(
     // Every request since the last frame (level setup's BGMusicStart, the
     // shop and map screens' leftovers included).
     let new: Vec<Event> = sim.game.events.drain(..).collect();
+    guard.1.push(("before_audio", guard.0.elapsed().as_secs_f64() * 1000.0));
     play_audio(&mut audio, &new);
+    guard.1.push(("after_audio", guard.0.elapsed().as_secs_f64() * 1000.0));
     for e in new {
         match e {
             Event::Exp { amount, .. } => sim.exp += i64::from(amount),

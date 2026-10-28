@@ -328,6 +328,22 @@ native effects render of replay-frame-B4start-audio-v1 measures 0.0941 /
 (the balance unchanged). Below 60 Hz the emulator's output DC filter
 still takes up to 2.7 dB.
 
+## Loading off the frame (2026-10-28, M20)
+
+The client loaded a sound bank on its first sound — reading the VBK and
+decoding every sample on the frame that played it — and read and decoded a
+whole music part (up to 7.2 MB of ADS) on the frame that started it, with
+or without an output device: H4's first Garm sound made one update take
+26 ms, the level-start music 188 ms. Now all 65 banks (31.8 MB on disk,
+about 110 MB decoded) are decoded on a background thread from startup (a
+bank not delivered yet still loads at once), and a music part decodes on
+its own thread: nothing plays until it is ready and the stream counts as
+playing meanwhile (PlayStreamComplete is not reported early); a newer
+request, a stop or a movie soundtrack supersedes a load still running.
+NATIVE timing: the original streams from the disc with its own latency,
+unmeasured. gdl_audio_render keeps the synchronous loads (AudioOut::
+set_synchronous), so offline renders and their comparisons are unchanged.
+
 ## Not yet
 
 Tower coin sounds against the reference capture, AudioLoadStage bank residency (the host loads banks on
