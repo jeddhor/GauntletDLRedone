@@ -499,15 +499,21 @@ impl Game {
         let _ = content;
         let dk = self.items.definitions[d].kind();
         let new = if dk == 1 && c.u32_(0xf8) != 0 {
-            // Inside an open chest model node: created unplaced and parented.
-            // Unreachable in this build: SetItem clears a chest's +0xf8 and
-            // no store writes a node there (the stores to +0xf8 are in
-            // SetItem, OpenChest, PlayerItemCollision and DamageItem).
+            // 0x158ab4: inside the chest's NULL1 node (SetItem's tail put it
+            // in +0xf8): AddItemSub unplaced, linked both ways (the chest's
+            // +0xfc is what PlayerItemCollision grabs once the chest is open,
+            // and keeps ProcessItems from deleting it), +0xdf the opener. The
+            // node parenting (MBNodeAddChild), MBTreeSetFlags(.., 8) and the
+            // 0.2 node scale are presentation; ProcessItems keeps the record
+            // on the chest. Then the common tail (0x158b68). Before
+            // 2026-10-28 this branch was believed unreachable and the content
+            // was placed loose but still linked — never collectable
+            // (playtest: a chest's blue potion in G1).
             let n = self.add_item_sub(d, None)?;
             self.items.records[chest].set_u32(0xfc, n as u32 + 1);
             self.items.records[n].set_u32(0xfc, chest as u32 + 1);
             self.items.records[n].set_u8(0xdf, opener.map_or(0xff, |o| o as u8));
-            return unsupported("chest content parented to the chest model node (presentation-dependent position)");
+            n
         } else {
             let n = self.add_item_sub(d, Some((c.matrix(), c.position())))?;
             let df = if chest_subtype == 0x2b {

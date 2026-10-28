@@ -131,7 +131,9 @@ impl ReferenceItems {
     /// A reference record in the export_live_items.py convention: +0x00
     /// definition pointer → index (WorldInfo +0x68, 0x50 bytes), kinds 5/12
     /// +0xf0 → WORLDS object index + 1 (WorldInfo +0x04, 0x3c bytes), kinds
-    /// 5/11 +0xf8 → item slot + 1, kinds 2/13 +0xf8 cleared.
+    /// 5/11 +0xf8 → item slot + 1, kind 13 +0xf8 cleared, kind 2 +0xf8 (the
+    /// chest's NULL1 node object, SetItem 0x15296c) → 1 when set, kinds 1/2
+    /// +0xfc (OpenChest's chest ↔ content links) → item slot + 1.
     fn native(raw: &[u8], worldinfo: &[u8], items_base: u32, kind_of: &dyn Fn(usize) -> i32) -> [u8; 0x110] {
         let word = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
         let (objects, defs) = (word(worldinfo, 4), word(worldinfo, 0x68));
@@ -148,8 +150,14 @@ impl ReferenceItems {
         if matches!(kind, 5 | 11) {
             new[0xf8..0xfc].copy_from_slice(&index(word(raw, 0xf8), items_base, 0x110).to_le_bytes());
         }
-        if matches!(kind, 2 | 13) {
+        if kind == 13 {
             new[0xf8..0xfc].fill(0);
+        }
+        if kind == 2 {
+            new[0xf8..0xfc].copy_from_slice(&u32::from(word(raw, 0xf8) != 0).to_le_bytes());
+        }
+        if matches!(kind, 1 | 2) {
+            new[0xfc..0x100].copy_from_slice(&index(word(raw, 0xfc), items_base, 0x110).to_le_bytes());
         }
         new
     }

@@ -4,9 +4,12 @@
 
 Conversions follow compare_items.py: +0x00 becomes the definition index
 (Defs, 0x50 bytes each), kinds 5/12 +0xf0 the WORLDS object index + 1
-(60 bytes each), kinds 5/11 +0xf8 the item slot + 1; presentation words
-(+0x70..+0xc7 render/anim nodes, +0xe6 dyngrid link, types 2/13 +0xf8) are
-zeroed. Also exported: the item world objects' runtime words (+0x10 flags,
+(60 bytes each), kinds 5/11 +0xf8 the item slot + 1, kind 2 +0xf8 (the
+chest's NULL1 content node, SetItem 0x15296c) 1 when set, kinds 1/2 +0xfc
+(OpenChest's chest/content links) the item slot + 1; presentation words
+(+0x70..+0xc7 render/anim nodes, +0xe6 dyngrid link, type 13 +0xf8) are
+zeroed. Exports before 2026-10-28 (live-items-g1-fixture-v1) zeroed the
+kind-2 +0xf8 too. Also exported: the item world objects' runtime words (+0x10 flags,
 +0x14, +0x16, +0x17) for every object.
 """
 import argparse
@@ -51,8 +54,12 @@ def main():
             index(0xf0, objs, 60)
         if kind in (5, 11):
             index(0xf8, items, 0x110)
-        if kind in (2, 13):
+        if kind == 13:
             struct.pack_into('<I', r, 0xf8, 0)
+        if kind == 2:
+            struct.pack_into('<I', r, 0xf8, int(struct.unpack_from('<I', r, 0xf8)[0] != 0))
+        if kind in (1, 2):
+            index(0xfc, items, 0x110)
         r[0x70:0xc8] = bytes(0x58)
         r[0xe6:0xe8] = bytes(2)
         records.append(dict(slot=k, active=ptr != 0, record=bytes(r).hex()))

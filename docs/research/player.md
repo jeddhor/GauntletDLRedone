@@ -244,8 +244,32 @@ it takes the world origin (HYPOTHESIS, gameplay.md "Statues").
   kind-2 subtype-0x2f definition; the CHESTSG tree swap is presentation)
   and +0xf4 takes the gold amount. A Death statue from a chest whose
   +0x100 ≠ 0 gets +0xf2 = 2 and +0xf3 = enemy_logic_num[0x1e] (the
-  `lbu` at 0x22d618). The content-node branch (+0xf8) is unreachable: no
-  store writes a node into a chest's +0xf8.
+  `lbu` at 0x22d618). CORRECTED 2026-10-28 — the content-node branch is
+  the chests' normal path, not unreachable: SetItem's tail 0x15296c
+  (kind 2 with a tree) looks up the node "%sNULL1" (0x2a81e8; CHEST and
+  CHESTS have NULL1, the gold/bomb chests do not) and stores its object in
+  +0xf8, then MBTreeSetFlags(node, 1). OpenChest 0x158ab4 then creates the
+  content unplaced, parents its node to NULL1 (0.2 scale, tree flags 8),
+  links chest +0xfc → content and content +0xfc → chest, +0xdf the opener,
+  and continues at the common tail (0x158b68: +0x100 = 0x1e). The linked
+  content is skipped by PlayerCollideItems (0x1462d8: kind 1 with +0xfc);
+  PlayerItemCollision on the open chest (+0xdc 2) grabs chest +0xfc, and
+  ProcessItems keeps a chest whose +0xfc is set. Reference
+  trace-G1-chest31-v3 (w7l1-chest31-key-v3: player 1 warped onto G1 chest
+  31 with a poked key; labelled guest writes; from w7l1-started-v1, the G1
+  new game 300 vblanks on — warp-G1-chest31-key-v1 warped during the
+  level start and was re-placed at step 141, -v2's Up held after a
+  position write did not move the player; both kept): opened at step 9 (chest
+  +0xfc → slot 519), +0xdc 1 at 11, 2 at 61, potions 0 → 1 at 61 standing
+  at the chest, chest and content expired and deleted at 77. The earlier
+  reading missed SetItem's tail (the export convention zeroed a kind-2
+  +0xf8 as a pointer). Native replay replay-frame-g1chest31-v1: 180/180
+  updates equal for player, effects, enemies; items 154/180 — slot 519's
+  y (the content rides the NULL1 node as the lid opens, y +0 → +1.9 →
+  +1.45) and last-bit differences of its rotation rows and z (the node
+  chain's products); native keeps it on the chest's matrix — a labelled
+  residual, unknowns.md). Before the fix the content was placed loose but linked, so a
+  chest's potion could never be picked up (playtest 2026-10-28).
 - DamageItem 0x15a620 on chests: a potion blast (flag 0x200) on a chest
   holding Death writes the chest DEFINITION's subtype to 1 (shared data),
   swaps the content to APPLE, plays AudioDeathDies and sets +0xf2 =

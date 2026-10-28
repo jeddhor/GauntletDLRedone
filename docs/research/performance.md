@@ -196,3 +196,8 @@ Then (the menu fixes: in-game Screen Adjust, the Display entry,
 controllers in the overlay, Back on Press Start): gdl_play
 dd2cc2f9e4294391…; menu flows 21/21 (menu-flows-m20-menus2),
 title_start_check 6/6 (title-start-m20-menus2).
+Then (widescreen 2D screens bordered; chests' NULL1 content node, core
+and replay convention): gdl_play c91768cd1e84076a…, gdl_tools
+b66b73cb42e60b99…; regression r87 equal to r86 for all 146 replays, menu
+flows 21/21 (menu-flows-m20-chest1), title_start_check 4/4
+(title-start-m20-chest1), scenarios chest-g1 and death-g1 (scenarios-chest1).

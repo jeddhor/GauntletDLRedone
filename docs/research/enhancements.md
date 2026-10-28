@@ -72,8 +72,13 @@ With `widescreen`, a window wider than the frame shows the 3D view across
 its full width at the frame's height: the vertical angle is the game's,
 the horizontal tangent becomes tan_v × viewport aspect (Hor+;
 Ps2Projection.wide), the frustum used for culling follows. The HUD stays
-centred at the original shape; movies (the full-screen movie quad) show
-bordered. Full-width blits of the flat TextureWhite (AAAWHITE: the trigger
+centred at the original shape. Full-frame 2D screens show bordered with
+black sides: movies (the full-screen movie quad), the tally and shop, the
+realm map, the select screen, the full-screen inventory and the front end
+(title, menus, attract screens) — the 3D view keeps rendering the level
+behind them, which in the widened sides showed frozen beside the 4:3
+screen until 2026-10-28 (playtest; checked on the RX 580 at 1920×1080:
+G1's exit tally with black sides, play still widened). Full-width blits of the flat TextureWhite (AAAWHITE: the trigger
 camera's letterbox bars, fills) are stretched to the window's width;
 textured blits stay in the frame. The end-of-stage fade and lightning act
 on the scene's light, so they reach the widened sides.

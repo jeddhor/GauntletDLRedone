@@ -81,13 +81,16 @@ pub fn clips_of(anim: &Animations, tree: usize) -> Vec<ClipTiming> {
 /// package defining a label keeps it); `nodes` gets per label whether the tree
 /// has a type-1 node (AtreeNodeInit +0x2c: AnimateNode passes those to
 /// DoAnimation) and its node count (AtreeInitSub's AnimInfo +0x38).
-pub fn add_item_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32)>, anim: &Animations) {
+pub fn add_item_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32, i32)>, anim: &Animations) {
     for (k, t) in anim.trees.iter().enumerate() {
         if lib.contains_key(&t.label) {
             continue;
         }
         lib.insert(t.label.clone(), clips_of(anim, k));
-        nodes.insert(t.label.clone(), (t.nodes.iter().any(|n| n.node_type == 1), t.nodes.len() as i32));
+        // SetItem 0x15296c (kind 2 with a tree): the "%sNULL1" node holds a
+        // chest's content (+0xf8; OpenChest's node branch).
+        let null1 = t.nodes.iter().position(|n| n.label == "NULL1").map_or(-1, |k| k as i32);
+        nodes.insert(t.label.clone(), (t.nodes.iter().any(|n| n.node_type == 1), t.nodes.len() as i32, null1));
     }
 }
 
@@ -139,14 +142,14 @@ pub fn enemy_trees(data: &mut EnemyAnimData, t: i32, prefix: &str, anim: &Animat
 /// order, so an enemy package's GEN_ tree (MONSTERS/WAR: GEN_WAR0..3, in J3
 /// and J4) joins the item tree library behind the item packages, the lowest
 /// enemy type first.
-fn add_generator_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32)>, enemy: &EnemyAnimData) {
+fn add_generator_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32, i32)>, enemy: &EnemyAnimData) {
     type Entry<'a> = (&'a (i32, String), &'a (Vec<ClipTiming>, bool, i32));
     let mut found: Vec<Entry> = enemy.gen_trees.iter().filter(|((t, _), _)| (0..=0x2c).contains(t)).collect();
     found.sort_by_key(|((t, label), _)| (*t, label.clone()));
     for ((_, label), (clips, animated, n)) in found {
         if !lib.contains_key(label) {
             lib.insert(label.clone(), clips.clone());
-            nodes.insert(label.clone(), (*animated, *n));
+            nodes.insert(label.clone(), (*animated, *n, -1));
         }
     }
 }
@@ -156,7 +159,7 @@ fn add_generator_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut H
 /// CritterTypeLoaded(3, 0)'s model; DEATHSTATUE1/2 in enemy_anim[0x1e]. They
 /// join the item tree library under their labels (the statue's own package
 /// takes precedence, as its AtreeMatch names it).
-fn add_statue_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32)>, enemy: &EnemyAnimData, critters: &[super::critters::CritterInput]) {
+fn add_statue_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32, i32)>, enemy: &EnemyAnimData, critters: &[super::critters::CritterInput]) {
     fn model_of(critters: &[super::critters::CritterInput], kind: i16) -> Option<std::sync::Arc<(Animations, Vec<u8>)>> {
         critters
             .iter()
@@ -169,9 +172,9 @@ fn add_statue_trees(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut Hash
             })
             .and_then(|(_, _, m)| m.clone())
     }
-    fn put(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32)>, name: &str, entry: (Vec<ClipTiming>, bool, i32)) {
+    fn put(lib: &mut HashMap<String, Vec<ClipTiming>>, nodes: &mut HashMap<String, (bool, i32, i32)>, name: &str, entry: (Vec<ClipTiming>, bool, i32)) {
         lib.insert(name.to_string(), entry.0);
-        nodes.insert(name.to_string(), (entry.1, entry.2));
+        nodes.insert(name.to_string(), (entry.1, entry.2, -1));
     }
     let from_model = |kind: i16, name: &str| -> Option<(Vec<ClipTiming>, bool, i32)> {
         let m = model_of(critters, kind)?;
@@ -303,8 +306,9 @@ pub struct LevelInputs<'a> {
     pub enemy_anims: EnemyAnimData,
     /// Item animation trees by definition name.
     pub item_anims: HashMap<String, Vec<ClipTiming>>,
-    /// Per item tree label: a type-1 node, and the node count (add_item_trees).
-    pub item_anim_nodes: HashMap<String, (bool, i32)>,
+    /// Per item tree label: a type-1 node, the node count and the NULL1
+    /// node's index or −1 (add_item_trees).
+    pub item_anim_nodes: HashMap<String, (bool, i32, i32)>,
     pub effect_tables: super::effects::EffectTables,
     /// AUDIO/AUDATPS2.ROM; None disables sound events.
     pub audio_rom: Option<gdl_formats::audio::AudioRom>,

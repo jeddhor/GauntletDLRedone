@@ -45,6 +45,17 @@ SCENARIOS = {
         menu=presses(CROSS, 40, 12, 90) + presses(TRIANGLE, 85, 12, 90),
         checks=[("key", "keys", "==", 1), ("after", "keys", "==", "start.keys"), ("after", "exp", "==", "start.exp"),
                 ("after", "waves", "==", "start.waves"), ("after", "state", "==", 1), ("after", "world", "==", 13)]),
+    # A chest opened with a key gives its content through the open chest
+    # (OpenChest's NULL1-node branch; reference trace-G1-chest31-v3: the
+    # potion taken at the open chest, both removed). G1 chest 31 holds a
+    # random pick; at these updates it is a potion. Playtest 2026-10-28:
+    # the content had been left loose and could not be picked up.
+    'chest-g1': dict(
+        level='G1', updates=520,
+        actions=[{"at": 5, "dump": "start"}, {"at": 200, "health": 5000}, {"at": 250, "teleport": [20.99, 0.6, 10.77]},
+                 {"at": 290, "dump": "key"}, {"at": 300, "teleport": [15.0, 10.3, -56.5]}, {"at": 500, "dump": "after"}],
+        menu=[],
+        checks=[("key", "keys", "==", 1), ("after", "keys", "==", 0), ("after", "potions", "==", 1)]),
     # G1's exit records the level as completed for the class and leads to the
     # Tower; the completion survives into the next level.
     'exit-g1': dict(

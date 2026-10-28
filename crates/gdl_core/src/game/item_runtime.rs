@@ -217,8 +217,17 @@ impl Game {
             (None, Some(g)) => g,
             (None, None) => String::from_utf8_lossy(self.items.definitions[r.definition()].name()).into_owned(),
         };
-        let (animated, nodes) = self.item_anim_nodes.get(&name).copied().unwrap_or((false, 0));
+        let (animated, nodes, null1) = self.item_anim_nodes.get(&name).copied().unwrap_or((false, 0, -1));
         self.item_anims[slot] = self.item_anim_lib.get(&name).map(|clips| ItemAnim { clock: super::setup::fresh_clock(), clips: clips.clone(), current: 0, animated });
+        // SetItem's tail 0x15296c, kind 2 with a tree: sprintf "%sNULL1",
+        // the node found → +0xf8 = its object, MBTreeSetFlags(node, 1). The
+        // CHEST and CHESTS trees have one; OpenChest then parents the content
+        // to it (reference trace-G1-chest31-v3: chest 31 +0xf8 0x1960010, the
+        // content linked both ways and taken through the open chest). NATIVE
+        // value 1 for the pointer (replays compare a kind-2 +0xf8 by presence).
+        if self.item_anims[slot].is_some() && 0 <= null1 && self.items.definitions[self.items.records[slot].definition()].kind() == 2 {
+            self.items.records[slot].set_u32(0xf8, 1);
+        }
         if let Some(a) = self.item_anims[slot].as_mut() {
             // AtreeInit: InitAnimInfo (+0x28/+0x2c 1.0 = record +0xac/+0xb0;
             // +0x38 = record +0xbc the node count) and InitAnim(0).
@@ -770,8 +779,20 @@ impl Game {
             // own matrix) under the item's own translation-only root, whose
             // add.s turns a −0.0 translation into +0.0 (I2 item 257: instance
             // x −0.0, +0.0 in w9l2-start-v1; items.md "Matrix chains").
-            let node = match self.items.floor_parent.get(slot) {
-                Some(Some((o, local))) => Some(self.collision.chain_world(*local, Some(*o)).map_err(|e| super::Unsupported(format!("item world: {e:?}")))?),
+            // A chest's content (OpenChest's node branch): its node is a child
+            // of the chest's NULL1 node, so the record follows the chest.
+            // HYPOTHESIS (labelled residual): the chest's matrix stands in for
+            // the node's world matrix — the reference content rises with the
+            // lid (trace-G1-chest31-v3: y +0 → +1.9 → +1.45 over 25 updates;
+            // x/z the chest's) and carries the node's 0.2 scale.
+            let in_chest = (self.items.definitions[r.definition()].kind() == 1)
+                .then(|| r.u32_(0xfc).checked_sub(1))
+                .flatten()
+                .map(|c| c as usize)
+                .filter(|&c| self.items.records.get(c).is_some_and(|c| c.active() && c.u32_(0xf8) != 0 && c.u32_(0xfc) == slot as u32 + 1));
+            let node = match (in_chest, self.items.floor_parent.get(slot)) {
+                (Some(c), _) => Some(std::array::from_fn(|i| std::array::from_fn(|j| self.items.records[c].f32_(0x10 + 0x10 * i + 4 * j)))),
+                (None, Some(Some((o, local)))) => Some(self.collision.chain_world(*local, Some(*o)).map_err(|e| super::Unsupported(format!("item world: {e:?}")))?),
                 _ => {
                     let mut m: [[f32; 4]; 4] = self.items.sound_anchor.get(slot).copied().flatten()
                         .unwrap_or_else(|| std::array::from_fn(|i| std::array::from_fn(|j| r.f32_(0x10 + 0x10 * i + 4 * j))));

@@ -535,6 +535,13 @@ original (PCSX2 reference on Xvfb :191, private captures):
    end with a NATIVE "Display" entry opening the settings overlay, which
    controllers now drive; Back on Press Start quits, a controller's Start
    opens the title menu there (enhancements.md, playtest.md).
+   2026-10-28 (user: widescreen sides not cleared under 4:3 screens; a
+   potion in G1 that could not be picked up): full-frame 2D screens now
+   keep the bordered frame; chests get their NULL1 content node (SetItem's
+   tail 0x15296c, missed before) so OpenChest's content is taken through
+   the open chest as in the reference (trace-G1-chest31-v3; native replay
+   180/180 player updates, items but the content's y; regression r87 =
+   r86 for all 146 replays; scenarios chest-g1 and death-g1 pass).
 
 ---
 

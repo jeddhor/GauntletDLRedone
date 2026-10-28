@@ -110,6 +110,23 @@ pause-display-realm, press-start-exit (Xvfb); on the RX 580 a virtual
 pad alone went Press Start (Start) → Options → Display → a setting changed
 and stored → B closed it on the list → Y, Y, Y to the exit (code 0).
 
+Next playtest (same day, widescreen fullscreen): (1) going from the
+widescreen view to a 4:3 screen left the sides showing the level — the
+3D view went on rendering behind the tally/shop, map, select screen and
+inventory, and only movies switched to the bordered frame; now every
+full-frame 2D screen does (enhancements.md; RX 580 at 1920×1080, G1's
+exit tally: black sides). (2) "I was unable to pick up a potion … the
+blue potion on the ground" in the first level (G1): reproduced natively —
+chest 31 by the start, opened with a key, drops a random pick, here
+POT_BLU, which could never be collected: SetItem's tail that gives chests
+their NULL1 content node was missing, so OpenChest took the loose branch
+and the content stayed linked to a deleted chest (player.md "Chests";
+reference trace-G1-chest31-v3, replay-frame-g1chest31-v1). Fixed; the
+scenario chest-g1 checks key → chest → potion. The ground potions with
++0xe0 3 or 4 (368, 369, 370) are hidden in single player as in the
+original (w7l1-potion-v1); the shown ones (367, 371, 372) were always
+collectable.
+
 M12 walkthrough (2026-10-22, gdl_play on the private Xvfb through
 tools/python/client_driver.py; frames in private/runs/client-m12a,
 client-m12b, client-ex1..4, client-die4):

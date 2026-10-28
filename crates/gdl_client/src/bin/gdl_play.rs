@@ -405,12 +405,16 @@ fn present_overlay(
 /// in play — InitCamera's WindowBottomLim; none in the flyby), in the frame
 /// rectangle; the HUD's 512×384 screen mapped onto that rectangle, and the
 /// final pass told where it is. NATIVE ENHANCEMENT (Settings::widescreen,
-/// a window wider than 640:448, no movie showing): the 3D view takes the
-/// window's full width at the frame's height (Hor+), the HUD stays centred.
+/// a window wider than 640:448): the 3D view takes the window's full width
+/// at the frame's height (Hor+), the HUD stays centred — not while a
+/// full-frame 2D screen covers the frame (a movie, the tally and shop, the
+/// realm map, the select screen, the full-screen inventory, the front end):
+/// those keep the frame's shape with black sides, as the level behind them
+/// would otherwise show (frozen) beside them (playtest 2026-10-28).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn ps2_viewport(
     windows: Query<&Window>,
-    sim: Option<Res<Sim>>,
+    (sim, screen, front, ui): (Option<Res<Sim>>, Res<Screen>, Res<Front>, Res<Ui>),
     settings: Res<gdl_client::settings::Settings>,
     movie: Query<&Visibility, With<MovieQuad>>,
     mut cams: Query<(&mut Camera, &mut Projection), With<FollowCamera>>,
@@ -422,7 +426,10 @@ fn ps2_viewport(
     let (width, height) = (w.physical_width().max(1), w.physical_height().max(1));
     let (fx, fy, fw, fh) = frame_rect(width, height);
     let movie = movie.iter().any(|v| *v == Visibility::Visible);
-    let wide = settings.widescreen && !movie && fw < width;
+    let screen_2d = *screen == Screen::Front
+        || sim.as_ref().is_some_and(|s| s.shop.is_some() || s.map.is_some() || s.select.is_some())
+        || (ui.paused && matches!(front.menu.page, gdl_client::menu::Page::Inventory | gdl_client::menu::Page::InventoryClose));
+    let wide = settings.widescreen && !movie && !screen_2d && fw < width;
     let (frame, inset) = sim
         .as_ref()
         .and_then(|s| s.game.std_camera.as_ref())
@@ -5675,6 +5682,7 @@ fn present_world(
     frames: Res<EnemyFrames>,
     mut slots: SlotQuery,
     (mut materials, mut variants, mut pending): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<PartVariants>, ResMut<PendingTreePsys>),
+    chest_nodes: Res<ChestNodes>,
 ) {
     let g = &sim.game;
     let items = &session.levels[session.current].items;
@@ -5742,7 +5750,18 @@ fn present_world(
                     continue;
                 }
                 let m = r.matrix();
-                let tf = record_transform([Vec3::from_array(m[0]), Vec3::from_array(m[1]), Vec3::from_array(m[2])], Vec3::from_array(r.position()));
+                let mut tf = record_transform([Vec3::from_array(m[0]), Vec3::from_array(m[1]), Vec3::from_array(m[2])], Vec3::from_array(r.position()));
+                // A chest's content (OpenChest's node branch): drawn at the
+                // chest's NULL1 node with the node's 0.2 scale, rising with
+                // the lid (presentation).
+                if let Some(c) = (kind == 1).then(|| r.u32_(0xfc).checked_sub(1)).flatten().map(|c| c as usize)
+                    && let Some(cr) = g.items.records.get(c).filter(|cr| cr.active() && cr.u32_(0xf8) != 0 && cr.u32_(0xfc) == slot.index as u32 + 1)
+                {
+                    let cm = cr.matrix();
+                    let chest = record_transform([Vec3::from_array(cm[0]), Vec3::from_array(cm[1]), Vec3::from_array(cm[2])], Vec3::from_array(cr.position()));
+                    let node = chest_nodes.0.get(&c).copied().unwrap_or(Mat4::IDENTITY);
+                    tf = Transform::from_matrix(chest.to_matrix() * node * Mat4::from_scale(Vec3::splat(0.2)));
+                }
                 if kind == 3 {
                     let level = r.u8_(0xf6);
                     let t = r.i16_(0xf0) as i32;
@@ -6272,9 +6291,15 @@ fn show_oframe(f: &OFrame, seq: u16, index: i32, v: &mut Visibility) {
     }
 }
 
+/// Chests' NULL1 node poses (item slot → the node's matrix in the slot's
+/// frame) from the last posed frame: a chest's content is drawn there
+/// (OpenChest's MBNodeAddChild; presentation).
+#[derive(Resource, Default)]
+struct ChestNodes(HashMap<usize, Mat4>);
+
 /// Item trees posed by the simulation's item animation clocks
 /// (ProcessItems' AnimateATree: the current sequence and frame).
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_item_trees(
     sim: Res<Sim>,
     sources: Res<Sources>,
@@ -6283,8 +6308,10 @@ fn present_item_trees(
     mut parts: Query<(Entity, &TreeNodeIdx, &mut Transform, Option<&OFrame>, &mut Visibility), Without<Slot>>,
     mut trees: Local<HashMap<String, Option<(String, usize)>>>,
     (libs, mut req, mut texmods): (Res<Libraries>, ResMut<MatRequests>, Local<HashMap<(String, usize), Vec<NodeTexMod>>>),
+    mut chest_nodes: ResMut<ChestNodes>,
 ) {
     let items = &session.levels[session.current].items;
+    chest_nodes.0.clear();
     for (slot, children, vis) in &slots {
         if slot.kind != SlotKind::Item || *vis == Visibility::Hidden {
             continue;
@@ -6305,6 +6332,9 @@ fn present_item_trees(
         let Some(a) = p.anim.as_ref() else { continue };
         let frame = anim.clock.frame.max(0.0);
         let Ok(pose) = gdl_client::tree_pose(a, tree, &p.anim_bytes, anim.current as usize, frame, true) else { continue };
+        if let Some(m) = a.trees.get(tree).and_then(|t| t.nodes.iter().position(|n| n.label == "NULL1")).and_then(|k| pose.get(k)) {
+            chest_nodes.0.insert(slot.index, *m);
+        }
         let index = object_frame(frame, a.trees.get(tree).and_then(|t| t.sequences.get(anim.current as usize)));
         let mut meshes = Vec::new();
         for child in children.iter() {
@@ -8280,16 +8310,23 @@ fn front_system(world: &mut EcsWorld) {
                     for (s, r) in g.items.records.iter().enumerate().filter(|(_, r)| r.active()) {
                         let def = &g.items.definitions[r.definition()];
                         eprintln!(
-                            "DEBUG F2 all {s} {} kind {} sub {} pos {:?} d8 {:#06x} geo {:?} geo_name {:?} f0 {} f2 {}",
+                            "DEBUG F2 all {s} {} kind {} sub {} pos {:?} item_pos {:?} d8 {:#06x} e0 {} e1 {} geo {:?} geo_name {:?} f0 {} f2 {} content {:?}",
                             String::from_utf8_lossy(def.name()),
                             def.kind(),
                             def.subtype(),
                             r.position(),
+                            r.v3(0x60),
                             r.u16_(0xd8),
+                            r.u8_(0xe0),
+                            r.u8_(0xe1),
                             g.items.geo.get(s),
                             g.items.geo_name.get(s),
                             r.i16_(0xf0),
-                            r.i16_(0xf2)
+                            r.i16_(0xf2),
+                            // Chests and barrels: the content definition (+0xf0).
+                            matches!(def.kind(), 2 | 10)
+                                .then(|| usize::try_from(r.i16_(0xf0)).ok().and_then(|c| g.items.definitions.get(c)).map(|c| (String::from_utf8_lossy(c.name()).into_owned(), c.kind(), c.subtype())))
+                                .flatten()
                         );
                     }
                 }
@@ -8755,6 +8792,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<PartVariants>()
         .init_resource::<MatRequests>()
         .init_resource::<PendingTreePsys>()
+        .init_resource::<ChestNodes>()
         .init_resource::<MovieScreen>()
         .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
         .init_resource::<EnemyFrames>()
