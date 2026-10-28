@@ -1,10 +1,12 @@
 # Gauntlet: Dark Legacy — native PS2 reconstruction
 
 Implementation follows [the master plan](Gauntlet_Dark_Legacy_PS2_Rust_Bevy_Master_Plan.md).
-The port is in development. Current native functionality is a bounded archive
-import/extraction tool, original-texture and level inspectors, and a headless
-source-qualified animation sampler with a native pose inspector. Gameplay has not
-been implemented; the viewer is not a playable port.
+The port is in development. The native game runs the original rules from the
+user's own disc: the Tower, all realms and bosses, one to four players, the
+original HUD, menus, audio and movies, and saves; a character has been played
+from a new game to the ending (docs/coverage.md M15). Import tooling,
+inspectors and comparison harnesses sit beside it in crates/gdl_tools and
+tools/python.
 
 See [milestone coverage](docs/coverage.md), [current state](docs/state.md),
 [toolchain](docs/toolchain.md) and [disc profile](profiles/ps2/slus-20047.json).
@@ -198,8 +200,16 @@ python3 tools/python/export_start_state.py   # once; private start state from th
 python3 tools/python/run_play.py             # Arrows/WASD move, Space/K attack, Esc quits
 ```
 
-There are no enemies, items, damage, HUD or audio yet. See
-[playtest notes](docs/research/playtest.md) for exactly what is native and what is interim.
+See [playtest notes](docs/research/playtest.md) for exactly what is native and what is interim.
 
 The [current checkpoint](docs/state.md) records exact progress, passing checks,
 preserved reference state and ordered next steps.
+
+## License
+
+Copyright (c) 2026 Gauntlet native reconstruction contributors. The project's
+code is licensed under the GNU General Public License, version 3 or (at your
+option) any later version (GPL-3.0-or-later; [LICENSE](LICENSE),
+[decision 0004](docs/decisions/0004-license.md)). Third-party code and its
+notices are listed in [THIRD_PARTY.md](THIRD_PARTY.md). Retail game files and
+BIOS data are not part of the project and are not covered by its license.

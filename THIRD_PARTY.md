@@ -1,7 +1,9 @@
 # Third-party code and research provenance
 
-Retail game files and BIOS data remain user-supplied private evidence and are not
-covered by this project's MIT license or distributed with source/builds.
+The project is licensed GPL-3.0-or-later (docs/decisions/0004-license.md; MIT
+until 2026-10-27). Retail game files and BIOS data remain user-supplied private
+evidence and are not covered by this project's license or distributed with
+source/builds.
 
 New Rust and research-tool implementations are original project code. The
 project is not clean-room: the following pinned research was consulted.

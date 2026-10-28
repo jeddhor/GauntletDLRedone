@@ -9,8 +9,11 @@ Initially target only the exact SHA-256-qualified SLUS_200.47 disc in
 profiles/ps2/slus-20047.json. The serial and SYSTEM.CNF VER do not prove a retail
 revision number. Unknown inputs must be reported and rejected by release imports.
 
-Original implementation code defaults to MIT. Consulted upstream code is evidence,
-not permission to transplant code. Record all reuse and licenses in THIRD_PARTY.md.
+Project code is licensed GPL-3.0-or-later (decisions/0004-license.md; MIT until
+2026-10-27). Code from GPL-3.0-compatible sources (PCSX2's GPL-3.0-or-later
+among them) may be reused with its notices; other consulted upstream code is
+evidence, not permission to transplant code. Record all reuse and licenses in
+THIRD_PARTY.md.
 Do not claim clean-room development. Avoid leaked SDKs and external leaked symbols;
 prefer the symbols/debug metadata contained in the user's supplied executable.
 Preserve retail data locally; distributable tools and source exclude all retail assets.
