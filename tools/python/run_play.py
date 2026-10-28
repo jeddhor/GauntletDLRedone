@@ -217,6 +217,7 @@ def main():
     parser.add_argument('--virtual', action='store_true', help='run inside the authenticated Xvfb session')
     parser.add_argument('--save-dir', type=pathlib.Path, help='native save directory')
     parser.add_argument('--import-card', type=pathlib.Path, help='PS2 memory-card image to import saves from (read only)')
+    parser.add_argument('--config-only', action='store_true', help='write private/reports/play-config.json and exit')
     args = parser.parse_args()
     data_home = pathlib.Path(os.environ.get('XDG_DATA_HOME', pathlib.Path.home() / '.local/share'))
     save_dir = args.save_dir or data_home / 'gdl-native' / 'SLUS-20047' / 'saves'
@@ -296,6 +297,9 @@ def main():
         monsters=[dict(type=t, package=n, prefix=p) for t, n, p in sorted(monsters)],
         audio=audio_config(), movies=movie_config())
     CONFIG.write_text(json.dumps(config, indent=1) + '\n')
+    if args.config_only:
+        print(CONFIG)
+        return
     env = os.environ.copy()
     if args.virtual:
         from virtual_display import environment

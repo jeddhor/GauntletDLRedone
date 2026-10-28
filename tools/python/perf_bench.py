@@ -12,7 +12,9 @@ hardware Vulkan swapchain). GDL_TEST_AUTOSTART creates the test character,
 GDL_DEBUG_LEVEL picks the level, GDL_INPUT_SCRIPT drives port 0 for walking
 scenes, GDL_EXIT_AFTER ends the run after N stepped updates and
 GDL_FRAME_LOG records every frame (the client's diagnostic; written to a
-tmpfs scratch file so disk writeback cannot stall the frame loop).
+tmpfs scratch file so disk writeback cannot stall the frame loop). Each
+scene gets its own saves directory (default settings unless --env names a
+GDL_SETTINGS file).
 
 Report private/reports/perf-bench-TAG.json: the binary's SHA-256, the
 adapter line the client logged, the window size, and per scene the frame
@@ -34,9 +36,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONFIG = ROOT / 'private/reports/play-config.json'
 RADV = '/usr/share/vulkan/icd.d/radeon_icd.json'
 
-# name: (GDL_DEBUG_LEVEL or None for the Tower, input script or None, note)
+# Triangle (entry 0xc) every 30 menu ticks from tick 30, eight times: the
+# Tower's welcome scrolls close (scenarios.py's menu script).
+WELCOME = [[30 + 30 * k, 32 + 30 * k, [0xc]] for k in range(8)]
+
+# name: (GDL_DEBUG_LEVEL or None for the Tower, input script or None, note[, menu script])
 SCENES = {
-    'tower': (None, None, 'the Tower at the start of a new game: crystals, fire bowls, Sumner'),
+    'tower': (None, None, 'the Tower at the start of a new game: crystals, fire bowls, Sumner', WELCOME),
     'g1-walk': ('G1', [[150, 900, [2]]], 'Poison Fields: walking up from the start (moving camera, updates 160..290)'),
     'c2': ('C2', None, 'Desert C2 start: GRU generators and swarms'),
     'f1': ('F1', None, 'Hell F1 start: 181 generators in the level'),
@@ -77,7 +83,7 @@ def stats(frames_log):
 
 
 def run_scene(tag, name, binary, updates, width, height, extra_env, scratch):
-    level, script, note = SCENES[name]
+    level, script, note, *menu = SCENES[name]
     d = scratch / name
     d.mkdir(parents=True, exist_ok=True)
     env_lines = {
@@ -89,13 +95,21 @@ def run_scene(tag, name, binary, updates, width, height, extra_env, scratch):
     if script:
         (d / 'input.json').write_text(json.dumps(script))
         env_lines['GDL_INPUT_SCRIPT'] = str(d / 'input.json')
+    if menu:
+        (d / 'menu.json').write_text(json.dumps(menu[0]))
+        env_lines['GDL_MENU_SCRIPT'] = str(d / 'menu.json')
     env_lines.update(extra_env)
+    # The scene's own saves (the player's settings.json is not read).
+    cfg = json.loads(CONFIG.read_text())
+    (d / 'saves').mkdir(exist_ok=True)
+    cfg['saves'] = str(d / 'saves')
+    (d / 'config.json').write_text(json.dumps(cfg))
     session = d / 'session.sh'
     exports = ''.join(f"export {k}='{v}'\n" for k, v in env_lines.items())
     session.write_text(f"""#!/bin/bash
 cd '{ROOT}'
 unset WAYLAND_DISPLAY
-{exports}timeout 900 '{binary}' '{CONFIG}' > '{d / "client.log"}' 2>&1
+{exports}timeout 900 '{binary}' '{d / "config.json"}' > '{d / "client.log"}' 2>&1
 echo "exit $?" > '{d / "exit.txt"}'
 """)
     session.chmod(0o755)

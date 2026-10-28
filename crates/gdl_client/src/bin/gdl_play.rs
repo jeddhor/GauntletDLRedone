@@ -2443,7 +2443,7 @@ struct TestHarness {
     hashes: Vec<String>,
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
-    /// {"at": u, "health": h} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
+    /// {"at": u, "health": h[, "player": k]} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
     /// {"at": u, "boss_kill": true} (DEBUG) |
     /// {"at": u, "save": card file} for player 1 |
     /// {"at": u, "settings": {...}}: fields merged into the M19 settings
@@ -3690,6 +3690,63 @@ fn refresh_characters(
     }
 }
 
+/// TEST switch GDL_TEST_PLAYERS=N (2..4): once the level runs, players
+/// 2..N join as copies of player 1 on ports 1..N−1 — gdl_tools' players=N
+/// (each placed by load_player_geo, its controls on its own port), with
+/// player 1's character loaded for each. For M20 long co-op sessions
+/// driven by virtual gamepads; the select screen's join is not used.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn test_players(
+    mut commands: Commands,
+    front: Res<Front>,
+    mut sim: ResMut<Sim>,
+    mut sources: ResMut<Sources>,
+    session: Res<Session>,
+    mut libraries: ResMut<Libraries>,
+    (mut meshes, mut images, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<gdl_client::GsMaterial>>),
+    root: Query<Entity, With<MirrorRoot>>,
+    mut done: Local<bool>,
+) {
+    if *done || sim.updates < 2 {
+        return;
+    }
+    *done = true;
+    let Some(n) = std::env::var("GDL_TEST_PLAYERS").ok().and_then(|v| v.parse::<usize>().ok()) else { return };
+    for k in 1..n.min(4) {
+        let key = CharKey::of(&sim.game.players[0]);
+        if let Err(e) = install_char(&front, &mut sources, &mut libraries, (&mut meshes, &mut images, &mut materials), k, key) {
+            sim.last_event = format!("test player {}: {e}", k + 1);
+            return;
+        }
+        let Some(pc) = sources.players[k].as_ref() else { return };
+        let g = &mut sim.game;
+        g.player_clips[k] = setup::clips_of(&pc.clips, 0);
+        if let Ok(c) = class_data_of(&front, key.class) {
+            g.classes[k] = with_sfx_trees(c, &sources, k);
+        }
+        let mut r = g.players[0].clone();
+        r.set_u32(0, k as u32);
+        r.set_u32(4, k as u32);
+        g.players[k] = r;
+        g.init_player_missiles(k);
+        g.resolve_plyr_data(k);
+        g.player_rigs[k] = g.player_rigs[0].clone();
+        let (start, yaw) = g.player_start;
+        let placed = g.place_player(k, start, yaw).and_then(|_| g.load_player_geo_place(k));
+        g.players[k].set_u32(0x1e0, 0);
+        g.players[k].set_u32(0x1e4, 0);
+        if let Err(e) = placed.and_then(|_| g.init_player_anim(k)) {
+            sim.error = Some(format!("test player {}: {}", k + 1, e.0));
+            return;
+        }
+        g.controls.assign(k, k);
+        g.globals.active_players |= 1 << k;
+        if let Ok(root) = root.single() {
+            spawn_body(&mut commands, root, k, pc, &session, &mut meshes, &mut images, &mut materials);
+        }
+    }
+}
+
 /// UpdatePlayerShadow 0x147fa0: the shadow at the player's x/z and the
 /// higher of floor (+0x88c) and water (+0x8a4) heights + 0.1; above water
 /// MBTreeSetAltTex(−2, TextureSplash = POWERUPS "SPLASH", InitEffects)
@@ -4836,7 +4893,8 @@ fn simulate(
                 }
             }
             if let Some(h) = a["health"].as_f64() {
-                sim.game.players[0].set_f32(0x1a10, h as f32);
+                let k = a["player"].as_u64().unwrap_or(0).min(3) as usize;
+                sim.game.players[k].set_f32(0x1a10, h as f32);
             }
             if let Some(gold) = a["gold"].as_i64() {
                 sim.game.players[0].set_i32(0x1a20, gold as i32);
@@ -8611,7 +8669,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, refresh_characters, (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                (advance_level, (refresh_characters, test_players).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
