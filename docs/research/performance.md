@@ -164,7 +164,13 @@ Windows installation.
 ## Release identity
 
 Release candidates are built with `cargo build --release --locked`
-(Linux) and the cross-build command in toolchain.md (Windows). The
+(Linux) and the cross-build command in toolchain.md (Windows). 2026-10-28
+(source 730d114): target/release/gdl_play SHA-256 9c0b9b0951b3066e…
+(identical from a second target directory), gdl_tools f9614eed8bb7ec74…,
+gdl_play.exe 05c34013d3dfa56d…; the Windows build under Wine and the Linux
+release give identical per-update simulation hashes over a 600-update G1
+walk (private/runs/m19-m20-evidence-v1/final). GUI menu flows 16/16 on the
+final client (menu-flows-m20-final3). The
 binaries embed the source path in panic locations; the SHA-256 of each
 tested binary is in its report (perf-bench-*, platform-checks-*, soak-*,
 private/runs/m19-m20-evidence-v1/binaries.sha256). Running needs only the
