@@ -306,10 +306,21 @@ pub struct GsParams {
 /// blending, then × lightmap CLUT alpha / 0x80. Double sided. Per-node draw
 /// state (`GsDraw`) follows setPrimInfo: GS draws write depth unless the node
 /// masks it, including translucent ones.
+///
+/// M20: bindless where the device allows it (Bevy groups materials into
+/// slabs sharing one bind group, so draws of different materials batch
+/// into multi-draw calls): `params` goes to the slab's data array (binding
+/// 10), the textures and samplers to Bevy's global binding arrays through
+/// the index table (indices 0..8), the shared point-light buffer to a
+/// buffer array (binding 11). Without bindless support the bindings are
+/// the plain ones (gs.wgsl keeps both). G1 drew about 2,700 meshes with
+/// 1,250 materials, each its own bind group: the render thread spent ~12
+/// ms a frame encoding and submitting them on the RX 580.
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 #[bind_group_data(GsDraw)]
+#[data(0, GsParams, binding_array(10))]
+#[bindless(index_table(range(0..8)))]
 pub struct GsMaterial {
-    #[uniform(0)]
     pub params: GsParams,
     /// Lit by the scene light (characters, items: no colours, no lightmap).
     pub lit: bool,
@@ -326,7 +337,7 @@ pub struct GsMaterial {
     #[sampler(6)]
     pub overlay: Option<Handle<Image>>,
     /// The shared point-light buffer (point_light_buffer).
-    #[storage(7, read_only, buffer, visibility(fragment))]
+    #[storage(7, read_only, buffer, binding_array(11), visibility(fragment))]
     pub lights: Buffer,
     pub alpha_mode: AlphaMode,
     pub draw: GsDraw,
@@ -367,6 +378,12 @@ pub struct GsDraw {
     /// word 1.z, pbDebugMode, is 0 in play): only front faces reach the
     /// GS (research/rendering.md "Back-face culling").
     pub cull: bool,
+}
+
+impl From<&GsMaterial> for GsParams {
+    fn from(material: &GsMaterial) -> Self {
+        material.params
+    }
 }
 
 impl From<&GsMaterial> for GsDraw {

@@ -7,6 +7,10 @@
 // computed in GS (display) space and converted for the sRGB target.
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
+#ifdef BINDLESS
+#import bevy_pbr::mesh_bindings::mesh
+#import bevy_render::bindless::{bindless_samplers_filtering, bindless_textures_2d}
+#endif
 
 struct GsParams {
     // Constant colour in GS units (rgb 1.0 = 255, alpha 1.0 = 0x80).
@@ -30,20 +34,40 @@ struct GsParams {
     chrome_v: vec4<f32>,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: GsParams;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var base_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var base_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(3) var lightmap_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(4) var lightmap_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(5) var overlay_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(6) var overlay_sampler: sampler;
 // Point lights, shared by every material: position + radius, colour +
 // attenuation (lib.rs POINT_LIGHTS).
 struct PointLights {
     pos: array<vec4<f32>, 8>,
     col: array<vec4<f32>, 8>,
 };
+
+#ifdef BINDLESS
+// The slab's index table (GsMaterial's bindless indices 0..8): the data
+// array entry, then each texture / sampler's slot in Bevy's global binding
+// arrays, then the point-light buffer's slot.
+struct GsBindings {
+    material: u32,
+    base_texture: u32,
+    base_sampler: u32,
+    lightmap_texture: u32,
+    lightmap_sampler: u32,
+    overlay_texture: u32,
+    overlay_sampler: u32,
+    lights: u32,
+};
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<storage> material_indices: array<GsBindings>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(10) var<storage> material_array: array<GsParams>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(11) var<storage, read> plights_array: binding_array<PointLights>;
+#else
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> material: GsParams;
+@group(#{MATERIAL_BIND_GROUP}) @binding(1) var base_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(2) var base_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(3) var lightmap_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(4) var lightmap_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(5) var overlay_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(6) var overlay_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(7) var<storage, read> plights: PointLights;
+#endif
 
 // Point lights: VU1 microcode (Tower state vu1MicroMem.bin, pairs 652..716
 // and 1026..1090; docs/research/rendering.md). Per light, skipped when the
@@ -51,7 +75,7 @@ struct PointLights {
 // attenuation × (1 − d²/r²) × cosθ / d, 1) — the 7.5 is the VU normal scale
 // (5-bit unpack, ITOF4 − 7.5) against positions and lights × 8. Evaluated
 // per fragment here (the VU lights vertices).
-fn point_lights(n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+fn point_lights(plights: PointLights, n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
     var pl = vec3(0.0);
     for (var i = 0u; i < 8u; i = i + 1u) {
         let lp = plights.pos[i];
@@ -97,6 +121,14 @@ fn gs_modulate(cv: vec3<f32>, tex: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+#ifdef BINDLESS
+    let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
+    let params = material_array[material_indices[slot].material];
+    let pl_data = plights_array[material_indices[slot].lights];
+#else
+    let params = material;
+    let pl_data = plights;
+#endif
     var rgb = params.tint.rgb;
     var alpha = params.tint.a;
 #ifdef VERTEX_COLORS
@@ -108,13 +140,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let d = max(dot(n, params.light_dir.xyz), 0.0);
         // VU1 program A: min(ambient + light, 128) + point lights, ≤ 255.
         let base = min(vec3(1.0), vec3(params.light.a + params.scale.y) + d * params.light.rgb);
-        rgb = rgb * min(base + point_lights(n, in.world_position.xyz), vec3(255.0 / 128.0));
+        rgb = rgb * min(base + point_lights(pl_data, n, in.world_position.xyz), vec3(255.0 / 128.0));
     } else {
         // VU1 program B (vertex colours, lightmap pass): min(colour × scale,
         // 128) + point lights, ≤ 255. HYPOTHESIS: the scale is
         // MBLightmapMod / MBNoShadeMod's 1 + add.
         let base = min(rgb * max(1.0 + params.scale.x, 0.0), vec3(1.0));
-        rgb = min(base + point_lights(normalize(in.world_normal), in.world_position.xyz), vec3(255.0 / 128.0));
+        rgb = min(base + point_lights(pl_data, normalize(in.world_normal), in.world_position.xyz), vec3(255.0 / 128.0));
     }
     let cf = rgb;
     let af = alpha;
@@ -136,13 +168,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // GS LOD (TEX1 LCM 0, L 0): log2(1/Q) + K, 1/Q the view depth in game
     // units (the G1 dump's Q at the player matches it to ~5%). LOD < 0 is
     // magnification at level 0; the sampler clamps at MXL.
-    var t: vec4<f32>;
-    if params.scale.w > 0.5 {
-        let depth = max(-(view.view_from_world * vec4(in.world_position.xyz, 1.0)).z, 1e-3);
-        t = textureSampleLevel(base_texture, base_sampler, uv, max(log2(depth) + params.scale.z, 0.0));
-    } else {
-        t = textureSample(base_texture, base_sampler, uv);
-    }
+    // Both samples are taken and one chosen: in bindless mode `params` is
+    // per instance, and implicit-derivative sampling must stay in uniform
+    // control flow.
+    let depth = max(-(view.view_from_world * vec4(in.world_position.xyz, 1.0)).z, 1e-3);
+    let lod = max(log2(depth) + params.scale.z, 0.0);
+#ifdef BINDLESS
+    let t_lod = textureSampleLevel(bindless_textures_2d[material_indices[slot].base_texture], bindless_samplers_filtering[material_indices[slot].base_sampler], uv, lod);
+    let t_auto = textureSample(bindless_textures_2d[material_indices[slot].base_texture], bindless_samplers_filtering[material_indices[slot].base_sampler], uv);
+#else
+    let t_lod = textureSampleLevel(base_texture, base_sampler, uv, lod);
+    let t_auto = textureSample(base_texture, base_sampler, uv);
+#endif
+    let t = select(t_auto, t_lod, params.scale.w > 0.5);
     if params.options.x > 0.5 {
         rgb = gs_modulate(rgb, t.rgb);
         alpha = alpha * t.a * (255.0 / 128.0);
@@ -155,7 +193,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // only where the base pass wrote alpha bit 7, Av >= 0x80).
     // VU1 program A re-kicks the base pass's vertex block for it, so it
     // uses the base UVs (rendering.md "VU1 microcode").
+#ifdef BINDLESS
+    let o = textureSample(bindless_textures_2d[material_indices[slot].overlay_texture], bindless_samplers_filtering[material_indices[slot].overlay_sampler], in.uv + params.options.zw);
+#else
     let o = textureSample(overlay_texture, overlay_sampler, in.uv + params.options.zw);
+#endif
     if params.extra.x > 0.5 && alpha >= 0.999 {
         let os = min(cf * o.rgb, vec3(1.0));
         let oa = af * o.a * (255.0 / 128.0);
@@ -163,7 +205,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 #endif
 #ifdef VERTEX_UVS_B
+#ifdef BINDLESS
+    let lm = textureSample(bindless_textures_2d[material_indices[slot].lightmap_texture], bindless_samplers_filtering[material_indices[slot].lightmap_sampler], in.uv_b).r;
+#else
     let lm = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r;
+#endif
     if params.options.y > 0.5 {
         // The base pass's own frame write truncates before the lightmap
         // pass reads it back (opaque texels; translucent ones blend first).
