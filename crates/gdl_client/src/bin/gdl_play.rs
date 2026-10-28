@@ -2255,8 +2255,9 @@ fn frame_limiter(mut next: Local<Option<std::time::Instant>>, mut count: Local<(
 /// rendered frame — frame, milliseconds since the previous frame, entity
 /// count, the simulation's update count, player 0's current action, the
 /// material count, the visible 3D meshes and their distinct materials, the
-/// shown camera position —
-/// for frame-time comparisons of game situations. Not a game feature.
+/// shown camera position, the frame's Time delta (ms) and player 1's shown
+/// body position — for frame-time and motion-uniformity comparisons of game
+/// situations. Not a game feature.
 fn frame_log(
     mut state: Local<Option<(std::fs::File, std::time::Instant, u64)>>,
     entities: Query<Entity>,
@@ -2264,6 +2265,7 @@ fn frame_log(
     materials: Res<Assets<gdl_client::GsMaterial>>,
     visible: Query<(&ViewVisibility, &MeshMaterial3d<gdl_client::GsMaterial>)>,
     camera: Query<&GlobalTransform, With<FollowCamera>>,
+    (time, bodies): (Res<Time>, Query<(&CharacterRoot, &GlobalTransform)>),
 ) {
     use std::io::Write;
     if state.is_none() {
@@ -2286,7 +2288,28 @@ fn frame_log(
     }).count();
     // And the shown camera position (presentation blending check).
     let eye = camera.iter().next().map_or(Vec3::ZERO, GlobalTransform::translation);
-    let _ = writeln!(f, "{} {:.2} {} {} {} {} {} {} {:.4} {:.4} {:.4}", n, ms, entities.iter().count(), updates, action, materials.len(), shown, seen.len(), eye.x, eye.y, eye.z);
+    // And the frame's Time delta (what the blending and the fixed clock
+    // use) and player 1's shown body position (motion uniformity).
+    let body = bodies.iter().find(|(c, _)| c.0 == 0).map_or(Vec3::ZERO, |(_, g)| g.translation());
+    let _ = writeln!(
+        f,
+        "{} {:.2} {} {} {} {} {} {} {:.4} {:.4} {:.4} {:.3} {:.4} {:.4} {:.4}",
+        n,
+        ms,
+        entities.iter().count(),
+        updates,
+        action,
+        materials.len(),
+        shown,
+        seen.len(),
+        eye.x,
+        eye.y,
+        eye.z,
+        time.delta_secs_f64() * 1000.0,
+        body.x,
+        body.y,
+        body.z
+    );
 }
 
 /// DIAGNOSTIC: GDL_SHOT_FRAMES=N,M,... with GDL_SHOT_DIR=DIR saves rendered

@@ -37,7 +37,7 @@ RADV = '/usr/share/vulkan/icd.d/radeon_icd.json'
 # name: (GDL_DEBUG_LEVEL or None for the Tower, input script or None, note)
 SCENES = {
     'tower': (None, None, 'the Tower at the start of a new game: crystals, fire bowls, Sumner'),
-    'g1-walk': ('G1', [[200, 600, [1]], [601, 900, [2]]], 'Poison Fields: walking right then up through enemies'),
+    'g1-walk': ('G1', [[150, 900, [2]]], 'Poison Fields: walking up from the start (moving camera, updates 160..290)'),
     'c2': ('C2', None, 'Desert C2 start: GRU generators and swarms'),
     'f1': ('F1', None, 'Hell F1 start: 181 generators in the level'),
     'i1': ('I1', None, 'Ice I1 start'),
