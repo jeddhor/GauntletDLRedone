@@ -14,6 +14,10 @@ PCM / 32768), the correlation coefficient, the residual level, and the
 capture/native magnitude ratio in third-octave bands. AdsSetVolume's word
 v gives the native stream gain ((v × 0x1fff) >> 8) / 0x4000; the report
 also gives the word whose gain is nearest the fitted one.
+
+--native-f32 RENDER.f32 compares against a native mixer render instead
+(gdl_audio_render's interleaved stereo f32 at 48 kHz: the SPU resampling,
+envelope and volumes applied); STREAM then only labels the report.
 """
 import argparse
 import json
@@ -74,12 +78,16 @@ def main():
     ap.add_argument('report', type=pathlib.Path)
     ap.add_argument('--from', dest='start', type=float, default=10.0)
     ap.add_argument('--seconds', type=float, default=8.0)
+    ap.add_argument('--native-f32', type=pathlib.Path, help='a gdl_audio_render output (stereo f32, 48 kHz) instead of the ADS decode')
     a = ap.parse_args()
     if a.report.exists() or not a.report.resolve().is_relative_to((ROOT / 'private').resolve()):
         raise SystemExit('choose a new report under private/')
     scratch = a.report.parent
     cap = capture_pcm(a.capture)
-    rate, nat = native_pcm(stream_file(a.stream), scratch)
+    if a.native_f32:
+        rate, nat = 48000, np.fromfile(a.native_f32, '<f4').astype(np.float64).reshape(-1, 2)
+    else:
+        rate, nat = native_pcm(stream_file(a.stream), scratch)
     if rate != 48000:
         # Linear resampling of the native stream to the capture's 48 kHz
         # (only for locating and levels; the spectrum is then approximate).
@@ -97,7 +105,8 @@ def main():
     ref = loop[off:off + n]
     out = dict(capture=str(a.capture), stream=a.stream, stream_rate=rate, stream_seconds=round(len(nat) / 48000, 3),
                window=[a.start, a.seconds], offset_in_stream_s=round(off / 48000, 5), channels=[],
-               scope='M17 research: PCSX2 capture (AAC, lossy) against the native ADS decode; levels and spectrum, not samples')
+               native=str(a.native_f32) if a.native_f32 else 'ads-pcm decode',
+               scope='M17 research: PCSX2 capture (AAC, lossy) against the native ADS decode or mixer render; levels and spectrum, not samples')
     edges = 1000 * 2.0 ** (np.arange(-15, 13) / 3)
     for c in range(2):
         x, y = win[:, c], ref[:, c]

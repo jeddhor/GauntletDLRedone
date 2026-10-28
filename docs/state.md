@@ -494,7 +494,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    legitimate campaign reaches the ending** without the assist, and its
    completion state survives a client save and reload (completion-lg37h4b
    PASS). M15 complete; the chain's Tower between levels is not simulated
-   (labelled).
+   (labelled). Then, with the owner's approval, the project was
+   relicensed GPL-3.0-or-later (decisions/0004-license.md) and the SPU2's
+   Gaussian resampling taken from PCSX2 v2.6.3 into gdl_core::spu; the
+   mixer uses it and G1's capture now matches the native render's
+   spectrum to 14 kHz (audio.md "SPU resampling"). M17 complete.
 
 ---
 

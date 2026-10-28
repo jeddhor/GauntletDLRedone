@@ -20,6 +20,7 @@ pub mod psys;
 pub mod rng;
 pub mod save;
 pub mod sparse;
+pub mod spu;
 pub mod transform;
 pub mod tree_pose;
 pub mod vu0;

@@ -296,8 +296,39 @@ not identified (open; a hardware recording would settle it). Waveform-level
 fits of the effects are not meaningful here: the looping voices of the
 saved state keep their own phase.
 
+## SPU resampling (2026-10-27)
+
+With the project relicensed GPL-3.0-or-later (decisions/0004-license.md),
+gdl_core::spu carries the SPU2's resampling translated from PCSX2 v2.6.3
+(Mixer.cpp UpdatePitch/GetVoiceValues/GaussianInterpolate,
+interpolate_table.h, spu2sys.cpp V_Voice::Start; THIRD_PARTY.md): each
+voice's pitch counter SP advances by the pitch word (at most 0x3fff) every
+48 kHz sample, each whole 0x1000 shifts the next decoded sample into a
+four-sample history, and the output is the 4-tap Gaussian at the
+remaining fraction (256 × 4 table, rows summing to 0x7f80 ± 1); key-on
+sets SP to −1 and clears the history. gdl_client's mixer uses it for
+every voice (pitch = VagParseHeader's rate × 4096 / 48000; each part of a
+chain keyed on again) and for both music channels, in place of the
+nearest-sample reads. A part ends when the counter fetches past its last
+sample (the next part is keyed on at the following sample; on hardware
+DCS's voicePlayNextSample reacts to the end flag a little later —
+unmeasured).
+
+Comparisons rerun (private/reports; synthetic replays starting the
+stream, rendered by gdl_audio_render): G1's capture against the mixer's
+TOWN1 render (24 kHz, pitch 0x800; audio-compare-g1-TOWN1-spu-v1, window
+20–28 s): correlation 0.966 / 0.967 as before, and the capture/native band
+ratio now flat within ±0.6 dB from 90 Hz to 9 kHz and +0.8 / +0.9 dB at
+11 and 14 kHz, where against the raw decode it had fallen to −5.7 and
+−10.5 dB — the fall was the Gaussian's. B4's capture against the mixer's
+MOUNT4 render (word 100, audio-compare-b4-MOUNT4-spu-v1): gains 0.616 /
+0.632 of native, the 0.625 of PCSX2's output stage within 0.1 dB; the
+native effects render of replay-frame-B4start-audio-v1 measures 0.0941 /
+0.0362 RMS, so the capture's effects sit at ×0.593 / ×0.572 as before
+(the balance unchanged). Below 60 Hz the emulator's output DC filter
+still takes up to 2.7 dB.
+
 ## Not yet
 
-Tower coin sounds against the reference capture, the SPU's interpolation filter (provenance:
-unknowns.md), AudioLoadStage bank residency (the host loads banks on
+Tower coin sounds against the reference capture, AudioLoadStage bank residency (the host loads banks on
 demand). Sound items follow their +0xf8 world node (process_sound_item).
