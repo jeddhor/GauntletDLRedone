@@ -112,6 +112,19 @@ fn frame_rect(width: u32, height: u32) -> (u32, u32, u32, u32) {
 #[derive(Component)]
 struct HudCamera;
 
+/// The HUD camera's horizontal extent in blit-screen units: 512, or more
+/// when the widescreen 3D view continues beyond the frame (ps2_viewport).
+#[derive(Resource)]
+struct FrameLayout {
+    hud_span: f32,
+}
+
+impl Default for FrameLayout {
+    fn default() -> Self {
+        Self { hud_span: 512.0 }
+    }
+}
+
 /// Where the settings overlay stores settings.json (None under
 /// GDL_BASELINE / GDL_SETTINGS: test runs never write the player's file).
 #[derive(Resource)]
@@ -372,6 +385,7 @@ fn ps2_viewport(
     mut cams: Query<(&mut Camera, &mut Projection), With<FollowCamera>>,
     mut hud: Query<&mut Projection, (With<HudCamera>, Without<FollowCamera>)>,
     mut finals: Query<&mut gdl_client::DisplayToLinear>,
+    mut layout: ResMut<FrameLayout>,
 ) {
     let Ok(w) = windows.single() else { return };
     let (width, height) = (w.physical_width().max(1), w.physical_height().max(1));
@@ -405,6 +419,10 @@ fn ps2_viewport(
         {
             o.scaling_mode = bevy::camera::ScalingMode::Fixed { width: sw, height: sh };
         }
+    }
+    let span = if wide { 512.0 * width as f32 / fw as f32 } else { 512.0 };
+    if layout.hud_span != span {
+        layout.hud_span = span;
     }
     let rect = Vec4::new(fx as f32 / width as f32, fy as f32 / height as f32, fw as f32 / width as f32, fh as f32 / height as f32);
     let wide = if wide { 1.0 } else { 0.0 };
@@ -6908,9 +6926,13 @@ fn present_hud(
     mut meshes: ResMut<Assets<Mesh>>,
     mut pool: HudSpriteQuery,
     mut quad: Local<Option<Handle<Mesh>>>,
-    mut icon: ResMut<MenuIcon>,
+    (mut icon, layout): (ResMut<MenuIcon>, Res<FrameLayout>),
 ) {
     let playing = *screen == Screen::Playing;
+    // NATIVE ENHANCEMENT (widescreen): full-width fills of the flat
+    // TextureWhite (TriggerCamUpdate's letterbox, fades) reach the window's
+    // sides; textured blits stay in the frame.
+    let white = sim.as_ref().and_then(|s| s.game.hud.lookup("AAAWHITE"));
     let mut list = Vec::new();
     // MBDrawBlits' HILITE_FRAC clock (vb_counter).
     let vb_counter = sim.as_ref().map_or(0, |s| s.game.vb_counter);
@@ -7097,7 +7119,9 @@ fn present_hud(
             None => (gs(b.rgba), [Vec4::ZERO; 4]),
         };
         let params = gdl_client::BlitParams { rgba, crop: Vec4::from_array(b.crop), mask_rect, corners };
-        let transform = Transform::from_xyz(b.x + b.w * 0.5 - 256.0, 192.0 - b.y - b.h * 0.5, i as f32 * 0.001).with_scale(Vec3::new(b.w, b.h, 1.0));
+        let fill = 512.0 < layout.hud_span && b.tex.is_some() && b.tex == white && b.x <= 0.0 && 512.0 <= b.x + b.w;
+        let (cx, w) = if fill { (0.0, layout.hud_span) } else { (b.x + b.w * 0.5 - 256.0, b.w) };
+        let transform = Transform::from_xyz(cx, 192.0 - b.y - b.h * 0.5, i as f32 * 0.001).with_scale(Vec3::new(w, b.h, 1.0));
         if let Some((_, tr, vis, mat)) = slots.get_mut(i) {
             **tr = transform;
             **vis = Visibility::Visible;
@@ -8623,6 +8647,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(settings.clone())
         .insert_resource(gdl_client::controls::Bindings::from_settings(&settings.keys))
         .init_resource::<gdl_client::enhance::Overlay>()
+        .init_resource::<FrameLayout>()
         .insert_resource(SettingsDir(settings_dir))
         .insert_resource(front)
         .insert_resource(Screen::Front)
