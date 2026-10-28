@@ -197,8 +197,15 @@ movement and collision code:
 
 ```sh
 python3 tools/python/export_start_state.py   # once; private start state from the save
-python3 tools/python/run_play.py             # Arrows/WASD move, Space/K attack, Esc quits
+python3 tools/python/run_play.py             # writes private/reports/play-config.json, runs gdl_play with it
 ```
+
+Keyboard (player 1): WASD/arrows move, Space/K attack, E/L magic, Shift/I turbo
+(closes scrolls), Esc or Enter the pause menu (in the Tower: Settings, Manage
+Character → Save Character, Shop, Inventory, Quit Game). Player 2: TFGH, R
+attack, U start; gamepads by their buttons. `target/release/gdl_play` alone
+needs the config path: `target/release/gdl_play private/reports/play-config.json`
+from the repository root.
 
 See [playtest notes](docs/research/playtest.md) for exactly what is native and what is interim.
 
