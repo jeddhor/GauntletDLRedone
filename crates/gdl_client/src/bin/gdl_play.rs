@@ -1190,11 +1190,17 @@ fn apply_material_requests(
     mut commands: Commands,
     mut req: ResMut<MatRequests>,
     mut meshes: Query<(Entity, &mut MeshMaterial3d<gdl_client::GsMaterial>, Option<&MatOverride>, &GlobalTransform)>,
+    overridden: Query<Entity, With<MatOverride>>,
     mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let eye = camera.iter().next().map(GlobalTransform::translation);
-    for (e, mut m, ov, at) in &mut meshes {
+    // Only the meshes with a request this frame or an override to keep or
+    // undo (every mesh with a cloned material each frame took about 1 ms).
+    let mut todo: Vec<Entity> = req.0.keys().copied().collect();
+    todo.extend(overridden.iter().filter(|e| !req.0.contains_key(e)));
+    for e in todo {
+        let Ok((e, mut m, ov, at)) = meshes.get_mut(e) else { continue };
         let r = req.0.remove(&e);
         let base = ov.map_or_else(|| m.0.clone(), |o| o.base.clone());
         let Some(b) = materials.get(&base).cloned() else { continue };
@@ -1434,12 +1440,26 @@ fn present_scene_light(sim: Res<Sim>, mut last: Local<Option<([f32; 8], usize)>>
         return;
     }
     *last = Some(key);
-    for (_, m) in materials.iter_mut() {
-        if m.lit {
-            m.params.light_dir = towards.extend(1.0);
-            m.params.light = colour.extend(ambient);
-        } else {
-            m.params.scale.x = add;
+    // Only the materials whose values differ are taken mutably: Assets'
+    // iter_mut marks every material modified, and a new override material
+    // (an effect's alpha or tint, about once a second in G1) changed the
+    // count, so all ~3,000 were re-prepared with their bind groups — a 70 ms
+    // frame twice a second (M20 profile, prof-g1-radv-v3).
+    let light_dir = towards.extend(1.0);
+    let light = colour.extend(ambient);
+    let stale: Vec<_> = materials
+        .iter()
+        .filter(|(_, m)| if m.lit { m.params.light_dir != light_dir || m.params.light != light } else { m.params.scale.x != add })
+        .map(|(id, _)| id)
+        .collect();
+    for id in stale {
+        if let Some(m) = materials.get_mut(id) {
+            if m.lit {
+                m.params.light_dir = light_dir;
+                m.params.light = light;
+            } else {
+                m.params.scale.x = add;
+            }
         }
     }
 }
@@ -2166,7 +2186,7 @@ fn ui_trace(front: Option<Res<Front>>, screen: Option<Res<Screen>>, ui: Res<Ui>,
     }
 }
 
-fn frame_limiter(mut next: Local<Option<std::time::Instant>>, mut count: Local<(u64, Option<std::time::Instant>)>, harness: Res<TestHarness>) {
+fn frame_limiter(mut next: Local<Option<std::time::Instant>>, mut count: Local<(u64, Option<std::time::Instant>)>, harness: Res<TestHarness>, settings: Res<gdl_client::settings::Settings>) {
     let t0 = *count.1.get_or_insert_with(std::time::Instant::now);
     count.0 += 1;
     if count.0.is_multiple_of(30)
@@ -2174,7 +2194,8 @@ fn frame_limiter(mut next: Local<Option<std::time::Instant>>, mut count: Local<(
     {
         let _ = std::fs::write(out.with_extension("frames"), format!("{} {:.3}\n", count.0, t0.elapsed().as_secs_f64()));
     }
-    let Some(fps) = std::env::var("GDL_RENDER_FPS").ok().and_then(|v| v.parse::<f64>().ok()).filter(|f| *f > 0.0) else { return };
+    let fps = std::env::var("GDL_RENDER_FPS").ok().and_then(|v| v.parse::<f64>().ok()).or((0 < settings.fps_cap).then_some(f64::from(settings.fps_cap)));
+    let Some(fps) = fps.filter(|f| *f > 0.0) else { return };
     let period = std::time::Duration::from_secs_f64(1.0 / fps);
     let now = std::time::Instant::now();
     let due = next.map_or(now + period, |d| d);
@@ -2186,9 +2207,18 @@ fn frame_limiter(mut next: Local<Option<std::time::Instant>>, mut count: Local<(
 
 /// DIAGNOSTIC (performance): GDL_FRAME_LOG=PATH appends one line per
 /// rendered frame — frame, milliseconds since the previous frame, entity
-/// count, the simulation's update count and player 0's current action —
+/// count, the simulation's update count, player 0's current action, the
+/// material count, the visible 3D meshes and their distinct materials, the
+/// shown camera position —
 /// for frame-time comparisons of game situations. Not a game feature.
-fn frame_log(mut state: Local<Option<(std::fs::File, std::time::Instant, u64)>>, entities: Query<Entity>, sim: Option<Res<Sim>>) {
+fn frame_log(
+    mut state: Local<Option<(std::fs::File, std::time::Instant, u64)>>,
+    entities: Query<Entity>,
+    sim: Option<Res<Sim>>,
+    materials: Res<Assets<gdl_client::GsMaterial>>,
+    visible: Query<(&ViewVisibility, &MeshMaterial3d<gdl_client::GsMaterial>)>,
+    camera: Query<&GlobalTransform, With<FollowCamera>>,
+) {
     use std::io::Write;
     if state.is_none() {
         let Some(path) = std::env::var_os("GDL_FRAME_LOG") else { return };
@@ -2202,7 +2232,118 @@ fn frame_log(mut state: Local<Option<(std::fs::File, std::time::Instant, u64)>>,
     *last = now;
     *n += 1;
     let (updates, action) = sim.map_or((0, 0), |s| (s.updates, s.game.players[0].u32_(0x1e0)));
-    let _ = writeln!(f, "{} {:.2} {} {} {}", n, ms, entities.iter().count(), updates, action);
+    // Also the GsMaterial assets, the visible 3D meshes and their distinct
+    // materials (draw batching).
+    let mut seen = std::collections::HashSet::new();
+    let shown = visible.iter().filter(|(v, _)| v.get()).inspect(|(_, m)| {
+        seen.insert(m.0.id());
+    }).count();
+    // And the shown camera position (presentation blending check).
+    let eye = camera.iter().next().map_or(Vec3::ZERO, GlobalTransform::translation);
+    let _ = writeln!(f, "{} {:.2} {} {} {} {} {} {} {:.4} {:.4} {:.4}", n, ms, entities.iter().count(), updates, action, materials.len(), shown, seen.len(), eye.x, eye.y, eye.z);
+}
+
+/// DIAGNOSTIC: GDL_SHOT_FRAMES=N,M,... with GDL_SHOT_DIR=DIR saves rendered
+/// frames N, M, ... (counted from the start) as DIR/frame-NNNNN.png through
+/// Bevy's screenshot capture — the GPU's own output, where the private
+/// display's window import cannot read a GPU-presented window. Not a game
+/// feature.
+fn diagnostic_shots(mut commands: Commands, mut frame: Local<u64>) {
+    static SHOTS: std::sync::OnceLock<Option<(Vec<u64>, std::path::PathBuf)>> = std::sync::OnceLock::new();
+    *frame += 1;
+    let Some((frames, dir)) = SHOTS.get_or_init(|| {
+        let frames = std::env::var("GDL_SHOT_FRAMES").ok()?.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+        Some((frames, std::env::var_os("GDL_SHOT_DIR")?.into()))
+    }) else {
+        return;
+    };
+    if frames.contains(&*frame) {
+        let path = dir.join(format!("frame-{:05}.png", *frame));
+        commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window()).observe(bevy::render::view::screenshot::save_to_disk(path));
+    }
+}
+
+/// M19 presentation blending (NATIVE ENHANCEMENT; Settings::interpolate):
+/// a 3D entity's transform at the last two simulation updates.
+#[derive(Component)]
+struct Interp {
+    prev: Transform,
+    cur: Transform,
+}
+
+/// A step longer than this (units) between two updates is a cut, not motion.
+const INTERP_CUT: f32 = 6.0;
+
+/// The 3D scene (MirrorRoot's descendants and the follow camera) shown
+/// between the last two simulation updates at the display rate: after the
+/// presentation systems set each transform from the simulation, the shown
+/// transform is prev + (cur − prev) × the fixed clock's overstep fraction —
+/// one update (33 ms) behind, smooth at any refresh rate. The simulation
+/// keeps its 30 Hz update and reads none of this. A transform the
+/// presentation writes without a new update and to another value (a
+/// render-rate pose) is shown as written; one not written stays put; a cut
+/// (more than INTERP_CUT units in one update) is not blended. Off
+/// (Settings::interpolate false, GDL_BASELINE=1): every update shown as it
+/// is, the original 30 Hz picture.
+#[allow(clippy::type_complexity)]
+fn interpolate_transforms(
+    mut commands: Commands,
+    sim: Option<Res<Sim>>,
+    settings: Res<gdl_client::settings::Settings>,
+    fixed: Res<Time<Fixed>>,
+    mut last: Local<Option<u64>>,
+    mut was_on: Local<bool>,
+    roots: Query<(), With<MirrorRoot>>,
+    tracked: Query<(), With<Interp>>,
+    fresh: Query<(Entity, &Transform, Option<&ChildOf>, Has<FollowCamera>), Without<Interp>>,
+    mut q: Query<(&mut Transform, &mut Interp)>,
+) {
+    let Some(sim) = sim else { return };
+    if !settings.interpolate {
+        if std::mem::take(&mut *was_on) {
+            // Turned off: every transform back to its latest update.
+            for (mut tf, ip) in &mut q {
+                if !tf.is_changed() && *tf != ip.cur {
+                    *tf = ip.cur;
+                }
+            }
+        }
+        return;
+    }
+    *was_on = true;
+    let stepped = last.replace(sim.updates) != Some(sim.updates);
+    let alpha = fixed.overstep_fraction().clamp(0.0, 1.0);
+    for (e, tf, parent, camera) in &fresh {
+        if camera || parent.is_some_and(|p| roots.contains(p.parent()) || tracked.contains(p.parent())) {
+            commands.entity(e).insert(Interp { prev: *tf, cur: *tf });
+        }
+    }
+    for (mut tf, mut ip) in &mut q {
+        if tf.is_changed() {
+            let new = *tf;
+            if stepped {
+                ip.prev = if ip.cur.translation.distance(new.translation) > INTERP_CUT { new } else { ip.cur };
+                ip.cur = new;
+            } else if new != ip.cur {
+                ip.prev = new;
+                ip.cur = new;
+            }
+        } else if stepped {
+            ip.prev = ip.cur;
+        }
+        let shown = if ip.prev == ip.cur {
+            ip.cur
+        } else {
+            Transform {
+                translation: ip.prev.translation.lerp(ip.cur.translation, alpha),
+                rotation: ip.prev.rotation.slerp(ip.cur.rotation, alpha),
+                scale: ip.prev.scale.lerp(ip.cur.scale, alpha),
+            }
+        };
+        if *tf != shown {
+            *tf = shown;
+        }
+    }
 }
 
 #[derive(Component)]
@@ -2367,7 +2508,23 @@ fn assemble_library(pkg: &Package, set: gdl_client::MaterialSet, parts: HashMap<
         }
     }
     let texmods = gdl_formats::animation::texmods(&pkg.anim_bytes).unwrap_or_default();
-    let unresolved = set.unresolved.iter().map(|&i| i as u16).collect();
+    let unresolved: std::collections::HashSet<u16> = set.unresolved.iter().map(|&i| i as u16).collect();
+    // DIAGNOSTIC: GDL_LOG_UNRESOLVED lists each package's bitmap records
+    // drawn with the magenta placeholder, the TEXDEF labels at their offset
+    // and the object definitions whose parts use them.
+    if std::env::var_os("GDL_LOG_UNRESOLVED").is_some() && !unresolved.is_empty() {
+        for b in pkg.objects.bitmap_records.iter().filter(|b| unresolved.contains(&(b.index as u16))) {
+            let labels: Vec<&str> = pkg.table.bitmaps.iter().filter(|t| t.texture_offset == b.texture_offset).map(|t| t.label.as_str()).collect();
+            let users: Vec<&str> = pkg
+                .objects
+                .definitions
+                .iter()
+                .filter(|d| pkg.objects.objects.get(d.object_index as usize).is_some_and(|o| o.parts.iter().any(|p| u32::from(p.texture_index) == b.index)))
+                .map(|d| d.label.as_str())
+                .collect();
+            eprintln!("UNRESOLVED record {} format {} flags {:#x} {}x{} labels {:?} used by {:?}", b.index, b.format, b.flags, b.width, b.height, labels, users);
+        }
+    }
     let (mut textures, mut label_index) = (set.labels, set.label_index);
     // A texmod target without TEXDEF texels (record flags 0x20, e.g. the SFX
     // packages' REDWEAPTEX, filled from WEAPONS' frames) is still found by
@@ -2911,11 +3068,25 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
     let clip_nodes = &pc.clips.trees[0].nodes;
     let first_child = |parent: i32| tree.nodes.iter().find(|n| n.parent == parent).map(|n| n.index as i32);
     let wings_node = first_child(0).and_then(first_child);
+    // AtreeNodeInit's MB flags apply to the player's tree as to package
+    // trees: flag 1 (a DUMMY node, or +0x2e bit 0) hides the node's own
+    // object, flag 2 its subtree. The DUMMY node stays (the team moves'
+    // attach point) but draws nothing: its object (e.g. WIZ_GREDUMMY, the
+    // hand-glow texture GRE_HANDGLOW without texels, flags 0xac) had shown
+    // as a magenta triangle at the Wizard's feet, turning with him
+    // (playtest 2026-10-27).
+    let mut hidden_subtree: std::collections::HashSet<i32> = std::collections::HashSet::new();
+    for node in &tree.nodes {
+        if tree_node_flags(node) & 2 != 0 || hidden_subtree.contains(&node.parent) {
+            hidden_subtree.insert(node.index as i32);
+        }
+    }
     for node in &tree.nodes {
         let pose = if node.index == 0 { Some(0) } else { clip_nodes.iter().position(|c| c.label == node.label) };
         let Some(pose) = pose else { continue };
         let label: String = (tree.prefix.clone() + &node.label).chars().take(16).collect();
-        for def in character.objects.definitions.iter().filter(|d| d.label == label) {
+        let drawn = tree_node_flags(node) & 1 == 0 && !hidden_subtree.contains(&(node.index as i32));
+        for def in character.objects.definitions.iter().filter(|d| drawn && d.label == label) {
             for (mesh, material) in parts.get(&(def.object_index as u32)).into_iter().flatten() {
                 let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), RigNode(pose, slot))).id();
                 if node.label == "HEAD" {
@@ -3399,13 +3570,16 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut seen: Local<u64>, mut q: 
         } else {
             tm.accumulated += dt;
         }
-        let mut changed = first;
+        // Only the modifiers that stepped are re-applied: every frame target
+        // re-inserted (a texture upload each) and every scroll material
+        // re-prepared on each step cost about 1.6 ms a frame (M20 profile).
+        let mut dirty = vec![first; tm.mods.len()];
         let mut steps = 0;
         while tm.accumulated >= 1.0 / 30.0 && steps < 4 {
             tm.accumulated -= 1.0 / 30.0;
             steps += 1;
             tm.aframe = tm.aframe.wrapping_add(1);
-            for m in &mut tm.mods {
+            for (k, m) in tm.mods.iter_mut().enumerate() {
                 if 0 < m.divisor && tm.aframe % m.divisor as u32 != 0 {
                     continue;
                 }
@@ -3413,14 +3587,14 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut seen: Local<u64>, mut q: 
                 if i32::from(m.count).abs() <= m.counter {
                     m.counter = 0;
                 }
-                changed = true;
+                dirty[k] = true;
             }
         }
-        if !changed {
+        if !dirty.contains(&true) {
             continue;
         }
         let by_image = tm.by_image.as_ref().unwrap();
-        for m in &tm.mods {
+        for (m, _) in tm.mods.iter().zip(&dirty).filter(|(_, d)| **d) {
             match &m.kind {
                 TexModKind::Frames { target, frames } => {
                     let k = if first && steps == 0 { 0 } else { (m.counter.max(0) as usize).min(frames.len() - 1) };
@@ -3436,7 +3610,10 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut seen: Local<u64>, mut q: 
                     let _ = m.start;
                     let shift = sign * (m.counter.rem_euclid(n as i32) as f32 / n);
                     for id in by_image.get(target).into_iter().flatten() {
-                        if let Some(mat) = materials.get_mut(*id) {
+                        let cur = materials.get(*id).map(|mat| if *v { mat.params.options.w } else { mat.params.options.z });
+                        if cur.is_some_and(|c| c != shift)
+                            && let Some(mat) = materials.get_mut(*id)
+                        {
                             if *v {
                                 mat.params.options.w = shift;
                             } else {
@@ -4507,12 +4684,21 @@ fn simulate(
         g.do_players().map(|_| ())
     });
     sim.updates += 1;
+    // DIAGNOSTIC (M20 performance report): the time from process start to
+    // the first stepped update (loading), on stderr.
+    if sim.updates == 1 && std::env::var_os("GDL_FRAME_LOG").is_some() {
+        eprintln!("PERF load_to_first_update_ms {:.1}", process_start().elapsed().as_secs_f64() * 1000.0);
+    }
     if harness.exit_after.is_some() {
         let h = sim_state_hash(&sim.game);
         harness.hashes.push(h);
         if harness.exit_after == Some(sim.updates) {
             if let Some(out) = harness.state_out.as_ref() {
                 let _ = std::fs::write(out, harness.hashes.join("\n") + "\n");
+            }
+            // DIAGNOSTIC (M20): the peak resident memory (Linux VmHWM).
+            if let Some(line) = std::fs::read_to_string("/proc/self/status").ok().and_then(|s| s.lines().find(|l| l.starts_with("VmHWM")).map(str::to_string)) {
+                eprintln!("PERF {}", line.split_whitespace().collect::<Vec<_>>().join(" "));
             }
             exit.write(AppExit::Success);
         }
@@ -6697,6 +6883,18 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         game.players[0].set_i32(0xfc, 0);
         let pdats = world.resource::<Session>().pdats.clone();
         select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
+        // The original loads the Tower after init_player_select(0), so its
+        // init_next_level → setup_player_display sees player 1 choosing
+        // (state 2, column 0: display mode 0 — no coin, heart, gold, health
+        // or name) until update_class_spec redraws the panel. Built before
+        // the select, the panel kept mode 1 and drew the name being typed
+        // over the name entry's letters (playtest 2026-10-27). setup_player_display's
+        // callers in SLUS_200.47: init_next_level, load_player_geo,
+        // update_class_spec, do_players, init_mapscreen, init_shop and others
+        // — none on the name-entry path.
+        for k in 0..4 {
+            game.setup_player_display(k);
+        }
     }
     world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, weapon_hidden: [false; 4], exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
@@ -7260,7 +7458,17 @@ fn front_system(world: &mut EcsWorld) {
         // GDL_TEST_LOAD_SLOT: start with that stored slot instead.
         match std::env::var("GDL_TEST_LOAD_SLOT").ok().and_then(|v| v.parse::<u32>().ok()) {
             Some(slot) => act(world, Action::Play { slot }),
-            None => act(world, Action::Create { class: 6, colour: 0, name: "TEST".into() }),
+            None => {
+                // GDL_TEST_CLASS=CLASS:COLOUR: another class and colour.
+                let (class, colour) = std::env::var("GDL_TEST_CLASS")
+                    .ok()
+                    .and_then(|v| {
+                        let (c, k) = v.split_once(':')?;
+                        Some((c.parse().ok()?, k.parse().ok()?))
+                    })
+                    .unwrap_or((6, 0));
+                act(world, Action::Create { class, colour, name: "TEST".into() })
+            }
         }
         return;
     }
@@ -7669,6 +7877,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     let english = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/ENGLISH.ROM")?)?;
     let scrolls = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/SCROLL_E.ROM")?)?;
     let store = SaveStore::open(p("saves")?)?;
+    // M19 enhancement settings beside the saves (GDL_BASELINE=1: the
+    // original presentation).
+    let settings = gdl_client::settings::Settings::load(&p("saves")?);
     if let Some(slot) = store.migrate_slot_zero()? {
         println!("save0000 (interim slot numbering) moved to save{slot:04}; the old file is kept as migrated-save0000");
     }
@@ -7852,6 +8063,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         app.insert_non_send_resource(a);
     }
     app
+        .insert_resource(settings.clone())
         .insert_resource(front)
         .insert_resource(Screen::Front)
         .insert_resource(presentation)
@@ -7869,6 +8081,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                 primary_window: Some(Window {
                     title: "Gauntlet: Dark Legacy - INTERIM native build".into(),
                     resolution: (1280, 896).into(),
+                    present_mode: if settings.vsync { bevy::window::PresentMode::AutoVsync } else { bevy::window::PresentMode::AutoNoVsync },
+                    mode: if settings.fullscreen { bevy::window::WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current) } else { bevy::window::WindowMode::Windowed },
                     ..default()
                 }),
                 ..default()
@@ -7883,7 +8097,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<MenuIcon>()
         .add_systems(Startup, (setup_static, setup_menu_icon).chain())
         .insert_resource(TestHarness::from_env())
-        .add_systems(Last, (frame_limiter, ui_trace, frame_log))
+        .add_systems(Last, (frame_limiter, ui_trace, frame_log, diagnostic_shots))
+        .add_systems(PostUpdate, interpolate_transforms.before(bevy::transform::TransformSystems::Propagate))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
             Update,
@@ -8234,7 +8449,14 @@ fn advance_level(
     }
 }
 
+/// The process start (the M20 loading time).
+fn process_start() -> std::time::Instant {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *START.get_or_init(std::time::Instant::now)
+}
+
 fn main() {
+    let _ = process_start();
     if let Err(error) = run() {
         eprintln!("{error}");
         std::process::exit(1);

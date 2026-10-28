@@ -10,5 +10,11 @@ bevy.workspace = true
 gdl_core = { path = "../gdl_core" }
 gdl_formats = { path = "../gdl_formats" }
 sha2.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 alsa = "=0.9.1"
+
+[features]
+# DIAGNOSTIC (M20): Bevy's per-system tracing written as a Chrome trace
+# (trace-*.json in the working directory). Not part of the shipped build.
+profile = ["bevy/trace_chrome", "bevy/debug"]

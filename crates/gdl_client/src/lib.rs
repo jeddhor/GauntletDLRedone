@@ -6,6 +6,7 @@ pub mod audio;
 pub mod catalog;
 pub mod menu;
 pub mod movie;
+pub mod settings;
 
 use bevy::{
     asset::RenderAssetUsages,
