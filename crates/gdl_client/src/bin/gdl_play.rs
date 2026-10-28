@@ -40,18 +40,34 @@ const MIRROR: Vec3 = Vec3::new(-1.0, 1.0, 1.0);
 /// half-angle tangents (60° over 640 columns, 2·atan(1/2.88675) over 384
 /// rows), near 1 / far 65536, as Bevy's reverse-Z infinite perspective. The
 /// 3D viewport is the top 384 of 448 frame rows (viewport inset 64).
+/// NATIVE ENHANCEMENT (Settings::widescreen): `wide` keeps the vertical
+/// angle and widens the horizontal one to the viewport's aspect (Hor+).
 #[derive(Debug, Clone)]
 struct Ps2Projection {
     tan_h: f32,
     tan_v: f32,
     near: f32,
     far: f32,
+    /// The viewport's width / height (CameraProjection::update).
+    aspect: f32,
+    wide: bool,
+}
+
+impl Ps2Projection {
+    fn new(tan_h: f32, tan_v: f32, near: f32, far: f32) -> Self {
+        Self { tan_h, tan_v, near, far, aspect: tan_h / tan_v, wide: false }
+    }
+
+    /// The horizontal half-angle tangent drawn.
+    fn shown_tan_h(&self) -> f32 {
+        if self.wide && self.aspect.is_finite() && 0.0 < self.aspect { self.tan_v * self.aspect } else { self.tan_h }
+    }
 }
 
 impl bevy::camera::CameraProjection for Ps2Projection {
     fn get_clip_from_view(&self) -> Mat4 {
         Mat4::from_cols(
-            Vec4::new(1.0 / self.tan_h, 0.0, 0.0, 0.0),
+            Vec4::new(1.0 / self.shown_tan_h(), 0.0, 0.0, 0.0),
             Vec4::new(0.0, 1.0 / self.tan_v, 0.0, 0.0),
             Vec4::new(0.0, 0.0, 0.0, -1.0),
             Vec4::new(0.0, 0.0, self.near, 0.0),
@@ -60,13 +76,17 @@ impl bevy::camera::CameraProjection for Ps2Projection {
     fn get_clip_from_view_for_sub(&self, _sub_view: &bevy::camera::SubCameraView) -> Mat4 {
         self.get_clip_from_view()
     }
-    fn update(&mut self, _width: f32, _height: f32) {}
+    fn update(&mut self, width: f32, height: f32) {
+        if 0.0 < width && 0.0 < height {
+            self.aspect = width / height;
+        }
+    }
     fn far(&self) -> f32 {
         self.far
     }
     fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [bevy::math::Vec3A; 8] {
         let c = |z: f32| {
-            let (x, y) = (z.abs() * self.tan_h, z.abs() * self.tan_v);
+            let (x, y) = (z.abs() * self.shown_tan_h(), z.abs() * self.tan_v);
             [(x, -y), (x, y), (-x, y), (-x, -y)].map(|(a, b)| bevy::math::Vec3A::new(a, b, z))
         };
         let (n, f) = (c(z_near), c(z_far));
@@ -74,20 +94,304 @@ impl bevy::camera::CameraProjection for Ps2Projection {
     }
 }
 
-/// The 3D viewport: the PS2 frame's rows above the window's bottom inset
-/// (64 of 448 in play — InitCamera's WindowBottomLim; none in the flyby).
-fn ps2_viewport(windows: Query<&Window>, sim: Option<Res<Sim>>, mut cams: Query<&mut Camera, With<FollowCamera>>) {
+/// The PS2 frame's place in the window: the largest 640:448 rectangle,
+/// centred (x, y, width, height in physical pixels). The original picture
+/// fills it (borders outside); a window of exactly that shape is all frame.
+fn frame_rect(width: u32, height: u32) -> (u32, u32, u32, u32) {
+    let (w, h) = (width.max(1), height.max(1));
+    if u64::from(w) * 448 > u64::from(h) * 640 {
+        let fw = ((u64::from(h) * 640 + 224) / 448) as u32;
+        ((w - fw.min(w)) / 2, 0, fw.min(w), h)
+    } else {
+        let fh = ((u64::from(w) * 448 + 320) / 640) as u32;
+        (0, (h - fh.min(h)) / 2, w, fh.min(h))
+    }
+}
+
+/// The HUD layer's camera (the original 512×384 blit screen).
+#[derive(Component)]
+struct HudCamera;
+
+/// Where the settings overlay stores settings.json (None under
+/// GDL_BASELINE / GDL_SETTINGS: test runs never write the player's file).
+#[derive(Resource)]
+struct SettingsDir(Option<std::path::PathBuf>);
+
+/// The render layer of the native overlay camera (settings, frame rate).
+const OVERLAY_LAYER: usize = 2;
+
+#[derive(Component)]
+struct OverlayCamera;
+#[derive(Component)]
+struct OverlayBackdrop;
+#[derive(Component)]
+struct OverlayText;
+#[derive(Component)]
+struct FpsText;
+
+/// The native overlay's camera (last, window pixels, crisp text outside
+/// the GS display decode) and its entities, hidden until used.
+fn setup_overlay(mut commands: Commands) {
+    let layer = bevy::camera::visibility::RenderLayers::layer(OVERLAY_LAYER);
+    commands.spawn((
+        Camera2d,
+        Camera { order: 3, clear_color: ClearColorConfig::None, is_active: false, ..default() },
+        Tonemapping::None,
+        bevy::render::view::Hdr,
+        bevy::core_pipeline::tonemapping::DebandDither::Disabled,
+        layer.clone(),
+        OverlayCamera,
+    ));
+    commands.spawn((Sprite { color: Color::srgba(0.0, 0.0, 0.0, 0.82), custom_size: Some(Vec2::ONE), ..default() }, Transform::default(), Visibility::Hidden, layer.clone(), OverlayBackdrop));
+    commands.spawn((
+        Text2d::new(String::new()),
+        TextFont { font_size: 20.0, ..default() },
+        TextColor(Color::srgb(0.95, 0.92, 0.8)),
+        TextLayout::new_with_justify(bevy::text::Justify::Left),
+        Anchor::TOP_LEFT,
+        Transform::from_xyz(0.0, 0.0, 1.0),
+        Visibility::Hidden,
+        layer.clone(),
+        OverlayText,
+    ));
+    commands.spawn((
+        Text2d::new(String::new()),
+        TextFont { font_size: 16.0, ..default() },
+        TextColor(Color::srgb(1.0, 1.0, 0.6)),
+        Anchor::TOP_RIGHT,
+        Transform::from_xyz(0.0, 0.0, 1.0),
+        Visibility::Hidden,
+        layer,
+        FpsText,
+    ));
+}
+
+/// NATIVE ENHANCEMENT keys: F10 the settings overlay (its keys while
+/// open), F11 fullscreen, F3 the frame-rate counter. Changes are stored at
+/// once (settings.json beside the saves).
+fn enhancement_input(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut overlay: ResMut<gdl_client::enhance::Overlay>,
+    mut settings: ResMut<gdl_client::settings::Settings>,
+    mut bindings: ResMut<gdl_client::controls::Bindings>,
+    dir: Res<SettingsDir>,
+) {
+    use gdl_client::enhance::{Effect, Input};
+    if overlay.held && keys.get_pressed().next().is_none() {
+        overlay.held = false;
+    }
+    let mut changed = false;
+    if keys.just_pressed(KeyCode::F11) {
+        settings.fullscreen = !settings.fullscreen;
+        changed = true;
+    }
+    if keys.just_pressed(KeyCode::F3) {
+        settings.show_fps = !settings.show_fps;
+        changed = true;
+    }
+    if keys.just_pressed(KeyCode::F10) {
+        overlay.toggle();
+    } else if overlay.open {
+        let mut inputs = Vec::new();
+        if overlay.capturing() {
+            if keys.just_pressed(KeyCode::Escape) {
+                inputs.push(Input::Back);
+            } else if let Some(&k) = keys.get_just_pressed().next() {
+                inputs.push(Input::Key(k));
+            }
+        } else {
+            for (ks, i) in [
+                (&[KeyCode::ArrowUp, KeyCode::KeyW][..], Input::Up),
+                (&[KeyCode::ArrowDown, KeyCode::KeyS][..], Input::Down),
+                (&[KeyCode::ArrowLeft, KeyCode::KeyA][..], Input::Left),
+                (&[KeyCode::ArrowRight, KeyCode::KeyD][..], Input::Right),
+                (&[KeyCode::Enter, KeyCode::Space, KeyCode::NumpadEnter][..], Input::Accept),
+                (&[KeyCode::Escape][..], Input::Back),
+                (&[KeyCode::Backspace, KeyCode::Delete][..], Input::Reset),
+            ] {
+                if ks.iter().any(|&k| keys.just_pressed(k)) {
+                    inputs.push(i);
+                }
+            }
+        }
+        let (s, b) = (settings.bypass_change_detection(), bindings.bypass_change_detection());
+        for i in inputs {
+            if overlay.input(i, s, b) == Effect::Changed {
+                changed = true;
+            }
+        }
+        if changed {
+            settings.set_changed();
+            bindings.set_changed();
+        }
+        // The keys the overlay took are not seen by the menus this frame.
+        let taken: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
+        for k in taken {
+            keys.clear_just_pressed(k);
+        }
+    }
+    if changed && let Some(d) = &dir.0
+        && let Err(e) = settings.save(d)
+    {
+        eprintln!("settings: not stored ({e})");
+    }
+}
+
+/// The settings that live outside the systems reading them each frame:
+/// the window's sync and mode, every window camera's MSAA.
+fn apply_settings(settings: Res<gdl_client::settings::Settings>, mut windows: Query<&mut Window>, mut cams: Query<(&mut Msaa, Option<&bevy::camera::RenderTarget>), With<Camera>>) {
+    if !settings.is_changed() {
+        return;
+    }
+    for mut w in &mut windows {
+        let present = if settings.vsync { bevy::window::PresentMode::AutoVsync } else { bevy::window::PresentMode::AutoNoVsync };
+        if w.present_mode != present {
+            w.present_mode = present;
+        }
+        let mode = if settings.fullscreen { bevy::window::WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current) } else { bevy::window::WindowMode::Windowed };
+        if w.mode != mode {
+            w.mode = mode;
+        }
+    }
+    let msaa = Msaa::from_samples(settings.msaa);
+    for (mut m, target) in &mut cams {
+        if !matches!(target, Some(bevy::camera::RenderTarget::Image(_))) && *m != msaa {
+            *m = msaa;
+        }
+    }
+}
+
+/// The settings overlay and the frame-rate counter, placed in the PS2
+/// frame's rectangle (window pixels).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn present_overlay(
+    windows: Query<&Window>,
+    time: Res<Time<Real>>,
+    overlay: Res<gdl_client::enhance::Overlay>,
+    settings: Res<gdl_client::settings::Settings>,
+    bindings: Res<gdl_client::controls::Bindings>,
+    mut frames: Local<std::collections::VecDeque<f32>>,
+    mut cam: Query<&mut Camera, With<OverlayCamera>>,
+    mut backdrop: Query<(&mut Sprite, &mut Transform, &mut Visibility), (With<OverlayBackdrop>, Without<OverlayText>, Without<FpsText>)>,
+    mut text: Query<(&mut Text2d, &mut TextFont, &mut Transform, &mut Visibility), (With<OverlayText>, Without<FpsText>)>,
+    mut fps: Query<(&mut Text2d, &mut TextFont, &mut Transform, &mut Visibility), (With<FpsText>, Without<OverlayText>)>,
+) {
+    frames.push_back(time.delta_secs());
+    while 60 < frames.len() {
+        frames.pop_front();
+    }
     let Ok(w) = windows.single() else { return };
-    let (width, height) = (w.physical_width(), w.physical_height());
+    let (_, _, fw, fh) = frame_rect(w.physical_width(), w.physical_height());
+    let scale = w.scale_factor().max(0.1);
+    let (fw, fh) = (fw as f32 / scale, fh as f32 / scale);
+    let active = overlay.open || settings.show_fps;
+    for mut c in &mut cam {
+        if c.is_active != active {
+            c.is_active = active;
+        }
+    }
+    let show = |v: &mut Visibility, on: bool| {
+        let want = if on { Visibility::Visible } else { Visibility::Hidden };
+        if *v != want {
+            *v = want;
+        }
+    };
+    if let Ok((mut t, mut font, mut tf, mut v)) = text.single_mut() {
+        show(&mut v, overlay.open);
+        if overlay.open {
+            let lines = overlay.lines(&settings, &bindings);
+            let size = (fh / 34.0).clamp(10.0, 40.0);
+            let (bw, bh) = ((fw * 0.86).min(size * 40.0), (lines.len() as f32 + 1.5) * size * 1.25);
+            let joined = lines.join("\n");
+            if t.0 != joined {
+                t.0 = joined;
+            }
+            if font.font_size != size {
+                font.font_size = size;
+            }
+            tf.translation = Vec3::new(-bw * 0.5 + size, bh * 0.5 - size * 0.75, 1.0);
+            if let Ok((mut sprite, mut btf, mut bv)) = backdrop.single_mut() {
+                show(&mut bv, true);
+                sprite.custom_size = Some(Vec2::new(bw, bh));
+                btf.translation = Vec3::ZERO;
+            }
+        } else if let Ok((_, _, mut bv)) = backdrop.single_mut() {
+            show(&mut bv, false);
+        }
+    }
+    if let Ok((mut t, mut font, mut tf, mut v)) = fps.single_mut() {
+        show(&mut v, settings.show_fps);
+        if settings.show_fps && !frames.is_empty() {
+            let mean = frames.iter().sum::<f32>() / frames.len() as f32;
+            let worst = frames.iter().copied().fold(0.0, f32::max);
+            let line = format!("{:.0} fps  {:.1} ms  (worst {:.1})", 1.0 / mean.max(1e-6), mean * 1000.0, worst * 1000.0);
+            if t.0 != line {
+                t.0 = line;
+            }
+            let size = (fh / 48.0).clamp(9.0, 28.0);
+            if font.font_size != size {
+                font.font_size = size;
+            }
+            tf.translation = Vec3::new(fw * 0.5 - size * 0.5, fh * 0.5 - size * 0.4, 1.0);
+        }
+    }
+}
+
+/// The 3D viewport: the PS2 frame's rows above its bottom inset (64 of 448
+/// in play — InitCamera's WindowBottomLim; none in the flyby), in the frame
+/// rectangle; the HUD's 512×384 screen mapped onto that rectangle, and the
+/// final pass told where it is. NATIVE ENHANCEMENT (Settings::widescreen,
+/// a window wider than 640:448, no movie showing): the 3D view takes the
+/// window's full width at the frame's height (Hor+), the HUD stays centred.
+#[allow(clippy::type_complexity)]
+fn ps2_viewport(
+    windows: Query<&Window>,
+    sim: Option<Res<Sim>>,
+    settings: Res<gdl_client::settings::Settings>,
+    movie: Query<&Visibility, With<MovieQuad>>,
+    mut cams: Query<(&mut Camera, &mut Projection), With<FollowCamera>>,
+    mut hud: Query<&mut Projection, (With<HudCamera>, Without<FollowCamera>)>,
+    mut finals: Query<&mut gdl_client::DisplayToLinear>,
+) {
+    let Ok(w) = windows.single() else { return };
+    let (width, height) = (w.physical_width().max(1), w.physical_height().max(1));
+    let (fx, fy, fw, fh) = frame_rect(width, height);
+    let movie = movie.iter().any(|v| *v == Visibility::Visible);
+    let wide = settings.widescreen && !movie && fw < width;
     let (frame, inset) = sim
         .as_ref()
         .and_then(|s| s.game.std_camera.as_ref())
         .map_or((448.0, 64.0), |c| (c.window.frame[1] as f32, c.window.viewport[3] + c.window.viewport[2]));
-    let rows = (height as f32 * (frame - inset) / frame).round() as u32;
-    if let Ok(mut cam) = cams.single_mut() {
-        let want = bevy::camera::Viewport { physical_position: UVec2::ZERO, physical_size: UVec2::new(width.max(1), rows.max(1)), ..default() };
-        if cam.viewport.as_ref().is_none_or(|v| v.physical_size != want.physical_size) {
+    let rows = (fh as f32 * (frame - inset) / frame).round() as u32;
+    if let Ok((mut cam, mut projection)) = cams.single_mut() {
+        let (x, vw) = if wide { (0, width) } else { (fx, fw) };
+        let want = bevy::camera::Viewport { physical_position: UVec2::new(x, fy), physical_size: UVec2::new(vw.max(1), rows.max(1)), ..default() };
+        if cam.viewport.as_ref().is_none_or(|v| v.physical_size != want.physical_size || v.physical_position != want.physical_position) {
             cam.viewport = Some(want);
+        }
+        if let Projection::Custom(custom) = &*projection
+            && custom.get::<Ps2Projection>().is_some_and(|p| p.wide != wide)
+            && let Projection::Custom(custom) = &mut *projection
+            && let Some(p) = custom.get_mut::<Ps2Projection>()
+        {
+            p.wide = wide;
+        }
+    }
+    let (sw, sh) = (512.0 * width as f32 / fw as f32, 384.0 * height as f32 / fh as f32);
+    for mut p in &mut hud {
+        if let Projection::Orthographic(o) = &*p
+            && !matches!(o.scaling_mode, bevy::camera::ScalingMode::Fixed { width, height } if width == sw && height == sh)
+            && let Projection::Orthographic(o) = &mut *p
+        {
+            o.scaling_mode = bevy::camera::ScalingMode::Fixed { width: sw, height: sh };
+        }
+    }
+    let rect = Vec4::new(fx as f32 / width as f32, fy as f32 / height as f32, fw as f32 / width as f32, fh as f32 / height as f32);
+    let wide = if wide { 1.0 } else { 0.0 };
+    for mut d in &mut finals {
+        if d.frame != rect || d.wide != wide {
+            d.frame = rect;
+            d.wide = wide;
         }
     }
 }
@@ -1468,15 +1772,21 @@ fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, f: i32, meshes: &[(E
 /// one directional light (MBAddLight: intensity +0x108 × colour +0xfc,
 /// direction +0xf0, normalised). Lit materials get the light towards which
 /// normals shade (−direction, mirrored into render space).
-fn present_scene_light(sim: Res<Sim>, mut last: Local<Option<([f32; 8], usize)>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+fn present_scene_light(sim: Res<Sim>, settings: Res<gdl_client::settings::Settings>, mut last: Local<Option<([f32; 8], usize)>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
     let g = &sim.game;
     if g.level.len() < 0x10c {
         return;
     }
     // DoLighting: MBSetAmbient(clamp(Ambient · GlobalInten + special)) and
-    // MBLightmapMod(1, special) for unlit draws.
-    let ambient = g.lighting.ambient_out;
-    let add = g.lighting.lightmap_add;
+    // MBLightmapMod(1, special) for unlit draws. NATIVE ENHANCEMENT
+    // (Settings::reduce_flashes, accessibility): a brightening special
+    // (lightning, SetAmbientSpecial flashes) shown at 30 %.
+    let (mut ambient, mut add) = (g.lighting.ambient_out, g.lighting.lightmap_add);
+    let special = g.lighting.special_cur;
+    if settings.reduce_flashes && 0.0 < special {
+        ambient = (g.lighting.ambient * g.lighting.global_inten + special * 0.3).clamp(0.0, 1.0);
+        add = special * 0.3;
+    }
     let dir = Vec3::new(g.level_f32(0xf0), g.level_f32(0xf4), g.level_f32(0xf8));
     let colour = Vec3::new(g.level_f32(0xfc), g.level_f32(0x100), g.level_f32(0x104)) * g.level_f32(0x108);
     let towards = if dir.length() > 0.0 { -dir.normalize() * MIRROR } else { Vec3::Y };
@@ -2033,30 +2343,21 @@ enum MovieThen {
 /// select (K/L/I/J as the reference's PCSX2 bindings); port 1: TFGH, R
 /// cross, Y circle, U start, B L2; gamepads by their face/shoulder
 /// buttons (left stick as analog entries 4–7).
-fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad]) -> PadStatus {
+fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bindings: &gdl_client::controls::Bindings, keyboard: bool) -> PadStatus {
     let mut s = PadStatus { connected: true, ..Default::default() };
     let press = |s: &mut PadStatus, i: usize, on: bool| {
         if on {
             s.press(i);
         }
     };
-    let k = |a: KeyCode| keys.pressed(a);
+    // `keyboard` false: the settings overlay has the keys.
+    let k = |a: KeyCode| keyboard && keys.pressed(a);
     match slot {
         0 => {
-            press(&mut s, 0, k(KeyCode::ArrowLeft) || k(KeyCode::KeyA));
-            press(&mut s, 1, k(KeyCode::ArrowRight) || k(KeyCode::KeyD));
-            press(&mut s, 2, k(KeyCode::ArrowUp) || k(KeyCode::KeyW));
-            press(&mut s, 3, k(KeyCode::ArrowDown) || k(KeyCode::KeyS));
-            press(&mut s, 0xd, k(KeyCode::Space) || k(KeyCode::KeyK));
-            press(&mut s, 0xb, k(KeyCode::KeyE) || k(KeyCode::KeyL));
-            press(&mut s, 0xc, k(KeyCode::ShiftLeft) || k(KeyCode::KeyI));
-            press(&mut s, 0xa, k(KeyCode::KeyQ) || k(KeyCode::KeyJ));
-            press(&mut s, 8, k(KeyCode::KeyZ));
-            press(&mut s, 9, k(KeyCode::KeyX));
-            press(&mut s, 0x12, k(KeyCode::ControlLeft));
-            press(&mut s, 0x13, k(KeyCode::KeyV));
-            press(&mut s, 0x14, k(KeyCode::Enter));
-            press(&mut s, 0x15, k(KeyCode::Tab));
+            // Settings::keys may rebind them (gdl_client::controls).
+            for (a, ks) in gdl_client::controls::ACTIONS.iter().zip(&bindings.keys) {
+                press(&mut s, a.entry, ks.iter().any(|&key| k(key)));
+            }
         }
         1 => {
             press(&mut s, 0, k(KeyCode::KeyF));
@@ -2713,7 +3014,7 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
         Tonemapping::None,
         bevy::render::view::Hdr,
         bevy::core_pipeline::tonemapping::DebandDither::Disabled,
-        Projection::custom(Ps2Projection { tan_h: tan_v * 640.0 / 384.0, tan_v, near: 1.0, far: 65536.0 }),
+        Projection::custom(Ps2Projection::new(tan_v * 640.0 / 384.0, tan_v, 1.0, 65536.0)),
         Transform::default(),
         FollowCamera,
     ));
@@ -2726,12 +3027,13 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
         bevy::core_pipeline::tonemapping::DebandDither::Disabled,
         // The last camera: decode the frame's display values once.
         // GDL_NO_DITHER=1: present without the GS frame's 16-bit quantisation.
-        gdl_client::DisplayToLinear { enabled: 1.0, offset_x: 0.0, offset_y: 0.0, dither: if std::env::var_os("GDL_NO_DITHER").is_some() { 0.0 } else { 1.0 } },
+        gdl_client::DisplayToLinear { dither: if std::env::var_os("GDL_NO_DITHER").is_some() { 0.0 } else { 1.0 }, ..default() },
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: bevy::camera::ScalingMode::Fixed { width: 512.0, height: 384.0 },
             ..OrthographicProjection::default_2d()
         }),
         bevy::camera::visibility::RenderLayers::layer(HUD_LAYER),
+        HudCamera,
     ));
     commands.spawn((
         Text2d::new(String::new()),
@@ -4471,6 +4773,7 @@ fn simulate(
     front: Res<Front>,
     time: Res<Time>,
     (mut harness, mut exit): (ResMut<TestHarness>, MessageWriter<AppExit>),
+    (bindings, overlay): (Res<gdl_client::controls::Bindings>, Res<gdl_client::enhance::Overlay>),
 ) {
     let closing = front.ending.active();
     if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started {
@@ -4481,7 +4784,7 @@ fn simulate(
     let pads: Vec<&Gamepad> = pads.into_iter().map(|(_, g)| g).collect();
     let mut ports = [PadStatus::default(); 8];
     for (k, port) in ports.iter_mut().take(4).enumerate() {
-        *port = player_input(k, &keys, &pads);
+        *port = player_input(k, &keys, &pads, &bindings, !overlay.open && !overlay.held);
         // Only ports with a device are connected (keyboard: ports 0 and 1).
         port.connected = k < 2 || pads.get(k).is_some();
     }
@@ -4671,9 +4974,10 @@ fn simulate(
             Err(e) => sim.error = Some(format!("screen saver: {}", e.0)),
         }
     }
-    if ui.paused || closing || sim.message_box.is_some() {
+    if ui.paused || closing || sim.message_box.is_some() || overlay.open {
         // main keeps running AudioQueUpdate / AudioPoll (DoOptions,
-        // ScrollMessageBox): queued lines go on while the game waits.
+        // ScrollMessageBox): queued lines go on while the game waits (also
+        // under the native settings overlay).
         let vb = sim.game.globals.vb_elapsed;
         if ui.paused && gdl_client::menu::page_record(&front.menu.page).is_some() {
             // DoOptions with a menu up: LowerBGMusic(0.1, −1) (the music
@@ -4690,7 +4994,9 @@ fn simulate(
             sim.game.bg_music_update();
         }
         sim.game.main_audio(vb);
-        if !ui.paused && !closing {
+        if overlay.open {
+            // The native settings overlay: the game waits.
+        } else if !ui.paused && !closing {
             step_message_box(&mut sim, &ports, time.delta_secs());
         } else if let Err(e) = sim.game.update_controls(&ports) {
             // DoOptions reads PlayerControl each frame, so the press that
@@ -6333,7 +6639,7 @@ fn setup_menu_icon(
         Tonemapping::None,
         bevy::render::view::Hdr,
         bevy::core_pipeline::tonemapping::DebandDither::Disabled,
-        Projection::custom(Ps2Projection { tan_h: 320.0 / ICON_FOCAL, tan_v: 224.0 / ICON_FOCAL, near: 0.05, far: 100.0 }),
+        Projection::custom(Ps2Projection::new(320.0 / ICON_FOCAL, 224.0 / ICON_FOCAL, 0.05, 100.0)),
         Transform::default(),
         layer.clone(),
     ));
@@ -7150,8 +7456,12 @@ fn menu_held(world: &mut EcsWorld) -> (bool, bool) {
 fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
     let mut out = Vec::new();
     let mut toggle = false;
+    // The settings overlay has the keyboard while open (and until its keys
+    // are released); the menus take player 1's bound keys too.
+    let blocked = world.get_resource::<gdl_client::enhance::Overlay>().is_some_and(|o| o.open || o.held);
+    let bindings = world.get_resource::<gdl_client::controls::Bindings>().cloned().unwrap_or_default();
     let keys = world.resource::<ButtonInput<KeyCode>>();
-    let pressed = |k: KeyCode| keys.just_pressed(k);
+    let pressed = |k: KeyCode| !blocked && keys.just_pressed(k);
     if naming {
         for (k, c) in [
             (KeyCode::KeyA, 'A'), (KeyCode::KeyB, 'B'), (KeyCode::KeyC, 'C'), (KeyCode::KeyD, 'D'), (KeyCode::KeyE, 'E'), (KeyCode::KeyF, 'F'), (KeyCode::KeyG, 'G'),
@@ -7175,19 +7485,20 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
             out.push(Key::Back);
         }
     } else {
-        for (ks, key) in [
-            (&[KeyCode::ArrowUp, KeyCode::KeyW][..], Key::Up),
-            (&[KeyCode::ArrowDown, KeyCode::KeyS][..], Key::Down),
-            (&[KeyCode::ArrowLeft, KeyCode::KeyA][..], Key::Left),
-            (&[KeyCode::ArrowRight, KeyCode::KeyD][..], Key::Right),
-            // The original's menu edges: cross 0x2000000 accepts, triangle
-            // 0x8000000 goes back, circle 0x1000000 (Center); the keys of
-            // player_input plus Enter/Escape/Backspace/C.
-            (&[KeyCode::Enter, KeyCode::Space, KeyCode::KeyK][..], Key::Accept),
-            (&[KeyCode::Escape, KeyCode::Backspace, KeyCode::KeyI, KeyCode::ShiftLeft][..], Key::Back),
-            (&[KeyCode::KeyC, KeyCode::KeyL, KeyCode::KeyE][..], Key::Center),
+        // The original's menu edges: cross 0x2000000 accepts, triangle
+        // 0x8000000 goes back, circle 0x1000000 (Center); fixed keys
+        // (arrows, Enter/Escape/Backspace/C) plus player 1's bound ones
+        // (by default WASD, Space/K, Shift/I, E/L).
+        for (fixed, action, key) in [
+            (&[KeyCode::ArrowUp][..], "up", Key::Up),
+            (&[KeyCode::ArrowDown][..], "down", Key::Down),
+            (&[KeyCode::ArrowLeft][..], "left", Key::Left),
+            (&[KeyCode::ArrowRight][..], "right", Key::Right),
+            (&[KeyCode::Enter][..], "cross", Key::Accept),
+            (&[KeyCode::Escape, KeyCode::Backspace][..], "triangle", Key::Back),
+            (&[KeyCode::KeyC][..], "circle", Key::Center),
         ] {
-            if ks.iter().any(|&k| pressed(k)) {
+            if fixed.iter().chain(bindings.of(action)).any(|&k| pressed(k)) {
                 out.push(key);
             }
         }
@@ -8030,6 +8341,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     // M19 enhancement settings beside the saves (GDL_BASELINE=1: the
     // original presentation).
     let settings = gdl_client::settings::Settings::load(&p("saves")?);
+    let settings_dir = (std::env::var_os("GDL_BASELINE").is_none() && std::env::var_os("GDL_SETTINGS").is_none()).then(|| p("saves")).transpose()?;
+    gdl_client::texture_pack::configure(settings.texture_pack.clone());
     if let Some(slot) = store.migrate_slot_zero()? {
         println!("save0000 (interim slot numbering) moved to save{slot:04}; the old file is kept as migrated-save0000");
     }
@@ -8214,6 +8527,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     app
         .insert_resource(settings.clone())
+        .insert_resource(gdl_client::controls::Bindings::from_settings(&settings.keys))
+        .init_resource::<gdl_client::enhance::Overlay>()
+        .insert_resource(SettingsDir(settings_dir))
         .insert_resource(front)
         .insert_resource(Screen::Front)
         .insert_resource(presentation)
@@ -8245,7 +8561,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<Ui>()
         .init_resource::<HudSets>()
         .init_resource::<MenuIcon>()
-        .add_systems(Startup, (setup_static, setup_menu_icon).chain())
+        .add_systems(Startup, (setup_static, setup_menu_icon, setup_overlay).chain())
         .insert_resource(TestHarness::from_env())
         .add_systems(Last, (frame_limiter, ui_trace, frame_log, diagnostic_shots, diagnostic_scene_dump))
         .add_systems(PostUpdate, interpolate_transforms.before(bevy::transform::TransformSystems::Propagate))
@@ -8253,6 +8569,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(
             Update,
             (
+                enhancement_input,
+                apply_settings,
                 front_system,
                 play_menu_cues,
                 run_attract,
@@ -8263,6 +8581,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 present_menu_icon,
                 present_saver,
                 present_screen_adjust,
+                present_overlay,
             )
                 .chain(),
         )

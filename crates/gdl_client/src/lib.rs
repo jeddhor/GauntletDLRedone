@@ -4,9 +4,12 @@
 //! level-0 filtering and the blending colour space are presentation choices.
 pub mod audio;
 pub mod catalog;
+pub mod controls;
+pub mod enhance;
 pub mod menu;
 pub mod movie;
 pub mod settings;
+pub mod texture_pack;
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -151,7 +154,7 @@ pub fn write_point_lights(queue: &RenderQueue, pos: &[Vec4; 8], col: &[Vec4; 8])
 /// The final pass of the last camera: the frame holds GS display values
 /// (GsMaterial, BlitMaterial and every blend work on them, as the GS does);
 /// this decodes them once for the sRGB swapchain.
-#[derive(Component, bevy::render::extract_component::ExtractComponent, Clone, Copy, Default, ShaderType)]
+#[derive(Component, bevy::render::extract_component::ExtractComponent, Clone, Copy, ShaderType)]
 pub struct DisplayToLinear {
     pub enabled: f32,
     /// pbScreenSetAdjust's picture shift as a fraction of the frame
@@ -164,6 +167,17 @@ pub struct DisplayToLinear {
     /// clamp(c + DM[y & 3][x & 3]) >> 3 per PS2 pixel, shown as v << 3.
     /// Only the final value is quantised (each GS write truncates).
     pub dither: f32,
+    /// The PS2 frame's rectangle in the window (x, y, width, height as
+    /// fractions): outside it black, unless `wide` (NATIVE ENHANCEMENT:
+    /// the widescreen 3D view continues beyond it).
+    pub frame: Vec4,
+    pub wide: f32,
+}
+
+impl Default for DisplayToLinear {
+    fn default() -> Self {
+        Self { enabled: 1.0, offset_x: 0.0, offset_y: 0.0, dither: 1.0, frame: Vec4::new(0.0, 0.0, 1.0, 1.0), wide: 0.0 }
+    }
 }
 
 impl bevy::core_pipeline::fullscreen_material::FullscreenMaterial for DisplayToLinear {
@@ -265,6 +279,12 @@ pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index
     };
     let mut sampler = ImageSamplerDescriptor::linear();
     sampler.set_address_mode(ImageAddressMode::ClampToEdge);
+    // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack).
+    if texture_pack::active()
+        && let Some((w, h, new)) = texture_pack::replace(b.width, b.height, &rgba)
+    {
+        return Some(raw_image(w as u16, h as u16, new, TextureFormat::Rgba8Unorm, ImageSampler::Descriptor(sampler)));
+    }
     Some(raw_image(b.width, b.height, rgba, TextureFormat::Rgba8Unorm, ImageSampler::Descriptor(sampler)))
 }
 
@@ -737,6 +757,14 @@ pub fn materials_for(
                 p[3] = if p[3] != 0 { 0x80 } else { 0 };
             }
         }
+        // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack;
+        // one level, so the GS LOD selection does not apply to it).
+        let (mut width, mut height) = (bitmap.width, bitmap.height);
+        if texture_pack::active()
+            && let Some((w, h, new)) = texture_pack::replace(width, height, &levels[0])
+        {
+            (width, height, levels) = (w as u16, h as u16, vec![new]);
+        }
         // Opaque when every texel passes at full coverage; Mask when texels
         // are either rejected by the alpha test or full; otherwise blended.
         let rgba = &levels[0];
@@ -753,7 +781,7 @@ pub fn materials_for(
         if 0 < max_level {
             mipmapped.insert(bitmap.index as u16);
         }
-        let image = images.add(mip_image(bitmap.width, bitmap.height, levels, mip_sampler(bitmap.flags, max_level)));
+        let image = images.add(mip_image(width, height, levels, mip_sampler(bitmap.flags, max_level)));
         labels.entry(candidates[0].label.to_uppercase()).or_insert_with(|| image.clone());
         record_images.insert(bitmap.index as u16, image.clone());
         base.insert(

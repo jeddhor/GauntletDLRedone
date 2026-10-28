@@ -2082,6 +2082,7 @@ dependencies = [
  "bevy",
  "gdl_core",
  "gdl_formats",
+ "png",
  "serde",
  "serde_json",
  "sha2",

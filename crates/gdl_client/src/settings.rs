@@ -17,19 +17,19 @@ pub struct Settings {
     pub vsync: bool,
     /// Frames per second at most (0: no cap beyond vsync).
     pub fps_cap: u32,
-    /// Fill the window's aspect ratio with a wider view (off: the original
-    /// 4:3 picture, bordered).
+    /// A window wider than the PS2 frame (640:448) shows a wider 3D view
+    /// (Hor+; the HUD stays centred). Off: the original picture, bordered.
     pub widescreen: bool,
-    /// 3D render resolution relative to the window (supersampling above 1).
-    pub render_scale: f32,
-    /// Multisample anti-aliasing samples (1, 2 or 4).
+    /// Multisample anti-aliasing samples (1, 2 or 4; 4 is Bevy's camera
+    /// default, which every native render used before 2026-10-28; the GS
+    /// has none, so the baseline is 1).
     pub msaa: u32,
     pub fullscreen: bool,
-    /// HUD size relative to the original (accessibility).
-    pub hud_scale: f32,
-    /// Soften full-screen flashes (lightning, ambient flashes): accessibility.
+    /// Soften lightning and other ambient flashes (accessibility).
     pub reduce_flashes: bool,
-    /// A texture replacement directory (PNG files named by texture hash).
+    /// A texture replacement directory (texture_pack: PNG files named by
+    /// texture hash; absolute, or relative to the working directory).
+    /// Read at startup.
     pub texture_pack: Option<PathBuf>,
     /// Frame-time overlay (diagnostics).
     pub show_fps: bool,
@@ -45,10 +45,8 @@ impl Default for Settings {
             vsync: true,
             fps_cap: 0,
             widescreen: false,
-            render_scale: 1.0,
-            msaa: 1,
+            msaa: 4,
             fullscreen: false,
-            hud_scale: 1.0,
             reduce_flashes: false,
             texture_pack: None,
             show_fps: false,
@@ -58,10 +56,16 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// The original presentation: no blending, 4:3, native resolution, no
-    /// replacements (fidelity comparisons; GDL_BASELINE=1).
+    /// The original presentation: no blending, the frame's aspect, no
+    /// anti-aliasing, no flash softening, no replacements (fidelity
+    /// comparisons; GDL_BASELINE=1). Window, sync and controls are kept.
     pub fn baseline() -> Self {
-        Self { interpolate: false, widescreen: false, render_scale: 1.0, msaa: 1, hud_scale: 1.0, reduce_flashes: false, texture_pack: None, ..Self::default() }
+        Self::default().with_baseline_presentation()
+    }
+
+    /// These settings with the original presentation (see `baseline`).
+    pub fn with_baseline_presentation(&self) -> Self {
+        Self { interpolate: false, widescreen: false, msaa: 1, reduce_flashes: false, texture_pack: None, ..self.clone() }
     }
 
     /// The settings file beside a save directory.
@@ -84,8 +88,6 @@ impl Settings {
 
     /// Values in range (a hand-edited file).
     pub fn sanitise(&mut self) {
-        self.render_scale = if self.render_scale.is_finite() { self.render_scale.clamp(0.5, 3.0) } else { 1.0 };
-        self.hud_scale = if self.hud_scale.is_finite() { self.hud_scale.clamp(0.75, 2.0) } else { 1.0 };
         self.msaa = match self.msaa {
             0 | 1 => 1,
             2 | 3 => 2,
@@ -112,14 +114,14 @@ mod tests {
 
     #[test]
     fn missing_fields_take_defaults_and_values_are_clamped() {
-        let mut s: Settings = serde_json::from_str(r#"{"render_scale": 9.0, "msaa": 3, "interpolate": false}"#).unwrap();
+        let mut s: Settings = serde_json::from_str(r#"{"fps_cap": 7, "msaa": 3, "interpolate": false}"#).unwrap();
         s.sanitise();
-        assert_eq!((s.render_scale, s.msaa, s.interpolate, s.vsync), (3.0, 2, false, true));
+        assert_eq!((s.fps_cap, s.msaa, s.interpolate, s.vsync), (30, 2, false, true));
     }
 
     #[test]
     fn baseline_is_the_original_presentation() {
         let b = Settings::baseline();
-        assert!(!b.interpolate && !b.widescreen && b.render_scale == 1.0 && b.texture_pack.is_none());
+        assert!(!b.interpolate && !b.widescreen && b.msaa == 1 && b.texture_pack.is_none());
     }
 }
