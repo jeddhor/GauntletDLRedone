@@ -645,6 +645,7 @@ impl Game {
             level_done: None,
             players_done: false,
             exit_ready: false,
+            step_phases: Vec::new(),
             map_preload: -1,
             vb_counter: s.extra.vb_counter,
             audio_que: Default::default(),
@@ -953,6 +954,9 @@ impl Game {
     /// One game update (game_main 0x4010 order): world_update, do_items,
     /// do_enemies, do_players (`players`), ProcessEffects.
     pub fn step_with(&mut self, visible_override: Option<&Visibility>, players: &mut dyn FnMut(&mut Game) -> R<()>) {
+        let started = std::time::Instant::now();
+        self.step_phases.clear();
+        let phase = |g: &mut Game, name: &'static str| g.step_phases.push((name, started.elapsed().as_secs_f32() * 1000.0));
         self.frame_main += 1;
         self.vibe_fresh = [false; 4];
         // main: AudioQueUpdate / AudioPoll before game_main.
@@ -969,6 +973,7 @@ impl Game {
         // ActivePlayerMask, the +0x93e panel-written bits, player counts)
         // after the quit/restart checks, before the mode dispatch.
         self.set_player_vars();
+        phase(self, "audio_lighting_hud");
         // game_main: AudioUnshrink 0x1605d0 (AudioSFX2(0x55, 0x7f, 0xe0,
         // 0x28)) when the shrink powerup has worn off since ProcessItems.
         if self.old_enemy_shrink < self.globals.enemy_shrink && self.globals.game_mode == 0x4010 {
@@ -992,10 +997,13 @@ impl Game {
             if let Err(e) = self.do_world_animation() {
                 self.log.note("world_update", &e);
             }
+            phase(self, "world_animation");
             self.sync_collision();
+            phase(self, "sync_collision");
             if let Err(e) = self.setup_dyn_grid() {
                 self.log.note("world_update", &e);
             }
+            phase(self, "dyn_grid");
             if let Err(e) = self.boss_world_update() {
                 self.log.note("world_update", &e);
             }
@@ -1012,9 +1020,11 @@ impl Game {
                 self.log.note("world_update", &e);
             }
         }
+        phase(self, "world_update");
         if let Err(e) = self.process_items() {
             self.log.note("do_items", &e);
         }
+        phase(self, "process_items");
         let camera_visible = |g: &Game, k: usize| -> (bool, bool) {
             let Some(cam) = &g.camera else { return (true, true) };
             let rec = &g.enemies[k];
@@ -1029,6 +1039,7 @@ impl Game {
         if let Err(e) = self.do_enemies(vis) {
             self.log.note("do_enemies", &e);
         }
+        phase(self, "do_enemies");
         // do_players: the welcome block first.
         self.welcome_check();
         if let Err(e) = self.tower_check_messages(false) {
@@ -1037,6 +1048,7 @@ impl Game {
         if let Err(e) = players(self) {
             self.log.note("do_players", &e);
         }
+        phase(self, "do_players");
         // game_main: do_players done and AudioStillPlaying clear → the
         // level's end (the host's transition); ProcessEffects is skipped.
         if self.players_done && !self.audio_still_playing() {
@@ -1055,10 +1067,12 @@ impl Game {
                 self.do_show_path();
             }
         }
+        phase(self, "process_effects");
         // main's camera dispatch (StdCamUpdate) and MBEndFrame.
         if let Err(e) = self.camera_step() {
             self.log.note("camera", &e);
         }
+        phase(self, "camera");
         // game_main: do_wave_timer; modify_thermometer before world_update
         // (drawn here).
         if let Err(e) = self.do_wave_timer() {
@@ -1067,6 +1081,7 @@ impl Game {
         self.modify_thermometer();
         // game_main: BGMusicUpdate.
         self.bg_music_update();
+        phase(self, "end");
     }
 
     /// do_enemies with the camera's visibility tests (the flyby's update).

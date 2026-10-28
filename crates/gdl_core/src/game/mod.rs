@@ -493,6 +493,10 @@ pub struct Game {
     /// done and AudioStillPlaying clear): the level may end.
     pub players_done: bool,
     pub exit_ready: bool,
+    /// DIAGNOSTIC (M20, presentation timing only): the milliseconds
+    /// since the start of the last step_with at the end of each phase.
+    /// Nothing in the simulation reads it.
+    pub step_phases: Vec<(&'static str, f32)>,
     /// game_main's explicit next wave before init_mapscreen (−1 none).
     pub map_preload: i32,
     /// vb_counter 0x2a1c78 (vblanks; the fixture's value at load).

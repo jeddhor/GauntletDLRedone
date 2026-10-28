@@ -36,6 +36,7 @@ enum Row {
     Blend,
     Vsync,
     FpsCap,
+    FrameQueue,
     Fullscreen,
     Msaa,
     ReduceFlashes,
@@ -45,7 +46,7 @@ enum Row {
     Close,
 }
 
-const MAIN: [Row; 11] = [Row::Widescreen, Row::Blend, Row::Vsync, Row::FpsCap, Row::Fullscreen, Row::Msaa, Row::ReduceFlashes, Row::ShowFps, Row::Controls, Row::Original, Row::Close];
+const MAIN: [Row; 12] = [Row::Widescreen, Row::Blend, Row::Vsync, Row::FpsCap, Row::FrameQueue, Row::Fullscreen, Row::Msaa, Row::ReduceFlashes, Row::ShowFps, Row::Controls, Row::Original, Row::Close];
 const FPS_CAPS: [u32; 7] = [0, 30, 60, 75, 120, 144, 240];
 
 #[derive(Default, bevy::prelude::Resource)]
@@ -108,6 +109,15 @@ impl Overlay {
                 Row::Blend => format!("Motion blending      {}", on(s.interpolate)),
                 Row::Vsync => format!("VSync                {}", on(s.vsync)),
                 Row::FpsCap => format!("Frame cap            {}", if s.fps_cap == 0 { "Off".to_string() } else { s.fps_cap.to_string() }),
+                Row::FrameQueue => format!(
+                    "Frames queued        {} ({})",
+                    s.frame_queue,
+                    match s.frame_queue {
+                        1 => "lowest latency",
+                        2 => "balanced",
+                        _ => "smoothest",
+                    }
+                ),
                 Row::Fullscreen => format!("Fullscreen (F11)     {}", on(s.fullscreen)),
                 Row::Msaa => format!("Anti-aliasing        {}", if s.msaa <= 1 { "Off".to_string() } else { format!("{}x MSAA", s.msaa) }),
                 Row::ReduceFlashes => format!("Reduce flashes       {}", on(s.reduce_flashes)),
@@ -199,6 +209,9 @@ impl Overlay {
                     Row::FpsCap => {
                         let at = FPS_CAPS.iter().position(|&c| c == s.fps_cap).unwrap_or(0);
                         s.fps_cap = FPS_CAPS[if back { (at + FPS_CAPS.len() - 1) % FPS_CAPS.len() } else { (at + 1) % FPS_CAPS.len() }];
+                    }
+                    Row::FrameQueue => {
+                        s.frame_queue = if back { (s.frame_queue + 1) % 3 + 1 } else { s.frame_queue % 3 + 1 };
                     }
                     Row::Msaa => {
                         let order = [1, 2, 4];

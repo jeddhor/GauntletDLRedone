@@ -285,6 +285,10 @@ fn apply_settings(settings: Res<gdl_client::settings::Settings>, mut windows: Qu
         if w.mode != mode {
             w.mode = mode;
         }
+        let queue = std::num::NonZeroU32::new(settings.frame_queue);
+        if w.desired_maximum_frame_latency != queue {
+            w.desired_maximum_frame_latency = queue;
+        }
     }
     let msaa = Msaa::from_samples(settings.msaa);
     for (mut m, target) in &mut cams {
@@ -5265,7 +5269,7 @@ fn simulate(
     });
     if std::env::var_os("GDL_SLOW_STEP").is_some() && t0.elapsed().as_secs_f64() > 0.008 {
         let ev: Vec<String> = game.events[before..].iter().map(|e| format!("{e:?}").chars().take(80).collect()).collect();
-        eprintln!("SLOWSTEP update {} {:.1} ms events {:?}", sim.updates, t0.elapsed().as_secs_f64() * 1000.0, ev);
+        eprintln!("SLOWSTEP {:.1} ms phases {:?} events {:?}", t0.elapsed().as_secs_f64() * 1000.0, game.step_phases, ev);
     }
     guard.1.push(("after_step", guard.0.elapsed().as_secs_f64() * 1000.0));
     sim.updates += 1;
@@ -8691,6 +8695,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     resolution: (1280, 896).into(),
                     present_mode: if settings.vsync { bevy::window::PresentMode::AutoVsync } else { bevy::window::PresentMode::AutoNoVsync },
                     mode: if settings.fullscreen { bevy::window::WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current) } else { bevy::window::WindowMode::Windowed },
+                    desired_maximum_frame_latency: std::num::NonZeroU32::new(settings.frame_queue),
                     ..default()
                 }),
                 ..default()
