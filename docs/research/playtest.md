@@ -53,7 +53,8 @@ player is restored at once. Message scrolls turn their pages on triangle
 only, as in the original. Menus: arrows/WASD or D-pad, cross
 (Enter/Space/K, gamepad South) to accept, triangle (Esc/Backspace/I/Shift,
 gamepad North) to go back, circle (C/L/E, gamepad East) centres Screen
-Adjust; Escape on the "Press Start" screen exits. The HUD shows colour/class, level, experience,
+Adjust; Back on the "Press Start" screen (Escape, Backspace, gamepad
+North) exits, and a gamepad's Start there opens the title menu. The HUD shows colour/class, level, experience,
 save slot, health, gold, keys, potions, kills, active enemies and standing
 generators; F1 adds the interim labels and any unported path hit. Native
 keys since 2026-10-28 (enhancements.md): F10 the settings overlay (player
@@ -91,6 +92,23 @@ the class choice followed on the fixed build. Not seen on the Xvfb, where
 every software-rendered frame holds an update; present since the select
 screen's port (the Oct 27 build had the same check), the faster M20
 frames made it frequent.
+
+Same playtest, two more reports. "The Screen page never pops up": in game
+(the Tower's or a realm's Settings) choosing Screen resumed the game —
+Menu::is_paused lacked the Screen and Control Style pages, so gdl_play
+unpaused under them, nothing was drawn and the d-pad moved the player
+(from the title it worked: nothing is paused there). Fixed; Screen is the
+original Screen Adjust (the picture's position, as for a TV). The user
+had found no graphics options in the menus (the F10 overlay was the only
+way): the options lists now end with a NATIVE "Display" entry opening
+that overlay, which takes controllers too (enhancements.md). And the
+front end had no exit (only Escape on Press Start, undocumented in the
+menus): Back on Press Start now quits. Checks: unit tests (every in-game
+Settings entry keeps the game paused; Start/Back on Press Start; Display);
+menu flows pause-screen-tower, pause-screen-realm, title-display,
+pause-display-realm, press-start-exit (Xvfb); on the RX 580 a virtual
+pad alone went Press Start (Start) → Options → Display → a setting changed
+and stored → B closed it on the list → Y, Y, Y to the exit (code 0).
 
 M12 walkthrough (2026-10-22, gdl_play on the private Xvfb through
 tools/python/client_driver.py; frames in private/runs/client-m12a,

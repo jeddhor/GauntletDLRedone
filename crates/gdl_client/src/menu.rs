@@ -26,6 +26,9 @@ pub enum Key {
     Back,
     /// The circle button's "Center" (screen_options' button row).
     Center,
+    /// A controller's START (do_titlescreen's new_start: the Start edge
+    /// opens the title menu). Other pages ignore it.
+    Start,
     Char(char),
     Erase,
 }
@@ -68,6 +71,9 @@ pub enum Action {
     /// the category's next hint, fills `hints[list]` and `hint_title` and
     /// opens the page.
     ShowHint { list: usize },
+    /// NATIVE: an options list's "Display" entry — the host opens the
+    /// settings overlay over the menu, which stays on the list.
+    Display,
 }
 
 /// The option menus' sound cues (do_optmenu 0x10c4f8 and DoOptions
@@ -215,10 +221,17 @@ fn submenu_entries(key: &str) -> &'static [&'static str] {
 pub const CLASS_NAMES: [&str; 8] = ["WARRIOR", "VALKYRIE", "WIZARD", "ARCHER", "DWARF", "KNIGHT", "SORCERESS", "JESTER"];
 pub const COLOUR_NAMES: [&str; 4] = ["YELLOW", "BLUE", "RED", "GREEN"];
 const TITLE_MENU: [&str; 2] = ["Start", "Options"];
-const TITLE_OPTIONS: [&str; 5] = ["Audio", "Game Options", "Compass", "Controls", "Screen"];
-const TOWER_OPTIONS: [&str; 4] = ["Audio", "Compass", "Controls", "Screen"];
+/// The original options lists plus a NATIVE last entry, "Display" (the
+/// settings overlay: fullscreen, widescreen, VSync, …; gdl_play adds it to
+/// the drawn menu records too).
+const TITLE_OPTIONS: [&str; 6] = ["Audio", "Game Options", "Compass", "Controls", "Screen", DISPLAY];
+const TOWER_OPTIONS: [&str; 5] = ["Audio", "Compass", "Controls", "Screen", DISPLAY];
 /// game_options 0x21d620 (a realm's Settings).
-const GAME_OPTIONS: [&str; 3] = ["Audio", "Controls", "Screen"];
+const GAME_OPTIONS: [&str; 4] = ["Audio", "Controls", "Screen", DISPLAY];
+/// NATIVE: the options lists' added entry.
+pub const DISPLAY: &str = "Display";
+/// The records that get the [`DISPLAY`] entry.
+pub const DISPLAY_RECORDS: [&str; 3] = ["title_options", "tower_options", "game_options"];
 
 /// The options list an Options page shows (by the page it returns to).
 fn option_names(back: &Page) -> &'static [&'static str] {
@@ -396,7 +409,26 @@ impl Menu {
     }
 
     pub fn is_paused(&self) -> bool {
-        matches!(self.page, Page::Paused { .. } | Page::ConfirmQuit { .. } | Page::Options { .. } | Page::Audio { .. } | Page::NotPorted { .. } | Page::Shop { .. } | Page::Inventory | Page::InventoryClose | Page::Hints { .. } | Page::HintText { .. } | Page::Submenu { .. } | Page::Choice { .. })
+        // Every page an in-game menu reaches (before 2026-10-28 Screen and
+        // ControlStyle were missing: the game resumed under them and Screen
+        // Adjust never showed in game).
+        matches!(
+            self.page,
+            Page::Paused { .. }
+                | Page::ConfirmQuit { .. }
+                | Page::Options { .. }
+                | Page::Audio { .. }
+                | Page::NotPorted { .. }
+                | Page::Shop { .. }
+                | Page::Inventory
+                | Page::InventoryClose
+                | Page::Hints { .. }
+                | Page::HintText { .. }
+                | Page::Submenu { .. }
+                | Page::Choice { .. }
+                | Page::ControlStyle { .. }
+                | Page::Screen { .. }
+        )
     }
 
     pub fn input(&mut self, key: Key) -> Option<Action> {
@@ -465,12 +497,17 @@ impl Menu {
     fn input_page(&mut self, key: Key) -> Option<Action> {
         let page = self.page.clone();
         match page {
-            Page::PressStart => {
-                if key == Key::Accept {
+            Page::PressStart => match key {
+                Key::Accept | Key::Start => {
                     self.page = Page::Title { at: 0 };
+                    None
                 }
-                None
-            }
+                // NATIVE: Back on "Press Start" (Escape, Backspace, a
+                // controller's triangle) quits the client — the PS2 has no
+                // exit; the title's Back leads here.
+                Key::Back => Some(Action::Exit),
+                _ => None,
+            },
             Page::Title { at } => match key {
                 Key::Up | Key::Down => {
                     self.page = Page::Title { at: wrap(at, 2, key == Key::Up) };
@@ -512,6 +549,10 @@ impl Menu {
                     Key::Accept if names[at] == "Game Options" => self.page = Page::Submenu { key: "gameoption_options", at: 0, back: Box::new(Page::Options { at, back }) },
                     Key::Accept if names[at] == "Controls" => self.page = Page::Submenu { key: "controls_options", at: 0, back: Box::new(Page::Options { at, back }) },
                     Key::Accept if names[at] == "Screen" => self.page = Page::Screen { saved: (self.prefs[3], self.prefs[4]), back: Box::new(Page::Options { at, back }) },
+                    Key::Accept if names[at] == DISPLAY => {
+                        self.page = Page::Options { at, back };
+                        return Some(Action::Display);
+                    }
                     Key::Accept => self.page = Page::NotPorted { what: names[at].to_string(), back: Box::new(Page::Options { at, back }) },
                     Key::Back => self.page = *back,
                     _ => {}
@@ -779,7 +820,7 @@ impl Menu {
     pub fn text(&self) -> String {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let body = match &self.page {
-            Page::PressStart => "Press Start\n\n(Enter / Space / gamepad South)".to_string(),
+            Page::PressStart => "Press Start\n\n(Enter / Space / gamepad Start or South)\nEscape / gamepad North: quit".to_string(),
             Page::Title { at } => list("", &s(&TITLE_MENU), *at),
             Page::Options { at, back } => {
                 list("OPTIONS", &s(option_names(back)), *at)
@@ -894,6 +935,53 @@ mod tests {
         m.input(Key::Down);
         assert_eq!(m.input(Key::Left), Some(Action::Stereo { on: true }));
         assert_eq!(m.input(Key::Back), Some(Action::Volumes { music: 130, sfx: 255, store: true }));
+    }
+
+    #[test]
+    fn in_game_settings_pages_keep_the_game_paused() {
+        // Every entry of the Tower's and a realm's Settings, and Controls →
+        // Style: the game stays paused (Screen and ControlStyle resumed it
+        // before 2026-10-28, so Screen Adjust never showed in game).
+        for tower in [true, false] {
+            let names = option_names(&Page::Paused { tower, at: 0 });
+            for (i, name) in names.iter().enumerate() {
+                let mut m = Menu::new(128, 128);
+                m.pause(tower);
+                m.input(Key::Accept);
+                for _ in 0..i {
+                    m.input(Key::Down);
+                }
+                let action = m.input(Key::Accept);
+                assert!(m.is_paused(), "tower {tower} {name}: {:?}", m.page);
+                assert_eq!(action == Some(Action::Display), *name == DISPLAY);
+                if *name == "Screen" {
+                    assert!(matches!(m.page, Page::Screen { .. }));
+                }
+                if *name == "Controls" {
+                    m.input(Key::Accept);
+                    assert!(matches!(m.page, Page::ControlStyle { .. }));
+                    assert!(m.is_paused());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn press_start_takes_start_and_back_quits() {
+        let mut m = Menu::new(128, 128);
+        assert_eq!(m.input(Key::Start), None);
+        assert_eq!(m.page, Page::Title { at: 0 });
+        assert_eq!(m.input(Key::Back), None);
+        assert_eq!(m.page, Page::PressStart);
+        assert_eq!(m.input(Key::Back), Some(Action::Exit));
+        // The title's Options → Display: the overlay, the list stays.
+        m.page = Page::Title { at: 1 };
+        m.input(Key::Accept);
+        for _ in 0..5 {
+            m.input(Key::Down);
+        }
+        assert_eq!(m.input(Key::Accept), Some(Action::Display));
+        assert!(matches!(m.page, Page::Options { at: 5, .. }));
     }
 
     #[test]

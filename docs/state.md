@@ -529,6 +529,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    screen, as the original's init_over callers do (hud.md, playtest.md).
    title_start_check.py on the RX 580: 3/8 before, 8/8 after; menu flows
    16/16 (menu-flows-m20-selectfix1).
+   2026-10-28 (user: Screen "never pops up", no graphics options, no
+   exit on the title screens): in-game Screen Adjust and Control Style
+   resumed the game under them (Menu::is_paused; fixed); the options lists
+   end with a NATIVE "Display" entry opening the settings overlay, which
+   controllers now drive; Back on Press Start quits, a controller's Start
+   opens the title menu there (enhancements.md, playtest.md).
 
 ---
 

@@ -192,3 +192,7 @@ builds); rebuilt from 730d114's source the previous client reproduced
 9c0b9b0951b3066e… exactly. GUI menu flows 16/16 on it
 (menu-flows-m20-selectfix1). Only gdl_play changed; gdl_tools and the
 Windows build were not rebuilt.
+Then (the menu fixes: in-game Screen Adjust, the Display entry,
+controllers in the overlay, Back on Press Start): gdl_play
+dd2cc2f9e4294391…; menu flows 21/21 (menu-flows-m20-menus2),
+title_start_check 6/6 (title-start-m20-menus2).

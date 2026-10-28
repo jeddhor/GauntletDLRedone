@@ -276,7 +276,9 @@ Original menu tables (ELF): title "Press Start" (0x2abed0) → title_menu
 Compass, Controls, Screen}; tower_menu {Settings, Manage Character, Shop,
 Inventory, Quit Game}; game_menu {Settings, Quit Level}; tower_options
 {Audio, Compass, Controls, Screen}; hint_menu {General Hints, Guardians,
-Items of Legend, Runestones}. Text ROMs (gdl_formats::textrom; ENGLISH.ROM 194 entries, SCROLL_E.ROM
+Items of Legend, Runestones} (NATIVE since 2026-10-28: title_options,
+tower_options and game_options end with "Display", the settings overlay;
+enhancements.md). Text ROMs (gdl_formats::textrom; ENGLISH.ROM 194 entries, SCROLL_E.ROM
 57, HINTS_E.ROM 45; dumps private/reports/text-rom-*-v1.txt): MB containers
 with FONT names (20-byte records), TEXT lines, TOFF line offsets, STRS
 {line count, first line, font, scale} per entry, entry names in DEFS via

@@ -110,7 +110,7 @@ FLOWS = {
     # Every Options entry opened and closed in turn (the trace names each page).
     'options-all': dict(
         steps=[["wait", 8]] + k('Return') + k('Down') + k('Return')
-        + sum(([*k('Down', i), *k('Return'), ["wait", 1], ["shot", f"opt{i}"], *k('BackSpace'), *k('Up', i)] for i in range(6)), [])
+        + sum(([*k('Down', i), *k('Return'), ["wait", 1], ["shot", f"opt{i}"], *k('BackSpace'), *k('Up', i)] for i in range(5)), [])
         + [["wait", 1]],
         expect=[r'Options \{ at: 0', r'Audio', r'Options \{ at: 1', r'Options \{ at: 2', r'Options \{ at: 3']),
     # In the Tower: the pause menu and its entries.
@@ -129,6 +129,35 @@ FLOWS = {
         + k('i', 6, gap=1.5) + [["wait", 2]] + k('Escape') + [["wait", 1], ["shot", "paused"]] + k('Return') + [["wait", 1], ["shot", "settings"]]
         + k('BackSpace') + [["wait", 1], ["shot", "back"]],
         expect=[r'paused=true Paused \{ tower: true, at: 0', r'paused=true Options \{ at: 0', r'paused=true Paused \{ tower: true, at: 0']),
+    # Screen Adjust from the in-game Settings (playtest 2026-10-28: "never
+    # pops up"): the Tower's tower_options entry 3, a realm's game_options
+    # entry 2; the picture moves, Back restores it.
+    'pause-screen-tower': dict(
+        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Return') + [["wait", 3]] + k('space', 8, gap=1.5) + [["wait", 12]]
+        + k('i', 6, gap=1.5) + [["wait", 2]] + k('Escape') + [["wait", 1]] + k('Return') + [["wait", 1]] + k('Down', 3) + k('Return')
+        + [["wait", 1], ["shot", "screen"]] + k('Right', 4) + [["shot", "moved"]] + k('BackSpace') + [["wait", 1], ["shot", "back"]],
+        expect=[r'paused=true Options \{ at: 3', r'paused=true Screen \{', r'paused=true Options \{ at: 3']),
+    'pause-screen-realm': dict(
+        env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1'),
+        steps=[["wait", 15]] + k('Escape') + [["wait", 1]] + k('Return') + [["wait", 1]] + k('Down', 2) + k('Return')
+        + [["wait", 1], ["shot", "screen"]] + k('Right', 4) + [["shot", "moved"]] + k('BackSpace') + [["wait", 1], ["shot", "back"]],
+        expect=[r'paused=true Options \{ at: 2', r'paused=true Screen \{', r'paused=true Options \{ at: 2']),
+    # NATIVE "Display" (the options lists' last entry): the settings
+    # overlay over the list; Escape closes it, the list stays.
+    'title-display': dict(
+        steps=[["wait", 8]] + k('Return') + k('Down') + k('Return') + k('Down', 5) + k('Return') + [["wait", 1], ["shot", "overlay"]]
+        + k('Escape') + [["wait", 1], ["shot", "closed"]] + k('BackSpace') + [["wait", 1]],
+        expect=[r'front .*Options \{ at: 5, back: Title \{ at: 1 \} \} \| .*\| overlay$', r'front .*Options \{ at: 5, back: Title \{ at: 1 \} \} \| $',
+                r'front .*Title \{ at: 1 \}']),
+    'pause-display-realm': dict(
+        env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1'),
+        steps=[["wait", 15]] + k('Escape') + [["wait", 1]] + k('Return') + [["wait", 1]] + k('Down', 3) + k('Return')
+        + [["wait", 1], ["shot", "overlay"]] + k('Escape') + [["wait", 1], ["shot", "closed"]] + k('BackSpace', 2) + [["wait", 2]],
+        expect=[r'paused=true Options \{ at: 3.*\| overlay$', r'paused=true Options \{ at: 3[^|]*\|  world 7 level 0$', r'paused=false']),
+    # NATIVE exit: Back on "Press Start" (the title's Back leads there).
+    'press-start-exit': dict(
+        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('BackSpace') + [["wait", 1]] + k('Escape') + [["wait", 2]],
+        expect=[r'front .*Title \{ at: 0 \}', r'front .*PressStart', r'^\d+ exit$']),
     # In a realm (G1, TEST autostart): pause → Quit Level → "Abort Level?"
     # (quitlevel_question) → Yes → back in the Tower.
     'pause-realm': dict(

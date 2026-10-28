@@ -212,13 +212,18 @@ needs the config path: `target/release/gdl_play private/reports/play-config.json
 from the repository root (`run_play.py --config-only` rewrites the config
 without starting the game).
 
-Native settings (not part of the original game): **F10** opens the settings
-overlay — widescreen view, motion blending, VSync, frame cap, frames queued, fullscreen,
+Native settings (not part of the original game): **Options → Display** (on
+the title, or Settings → Display in the pause menu) or **F10** opens the
+settings overlay — widescreen view, motion blending, VSync, frame cap, frames queued, fullscreen,
 anti-aliasing, reduced flashes, the frame-rate counter, "Original
-presentation" and player 1's key bindings; the game waits while it is open.
+presentation" and player 1's key bindings; keyboard or controller (d-pad,
+A changes, B closes); the game waits while it is open.
 **F11** toggles fullscreen and **F3** the frame-rate counter. Settings are
 stored in `settings.json` beside the saves; a `texture_pack` directory there
 replaces textures (see [enhancements](docs/research/enhancements.md)).
+Options → Screen is the original Screen Adjust (moves the picture, as for a
+TV). Back on "Press Start" (Escape, Backspace, a controller's Y/triangle)
+quits; Back on the title menu returns to "Press Start".
 
 See [playtest notes](docs/research/playtest.md) for exactly what is native and what is interim.
 

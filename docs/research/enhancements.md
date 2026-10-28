@@ -29,16 +29,32 @@ into place). `GDL_SETTINGS=FILE` reads another file and, like
 
 ## Settings overlay and keys
 
-F10 opens the settings overlay (gdl_client::enhance, drawn by gdl_play on
+F10, or the options lists' NATIVE last entry "Display" (title Options,
+the Tower's and a realm's Settings; added to the title_options,
+tower_options and game_options records at load, drawn like their
+entries; since 2026-10-28, when the playtest found no graphics options in
+the menus), opens the settings overlay (gdl_client::enhance, drawn by gdl_play on
 its own last camera in window pixels, outside the GS display decode): every
 field above but the texture pack (frames queued as "lowest latency",
 "default", "more buffering"), "Original presentation" (the baseline's
 presentation, window and keys kept) and a key-binding page. The game waits
 while it is open (simulate's waiting branch: audio polls, no update), and
 keys still held when it closes are ignored by the game until released (so
-the Enter that closed it does not press Start). F11 toggles fullscreen and
+the Enter that closed it does not press Start). Controllers work it too:
+the d-pad chooses and changes, South (A/cross) changes, East or North
+(B/circle, Y/triangle) goes back or closes; while it is open the menus
+and the game ignore the controllers' buttons and stick (the pads stay
+connected), and the presses it took are cleared for the frame. Closing
+from "Display" leaves the options list where it was. F11 toggles fullscreen and
 F3 the frame-rate counter anywhere. Changes are stored at once. The F-keys
 F1, F2 and F9 keep their DEBUG uses.
+
+Front end (NATIVE): Back on "Press Start" (Escape, Backspace, a
+controller's North/triangle) quits the client — the PS2 game has no exit;
+Back on the title menu returns to "Press Start", so two Backs from the
+title quit. A controller's START also opens the title menu there
+(do_titlescreen tests only the Start edge: new_start(−1) → and_edges
+0x40000; the native front end also takes cross/Enter).
 
 ## Picture shape and widescreen
 

@@ -90,7 +90,7 @@ impl Overlay {
             out.push(String::new());
             for (k, (a, keys)) in ACTIONS.iter().zip(&b.keys).enumerate() {
                 let names = if self.capture == Some(k) {
-                    "press a key... (Escape: cancel)".to_string()
+                    "press a key... (Escape / pad B: cancel)".to_string()
                 } else {
                     keys.iter().map(|&k| crate::controls::key_name(k)).collect::<Vec<_>>().join(", ")
                 };
@@ -98,7 +98,7 @@ impl Overlay {
             }
             out.push(format!("{}Back", mark(ACTIONS.len())));
             out.push(String::new());
-            out.push("Enter: bind  Backspace: default  Escape: back".to_string());
+            out.push("Enter/pad A: bind  Backspace: default  Escape/pad B: back".to_string());
             return out;
         }
         out.push("SETTINGS (native enhancements)".to_string());
@@ -130,7 +130,8 @@ impl Overlay {
         }
         out.push(String::new());
         out.push(format!("Texture pack: {}", s.texture_pack.as_ref().map_or("none".to_string(), |p| p.display().to_string())));
-        out.push("Arrows: choose  Enter/Left/Right: change  Escape/F10: close".to_string());
+        out.push("Arrows / d-pad: choose   Enter / pad A / Left / Right: change".to_string());
+        out.push("Escape / pad B / F10: close".to_string());
         out
     }
 

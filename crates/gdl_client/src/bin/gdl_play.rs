@@ -155,7 +155,7 @@ fn setup_overlay(mut commands: Commands) {
         layer.clone(),
         OverlayCamera,
     ));
-    commands.spawn((Sprite { color: Color::srgba(0.0, 0.0, 0.0, 0.82), custom_size: Some(Vec2::ONE), ..default() }, Transform::default(), Visibility::Hidden, layer.clone(), OverlayBackdrop));
+    commands.spawn((Sprite { color: Color::srgba(0.0, 0.0, 0.0, 0.97), custom_size: Some(Vec2::ONE), ..default() }, Transform::default(), Visibility::Hidden, layer.clone(), OverlayBackdrop));
     commands.spawn((
         Text2d::new(String::new()),
         TextFont { font_size: 20.0, ..default() },
@@ -180,8 +180,11 @@ fn setup_overlay(mut commands: Commands) {
 }
 
 /// NATIVE ENHANCEMENT keys: F10 the settings overlay (its keys while
-/// open), F11 fullscreen, F3 the frame-rate counter. Changes are stored at
-/// once (settings.json beside the saves).
+/// open; also opened by the options lists' "Display" entry), F11
+/// fullscreen, F3 the frame-rate counter. While open the overlay also
+/// takes the controllers: d-pad, South (A/cross) changes, East or North
+/// (B/circle, Y/triangle) goes back. Changes are stored at once
+/// (settings.json beside the saves).
 #[allow(clippy::too_many_arguments)]
 fn enhancement_input(
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -191,9 +194,10 @@ fn enhancement_input(
     dir: Res<SettingsDir>,
     (sim, harness): (Option<Res<Sim>>, Res<TestHarness>),
     mut acted: Local<Option<u64>>,
+    mut pads: Query<(&mut Gamepad, Option<&Name>)>,
 ) {
     use gdl_client::enhance::{Effect, Input};
-    if overlay.held && keys.get_pressed().next().is_none() {
+    if overlay.held && keys.get_pressed().next().is_none() && pads.iter().all(|(g, n)| !pad_used(n) || g.get_pressed().next().is_none()) {
         overlay.held = false;
     }
     let mut changed = false;
@@ -226,13 +230,29 @@ fn enhancement_input(
         overlay.toggle();
     } else if overlay.open {
         let mut inputs = Vec::new();
+        let pad = |b: GamepadButton| pads.iter().any(|(g, n)| pad_used(n) && g.just_pressed(b));
+        let pad_back = pad(GamepadButton::East) || pad(GamepadButton::North);
         if overlay.capturing() {
-            if keys.just_pressed(KeyCode::Escape) {
+            if keys.just_pressed(KeyCode::Escape) || pad_back {
                 inputs.push(Input::Back);
             } else if let Some(&k) = keys.get_just_pressed().next() {
                 inputs.push(Input::Key(k));
             }
         } else {
+            for (b, i) in [
+                (GamepadButton::DPadUp, Input::Up),
+                (GamepadButton::DPadDown, Input::Down),
+                (GamepadButton::DPadLeft, Input::Left),
+                (GamepadButton::DPadRight, Input::Right),
+                (GamepadButton::South, Input::Accept),
+            ] {
+                if pad(b) {
+                    inputs.push(i);
+                }
+            }
+            if pad_back {
+                inputs.push(Input::Back);
+            }
             for (ks, i) in [
                 (&[KeyCode::ArrowUp, KeyCode::KeyW][..], Input::Up),
                 (&[KeyCode::ArrowDown, KeyCode::KeyS][..], Input::Down),
@@ -257,10 +277,17 @@ fn enhancement_input(
             settings.set_changed();
             bindings.set_changed();
         }
-        // The keys the overlay took are not seen by the menus this frame.
+        // The keys and buttons the overlay took are not seen by the menus
+        // this frame.
         let taken: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
         for k in taken {
             keys.clear_just_pressed(k);
+        }
+        for (mut g, _) in &mut pads {
+            let taken: Vec<GamepadButton> = g.get_just_pressed().copied().collect();
+            for b in taken {
+                g.digital_mut().clear_just_pressed(b);
+            }
         }
     }
     if changed && let Some(d) = &dir.0
@@ -2392,7 +2419,7 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bin
             s.press(i);
         }
     };
-    // `keyboard` false: the settings overlay has the keys.
+    // `keyboard` false: the settings overlay has the keys and controllers.
     let k = |a: KeyCode| keyboard && keys.pressed(a);
     match slot {
         0 => {
@@ -2414,7 +2441,9 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bin
         _ => {}
     }
     if let Some(g) = pads.get(slot) {
-        let b = |x: GamepadButton| g.pressed(x);
+        // `keyboard` false also mutes the controller's buttons and stick
+        // (the overlay has them); the pad stays connected.
+        let b = |x: GamepadButton| keyboard && g.pressed(x);
         press(&mut s, 0, b(GamepadButton::DPadLeft));
         press(&mut s, 1, b(GamepadButton::DPadRight));
         press(&mut s, 2, b(GamepadButton::DPadUp));
@@ -2430,7 +2459,7 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bin
         press(&mut s, 0x14, b(GamepadButton::Start));
         press(&mut s, 0x15, b(GamepadButton::Select));
         // The left stick as pressure-style entries 4–7 (left, right, up, down).
-        let st = g.left_stick();
+        let st = if keyboard { g.left_stick() } else { Vec2::ZERO };
         let v = |x: f32| (x.clamp(0.0, 1.0) * 255.0) as u8;
         s.analog = true;
         s.has_stick = true;
@@ -2534,8 +2563,18 @@ fn progress_dump(g: &Game, label: &str, update: u64) -> serde_json::Value {
 /// GDL_UI_TRACE=FILE (TEST): one line per change of the screen, the
 /// front-end page or the in-game modal state (select screen, shop, map,
 /// movie, message box, pause), with the frame number — menu flow tests
-/// assert the sequence a key script produces.
-fn ui_trace(front: Option<Res<Front>>, screen: Option<Res<Screen>>, ui: Res<Ui>, sim: Option<Res<Sim>>, mut state: Local<(u64, String, Option<std::path::PathBuf>, bool)>) {
+/// assert the sequence a key script produces. " | overlay" marks the
+/// settings overlay; the client's exit writes "exit".
+#[allow(clippy::too_many_arguments)]
+fn ui_trace(
+    front: Option<Res<Front>>,
+    screen: Option<Res<Screen>>,
+    ui: Res<Ui>,
+    sim: Option<Res<Sim>>,
+    overlay: Res<gdl_client::enhance::Overlay>,
+    mut exits: MessageReader<AppExit>,
+    mut state: Local<(u64, String, Option<std::path::PathBuf>, bool)>,
+) {
     if !state.3 {
         state.3 = true;
         state.2 = std::env::var_os("GDL_UI_TRACE").map(std::path::PathBuf::from);
@@ -2567,6 +2606,12 @@ fn ui_trace(front: Option<Res<Front>>, screen: Option<Res<Screen>>, ui: Res<Ui>,
     if let Some(f) = front.as_ref().filter(|f| f.ending.active()) {
         // end_optmenu's leftovers: fading menus and the fire scroll.
         line += &format!(" | ending finish {}{}", f.ending.finishing.len(), if f.ending.burn.is_some() { " burn" } else { "" });
+    }
+    if overlay.open {
+        line += " | overlay";
+    }
+    if exits.read().next().is_some() {
+        line = "exit".into();
     }
     if line != state.1 {
         state.1 = line.clone();
@@ -7590,7 +7635,7 @@ fn menu_held(world: &mut EcsWorld) -> (bool, bool) {
     let mut left = held(KeyCode::ArrowLeft, "left");
     let mut right = held(KeyCode::ArrowRight, "right");
     let mut pads = world.query::<(&Gamepad, Option<&Name>)>();
-    for (g, _) in pads.iter(world).filter(|(_, n)| pad_used(*n)) {
+    for (g, _) in pads.iter(world).filter(|(_, n)| !blocked && pad_used(*n)) {
         left |= g.pressed(GamepadButton::DPadLeft);
         right |= g.pressed(GamepadButton::DPadRight);
     }
@@ -7649,8 +7694,9 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
         }
         toggle = pressed(KeyCode::Escape) || pressed(KeyCode::KeyP);
     }
+    // The overlay has the controllers too while open (and until released).
     let mut pads = world.query::<(&Gamepad, Option<&Name>)>();
-    for (g, _) in pads.iter(world).filter(|(_, n)| pad_used(*n)) {
+    for (g, _) in pads.iter(world).filter(|(_, n)| !blocked && pad_used(*n)) {
         for (b, key) in [
             (GamepadButton::DPadUp, Key::Up),
             (GamepadButton::DPadDown, Key::Down),
@@ -7659,6 +7705,8 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
             (GamepadButton::South, Key::Accept),
             (GamepadButton::North, Key::Back),
             (GamepadButton::East, Key::Center),
+            // do_titlescreen's new_start (Press Start); other pages ignore it.
+            (GamepadButton::Start, Key::Start),
         ] {
             if g.just_pressed(b) {
                 out.push(key);
@@ -7952,8 +8000,16 @@ fn act(world: &mut EcsWorld, action: Action) {
                 }
                 refresh_shop(world)?;
             }
+            // NATIVE: Back on "Press Start".
             Action::Exit => {
                 world.write_message(AppExit::Success);
+            }
+            // NATIVE: an options list's "Display" entry.
+            Action::Display => {
+                let mut overlay = world.resource_mut::<gdl_client::enhance::Overlay>();
+                if !overlay.open {
+                    overlay.toggle();
+                }
             }
             Action::Choose { key, idx } => {
                 // DoOptions' choice menus: GamePrefs +0x14 difficulty, +0x18
@@ -8304,11 +8360,9 @@ fn front_system(world: &mut EcsWorld) {
             end_menu(world, before);
             return;
         }
-    } else if world.resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::Escape) && matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::PressStart) {
-        // NATIVE: Escape on "Press Start" quits the client.
-        world.write_message(AppExit::Success);
-        return;
     }
+    // (NATIVE: Back on "Press Start" — Escape, Backspace, a controller's
+    // triangle — quits through the menu's Action::Exit.)
     for k in keys {
         let before = shown_menu(world);
         let action = world.resource_mut::<Front>().menu.input(k);
@@ -8557,6 +8611,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     ] {
         if let Some(m) = elf.symbol(n).and_then(|sym| gdl_core::game::optmenu::OptMenu::from_elf(&elf, sym.address).ok()) {
             menus.insert(n, m);
+        }
+    }
+    // NATIVE: the options lists end with "Display" (the settings overlay;
+    // gdl_client::menu::DISPLAY), drawn like the entry before it. Action 0
+    // is no DoOptions case.
+    for n in gdl_client::menu::DISPLAY_RECORDS {
+        if let Some(m) = menus.get_mut(n)
+            && let Some(last) = m.entries.last().cloned()
+        {
+            m.entries.push(gdl_core::game::optmenu::MenuEntry { label: gdl_client::menu::DISPLAY.into(), action: 0, value: None, ..last });
         }
     }
     let controls_menu = gdl_core::game::optmenu::ControlsMenu::from_elf(&elf).ok();
