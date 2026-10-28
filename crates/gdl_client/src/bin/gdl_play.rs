@@ -8144,7 +8144,15 @@ fn front_system(world: &mut EcsWorld) {
             start_attract(&mut front, 0x8002);
             return;
         }
-        if world.get_resource::<Sim>().is_some_and(|s| s.over.is_none() && (0..4).all(|k| s.game.players[k].i32_(0xfc) == 0)) {
+        // init_over's callers in SLUS_200.47: game_main's level end with
+        // active_players 0 (tail jumps 0x125a28, 0x125b0c) and quit_game
+        // (0x1252e4) — never game mode 0x400b, where game_main runs
+        // do_player_select only. The title's Start opens the select with
+        // player 1 active in state 0 until its first update (new_player);
+        // this check runs per rendered frame, so a frame before that update
+        // (playtest 2026-10-28, RX 580) ended the game: init_over cleared
+        // active_players and the empty select went on into the Tower.
+        if world.get_resource::<Sim>().is_some_and(|s| s.over.is_none() && s.select.is_none() && (0..4).all(|k| s.game.players[k].i32_(0xfc) == 0)) {
             let mut sim = world.resource_mut::<Sim>();
             let over = sim.game.init_over();
             sim.over = Some(over);

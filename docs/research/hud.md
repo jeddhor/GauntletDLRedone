@@ -830,6 +830,17 @@ init_attract_mode(0x8002) — the FAIL movie, then the attract sequence
 the client's sim.over); the Tower's join check does not run in 0x4014.
 GUI: Quit Game → GAME OVER over the Tower → FAIL.
 
+init_over's only call sites in SLUS_200.47 (a scan for jal/j 0x127e70):
+jal 0x1252e4 behind quit_game 0x21edb0 (set only by DoOptions entry 0x25)
+and 0x10e6f0, and the tail jumps 0x125a28 and 0x125b0c in game_main's
+level end when active_players 0x220114 is 0. Game mode 0x400b (the select
+screen) reaches none of them. NATIVE: gdl_play checks "every player in
+state 0" once per rendered frame instead of the level end's test; since
+2026-10-28 not while the select screen runs — the title's Start opens it
+with player 1 active but still in state 0 until do_player_select's first
+update (new_player), and a rendered frame before that update had ended
+the game (playtest.md, 2026-10-28).
+
 ## Sumner's hint pad (2026-10-22)
 
 HintMenu 0x10e800 (SumnerHintsActivate after 2 s at the pad): hints_inited

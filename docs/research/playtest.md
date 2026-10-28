@@ -70,6 +70,28 @@ stutter — material re-preparation and texture re-upload hitches plus
 30 Hz motion. All three fixed (commit 635002c, performance.md), then M19
 and M20 finished on the user's instruction.
 
+User playtest 2026-10-28 (the M19/M20 build, RX 580): Start on the title
+did not offer a character — the Tower came up with GAME OVER over its
+intro scroll. The title's Start builds the Tower and opens the select
+screen with player 1 active but in state 0 until do_player_select's first
+update gives it state 2 (new_player). front_system's game-over check
+("every player in state 0", once per rendered frame) ran in a rendered
+frame before that update — after the load the first frame often carries
+no 30 Hz step — and init_over cleared active_players; the select screen,
+now with nobody choosing, counted as all ready and init_next_level went
+into the Tower. The original calls init_over only from quit_game and the
+level end (hud.md "Game over"), never in game mode 0x400b; the check now
+skips the select screen. Reproducer: tools/python/title_start_check.py
+(kwin virtual session on the RX 580, a virtual pad, audio into ALSA null):
+3 of 8 trials kept the select screen with the earlier client (9c0b9b09…,
+title-start-m20-before-audio: the select closed after four frames, the
+Tower and GAME OVER followed; 4 of 6 with GDL_NO_AUDIO), 8 of 8 with the
+fix (89bf7be5…, title-start-m20-after-audio); Load → the player's file →
+the class choice followed on the fixed build. Not seen on the Xvfb, where
+every software-rendered frame holds an update; present since the select
+screen's port (the Oct 27 build had the same check), the faster M20
+frames made it frequent.
+
 M12 walkthrough (2026-10-22, gdl_play on the private Xvfb through
 tools/python/client_driver.py; frames in private/runs/client-m12a,
 client-m12b, client-ex1..4, client-die4):

@@ -155,6 +155,14 @@ path), so presentation times themselves are not measured.
 | Full disk | saves and settings keep the previous file (unit test, platform check) | not tested |
 | Audio | ALSA | cpal/WASAPI built, not tested |
 | Long co-op session | see Results | not tested |
+| Title Start → select screen at the real GPU's rate | 8/8 (title-start-m20-after-audio; 3/8 before the fix) | not tested |
+
+The last row was added after the user's 2026-10-28 playtest: on the RX
+580, Start on the title often went straight to the Tower with GAME OVER
+(playtest.md). The software-rendered Xvfb steps at least one update in
+every frame, so the menu flows there could not show it;
+tools/python/title_start_check.py runs it in the kwin virtual session on
+the real GPU with a virtual pad and audio into ALSA's null device.
 
 Not tested anywhere: a physical controller unplugged mid-game (the
 virtual pad covers the client path; M16's ControllerMessageBox was
@@ -177,3 +185,10 @@ private/runs/m19-m20-evidence-v1/binaries.sha256). Running needs only the
 user's disc extraction and the configuration run_play.py writes; no DEBUG
 switch or developer path is required (the TEST and DEBUG environment
 switches are off unless set).
+
+2026-10-28, after the playtest fix (the select screen's game-over race):
+target/release/gdl_play SHA-256 89bf7be5a0e3244b… (the same from two
+builds); rebuilt from 730d114's source the previous client reproduced
+9c0b9b0951b3066e… exactly. GUI menu flows 16/16 on it
+(menu-flows-m20-selectfix1). Only gdl_play changed; gdl_tools and the
+Windows build were not rebuilt.

@@ -523,6 +523,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    test runs had left in the player's save directory were moved to
    private/runs/test-saves-moved-from-user-dir. Not tested: a Windows
    installation, WASAPI output, a physical controller unplugged.
+   2026-10-28 (user playtest of that build: Start on the title went to the
+   Tower with GAME OVER): the per-frame game-over check ran before the
+   select screen's first update joined player 1; it now skips the select
+   screen, as the original's init_over callers do (hud.md, playtest.md).
+   title_start_check.py on the RX 580: 3/8 before, 8/8 after; menu flows
+   16/16 (menu-flows-m20-selectfix1).
 
 ---
 
