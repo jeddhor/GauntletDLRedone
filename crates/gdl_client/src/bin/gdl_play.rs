@@ -376,7 +376,7 @@ fn present_overlay(
 /// final pass told where it is. NATIVE ENHANCEMENT (Settings::widescreen,
 /// a window wider than 640:448, no movie showing): the 3D view takes the
 /// window's full width at the frame's height (Hor+), the HUD stays centred.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn ps2_viewport(
     windows: Query<&Window>,
     sim: Option<Res<Sim>>,
