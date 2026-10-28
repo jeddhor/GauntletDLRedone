@@ -18,9 +18,9 @@ pub struct Settings {
     /// Frames per second at most (0: no cap beyond vsync).
     pub fps_cap: u32,
     /// Frames queued for presentation (1..3; wgpu's desired maximum frame
-    /// latency). 3 absorbs a late frame (smoother, about one frame more
-    /// latency); M20 soak: no present interval over 26 ms with 3, up to
-    /// 44 ms with 2.
+    /// latency, default 2). 3 may absorb a late frame at about one frame
+    /// more latency; the M20 30-minute soaks showed no benefit (2 present
+    /// intervals over 33.4 ms with 2, 8 with 3; performance.md).
     pub frame_queue: u32,
     /// A window wider than the PS2 frame (640:448) shows a wider 3D view
     /// (Hor+; the HUD stays centred). Off: the original picture, bordered.
@@ -49,7 +49,7 @@ impl Default for Settings {
             interpolate: true,
             vsync: true,
             fps_cap: 0,
-            frame_queue: 3,
+            frame_queue: 2,
             widescreen: false,
             msaa: 4,
             fullscreen: false,

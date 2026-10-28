@@ -55,7 +55,20 @@ only, as in the original. Menus: arrows/WASD or D-pad, cross
 gamepad North) to go back, circle (C/L/E, gamepad East) centres Screen
 Adjust; Escape on the "Press Start" screen exits. The HUD shows colour/class, level, experience,
 save slot, health, gold, keys, potions, kills, active enemies and standing
-generators; F1 adds the interim labels and any unported path hit.
+generators; F1 adds the interim labels and any unported path hit. Native
+keys since 2026-10-28 (enhancements.md): F10 the settings overlay (player
+1's keys can be rebound there; the menus follow them), F11 fullscreen, F3
+the frame-rate counter.
+
+User playtest 2026-10-27 (run_play.py on the RX 580, a Green Wizard):
+a pink triangle under the player's feet pointing along the movement — the
+Wizard's DUMMY node object WIZ_GREDUMMY (an unfilled hand-glow
+placeholder), drawn because player rigs ignored AtreeNodeInit's MB flags;
+the name-entry letter spinner drawn under the panel's name — the select
+screen's panels were not recomputed after init_player_select(0); and
+stutter — material re-preparation and texture re-upload hitches plus
+30 Hz motion. All three fixed (commit 635002c, performance.md), then M19
+and M20 finished on the user's instruction.
 
 M12 walkthrough (2026-10-22, gdl_play on the private Xvfb through
 tools/python/client_driver.py; frames in private/runs/client-m12a,

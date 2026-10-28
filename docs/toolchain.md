@@ -1,7 +1,9 @@
 # Pinned toolchain and reference environment
 
-Verified on 2026-10-12. Local development is Linux x86-64; Windows testing has
-not been performed. No native Windows package is currently claimed.
+Verified on 2026-10-12. Local development is Linux x86-64. Since 2026-10-28
+the client also builds for x86_64-pc-windows-gnu ("Windows build" below);
+it has run under Wine on this machine, not on a Windows installation. No
+native Windows package is currently claimed.
 
 | Component | Exact observed version / identity |
 | --- | --- |
@@ -72,3 +74,34 @@ offline `cargo update` re-resolved unrelated crates to older cached versions
 and every pre-existing version is unchanged. Windows output is deferred to
 M20. Automated `--virtual` runs set `GDL_NO_AUDIO=1` so tests never play on
 the host's speakers. No recorded comparison depends on this change.
+
+## Windows build and audio (2026-10-28, M20)
+
+`alsa` became a Linux-only dependency of gdl_client and `cpal = "=0.15.3"`
+(already in the local registry cache) the Windows one: the mixer feeds the
+default WASAPI device through cpal as stereo f32 at the device's rate
+(audio.rs `start_cpal`). Resolving cpal added 33 packages to Cargo.lock
+(its per-platform dependencies, e.g. jni/ndk for Android, coreaudio for
+macOS, windows 0.54) and changed no existing version; `cargo metadata`
+needs the network for the Android-only ones, Linux and Windows builds do
+not.
+
+The Windows executable is cross-built with the pinned 1.93.1 toolchain from
+rustup (its x86_64-pc-windows-gnu standard library is installed; the
+system `cargo`/`rustc` 1.93.1 has no Windows target) and MinGW-w64's GCC as
+linker:
+
+```sh
+TC=~/.rustup/toolchains/1.93.1-x86_64-unknown-linux-gnu/bin
+RUSTC=$TC/rustc CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+  CARGO_TARGET_DIR=target-win $TC/cargo build --release --offline \
+  --target x86_64-pc-windows-gnu -p gdl_client --bin gdl_play
+```
+
+The result imports only system DLLs (kernel32, user32, gdi32, ws2_32, …;
+the MinGW runtime is static). Under Wine (10.0, Ubuntu 10.0~repack-12ubuntu1;
+a scratch WINEPREFIX) it renders on the RX 580 through winevulkan/RADV and
+its per-update simulation hashes equal the Linux build's over a 600-update
+G1 walk. Not tested: a Windows installation, WASAPI output (a test would
+play on the host's speakers), DirectX 12.
+

@@ -26,5 +26,6 @@ project is not clean-room: the following pinned research was consulted.
 
 Direct Cargo dependencies: flate2 (MIT OR Apache-2.0), serde/serde_json (MIT OR
 Apache-2.0), sha2 (MIT OR Apache-2.0), png (MIT OR Apache-2.0), Bevy (MIT OR
-Apache-2.0). Cargo.lock records exact transitive versions. A full transitive
+Apache-2.0), alsa 0.9.1 on Linux (Apache-2.0 OR MIT), cpal 0.15.3 on Windows
+(Apache-2.0). Cargo.lock records exact transitive versions. A full transitive
 license-notice/package audit is required at M21 and has not yet been performed.

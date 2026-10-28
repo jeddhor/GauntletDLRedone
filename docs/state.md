@@ -499,6 +499,30 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Gaussian resampling taken from PCSX2 v2.6.3 into gdl_core::spu; the
    mixer uses it and G1's capture now matches the native render's
    spectrum to 14 kHz (audio.md "SPU resampling"). M17 complete.
+   2026-10-27/28 (user: after a playtest on the RX 580 as a Green Wizard —
+   a pink triangle at the feet, a garbled name-entry spinner, stutter —
+   finish M19 and M20): the DUMMY node's object no longer draws and the
+   select screen recomputes its panels (both fixed, commit 635002c); the
+   stutter was frame hitches (materials re-prepared, textures re-uploaded)
+   and 30 Hz motion — fixed, then the scene blended at the display rate,
+   bindless materials, critters posed once per update (performance.md).
+   M19 (enhancements.md): the frame keeps its shape in any window, Hor+
+   widescreen, the F10 settings overlay (F11, F3), key bindings, MSAA as a
+   setting (Bevy's default 4× had always been on; the baseline is now
+   without), texture packs, reduced flashes; simulation hashes unchanged by
+   any of them, 146 replays equal to r85 (r86). M20 (performance.md): the
+   frozen-capture clocks and a HashMap texture search made captures depend
+   on frame timing (fixed); Windows build with cpal audio, run under Wine
+   with Linux-identical simulation hashes; platform checks (virtual
+   gamepad hotplug, focus loss, resize, fullscreen, full disk) and
+   30-minute four-player sessions (soak_test.py); sound banks are decoded
+   ahead and music parts off the frame (a 26 ms and a 188 ms stall); GUI
+   menu flows 16/16 (menu-flows-m20-final3). Residual (performance.md): a
+   rare long present interval (2 in a 30-minute four-player session) and
+   8–13 ms simulation updates every few minutes; ten TEST characters that
+   test runs had left in the player's save directory were moved to
+   private/runs/test-saves-moved-from-user-dir. Not tested: a Windows
+   installation, WASAPI output, a physical controller unplugged.
 
 ---
 

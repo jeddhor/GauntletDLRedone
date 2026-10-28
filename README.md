@@ -4,9 +4,13 @@ Implementation follows [the master plan](Gauntlet_Dark_Legacy_PS2_Rust_Bevy_Mast
 The port is in development. The native game runs the original rules from the
 user's own disc: the Tower, all realms and bosses, one to four players, the
 original HUD, menus, audio and movies, and saves; a character has been played
-from a new game to the ending (docs/coverage.md M15). Import tooling,
-inspectors and comparison harnesses sit beside it in crates/gdl_tools and
-tools/python.
+from a new game to the ending (docs/coverage.md M15). Native enhancements
+(widescreen, motion blending at the display's rate, key bindings, texture
+packs; docs/research/enhancements.md) are optional, and the performance and
+platform checks are in docs/research/performance.md. Linux is the
+development platform; the Windows build (docs/toolchain.md "Windows build")
+has run under Wine only. Import tooling, inspectors and comparison
+harnesses sit beside it in crates/gdl_tools and tools/python.
 
 See [milestone coverage](docs/coverage.md), [current state](docs/state.md),
 [toolchain](docs/toolchain.md) and [disc profile](profiles/ps2/slus-20047.json).
@@ -205,7 +209,16 @@ Keyboard (player 1): WASD/arrows move, Space/K attack, E/L magic, Shift/I turbo
 Character → Save Character, Shop, Inventory, Quit Game). Player 2: TFGH, R
 attack, U start; gamepads by their buttons. `target/release/gdl_play` alone
 needs the config path: `target/release/gdl_play private/reports/play-config.json`
-from the repository root.
+from the repository root (`run_play.py --config-only` rewrites the config
+without starting the game).
+
+Native settings (not part of the original game): **F10** opens the settings
+overlay — widescreen view, motion blending, VSync, frame cap, frames queued, fullscreen,
+anti-aliasing, reduced flashes, the frame-rate counter, "Original
+presentation" and player 1's key bindings; the game waits while it is open.
+**F11** toggles fullscreen and **F3** the frame-rate counter. Settings are
+stored in `settings.json` beside the saves; a `texture_pack` directory there
+replaces textures (see [enhancements](docs/research/enhancements.md)).
 
 See [playtest notes](docs/research/playtest.md) for exactly what is native and what is interim.
 

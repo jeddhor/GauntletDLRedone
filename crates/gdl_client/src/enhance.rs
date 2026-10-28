@@ -114,8 +114,8 @@ impl Overlay {
                     s.frame_queue,
                     match s.frame_queue {
                         1 => "lowest latency",
-                        2 => "balanced",
-                        _ => "smoothest",
+                        2 => "default",
+                        _ => "more buffering",
                     }
                 ),
                 Row::Fullscreen => format!("Fullscreen (F11)     {}", on(s.fullscreen)),
