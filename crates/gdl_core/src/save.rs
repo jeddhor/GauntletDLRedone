@@ -462,6 +462,26 @@ mod tests {
         fs::remove_dir_all(&s.dir).unwrap();
     }
 
+    /// M20 low disk space: a write that fails (ENOSPC — the `.tmp` path is
+    /// a link to /dev/full) reports the error and leaves the stored save
+    /// and its backup as they were.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_full_disk_keeps_the_previous_save() {
+        let s = SaveStore::open(dir("full")).unwrap();
+        s.store(3, "new", &region(b"KEEP", 7)).unwrap();
+        s.store(3, "", &region(b"KEEP", 8)).unwrap();
+        let tmp = s.path(3).with_extension("tmp");
+        std::os::unix::fs::symlink("/dev/full", &tmp).unwrap();
+        let err = s.store(3, "", &region(b"LOST", 9)).unwrap_err();
+        assert!(err.contains("No space left"), "{err}");
+        let l = s.load(3).unwrap();
+        assert!(l.recovered.is_none());
+        assert_eq!(l.save.summary().unwrap().gold, 8);
+        assert_eq!(read_envelope(&s.path(3).with_extension("bak")).unwrap().summary().unwrap().gold, 7);
+        fs::remove_dir_all(&s.dir).unwrap();
+    }
+
     #[test]
     fn corruption_and_interruption_recover() {
         let s = SaveStore::open(dir("corrupt")).unwrap();

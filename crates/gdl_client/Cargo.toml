@@ -13,7 +13,12 @@ sha2.workspace = true
 png.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
 alsa = "=0.9.1"
+
+[target.'cfg(windows)'.dependencies]
+cpal = "=0.15.3"
 
 [features]
 # DIAGNOSTIC (M20): Bevy's per-system tracing written as a Chrome trace

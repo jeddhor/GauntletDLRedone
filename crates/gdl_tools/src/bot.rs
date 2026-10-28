@@ -50,10 +50,12 @@ static PLAYER_DIMS: std::sync::OnceLock<(f32, f32, f32)> = std::sync::OnceLock::
 /// Without the health assist, steering keeps off dormant statues and
 /// live hazards (steer); set at each Bot::step.
 static AVOID_CONTACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Foes skipped until an update, by (kind, index); and the current update.
+type FoeSkip = (HashMap<(u8, usize), usize>, usize);
 thread_local! {
     /// Foes no fight target until an update (note_fire): fired at for 600
     /// updates without their health dropping; and the current update.
-    static FOE_SKIP: std::cell::RefCell<(HashMap<(u8, usize), usize>, usize)> = std::cell::RefCell::new((HashMap::new(), 0));
+    static FOE_SKIP: std::cell::RefCell<FoeSkip> = std::cell::RefCell::new((HashMap::new(), 0));
     /// Items keep_off no longer steers around: a dormant statue the bot got
     /// stuck by three times (its passage needs contact).
     static CONTACT_OK: std::cell::RefCell<HashSet<usize>> = std::cell::RefCell::new(HashSet::new());
@@ -361,6 +363,8 @@ impl Nav {
     /// wall test also passes. The permissive test sweeps 1.5 above the
     /// higher floor (lifts' lips, ramps the strict test rejects but the
     /// player walks); edges the bot cannot walk are blocked when stuck.
+    // The explicit comparisons keep NaN heights out of the climb tests.
+    #[allow(clippy::manual_range_contains)]
     fn edge_class(c: &mut CollisionWorld, a: V3, b: V3, radius: f32) -> Option<bool> {
         let dy = b[1] - a[1];
         // Climbs steeper than STEP_UP and descents deeper than DROP only on
@@ -1095,8 +1099,8 @@ fn melee_foe(g: &Game, p: V3) -> Option<V3> {
 
 /// A facing from which an attack swings in melee and its probe touches item
 /// `s`, the one nearest `cur` (2° steps), or None. PlayerMotion's attack
-/// (code 0xf) swings in melee only with a target within the player's radius
-/// + 1 (closest_enemy: the distance from +0x70 to the enemy's +0x60 less its
+/// (code 0xf) swings in melee only with a target within the player's
+/// radius + 1 (closest_enemy: the distance from +0x70 to the enemy's +0x60 less its
 /// width +0x24c, the enemy in state 1 or 6, inside the cone 0.707 + the
 /// distance × 0.293/30 of the facing; target_cone_mode 0: 0.5), else it
 /// throws; the swing does not turn the player (+0x8dc picks a side or back
@@ -1780,6 +1784,8 @@ impl Bot {
     }
 
     /// The next goal on the current graph; false when none is reachable.
+    // support_cache's entries are computed with `self` borrowed (no entry API).
+    #[allow(clippy::map_entry)]
     fn plan(&mut self, f: usize, g: &mut Game) -> bool {
         // A given-up goal the player has come near again gets another try
         // (at most every 2000 updates): G2's regular exit, given up behind
@@ -3041,7 +3047,7 @@ impl Bot {
                     let r = &g.players[0];
                     let facing = r.f32_(0x40).atan2(r.f32_(0x48));
                     let want = (q[0] - p[0]).atan2(q[2] - p[2]);
-                    if 0.3 < angle_diff(facing, want) && lure_t % 10 == 0 {
+                    if 0.3 < angle_diff(facing, want) && lure_t.is_multiple_of(10) {
                         return Self::steer(pad, g, p, q);
                     }
                     return pad;
@@ -3418,7 +3424,7 @@ impl Bot {
         });
         if let Some((d, at)) = near
             && d < close
-            && !(weak && !self.assist_enabled)
+            && (!weak || self.assist_enabled)
             && (f / window).is_multiple_of(every)
         {
             return Self::steer(pad, g, p, [2.0 * p[0] - at[0], p[1], 2.0 * p[2] - at[2]]);

@@ -169,18 +169,38 @@ fn setup_overlay(mut commands: Commands) {
 /// NATIVE ENHANCEMENT keys: F10 the settings overlay (its keys while
 /// open), F11 fullscreen, F3 the frame-rate counter. Changes are stored at
 /// once (settings.json beside the saves).
+#[allow(clippy::too_many_arguments)]
 fn enhancement_input(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut overlay: ResMut<gdl_client::enhance::Overlay>,
     mut settings: ResMut<gdl_client::settings::Settings>,
     mut bindings: ResMut<gdl_client::controls::Bindings>,
     dir: Res<SettingsDir>,
+    (sim, harness): (Option<Res<Sim>>, Res<TestHarness>),
+    mut acted: Local<Option<u64>>,
 ) {
     use gdl_client::enhance::{Effect, Input};
     if overlay.held && keys.get_pressed().next().is_none() {
         overlay.held = false;
     }
     let mut changed = false;
+    // TEST harness: GDL_TEST_ACTIONS {"at": u, "settings": {...}}.
+    if let Some(sim) = sim
+        && *acted != Some(sim.updates)
+    {
+        *acted = Some(sim.updates);
+        for a in harness.actions.iter().filter(|a| a["at"].as_u64() == Some(sim.updates)) {
+            if let (Some(add), Ok(serde_json::Value::Object(mut now))) = (a["settings"].as_object(), serde_json::to_value(&*settings)) {
+                now.extend(add.clone());
+                if let Ok(mut s) = serde_json::from_value::<gdl_client::settings::Settings>(serde_json::Value::Object(now)) {
+                    s.sanitise();
+                    *bindings = gdl_client::controls::Bindings::from_settings(&s.keys);
+                    *settings = s;
+                    changed = true;
+                }
+            }
+        }
+    }
     if keys.just_pressed(KeyCode::F11) {
         settings.fullscreen = !settings.fullscreen;
         changed = true;
@@ -2425,7 +2445,9 @@ struct TestHarness {
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
     /// {"at": u, "health": h} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
     /// {"at": u, "boss_kill": true} (DEBUG) |
-    /// {"at": u, "save": card file}] for player 1.
+    /// {"at": u, "save": card file} for player 1 |
+    /// {"at": u, "settings": {...}}: fields merged into the M19 settings
+    /// and stored, as the settings overlay does (M20 platform checks)].
     actions: Vec<serde_json::Value>,
     /// GDL_MENU_SCRIPT: like GDL_INPUT_SCRIPT, indexed by the ticks spent
     /// outside play (tally, shop, select screen, map, message boxes).
@@ -4678,6 +4700,17 @@ impl gdl_core::game::pselect::SaveCard for NativeCard<'_> {
     }
 }
 
+/// TEST switch GDL_GAMEPAD_ONLY=TEXT: only gamepads whose name contains
+/// TEXT are used (M20 device tests with a virtual pad while a physical
+/// controller is plugged in). Unset: every gamepad.
+fn pad_used(name: Option<&Name>) -> bool {
+    static ONLY: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    match ONLY.get_or_init(|| std::env::var("GDL_GAMEPAD_ONLY").ok()) {
+        Some(only) => name.is_some_and(|n| n.as_str().contains(only.as_str())),
+        None => true,
+    }
+}
+
 /// NATIVE: a letter typed on the keyboard this frame (name entry).
 fn typed_letter(keys: &ButtonInput<KeyCode>) -> Option<char> {
     let letters = [
@@ -4765,7 +4798,7 @@ fn play_audio(audio: &mut Option<NonSendMut<gdl_client::audio::AudioOut>>, event
 #[allow(clippy::too_many_arguments)]
 fn simulate(
     keys: Res<ButtonInput<KeyCode>>,
-    gamepads: Query<(Entity, &Gamepad)>,
+    gamepads: Query<(Entity, &Gamepad, Option<&Name>)>,
     mut sim: ResMut<Sim>,
     session: Res<Session>,
     ui: Res<Ui>,
@@ -4779,7 +4812,7 @@ fn simulate(
     if sim.error.is_some() || session.banner.is_some() || session.finished.is_some() || !ui.started {
         return;
     }
-    let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().collect();
+    let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().filter(|(_, _, n)| pad_used(*n)).map(|(e, g, _)| (e, g)).collect();
     pads.sort_by_key(|(e, _)| *e);
     let pads: Vec<&Gamepad> = pads.into_iter().map(|(_, g)| g).collect();
     let mut ports = [PadStatus::default(); 8];
@@ -7441,11 +7474,14 @@ fn end_game(world: &mut EcsWorld) {
 
 /// Left / right held (keyboard or d-pad): do_optmenu's level bits.
 fn menu_held(world: &mut EcsWorld) -> (bool, bool) {
+    let blocked = world.get_resource::<gdl_client::enhance::Overlay>().is_some_and(|o| o.open || o.held);
+    let bindings = world.get_resource::<gdl_client::controls::Bindings>().cloned().unwrap_or_default();
     let keys = world.resource::<ButtonInput<KeyCode>>();
-    let mut left = keys.pressed(KeyCode::ArrowLeft) || keys.pressed(KeyCode::KeyA);
-    let mut right = keys.pressed(KeyCode::ArrowRight) || keys.pressed(KeyCode::KeyD);
-    let mut pads = world.query::<&Gamepad>();
-    for g in pads.iter(world) {
+    let held = |fixed: KeyCode, action: &str| !blocked && std::iter::once(&fixed).chain(bindings.of(action)).any(|&k| keys.pressed(k));
+    let mut left = held(KeyCode::ArrowLeft, "left");
+    let mut right = held(KeyCode::ArrowRight, "right");
+    let mut pads = world.query::<(&Gamepad, Option<&Name>)>();
+    for (g, _) in pads.iter(world).filter(|(_, n)| pad_used(*n)) {
         left |= g.pressed(GamepadButton::DPadLeft);
         right |= g.pressed(GamepadButton::DPadRight);
     }
@@ -7504,8 +7540,8 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
         }
         toggle = pressed(KeyCode::Escape) || pressed(KeyCode::KeyP);
     }
-    let mut pads = world.query::<&Gamepad>();
-    for g in pads.iter(world) {
+    let mut pads = world.query::<(&Gamepad, Option<&Name>)>();
+    for (g, _) in pads.iter(world).filter(|(_, n)| pad_used(*n)) {
         for (b, key) in [
             (GamepadButton::DPadUp, Key::Up),
             (GamepadButton::DPadDown, Key::Down),

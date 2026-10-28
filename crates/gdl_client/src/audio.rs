@@ -1,5 +1,5 @@
-//! Native audio output for the playtest: a small mixer on an ALSA PCM
-//! (Linux; the Windows backend belongs to M20 platform work).
+//! Native audio output: a small mixer on an ALSA PCM (Linux) or the
+//! default WASAPI device through cpal (Windows; M20).
 //!
 //! Sound IDs (bank << 16 | call) resolve through AUDATPS2.ROM to a VBK bank;
 //! a call plays its sample chain in order (0x4000/0x2000 loop markers loop
@@ -241,7 +241,8 @@ pub struct AudioOut {
     bank_paths: HashMap<String, PathBuf>,
     stream_paths: HashMap<String, PathBuf>,
     banks: HashMap<usize, Option<LoadedBank>>,
-    _stream: Option<std::thread::JoinHandle<()>>,
+    /// The output's keep-alive (the ALSA thread or the cpal stream).
+    _stream: Option<Box<dyn std::any::Any>>,
     pub status: String,
 }
 
@@ -265,10 +266,11 @@ impl AudioOut {
         if silent {
             status = "audio: disabled (GDL_NO_AUDIO)".into();
         }
-        let stream = if silent { None } else { start_alsa(mixer.clone()) };
-        if stream.is_some() {
-            status = "audio: on (ALSA)".into();
+        let stream = if silent { None } else { start_output(mixer.clone()) };
+        if let Some((_, name)) = &stream {
+            status = format!("audio: on ({name})");
         }
+        let stream = stream.map(|(s, _)| s);
         status.push_str(note);
         Self { mixer, rom, bank_paths, stream_paths, banks: HashMap::new(), _stream: stream, status }
     }
@@ -454,8 +456,61 @@ impl AudioOut {
     }
 }
 
+/// The platform's output, fed from the mixer, and its name.
+#[cfg(target_os = "linux")]
+fn start_output(mixer: Arc<Mutex<Mixer>>) -> Option<(Box<dyn std::any::Any>, &'static str)> {
+    start_alsa(mixer).map(|t| (Box::new(t) as Box<dyn std::any::Any>, "ALSA"))
+}
+
+/// The platform's output, fed from the mixer, and its name.
+#[cfg(windows)]
+fn start_output(mixer: Arc<Mutex<Mixer>>) -> Option<(Box<dyn std::any::Any>, &'static str)> {
+    start_cpal(mixer).map(|s| (Box::new(s) as Box<dyn std::any::Any>, "WASAPI"))
+}
+
+/// No output backend on other platforms.
+#[cfg(not(any(target_os = "linux", windows)))]
+fn start_output(_mixer: Arc<Mutex<Mixer>>) -> Option<(Box<dyn std::any::Any>, &'static str)> {
+    None
+}
+
+/// Open the default output device through cpal (WASAPI on Windows) as
+/// stereo f32 at its own rate — the mixer resamples to any rate, as on
+/// ALSA — and render into its callback. Returns None without a device.
+#[cfg(windows)]
+fn start_cpal(mixer: Arc<Mutex<Mixer>>) -> Option<cpal::Stream> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    let device = cpal::default_host().default_output_device()?;
+    let supported = device.supported_output_configs().ok()?.find(|c| c.channels() == 2 && c.sample_format() == cpal::SampleFormat::F32)?;
+    let rate = if (supported.min_sample_rate().0..=supported.max_sample_rate().0).contains(&OUT_RATE) { cpal::SampleRate(OUT_RATE) } else { supported.max_sample_rate() };
+    let config: cpal::StreamConfig = supported.with_sample_rate(rate).into();
+    if let Ok(mut m) = mixer.lock() {
+        m.out_rate = rate.0;
+    }
+    let stream = device
+        .build_output_stream(
+            &config,
+            move |out: &mut [f32], _| {
+                match mixer.lock() {
+                    Ok(mut m) => m.render(out, 2),
+                    Err(_) => out.fill(0.0),
+                }
+                // As ALSA's i16 conversion saturates.
+                for v in out.iter_mut() {
+                    *v = v.clamp(-1.0, 1.0);
+                }
+            },
+            |_| {},
+            None,
+        )
+        .ok()?;
+    stream.play().ok()?;
+    Some(stream)
+}
+
 /// Open the default ALSA device (S16 stereo, 48 kHz) and feed it from the
 /// mixer on a background thread. Returns None when no device is available.
+#[cfg(target_os = "linux")]
 fn start_alsa(mixer: Arc<Mutex<Mixer>>) -> Option<std::thread::JoinHandle<()>> {
     use alsa::pcm::{Access, Format, HwParams, PCM};
     let pcm = PCM::new("default", alsa::Direction::Playback, false).ok()?;
