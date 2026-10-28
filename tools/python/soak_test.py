@@ -13,7 +13,8 @@ ports (GDL_TEST_PLAYERS; TEST), every player's health written to 5000
 every 300 updates so the session does not end in deaths (DEBUG), and each
 pad driven by a seeded random walk with cross/circle presses. Every 10 s
 the client's resident memory (VmRSS) and the frame log's last line are
-sampled.
+sampled; one screenshot at 50 s. The frame log is written to a tmpfs
+scratch file (TMPDIR) and copied to the run directory at the end.
 
 Report private/reports/soak-TAG.json: the binary's SHA-256, per 5-minute
 window the frame-time statistics, updates stepped and entities, the memory
@@ -27,8 +28,10 @@ import os
 import pathlib
 import random
 import statistics
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -69,7 +72,7 @@ def inside(run, binary, a):
     (run / 'actions.json').write_text(json.dumps(actions))
     env = dict(os.environ, VK_DRIVER_FILES=RADV, VK_ICD_FILENAMES=RADV, GDL_NO_AUDIO='1', GDL_GAMEPAD_ONLY='gdl-test-pad',
                GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL=a['level'], GDL_TEST_PLAYERS=str(a['players']),
-               GDL_FRAME_LOG=str(run / 'frames.log'), GDL_TEST_ACTIONS=str(run / 'actions.json'))
+               GDL_FRAME_LOG=a['log'], GDL_TEST_ACTIONS=str(run / 'actions.json'))
     if a.get('settings'):
         env['GDL_SETTINGS'] = a['settings']
     env.pop('WAYLAND_DISPLAY', None)
@@ -104,7 +107,7 @@ def inside(run, binary, a):
                     rss = None
                 line = ''
                 try:
-                    with open(run / 'frames.log', 'rb') as f:
+                    with open(a['log'], 'rb') as f:
                         f.seek(max(0, f.seek(0, 2) - 400))
                         line = f.read().decode(errors='replace').strip().splitlines()[-1]
                 except (FileNotFoundError, IndexError):
@@ -167,8 +170,10 @@ def main():
     run = ROOT / 'private/runs' / f'soak-{a.tag}'
     run.mkdir(parents=True, exist_ok=False)
     binary = pathlib.Path(a.binary).resolve()
+    # The frame log on tmpfs (TMPDIR): disk writeback must not stall frames.
+    scratch = pathlib.Path(tempfile.mkdtemp(prefix=f'soak-{a.tag}-'))
     args = {'minutes': a.minutes, 'players': a.players, 'level': a.level, 'seed': a.seed,
-            'settings': str(pathlib.Path(a.settings).resolve()) if a.settings else None}
+            'settings': str(pathlib.Path(a.settings).resolve()) if a.settings else None, 'log': str(scratch / 'frames.log')}
     session = run / 'session.sh'
     session.write_text(f"""#!/bin/bash
 cd '{ROOT}'
@@ -179,6 +184,8 @@ python3 '{pathlib.Path(__file__).resolve()}' --inside '{run}' '{binary}' '{json.
     subprocess.run(['kwin_wayland', '--virtual', '--xwayland', '--socket', f'gdl-soak-{os.getpid()}', '--width', str(a.width), '--height', str(a.height),
                     '--no-lockscreen', '--exit-with-session', str(session)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    timeout=a.minutes * 60 + 600)
+    if (scratch / 'frames.log').exists():
+        shutil.copyfile(scratch / 'frames.log', run / 'frames.log')
     inner = json.loads((run / 'inside.json').read_text()) if (run / 'inside.json').exists() else {}
     rss = [s['rss_kb'] for s in inner.get('samples', []) if s.get('rss_kb')]
     log = (run / 'client.log').read_text(errors='replace') if (run / 'client.log').exists() else ''
