@@ -121,6 +121,14 @@ Verified against the Tower dump: the flame sprites' colour ramp 0, 42, 85,
 the sprites bind WEAPONS' 64×64 P_TORCH (load order STATIC, WEAPONS,
 POWERUPS before the level). HYPOTHESES: 30 Hz psys frames
 (ticks_elapsed/1e7); a psys-owned rand state (the original shares one).
+After the globals and an emitter's own (world psys) texture, the search
+visits the current level's item, monster and critter packages in the
+order the client loads them, the level's own package, then the players'
+packages (gdl_play `search_order`, also used by the IT_SIGN and hand
+object lookups). HYPOTHESIS: the original's order among the level's
+packages is unread. It decides C2's MISTPART tree sprites, which exist in
+both ITEMS_C and the level package (different 32×32 images): ITEMS_C's
+now; before 2026-10-28 a HashMap picked either per process.
 
 ## Texture modifiers (texmods)
 
@@ -623,6 +631,24 @@ Gouraud interpolation of integer vertex colours, additive glow passes).
   600, uncapped and GDL_RENDER_FPS 9; tdet-a/-b) are equal at all 600
   updates. The earlier difference does not reproduce; its cause was not
   identified.
+- Corrected 2026-10-28 (M20): the harness clock counted one update as
+  1/59.94 s, i.e. texmods and particles ran at half rate in frozen
+  captures (an update is one AFrame: SPF 0x3d088889 = 1/30), and the psys
+  clock still dropped the steps past four in one render frame — a load
+  burst lost particle frames depending on frame timing, which is why H4's
+  flames differed between runs. Now, under GDL_FREEZE_AT, texmods take one
+  AFrame per update since their list's first run and particles one psys
+  frame per update, none dropped (render time and its four-step cap are
+  unchanged in play). The other source of run-to-run difference was a
+  texture search through a HashMap (per-process order): C2's MISTPART
+  sprites bound ITEMS_C's or the level's own texture at random ("Particle
+  systems" below). Checked on the RX 580 with GDL_RENDER_FPS 60 and 30
+  (private/runs/m20-determinism-v1): G1, F1, H4, J5, C2 frozen frames
+  bit-identical across the rates; I1 differed once (lantern and upper-deck
+  lighting) in seven runs, not reproduced since — cause unidentified,
+  first observation kept there. GDL_SCENE_DUMP=FRAME writes every drawn
+  mesh (world matrix, mesh and texture content digests, material
+  parameters) for diffing two runs.
 
 ## Weapon trails and the held weapon's flags (2026-10-23)
 

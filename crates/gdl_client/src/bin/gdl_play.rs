@@ -228,6 +228,37 @@ struct PlayerChar {
 #[derive(Resource, Default)]
 struct Libraries(HashMap<String, Library>);
 
+impl Libraries {
+    /// The libraries in `order` (search_order), then any other cached one by
+    /// name: a by-name search's result never depends on the map's
+    /// per-process iteration order (C2's sprite texture did, run to run).
+    fn ordered<'a>(&'a self, order: &'a [String]) -> impl Iterator<Item = &'a Library> + 'a {
+        let mut rest: Vec<&String> = self.0.keys().filter(|k| !order.contains(k)).collect();
+        rest.sort();
+        order.iter().chain(rest).filter_map(|n| self.0.get(n))
+    }
+}
+
+/// The loaded packages a by-name search (MBOX_FindTexture, the object
+/// lookups) visits, in load order: the globals STATIC, WEAPONS, POWERUPS
+/// (rendering.md "Particle systems"), the current level's item, monster
+/// and critter packages (level_packages; HYPOTHESIS: the original's order
+/// among them is unread), the level's own package, then the players' model
+/// and SFX packages. Libraries caches every package loaded so far; an
+/// earlier realm's comes only after these.
+fn search_order(session: &Session, sources: &Sources) -> Vec<String> {
+    const GLOBALS: [&str; 3] = ["STATIC", "WEAPONS", "POWERUPS"];
+    let mut out: Vec<String> = GLOBALS.iter().map(|s| s.to_string()).collect();
+    out.extend(level_packages(&session.levels[session.current]).into_iter().filter(|n| !GLOBALS.contains(&n.as_str())));
+    out.push(LEVEL_LIB.to_string());
+    for pc in sources.players.iter().flatten() {
+        out.extend([pc.model_name.clone(), pc.sfx_name.clone()]);
+    }
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|n| seen.insert(n.clone()));
+    out
+}
+
 /// One playable level (config entry).
 #[derive(Clone)]
 struct LevelSource {
@@ -470,6 +501,10 @@ struct CritterSlot {
     shown: Option<(usize, usize)>,
     /// Broken collision nodes drawn so far (CritterDamage's MBSetObject).
     damaged: usize,
+    /// The simulation update, part count and first part last posed: the
+    /// pose changes only with an update (frames between them keep it; the
+    /// presentation blending moves them); respawned parts are new entities.
+    posed: Option<(u64, usize, Option<Entity>)>,
 }
 
 /// One tree node's meshes of a critter slot.
@@ -567,17 +602,27 @@ fn present_critters(
         }
         root[12..15].copy_from_slice(&r.v3(0x40));
         let Some(children) = children else { continue };
+        // Posed once per update: every frame between updates recomputed
+        // each holder's whole parent chain and decomposed it (3.4 ms a
+        // frame in J5, M20 profile). Each node's transform is computed once
+        // (holders of OANIM frames share their node).
+        let key = (sim.updates, children.len(), children.first().copied());
+        if slot.posed == Some(key) {
+            continue;
+        }
+        slot.posed = Some(key);
+        let mut by_node: HashMap<usize, Option<Transform>> = HashMap::new();
         for child in children.iter() {
             if let Ok((part, mut tf, of, mut v)) = parts.get_mut(child) {
                 if let Some(f) = of {
                     // No critter package sequence reverses its frames.
                     show_oframe(f, cr.clip, object_frame(cr.clock.frame.max(0.0), None), &mut v);
                 }
-                if let Ok(m) = gdl_core::tree_pose::node_world(&cr.parents, &cr.locals, root, part.node, None) {
-                    let mat = Mat4::from_cols_array(&m);
-                    if mat.is_finite() {
-                        *tf = Transform::from_matrix(mat);
-                    }
+                let pose = *by_node.entry(part.node).or_insert_with(|| {
+                    gdl_core::tree_pose::node_world(&cr.parents, &cr.locals, root, part.node, None).ok().map(|m| Mat4::from_cols_array(&m)).filter(Mat4::is_finite).map(Transform::from_matrix)
+                });
+                if let Some(t) = pose {
+                    *tf = t;
                 }
             }
         }
@@ -1566,8 +1611,9 @@ struct Sim {
     /// GDL_FREEZE_AT reached: no simulation step, and the 30 Hz
     /// presentation clocks (texmods, particles) hold too.
     frozen: bool,
-    /// GDL_FREEZE_AT given: those clocks advance with stepped updates
-    /// (÷ 59.94) instead of render time, so frozen frames repeat.
+    /// GDL_FREEZE_AT given: those clocks advance one AFrame per stepped
+    /// update (SPF 1/30), none dropped, instead of by render time, so a
+    /// frozen frame is the same whatever the frame timing before it.
     sim_clock: bool,
     /// The held weapon's tree flag 2 (hidden) per player (Event::PlayerTreeFlags).
     weapon_hidden: [bool; 4],
@@ -2263,6 +2309,65 @@ fn diagnostic_shots(mut commands: Commands, mut frame: Local<u64>) {
     }
 }
 
+/// DIAGNOSTIC (GDL_SCENE_DUMP=FRAME[,FRAME…], GDL_SHOT_DIR): every drawn
+/// mesh's world transform, mesh, textures and material parameters at those
+/// frames, one sorted line each, to scene-NNNNN.txt — two runs' dumps diff
+/// to the entities that render differently.
+#[allow(clippy::type_complexity)]
+fn diagnostic_scene_dump(
+    mut frame: Local<u64>,
+    q: Query<(&GlobalTransform, &ViewVisibility, &Mesh3d, &MeshMaterial3d<gdl_client::GsMaterial>)>,
+    materials: Res<Assets<gdl_client::GsMaterial>>,
+    (images, meshes): (Res<Assets<Image>>, Res<Assets<Mesh>>),
+) {
+    static DUMPS: std::sync::OnceLock<Option<(Vec<u64>, std::path::PathBuf)>> = std::sync::OnceLock::new();
+    *frame += 1;
+    let Some((frames, dir)) = DUMPS.get_or_init(|| {
+        let frames = std::env::var("GDL_SCENE_DUMP").ok()?.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+        Some((frames, std::env::var_os("GDL_SHOT_DIR")?.into()))
+    }) else {
+        return;
+    };
+    if !frames.contains(&*frame) {
+        return;
+    }
+    // Asset indices follow load order: textures and meshes by content.
+    let digest = |bytes: &[u8]| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut h);
+        h.finish()
+    };
+    let image = |h: Option<&Handle<Image>>| h.and_then(|h| images.get(h)).map(|i| (i.width(), i.height(), i.data.as_deref().map(digest)));
+    let mut lines: Vec<String> = q
+        .iter()
+        .filter(|(_, v, ..)| v.get())
+        .map(|(g, _, mesh, mat)| {
+            let m = materials.get(&mat.0);
+            let p = m.map(|m| m.params);
+            let mesh = meshes.get(&mesh.0).map(|m| {
+                let mut bytes: Vec<u8> = m.attributes().flat_map(|(_, a)| a.get_bytes().to_vec()).collect();
+                if let Some(i) = m.indices() {
+                    bytes.extend(i.iter().flat_map(|k| (k as u32).to_le_bytes()));
+                }
+                (m.count_vertices(), digest(&bytes))
+            });
+            format!(
+                "{:.3?} mesh {:?} base {:?} lm {:?} ov {:?} {:?} {:?}",
+                g.to_matrix().to_cols_array(),
+                mesh,
+                image(m.and_then(|m| m.base.as_ref())),
+                image(m.and_then(|m| m.lightmap.as_ref())),
+                image(m.and_then(|m| m.overlay.as_ref())),
+                m.map(|m| m.alpha_mode),
+                p
+            )
+        })
+        .collect();
+    lines.sort();
+    let _ = std::fs::write(dir.join(format!("scene-{:05}.txt", *frame)), lines.join("\n") + "\n");
+}
+
 /// M19 presentation blending (NATIVE ENHANCEMENT; Settings::interpolate):
 /// a 3D entity's transform at the last two simulation updates.
 #[derive(Component)]
@@ -2285,7 +2390,7 @@ const INTERP_CUT: f32 = 6.0;
 /// (more than INTERP_CUT units in one update) is not blended. Off
 /// (Settings::interpolate false, GDL_BASELINE=1): every update shown as it
 /// is, the original 30 Hz picture.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn interpolate_transforms(
     mut commands: Commands,
     sim: Option<Res<Sim>>,
@@ -2377,10 +2482,12 @@ struct ItSign {
     spawned: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn present_it_sign(
     mut commands: Commands,
     sim: Res<Sim>,
     libs: Res<Libraries>,
+    (session, sources): (Res<Session>, Res<Sources>),
     mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
     mut variants: ResMut<PartVariants>,
     mut pending: ResMut<PendingTreePsys>,
@@ -2390,7 +2497,7 @@ fn present_it_sign(
         let r = &sim.game.players[sign.slot];
         let show = r.i16_(0x92c) != 0 && r.u16_(0x93c) & 2 == 0;
         if show && !sign.spawned {
-            if let Some(parts) = libs.0.values().find_map(|l| l.by_label.get("IT_SIGN")) {
+            if let Some(parts) = libs.ordered(&search_order(&session, &sources)).find_map(|l| l.by_label.get("IT_SIGN")) {
                 spawn_parts(&mut commands, e, vec![(Vec3::ZERO, parts.clone(), 0x10, None, None)], &mut materials, &mut variants, &mut pending);
             }
             sign.spawned = true;
@@ -2975,6 +3082,7 @@ fn present_hand_objects(
     mut commands: Commands,
     sim: Res<Sim>,
     libs: Res<Libraries>,
+    (session, sources): (Res<Session>, Res<Sources>),
     mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
     mut variants: ResMut<PartVariants>,
     mut pending: ResMut<PendingTreePsys>,
@@ -2988,7 +3096,7 @@ fn present_hand_objects(
         if h.key != want.map(|w| w.0) {
             commands.entity(e).despawn_related::<Children>();
             if let Some((label, flags)) = want
-                && let Some(parts) = libs.0.values().find_map(|l| l.by_label.get(label))
+                && let Some(parts) = libs.ordered(&search_order(&session, &sources)).find_map(|l| l.by_label.get(label))
             {
                 spawn_parts(&mut commands, e, vec![(Vec3::ZERO, parts.clone(), flags, None, None)], &mut materials, &mut variants, &mut pending);
             }
@@ -2999,11 +3107,15 @@ fn present_hand_objects(
 }
 
 fn present_special_texmods(sim: Res<Sim>, libs: Res<Libraries>, q: Query<(Entity, &SpecialTexmod)>, mut req: ResMut<MatRequests>, mut step: Local<(u64, u32)>) {
-    // AFrame: one step per game update (DoSpecialTexmods runs per frame).
+    // AFrame: one step per game update (DoSpecialTexmods runs per frame);
+    // a render frame after several updates takes every multiple of the
+    // rate among them (it took at most one).
     let aframe = sim.updates;
     for (e, t) in &q {
         if step.0 != aframe {
-            *step = (aframe, if aframe.is_multiple_of(u64::from(t.rate.max(1))) { (step.1 + 1) % t.frames.max(1) } else { step.1 });
+            let rate = u64::from(t.rate.max(1));
+            let crossed = aframe / rate - step.0.min(aframe) / rate;
+            *step = (aframe, ((u64::from(step.1) + crossed) % u64::from(t.frames.max(1))) as u32);
         }
         let Some(lib) = libs.0.get(&t.package) else { continue };
         let Some(&base) = lib.label_index.get(&t.base.to_uppercase()) else { continue };
@@ -3410,7 +3522,7 @@ fn spawn_level(
     spawn_world_psys(commands, root, session, &set, meshes);
     spawn_texmods(commands, &level.anim_bytes, &set);
     for index in 0..gdl_core::game::critters::MAX_INSTS {
-        let e = commands.spawn((CritterSlot { index, shown: None, damaged: 0 }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
+        let e = commands.spawn((CritterSlot { index, shown: None, damaged: 0, posed: None }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
         commands.entity(root).add_child(e);
     }
     for (kind, n) in [(SlotKind::Enemy, 25), (SlotKind::Item, item_count), (SlotKind::Effect, 64)] {
@@ -3537,19 +3649,12 @@ fn spawn_texmod_list(
     }
 }
 
-/// Seconds for the 30 Hz presentation clocks this frame: render time, or
-/// under GDL_FREEZE_AT the updates stepped since `seen` at 59.94 per second.
-fn presentation_dt(sim: &Sim, time: &Time, seen: u64) -> f32 {
-    if sim.sim_clock { sim.updates.saturating_sub(seen) as f32 / 59.94 } else { time.delta_secs() }
-}
-
 /// DoTexModSub 0x110e10 per AFrame (30 Hz presentation clock): every
 /// `divisor` frames the counter advances modulo |count|; frame modifiers
 /// copy frame `counter` into the target (initially frame 0, InitTexMod),
 /// scrolls set the shift add sign·(counter mod |count|)/|count|.
-fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut seen: Local<u64>, mut q: Query<&mut TexMods>, mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
-    let dt = presentation_dt(&sim, &time, *seen);
-    *seen = sim.updates;
+fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut q: Query<&mut TexMods>, mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<gdl_client::GsMaterial>>) {
+    let dt = time.delta_secs();
     for mut tm in &mut q {
         let tm = &mut *tm;
         let first = tm.by_image.is_none();
@@ -3562,21 +3667,28 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut seen: Local<u64>, mut q: 
             }
             tm.by_image = Some(map);
         }
-        // Under GDL_FREEZE_AT the clock is the updates stepped since this
-        // list's first run, whatever frame its spawn landed in.
-        if sim.sim_clock {
+        // Under GDL_FREEZE_AT one AFrame per update stepped since this
+        // list's first run, whatever frame its spawn landed in, all of them
+        // (render time drops the steps past four in one frame).
+        let due = if sim.sim_clock {
             let born = *tm.born.get_or_insert(sim.updates);
-            tm.accumulated = (sim.updates - born) as f32 / 59.94 - tm.aframe as f32 / 30.0;
+            Some((sim.updates - born) as u32)
         } else {
             tm.accumulated += dt;
-        }
+            None
+        };
         // Only the modifiers that stepped are re-applied: every frame target
         // re-inserted (a texture upload each) and every scroll material
         // re-prepared on each step cost about 1.6 ms a frame (M20 profile).
         let mut dirty = vec![first; tm.mods.len()];
         let mut steps = 0;
-        while tm.accumulated >= 1.0 / 30.0 && steps < 4 {
-            tm.accumulated -= 1.0 / 30.0;
+        while match due {
+            Some(n) => tm.aframe < n,
+            None => tm.accumulated >= 1.0 / 30.0 && steps < 4,
+        } {
+            if due.is_none() {
+                tm.accumulated -= 1.0 / 30.0;
+            }
             steps += 1;
             tm.aframe = tm.aframe.wrapping_add(1);
             for (k, m) in tm.mods.iter_mut().enumerate() {
@@ -3877,7 +3989,7 @@ fn present_particles(
     sim: Res<Sim>,
     mut seen: Local<u64>,
     mut clock: ResMut<PsysClock>,
-    libraries: Res<Libraries>,
+    (libraries, session, sources): (Res<Libraries>, Res<Session>, Res<Sources>),
     cams: Query<&bevy::camera::primitives::Frustum, With<FollowCamera>>,
     mut emitters: EmitterQuery,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -3887,11 +3999,21 @@ fn present_particles(
     let Some(cam) = &sim.game.std_camera else { return };
     let rows = cam.pb.cam_rows.map(Vec3::from_array);
     let frustum = cams.iter().next();
-    clock.accumulated += presentation_dt(&sim, &time, *seen);
+    // Under GDL_FREEZE_AT one psys frame per update stepped since the last
+    // run, all of them (render time drops the steps past four in one frame).
+    let due = sim.sim_clock.then(|| sim.updates.saturating_sub(*seen));
+    if due.is_none() {
+        clock.accumulated += time.delta_secs();
+    }
     *seen = sim.updates;
     let mut steps = 0;
-    while clock.accumulated >= 1.0 / 30.0 && steps < 4 {
-        clock.accumulated -= 1.0 / 30.0;
+    while match due {
+        Some(n) => steps < n,
+        None => clock.accumulated >= 1.0 / 30.0 && steps < 4,
+    } {
+        if due.is_none() {
+            clock.accumulated -= 1.0 / 30.0;
+        }
         steps += 1;
         let PsysClock { global, .. } = &mut *clock;
         global.start_frame();
@@ -3912,7 +4034,7 @@ fn present_particles(
             em.psys.draw(global, &em.matrix, 1.0, visible, &mut em.sprites);
         }
     }
-    if 4 <= steps {
+    if due.is_none() && 4 <= steps {
         clock.accumulated = 0.0;
     }
     let (right, up) = (rows[0], rows[1]);
@@ -3926,11 +4048,16 @@ fn present_particles(
             let name = em.psys.texture.clone().map(|t| t.to_uppercase()).unwrap_or_else(|| {
                 if em.psys.node_flags & 0x800000 != 0 { "PARTICLE2_XP".into() } else { "PARTICLE2_A".into() }
             });
+            let order = search_order(&session, &sources);
             let named = ["STATIC", "WEAPONS", "POWERUPS"]
                 .iter()
                 .find_map(|p| libraries.0.get(*p).and_then(|l| l.textures.get(&name)).cloned())
                 .or_else(|| em.texture.clone())
-                .or_else(|| libraries.0.values().find_map(|l| l.textures.get(&name).cloned()));
+                .or_else(|| libraries.ordered(&order).find_map(|l| l.textures.get(&name).cloned()));
+            if std::env::var_os("GDL_DEBUG_FX").is_some() {
+                let holders: Vec<&String> = order.iter().filter(|n| libraries.0.get(*n).is_some_and(|l| l.textures.contains_key(&name))).collect();
+                eprintln!("psys texture {name}: own {} in {holders:?}", em.texture.is_some());
+            }
             if named.is_none() && !libraries.0.contains_key("STATIC") {
                 continue;
             }
@@ -8097,7 +8224,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<MenuIcon>()
         .add_systems(Startup, (setup_static, setup_menu_icon).chain())
         .insert_resource(TestHarness::from_env())
-        .add_systems(Last, (frame_limiter, ui_trace, frame_log, diagnostic_shots))
+        .add_systems(Last, (frame_limiter, ui_trace, frame_log, diagnostic_shots, diagnostic_scene_dump))
         .add_systems(PostUpdate, interpolate_transforms.before(bevy::transform::TransformSystems::Propagate))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
