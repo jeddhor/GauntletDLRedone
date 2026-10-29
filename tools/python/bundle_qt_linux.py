@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Copy the installer's Qt beside it for the Linux package (M21).
 
-  bundle_qt_linux.py PACKAGE_DIR
+  bundle_qt_linux.py PACKAGE_DIR QT_PREFIX
 
-PACKAGE_DIR holds GauntletDarkLegacy-Installer, linked against the system's
-Qt 6 with DT_RPATH $ORIGIN/lib (installer/CMakeLists.txt). This adds:
+Run inside the Linux build container (tools/linux/build-package.sh).
+PACKAGE_DIR holds GauntletDarkLegacy-Installer, linked against the Qt 6 in
+QT_PREFIX (tools/linux/build-qt.sh) with DT_RPATH $ORIGIN/lib
+(installer/CMakeLists.txt). This adds:
 
   lib/       Qt's libraries and the less common libraries they need
-  plugins/   the platform plugins (X11 and Wayland), Wayland's xdg-shell and
-             decoration plugins, the compose and IBus input methods
+  plugins/   the X11 platform plugin, the compose and IBus input methods
+             (Wayland desktops run the installer through XWayland)
   qt.conf    Qt's prefix: the package folder, so only these plugins load
-  bundled-libraries.txt  per file: SHA-256, size, path, Debian package and
-             version, source package and version (read by library_licenses.py)
+  bundled-libraries.txt  per file: SHA-256, size, path, then the Debian
+             package and version and source package and version, or for
+             Qt's own files "qtbase-built VERSION qtbase VERSION" (read by
+             library_licenses.py)
 
 The libraries are the ldd closure of the installer and the plugins, less
 the base system (KEEP_SYSTEM: the C library, the compiler runtime, the
@@ -20,18 +24,15 @@ GLib, D-Bus, systemd and compression libraries), which every desktop has
 and which must match the running system. Offline; reads only local files.
 """
 import hashlib
+import os
 import pathlib
 import re
 import shutil
 import subprocess
 import sys
 
-QT_PLUGINS = pathlib.Path('/usr/lib/x86_64-linux-gnu/qt6/plugins')
 PLUGINS = [
     'platforms/libqxcb.so',
-    'platforms/libqwayland.so',
-    'wayland-shell-integration/libxdg-shell.so',
-    'wayland-decoration-client/libbradient.so',
     'platforminputcontexts/libcomposeplatforminputcontextplugin.so',
     'platforminputcontexts/libibusplatforminputcontextplugin.so',
 ]
@@ -51,8 +52,10 @@ KEEP_SYSTEM = re.compile(r'^(' + '|'.join([
 ]) + r')$')
 
 
-def ldd(path):
-    out = subprocess.run(['ldd', str(path)], capture_output=True, text=True, check=True).stdout
+def ldd(path, qt):
+    # Qt's libraries from its prefix (lib/ beside the installer is made here).
+    env = dict(os.environ, LD_LIBRARY_PATH=str(qt / 'lib'))
+    out = subprocess.run(['ldd', str(path)], capture_output=True, text=True, check=True, env=env).stdout
     deps = {}
     for line in out.splitlines():
         m = re.match(r'\s*(\S+) => (\S+) \(', line)
@@ -61,6 +64,15 @@ def ldd(path):
         elif 'not found' in line:
             raise SystemExit(f'{path}: {line.strip()}')
     return deps
+
+
+def origin(path, qt):
+    """The provenance fields: Qt's own build (its version from the SBOM's
+    name), or the Debian package."""
+    if qt in path.resolve().parents:
+        version = next(qt.glob('sbom/qtbase-*.spdx')).stem.split('-')[-1]
+        return ['qtbase-built', version, 'qtbase', version]
+    return debian_package(path)
 
 
 def debian_package(path):
@@ -74,9 +86,10 @@ def debian_package(path):
 
 
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         raise SystemExit(__doc__)
     pkg = pathlib.Path(sys.argv[1]).resolve()
+    qt = pathlib.Path(sys.argv[2]).resolve()
     exe = pkg / 'GauntletDarkLegacy-Installer'
     rpath = subprocess.run(['readelf', '-d', str(exe)], capture_output=True, text=True, check=True).stdout
     if not re.search(r'\(RPATH\)\s+Library rpath: \[\$ORIGIN/lib\]', rpath):
@@ -84,14 +97,14 @@ def main():
     for d in ('lib', 'plugins'):
         shutil.rmtree(pkg / d, ignore_errors=True)
     files = []
-    needed = dict(ldd(exe))
+    needed = dict(ldd(exe, qt))
     for rel in PLUGINS:
-        src = QT_PLUGINS / rel
+        src = qt / 'plugins' / rel
         dst = pkg / 'plugins' / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dst)
         files.append((dst, src))
-        needed.update(ldd(src))
+        needed.update(ldd(src, qt))
     for name, src in sorted(needed.items()):
         if KEEP_SYSTEM.match(name):
             continue
@@ -103,7 +116,7 @@ def main():
     rows = []
     for dst, src in sorted(files, key=lambda f: str(f[0])):
         data = dst.read_bytes()
-        rows.append(' '.join([hashlib.sha256(data).hexdigest(), str(len(data)), str(dst.relative_to(pkg))] + debian_package(src)))
+        rows.append(' '.join([hashlib.sha256(data).hexdigest(), str(len(data)), str(dst.relative_to(pkg))] + origin(src, qt)))
     (pkg / 'bundled-libraries.txt').write_text('\n'.join(rows) + '\n')
     kept = sorted({n for n in needed if KEEP_SYSTEM.match(n)})
     print(f'{len(rows)} files bundled ({sum(f[0].stat().st_size for f in files) / 2**20:.1f} MiB); '

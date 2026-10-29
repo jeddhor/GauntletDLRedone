@@ -592,6 +592,18 @@ original (PCSX2 reference on Xvfb :191, private captures):
    row and the select screen show the letters with the virtual Xbox Series
    pad; the original without one; per-update hashes unchanged
    (enhancements.md "Button prompts").
+   2026-10-29 (user: older Linux distributions supported, GCC source
+   bundled, label "complete port"; the user tests Windows): the Linux
+   package is built in an Ubuntu 20.04 container with Qt 6.10.2 built from
+   the shipped source (tools/linux/; GLIBC_2.30 / GLIBCXX_3.4.28 at most);
+   on Ubuntu 20.04 (Mesa 21.2.6) it installs, verifies, shows the wizard
+   and plays with hashes equal to this host's (old-distro-focal4). An
+   update over the previous release keeps saves and settings
+   (update-v3). No GPU: a plain message (and a dialog on Linux); no
+   FFmpeg: movies skipped. The Windows package ships GCC 13.1.0's source
+   with the MinGW-Builds patches; its programs no longer embed this
+   machine's folders. release_audit.py: no game data, saves or private
+   paths in the release (research/release.md).
 
 ---
 

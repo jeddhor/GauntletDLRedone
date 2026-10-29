@@ -87,7 +87,7 @@ def main():
             'version 3 in LICENSE). The packages carry them beside the installer, unmodified',
             'and dynamically linked; LIBRARY_LICENSES.txt in each package lists those files',
             'and the libraries they need, with their notices, and the Qt source they were',
-            'built from is distributed with the release (qt-source/). The game and the',
+            'built from is distributed with the release (library-source/). The game and the',
             'importer do not use Qt.']
     pathlib.Path(sys.argv[1]).write_text('\n'.join(out) + '\n')
     print(sys.argv[1], len(rows), 'crates', len(texts), 'distinct texts', len(missing), 'without files')

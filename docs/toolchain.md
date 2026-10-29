@@ -115,9 +115,14 @@ owner's decision, 2026-10-28: the user installs nothing first).
 
 | Component | Version |
 | --- | --- |
-| Qt (Linux, system; bundled into the package) | 6.10.2 (Ubuntu qt6-base-dev 6.10.2+dfsg-7) |
-| CMake / Ninja (Linux) | 4.2.3 (4.2.3-2ubuntu2) / 1.13.2 |
-| GCC (Linux) | 15.2.0 |
+| Linux release build environment (since 2026-10-29) | podman 5.7.0, image gdl-build-focal:2 (tools/linux/Containerfile; id e4c9337b6feafa6c…) from docker.io/library/ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a |
+| GCC (Linux release) | gcc-10 / g++-10 10.5.0-1ubuntu1~20.04 (Qt and the installer); the system gcc 9 links the Rust programs |
+| GNU C library / libstdc++ (Linux release) | 2.31-0ubuntu9.18 / 10.5.0-1ubuntu1~20.04 (GLIBCXX_3.4.28) |
+| CMake / Ninja (Linux release) | 3.31.6 (PyPI cmake==3.31.6; Qt 6.10 needs 3.22, the release has 3.16) / 1.10.0 |
+| Qt (Linux, bundled into the package) | 6.10.2, built by tools/linux/build-qt.sh from qt6-base_6.10.2+dfsg.orig.tar.xz (73 MiB install in private/build/qt-6.10.2-focal) |
+| Runtime check image (older distribution) | gdl-runtime-focal:1 (tools/linux/Containerfile.test; id 5d53a541e3c5fca0…): libc6 2.31-0ubuntu9.17, libstdc++6 10.5.0, libvulkan1 1.2.131.2-1, mesa-vulkan-drivers 21.2.6-0ubuntu0.1~20.04.2 |
+| Qt (Linux, until 2026-10-28) | 6.10.2 (Ubuntu qt6-base-dev 6.10.2+dfsg-7; needed glibc 2.43) |
+| CMake / Ninja / GCC (Linux host: development builds) | 4.2.3 / 1.13.2 / 15.2.0 |
 | bubblewrap (bundle checks) | /usr/bin/bwrap (Ubuntu 26.04) |
 | Windows build host | the owner's Windows 11 Pro machine over SSH (OpenSSH, PowerShell 7.6.7), working folder P:\gauntlet |
 | Qt (Windows) | 6.11.1 mingw_64, The Qt Company's official binaries (C:\Qt\6.11.1\mingw_64) |
@@ -126,22 +131,32 @@ owner's decision, 2026-10-28: the user installs nothing first).
 | MinGW-w64 GCC (Windows cross, game and importer) | 13.2.0, POSIX threads (g++-mingw-w64-x86-64-posix 13.2.0-6ubuntu1+26.1) |
 | Wine (Windows checks) | 10.0~repack-12ubuntu1 |
 
-Linux: `bash tools/package.sh linux OUT` builds the release programs and
-the installer (DT_RPATH `$ORIGIN/lib`, installer/CMakeLists.txt), then
-tools/python/bundle_qt_linux.py copies Qt's libraries, the X11 and Wayland
-platform plugins (with xdg-shell, the bradient decorations and the compose
-and IBus input methods) and their less common dependencies into lib/ and
-plugins/ with a qt.conf: 38 files, 64.2 MiB (half of it ICU's data). Left
-to the system: the C library, the GCC runtime (libstdc++, libgcc_s,
-libgomp, libatomic), the GL/EGL dispatch libraries, core X11/xcb and
-wayland-client, fontconfig/freetype/harfbuzz, GLib, D-Bus, systemd and
-the compression libraries — every desktop has them and they must match
-the running system. bundled-libraries.txt records each file's Debian
-package. The package needs glibc 2.43: the game itself already does
-(acosf, asinf, atan2f, coshf and sinhf at GLIBC_2.43; pidfd_spawnp at
-2.39), and so does libQt6Gui; the libstdc++ floor is GLIBCXX_3.4.30 and
-CXXABI_1.3.15. A build for older distributions needs an older build
-environment (not done).
+Linux release build (2026-10-29; the owner's decision: older
+distributions supported): `bash tools/package.sh linux OUT` runs everything
+in an Ubuntu 20.04 container (podman, rootless, `--network=none`), so the
+programs need no newer C library than 2.31. The host's pinned Rust toolchain
+(~/.rustup, read-only) and Cargo registry (offline) are mounted; the build
+tree is GDL_LINUX_WORK (default /tmp/gdl-linux-build). Qt is built once from
+the shipped qtbase source (tools/linux/build-qt.sh: Core, Gui, Widgets,
+DBus, the XCB platform plugin and the compose/IBus input methods, the AT-SPI
+accessibility bridge; no OpenGL, Vulkan, Wayland, network, SQL or ICU;
+HarfBuzz, PCRE2, libpng and the other third-party code from Qt's own
+copies, FreeType and Fontconfig the system's). tools/linux/build-package.sh
+then builds gdl_play and gdl_import (cargo, the system gcc as linker) and
+the installer (g++-10; DT_RPATH `$ORIGIN/lib` only, installer/CMakeLists.txt),
+copies Qt and its less common dependencies beside it (bundle_qt_linux.py:
+26 files, 38.4 MiB; Ubuntu 20.04's xcb-util, xkbcommon and other xcb
+libraries), writes LIBRARY_LICENSES.txt, and fails when any ELF file of the
+package needs more than GLIBC_2.31 or GLIBCXX_3.4.28: the release needs
+GLIBC_2.30 and GLIBCXX_3.4.28. Left to the system: the C library, the GCC
+runtime, core X11/xcb (libX11, libxcb, libXau, libXdmcp, libX11-xcb),
+fontconfig/FreeType/libpng, D-Bus, expat, systemd and the compression
+libraries. Wayland desktops run the installer through XWayland, as they run
+the game. The linked symbol versions do not change the game: its per-update
+hashes equal the host build's over 1000 Tower and 1500 G1 updates, and the
+installed game on Ubuntu 20.04 (glibc 2.31, Mesa 21.2.6) equals the same
+installation on this host (glibc 2.43, Mesa 26) over 600 updates
+(research/release.md "Older Linux distributions").
 
 Windows: `GDL_WINDOWS_HOST=10.1.0.91 bash tools/package.sh windows OUT`
 cross-builds the game and the importer as in "Windows build" above, copies
@@ -156,15 +171,23 @@ installer links with `-s -Wl,--no-insert-timestamp` (strip would insert a
 PE time stamp): two clean builds are byte-identical. The host's
 `deployed-files.txt` hashes are checked after the copy.
 
-Notices: tools/python/library_licenses.py writes each package's
-LIBRARY_LICENSES.txt — Linux: the Debian copyright file of every bundled
-binary package and the common-licenses texts they refer to; Windows: the
-42 third-party components Qt's SBOM (qtbase-6.11.1.spdx.json) records in
-the deployed Qt files with their copyright texts, their license texts from
-Qt's own LICENSES/, and the MinGW runtime's and Ubuntu mingw-w64's notices.
+The Windows programs' panic locations name /cargo and /src instead of the
+build machine's folders (`--remap-path-prefix`, package.sh; the Linux
+container mounts them there).
 
-Qt source (the LGPL's corresponding source), in private/qt-src/ and
-copied by package.sh to OUT/qt-source/ beside the packages:
+Notices: tools/python/library_licenses.py writes each package's
+LIBRARY_LICENSES.txt — Linux: the third-party components Qt's SBOM
+(sbom/qtbase-6.10.2.spdx, tag-value, written by the Qt build) records in
+the bundled Qt files (37), their license texts from Qt's LICENSES/, and the
+Debian copyright file of every other bundled binary package with the
+common-licenses texts they refer to; Windows: the 42 components Qt's SBOM
+(qtbase-6.11.1.spdx.json) records in the deployed Qt files with their
+copyright texts and license texts, and the MinGW runtime's and Ubuntu
+mingw-w64's notices, with the GCC runtime's corresponding source.
+
+Library sources (the LGPL's and GPL's corresponding source), in
+private/library-src/{linux,windows} (hard links to private/qt-src/ for Qt)
+and copied by package.sh to OUT/library-source/ beside the packages:
 
 | File | SHA-256 | Verification |
 | --- | --- | --- |
@@ -172,7 +195,12 @@ copied by package.sh to OUT/qt-source/ beside the packages:
 | ubuntu/qt6-base_6.10.2+dfsg-7.dsc | 002cf6224c7569157884020e2575fbdb5588fe6558568ff791d64a1f99d1efc9 | Ubuntu resolute InRelease (gpgv: Ubuntu Archive Automatic Signing Key (2018)) → universe Sources.xz → these three SHA-256 |
 | ubuntu/qt6-base_6.10.2+dfsg.orig.tar.xz | b5f8b150b1f0dd8a3ec51764cfd7817562f6b543b5f37dc5cab7c7f1823d313d | as above |
 | ubuntu/qt6-base_6.10.2+dfsg-7.debian.tar.xz | 5071476712a4e641cbb730efb92c59bd9a15bf5be9f953ce114b99e4f8cfa758 | as above |
+| windows/gcc-13.1.0.tar.xz | 61d684f0aa5e76ac6585ad8898a2427aade8979ed5e7f85492286c4dfc13ee86 | ftp.gnu.org; gpgv against gnu-keyring.gpg: good signature (RSA 6C35B99309B5FA62, Jakub Jelinek); signature and keyring in private/library-src/verify |
+| windows/mingw-builds-7ff96692a8032d893781523b311ac9b6cbbda0a1.tar.gz | cb92e4c9df87cd3536a4f9318620a3153bae3de813207aded08a6747ba2d0fc1 | github.com/niXman/mingw-builds archive of that commit: the develop branch's head (2023-05-24 13:06 UTC) when the kit's build ran (its build-info: 2023-05-24 22:40; mingw-builds-binaries' build.yml at tag 13.1.0-rt_v11-rev1 checks out develop); holds scripts/gcc-13.1.0.sh and the ten gcc patches build-info lists, in its order |
+| windows/mingw-builds-13.1.0-rev1-build-info.txt | b695a15b07be3e1a974d320fe06cc103c81fca3f7e247ed023aaf31177678823 | the kit's C:\Qt\Tools\mingw1310_64\build-info.txt (MinGW-W64-builds-5.0.0, --mode=gcc-13.1.0 --rev=1 --rt-version=v11, sources, patches and configure lines) |
 
-Every bundled Qt file on Linux comes from qt6-base's binary packages. Not
-redistributed: the source of the MinGW runtime DLLs (GCC 13.1.0 with the
-GCC Runtime Library Exception; LIBRARY_LICENSES.txt points to it).
+Linux (since 2026-10-29): the bundled Qt is built from the orig tarball
+alone (linux/qt6-base_6.10.2+dfsg.orig.tar.xz, the same file); the Debian
+files stay in private/qt-src as its provenance. Windows: the MinGW runtime
+DLLs' source (GCC 13.1.0 with the GCC Runtime Library Exception) is
+redistributed since 2026-10-29 (the owner's decision).

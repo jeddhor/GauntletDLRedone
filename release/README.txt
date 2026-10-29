@@ -12,9 +12,10 @@ What you need
 -------------
   - Your own copy of the game: the disc in a drive, or an image of it.
   - 64-bit Windows (tested on Windows 11), or a 64-bit Linux distribution
-    with the GNU C library 2.43 or newer (for example Ubuntu 26.04). On
-    Linux the game uses X11 (Wayland desktops run it through XWayland) and
-    ALSA for sound.
+    from 2020 or later: the GNU C library 2.31 or newer (for example Ubuntu
+    20.04, Debian 11, Fedora 32, RHEL 9 or newer). On Linux the game and the
+    installer use X11 (Wayland desktops run them through XWayland) and the
+    game uses ALSA for sound.
   - A graphics card with Vulkan (Windows: Vulkan or DirectX 12).
   - About 1 GB of disk space.
 Nothing else has to be installed first: the libraries the installer needs
@@ -136,7 +137,7 @@ License
 This port is free software under the GNU General Public License, version 3
 or later (LICENSE). Third-party components and their notices are listed in
 THIRD_PARTY.md and THIRD_PARTY_LICENSES.txt; the libraries that come with
-the installer are listed with their notices in LIBRARY_LICENSES.txt, and the
-source of the Qt they come from is distributed with this release
-(qt-source). Gauntlet: Dark Legacy and its data belong to their owners; they
-are not part of this software.
+the installer are listed with their notices in LIBRARY_LICENSES.txt, and
+their source (Qt's; on Windows also the GCC runtime's) is distributed with
+this release (library-source). Gauntlet: Dark Legacy and its data belong
+to their owners; they are not part of this software.

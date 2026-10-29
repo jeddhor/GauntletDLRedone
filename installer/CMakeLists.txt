@@ -23,9 +23,10 @@ set_target_properties(gdl_installer PROPERTIES OUTPUT_NAME "GauntletDarkLegacy-I
 if(UNIX AND NOT APPLE)
     # The Linux package carries Qt in lib/ and plugins/ beside the installer
     # (tools/python/bundle_qt_linux.py). DT_RPATH, not RUNPATH: it also
-    # applies to the dependencies of those libraries and plugins.
-    set_target_properties(gdl_installer PROPERTIES BUILD_RPATH "$ORIGIN/lib")
-    target_link_options(gdl_installer PRIVATE -Wl,--disable-new-dtags)
+    # applies to the dependencies of those libraries and plugins. Only
+    # $ORIGIN/lib: not the build's Qt folder (tools/linux/build-qt.sh).
+    set_target_properties(gdl_installer PROPERTIES SKIP_BUILD_RPATH ON)
+    target_link_options(gdl_installer PRIVATE "LINKER:-rpath,$ORIGIN/lib" LINKER:--disable-new-dtags)
 endif()
 if(MINGW)
     # Stripped at link time, without the PE time stamp (strip would insert
