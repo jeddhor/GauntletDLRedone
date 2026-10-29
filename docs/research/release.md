@@ -252,6 +252,12 @@ generic). The previous Windows game (b9f7496) carried the build machine's
 folders in 5,315 panic locations (the Cargo registry under the user's home,
 the repository's mount path); the Windows build now remaps them to /cargo
 and /src (package.sh), as the Linux container's mounts already do.
+release-audit-final1 (the release's packages and the source archive of
+5d5d363): one finding — the audit tool itself held the owner's e-mail
+address as a search string; it now reads it from the git configuration at
+run time. release-audit-final2 (both packages, their archives, the source
+archive of 1d450fc; 3142 private identities, the owner's 4 save files):
+no findings.
 
 ## Windows
 
