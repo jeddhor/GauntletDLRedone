@@ -28,9 +28,17 @@ pub struct MoviePlayer {
     pub audio: Option<(Vec<i16>, u32, u32)>,
 }
 
-/// The ffmpeg executable: GDL_FFMPEG, else `ffmpeg` on PATH.
+/// The ffmpeg executable: GDL_FFMPEG, else one beside the game's
+/// executable (an installation may carry it), else `ffmpeg` on PATH.
 fn ffmpeg() -> String {
-    std::env::var("GDL_FFMPEG").unwrap_or_else(|_| "ffmpeg".into())
+    if let Ok(f) = std::env::var("GDL_FFMPEG") {
+        return f;
+    }
+    let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" })));
+    match beside.filter(|p| p.is_file()) {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => "ffmpeg".into(),
+    }
 }
 
 impl MoviePlayer {

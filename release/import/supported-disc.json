@@ -1,0 +1,245 @@
+{
+  "files": [
+    {
+      "path": "SLUS_200.47",
+      "sha256": "69056dc6969c3740a82422ecdf7f771b19b26e20aff208d620c6efec66a3d527",
+      "size": 2866160,
+      "use": "copy"
+    },
+    {
+      "path": "WAD.BIN",
+      "sha256": "e047a4e060c2372407bd6e00c380602dcddeadb0f31637ba88630a8c029da946",
+      "size": 479993856,
+      "use": "extract"
+    },
+    {
+      "path": "IRX/DCS.IRX",
+      "sha256": "6b7499263405e771b9ea89dff14faa6da862a475fd67457158091b1cd64e2768",
+      "size": 134639,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/BELLOWS.PSS",
+      "sha256": "57626b827532f56af43983bdcb858490c55b79cb77c4688cac30d5d13745cb54",
+      "size": 4554756,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/FSCROLL.PSS",
+      "sha256": "54c0a070d50b7266bb77647dc946eaf830982e9371e395ec0ff28969455ae1c9",
+      "size": 7356420,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/GARM.PSS",
+      "sha256": "201d58d725b89fcc26c4ff1e76bcaec2148426c6e44a4c79d68f3c53cd33cc9c",
+      "size": 6979588,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/GOODBOOK.PSS",
+      "sha256": "2506425be4862cbd7102d0f01ba72715e6c75f5741aee49bb679c87d461b48c4",
+      "size": 5898244,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/ICEAXE.PSS",
+      "sha256": "f3d16b6f3c197cc25106b63804be92f9aab834ce6971d1a429a426f20accee38",
+      "size": 4538372,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/JAVELIN.PSS",
+      "sha256": "8aecf99d6768d5b0c92d27d91f6bee5ceb588a8a23f511b14738f0ed8a81ca65",
+      "size": 6750212,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/LAMP.PSS",
+      "sha256": "5e0240bac290690740b8bf85ca64fc91dcbdf8b9e64e5fdcdfcf39b0f1ac6522",
+      "size": 7356420,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/LANTERN.PSS",
+      "sha256": "6e039f923eabb233cca05d63749e37a261a5968bac416a9e627843d5bbc9aa27",
+      "size": 4390916,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEA1.PSS",
+      "sha256": "68ea570cca7d9b02459c549cb5c29c2b87e8a442f078981efd1216f01164de59",
+      "size": 1392644,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEA3.PSS",
+      "sha256": "d04af148088bd0e633213ae389327421abedef5fcc131b18f2bd4ced780dbf2a",
+      "size": 1064964,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEB1.PSS",
+      "sha256": "211b42cbd43aa1fffc1523a953ef60e317f3e160a5c61a12ef102cae36620678",
+      "size": 1441796,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEB4.PSS",
+      "sha256": "b88d21edd793b37895df2fcc830d8d4c49835af53b01dbd170adc86d78144b96",
+      "size": 1097732,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEC1.PSS",
+      "sha256": "a8da9837b49facbd51c3863874618907c541f43589c52578cbd4ea09a2b6ddbc",
+      "size": 1392644,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEC4.PSS",
+      "sha256": "440805039f288949b551684791ba66df4f14ec8217599b7dcbe2264de11eaec4",
+      "size": 1130500,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIED1.PSS",
+      "sha256": "c604c25500b169c96ad2e6429ef4c740cf2e0233cd99b12a1a0ab37a45e14651",
+      "size": 1409028,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIED3.PSS",
+      "sha256": "64ae343aed48c99ab3fef939a547dcf886bd2489b48097083f58de847e6baeb6",
+      "size": 1638404,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEG1.PSS",
+      "sha256": "f87d2fba2fb776d24ea1cc3308ceac6331942e615fa7d76743a92a4d9955d144",
+      "size": 1540100,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEG4.PSS",
+      "sha256": "c39bd83c2516fb3b518b74d635349606662278e32f0ea5a049a72e67709433a5",
+      "size": 4063236,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEH1.PSS",
+      "sha256": "719592ef1f2bb22d90eabeabd09d9e0517861fc2cfddc3b4babee08a93cc02fc",
+      "size": 1097732,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEI1.PSS",
+      "sha256": "67ed2f09af43420c36f40b22cf8ca3351740cadeb96c4a726d5385cbdf446aac",
+      "size": 1507332,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEI3.PSS",
+      "sha256": "3f6c0f648191fa79c866a3f20d73b49e04138ad54fd2b0b7c069356d644dcbc7",
+      "size": 1654788,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEJ1.PSS",
+      "sha256": "abb1f04b1152b85865be3db32c8ebb99bf4d06a8e7b42704ea56f3de819162fa",
+      "size": 2473988,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEJ3.PSS",
+      "sha256": "c7be6567aa5cf305706fb7138d98605d62d82a621ff18a229e05358e4815ebad",
+      "size": 3915780,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEK1.PSS",
+      "sha256": "9301ff07ca968d22dfb39b3caad263aa0b75847666de6d13c334475a0df5457c",
+      "size": 1572868,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/MOVIEK3.PSS",
+      "sha256": "3a743cfd6d9d559fb24d69796955fd95d129ca176b2eae78918ab2fb4100ee50",
+      "size": 2654212,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/SCIMITAR.PSS",
+      "sha256": "3de0a40c63ac6094545c8ce099b99a89f4887d39d17dc7f429d10e2929eb59d5",
+      "size": 4587524,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/SOULSAVE.PSS",
+      "sha256": "259de0a857499e4818d0579d5bf0aa4d779106aa1889a48405175be8eb414f39",
+      "size": 6045700,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG/VICTORY.PSS",
+      "sha256": "48694b8bb178d8f7b125a62ba4580f217e1fbf3bc0919be8edbb5d74145b0707",
+      "size": 6930436,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG2/FAIL.PSS",
+      "sha256": "2af0a5a5cae2ce368abd2b3e0e9cb71f7654365cce2d0f7496e5dde94f1d761e",
+      "size": 3391492,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG2/JES_ARC.PSS",
+      "sha256": "6c039b909fc842c74194797f85973dc869beece9464d3429c939c15261a17dd5",
+      "size": 3686404,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG2/MIDWAY.PSS",
+      "sha256": "70d5406cf62e45015664a22b1a6cf95fd5fc18cb4e99ca1a7ad3dcbdb660283e",
+      "size": 2097156,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG2/OPENING.PSS",
+      "sha256": "682b33c6796fa79cef0fd10b051ae50563c9ea8175622ed092c1d6fb5713df5c",
+      "size": 15319044,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG2/TITLE2.PSS",
+      "sha256": "61b66a18a684a6641faacef797079bc386ca9b86597aa388e6dc2ec0afcae0c4",
+      "size": 4440068,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG2/VAL_KNI.PSS",
+      "sha256": "470b2f3fef4ea1cea8337603d3636a3af90b3f1ad23b3cab45983d81f52a3a20",
+      "size": 3670020,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG2/WAR_DWA.PSS",
+      "sha256": "ecb23234650af04797c6befeb548c3bb74562cc421318b76d227f9b748ddd05f",
+      "size": 2818052,
+      "use": "copy"
+    },
+    {
+      "path": "MPEG2/WIZ_SOR.PSS",
+      "sha256": "c4dd9a44281b7a7fadea9c317c563d295f031055c0d3404c83999a14ad499f0d",
+      "size": 4292612,
+      "use": "copy"
+    }
+  ],
+  "image_sha256": "fb47d40667dfd5b51ffdf2cf7030a3737510b0c4f29dada2a953cb34c65545f2",
+  "note": "Files are checked one by one (a disc read through a drive need not give the image's bytes); the image hash is informational.",
+  "profile_id": "ps2-slus-20047-fb47d40667df",
+  "region": "NTSC-U",
+  "schema_version": 1,
+  "serial": "SLUS_200.47",
+  "title": "Gauntlet: Dark Legacy"
+}

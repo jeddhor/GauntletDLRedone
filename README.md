@@ -230,6 +230,26 @@ See [playtest notes](docs/research/playtest.md) for exactly what is native and w
 The [current checkpoint](docs/state.md) records exact progress, passing checks,
 preserved reference state and ordered next steps.
 
+## Release packages and the installer (M21)
+
+`bash tools/package.sh linux private/dist` builds a package: the Qt 6
+installer (`installer/`) and `payload/` (gdl_play, gdl_import, the shipped
+reference files in `release/import/`, licenses, release/README.txt and
+KNOWN_ISSUES.txt). The installer copies the payload into a folder in the
+user's home and imports the game from the user's disc, an image or a folder
+with `gdl_import` (crates/gdl_install); an installed `gdl_play` needs no
+argument. Without the installer:
+
+```sh
+target/release/gdl_import probe 'Gauntlet - Dark Legacy.iso' --reference release/import
+target/release/gdl_import install 'Gauntlet - Dark Legacy.iso' INSTALL_DIR --reference release/import
+INSTALL_DIR/gdl_play   # after copying target/release/gdl_play into INSTALL_DIR
+```
+
+See [decision 0005](docs/decisions/0005-installer.md) and
+[release research](docs/research/release.md); the Windows package needs a
+Qt for Windows (`QT_WIN_DIR`, docs/toolchain.md).
+
 ## License
 
 Copyright (c) 2026 Gauntlet native reconstruction contributors. The project's

@@ -1,3 +1,6 @@
+// A release build on Windows opens no console window (M21); fatal errors
+// go to report_fatal.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 //! INTERIM PLAYTEST build with the front end (M17 interim) and native
 //! saves (M18): title → the original player-select screen (saved
 //! characters on the native card, new characters, Hidden codes; the PS2
@@ -2570,6 +2573,19 @@ fn sim_state_hash(g: &Game) -> String {
     }
     b.extend_from_slice(&g.rng.state.to_le_bytes());
     b.extend_from_slice(&g.globals.time.to_bits().to_le_bytes());
+    // DIAGNOSTIC: GDL_STATE_PARTS=1 adds each part's short hash (players,
+    // enemies, items, effects, rng, time) to the line.
+    if std::env::var_os("GDL_STATE_PARTS").is_some() {
+        let short = |v: &[u8]| gdl_core::save::sha256(v)[..8].to_string();
+        let cat = |rs: &mut dyn Iterator<Item = &[u8]>| rs.flat_map(|r| r.iter().copied()).collect::<Vec<u8>>();
+        let mut parts: Vec<String> = g.players.iter().enumerate().map(|(k, r)| format!("p{k}:{}", short(&r.0))).collect();
+        parts.push(format!("enemies:{}", short(&cat(&mut g.enemies.iter().map(|r| r.0.as_slice())))));
+        parts.push(format!("items:{}", short(&cat(&mut g.items.records.iter().map(|r| r.0.as_slice())))));
+        parts.push(format!("effects:{}", short(&cat(&mut g.effects.slots.iter().map(|r| r.0.as_slice())))));
+        parts.push(format!("rng:{:08x}", g.rng.state));
+        parts.push(format!("time:{}", g.globals.time));
+        return format!("{},{}", gdl_core::save::sha256(&b), parts.join(","));
+    }
     gdl_core::save::sha256(&b)
 }
 
@@ -8517,20 +8533,54 @@ fn front_text(
     }
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
-    // gdl_play CONFIG.json (written by tools/python/run_play.py).
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() != 1 {
-        return Err("Usage: gdl_play CONFIG.json".into());
+/// MEASURED (the Poison Fields fixture, poison-fields-sor-v2): the PS2
+/// window's angle (MboxWinPtr +0x1c: 1.0471976, exactly π/3 as f32) and player +0x810's
+/// attention offset, for configurations without the capture's start state
+/// (an installation, M21). The attention offset is replaced by the
+/// player's own when a game starts.
+const FIXTURE_WINDOW_FOV: f32 = std::f32::consts::FRAC_PI_3;
+const FIXTURE_ATTENTION: [f32; 3] = [0.0, 4.4, 0.0];
+
+/// An installation's configuration: data/config.json beside the executable
+/// (gdl_import, M21).
+fn installed_config() -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let exe = std::env::current_exe()?;
+    let cfg = exe.parent().ok_or("executable directory")?.join("data").join("config.json");
+    if !cfg.is_file() {
+        return Err(format!("{} is missing: run the installer (or gdl_import install) to import the game from its disc", cfg.display()).into());
     }
-    let cfg: Value = serde_json::from_slice(&gdl_client::bounded_read(Path::new(&args[0]))?)?;
+    Ok(cfg)
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    // gdl_play [CONFIG.json]: the developer configuration written by
+    // tools/python/run_play.py, else an installation's data/config.json,
+    // whose paths are relative to it ("base": "config").
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let config_path = match args.as_slice() {
+        [] => installed_config()?,
+        [c] => std::path::PathBuf::from(c),
+        _ => return Err("Usage: gdl_play [CONFIG.json]".into()),
+    };
+    let cfg: Value = serde_json::from_slice(&gdl_client::bounded_read(&config_path)?)?;
+    if cfg["base"].as_str() == Some("config") {
+        let dir = config_path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        std::env::set_current_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
     let p = |k: &str| -> Result<std::path::PathBuf, Box<dyn Error>> { Ok(cfg[k].as_str().ok_or_else(|| format!("config {k}"))?.into()) };
-    let sim_start: Value = serde_json::from_slice(&gdl_client::bounded_read(&p("sim_start")?)?)?;
-    let pr = &sim_start["presentation"];
-    let vec3 = |r: &Value| -> Result<Vec3, Box<dyn Error>> { Ok(Vec3::from_array(serde_json::from_value::<[f32; 3]>(r.clone())?)) };
-    let presentation = Presentation {
-        fov: serde_json::from_value(pr["camera_fov"].clone())?,
-        attention: vec3(&pr["attention_offset_810"])?,
+    // Saves: the configuration's directory, else the platform's default.
+    let saves = match cfg["saves"].as_str() {
+        Some(s) => std::path::PathBuf::from(s),
+        None => gdl_client::default_save_dir()?,
+    };
+    let presentation = match cfg["sim_start"].as_str() {
+        Some(path) => {
+            let sim_start: Value = serde_json::from_slice(&gdl_client::bounded_read(Path::new(path))?)?;
+            let pr = &sim_start["presentation"];
+            let vec3 = |r: &Value| -> Result<Vec3, Box<dyn Error>> { Ok(Vec3::from_array(serde_json::from_value::<[f32; 3]>(r.clone())?)) };
+            Presentation { fov: serde_json::from_value(pr["camera_fov"].clone())?, attention: vec3(&pr["attention_offset_810"])? }
+        }
+        None => Presentation { fov: FIXTURE_WINDOW_FOV, attention: Vec3::from_array(FIXTURE_ATTENTION) },
     };
     let mut anim_paths = HashMap::new();
     for (name, v) in cfg["packages"].as_object().ok_or("config packages")? {
@@ -8625,9 +8675,16 @@ fn run() -> Result<(), Box<dyn Error>> {
         class_fx.push((chunk("SFXX"), chunk("DAMG")));
         pdats.push(data.pdat);
     }
-    let start: Value = serde_json::from_slice(&gdl_client::bounded_read(&p("game_start")?)?)?;
-    // The PS2 savestate capture's player 0 save region (import source).
-    let capture = start["players"][0].as_str().and_then(|h| {
+    // The new-game start-state template: the developer configuration's
+    // capture export, else the built-in sanitised copy (boot_state.json,
+    // tools/python/export_boot_state.py: MEASURED values, no captured
+    // character). The capture's player 0 save region is the import source
+    // (developer configurations only).
+    let (start, captured): (Value, bool) = match cfg["game_start"].as_str() {
+        Some(path) => (serde_json::from_slice(&gdl_client::bounded_read(Path::new(path))?)?, true),
+        None => (serde_json::from_str(include_str!("../boot_state.json"))?, false),
+    };
+    let capture = start["players"][0].as_str().filter(|_| captured).and_then(|h| {
         let b: Vec<u8> = (0..h.len()).step_by(2).filter_map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok()).collect();
         let r = b.get(profile::SAVE_START..profile::SAVE_START + profile::SAVE_LEN)?.to_vec();
         let sha = gdl_core::save::sha256(&r);
@@ -8636,11 +8693,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     let shop = gdl_core::game::powerups::shop_items(&catalog.read("SHPDATA/SHOP.WAD")?)?;
     let english = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/ENGLISH.ROM")?)?;
     let scrolls = gdl_formats::textrom::TextRom::parse(&catalog.read("TEXT/SCROLL_E.ROM")?)?;
-    let store = SaveStore::open(p("saves")?)?;
+    let store = SaveStore::open(saves.clone())?;
     // M19 enhancement settings beside the saves (GDL_BASELINE=1: the
     // original presentation).
-    let settings = gdl_client::settings::Settings::load(&p("saves")?);
-    let settings_dir = (std::env::var_os("GDL_BASELINE").is_none() && std::env::var_os("GDL_SETTINGS").is_none()).then(|| p("saves")).transpose()?;
+    let settings = gdl_client::settings::Settings::load(&saves);
+    let settings_dir = (std::env::var_os("GDL_BASELINE").is_none() && std::env::var_os("GDL_SETTINGS").is_none()).then(|| saves.clone());
     gdl_client::texture_pack::configure(settings.texture_pack.clone());
     if let Some(slot) = store.migrate_slot_zero()? {
         println!("save0000 (interim slot numbering) moved to save{slot:04}; the old file is kept as migrated-save0000");
@@ -9239,10 +9296,38 @@ fn process_start() -> std::time::Instant {
     *START.get_or_init(std::time::Instant::now)
 }
 
+/// A fatal error where a player sees it (M21): <data home>/gdl-native/
+/// last-error.txt and, on Windows (no console), a message box.
+fn report_fatal(msg: &str) {
+    if let Ok(d) = gdl_client::data_home() {
+        let d = d.join("gdl-native");
+        let _ = std::fs::create_dir_all(&d);
+        let _ = std::fs::write(d.join("last-error.txt"), msg);
+    }
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn MessageBoxW(hwnd: *mut core::ffi::c_void, text: *const u16, caption: *const u16, kind: u32) -> i32;
+        }
+        let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+        let (text, caption) = (wide(msg), wide("Gauntlet: Dark Legacy"));
+        // SAFETY: two NUL-terminated UTF-16 strings that outlive the call;
+        // MB_ICONERROR.
+        unsafe { MessageBoxW(core::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), 0x10) };
+    }
+}
+
 fn main() {
     let _ = process_start();
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        report_fatal(&format!("The game stopped unexpectedly:\n{info}"));
+        default_hook(info);
+    }));
     if let Err(error) = run() {
         eprintln!("{error}");
+        report_fatal(&format!("The game could not start:\n{error}"));
         std::process::exit(1);
     }
 }

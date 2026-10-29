@@ -105,3 +105,29 @@ its per-update simulation hashes equal the Linux build's over a 600-update
 G1 walk. Not tested: a Windows installation, WASAPI output (a test would
 play on the host's speakers), DirectX 12.
 
+
+## Installer and packages (2026-10-28, M21)
+
+The installer (`installer/`, docs/decisions/0005-installer.md) is C++17 on
+Qt 6 Widgets, built with CMake and Ninja:
+
+| Component | Version |
+| --- | --- |
+| Qt (Linux, system) | 6.10.2 (Ubuntu qt6-base-dev 6.10.2+dfsg-7) |
+| CMake / Ninja | 4.2.3 (4.2.3-2ubuntu2) / 1.13.2 |
+| GCC (Linux) | 15.2.0 |
+| MinGW-w64 GCC (Windows cross) | 13.2.0, POSIX threads (g++-mingw-w64-x86-64-posix 13.2.0-6ubuntu1+26.1) |
+| Wine (Windows checks) | 10.0~repack-12ubuntu1 |
+
+`bash tools/package.sh linux OUT` builds the release programs and the
+installer and assembles the package (stripped copies). The Linux installer
+links the system's Qt 6; packages name the runtime packages users need.
+
+Windows: `QT_WIN_DIR=… bash tools/package.sh windows OUT` cross-builds the
+game and the importer as in "Windows build" above and the installer with
+the POSIX-thread MinGW compilers against a Qt for Windows (MinGW build,
+Qt 6.10.2 to match the host's moc/uic/rcc through QT_HOST_PATH=/usr). No Qt
+for Windows is installed here: Ubuntu packages none, and fetching Qt's
+official MinGW binaries (aqtinstall from PyPI, or Qt's online installer)
+needs the project owner's approval. The Windows installer is therefore not
+built yet; the Windows game and importer are (and run under Wine).

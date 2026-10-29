@@ -123,7 +123,7 @@ counter) was up (playtest). A non-MSAA overlay camera is not possible: the
 wgpu validation. Checks: title-display at MSAA 4 and 1 (Xvfb: overlay
 frames equal within the setting's own text and edges, mean 0.6/255;
 closed-menu frames pixel-identical to the previous build); on the RX 580
-under the player's settings (Wayland fullscreen 1920×1080, widescreen,
+under the player's settings (fullscreen 1920×1080 through Xwayland, widescreen,
 MSAA 4 vs 1, title_start_check --overlay): mean difference 0.5/255; F3's
 counter drawn, the rest unchanged.
 

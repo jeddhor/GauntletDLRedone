@@ -151,10 +151,12 @@ a virtual pad with that identity and those capabilities, START only,
 reached the title menu from the SONY/attract screens (title_start_check
 --attract --xbox, attract-xbox1/2: the client's own frames show the movie,
 Press Start, then Start/Options; the window imports had been stale), under
-the player's settings on kwin's Wayland socket (rx580-wl-copy) and after
+the player's settings with WAYLAND_DISPLAY set as on the player's desktop (rx580-wl-copy; the client
+has winit's X11 backend only, so it ran through Xwayland, as it does there) and after
 the attract movies played out to Press Start (rx580-wl-natural). No
 remapper is active (input-remapper has no controller preset; Steam was not
-running). Open: what differs on the player's desktop. (2) With
+running). The player then found START working (same day; Steam not running, the ≡ Menu
+button): closed without a found cause. (2) With
 anti-aliasing on, the Display overlay washed the picture out: fixed
 (enhancements.md "Anti-aliasing").
 

@@ -6,6 +6,7 @@ pub mod critter;
 mod binary;
 pub mod elf;
 pub mod fnt;
+pub mod iso;
 pub mod memcard;
 pub mod objects;
 pub mod pdata;

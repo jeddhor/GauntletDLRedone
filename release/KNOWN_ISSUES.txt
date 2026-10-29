@@ -1,0 +1,43 @@
+GAUNTLET: DARK LEGACY native port — known issues and limits
+============================================================
+
+Supported release
+  Only the USA PlayStation 2 release, SLUS-20047, is supported. Other
+  releases (PAL, Japanese, GameCube, Xbox) are refused by the installer
+  rather than misread.
+
+Platforms
+  - Linux is the development platform. The game uses X11 (on Wayland desktops
+    through XWayland). The Linux installer needs the system's Qt 6 libraries
+    (Debian/Ubuntu: libqt6widgets6; Fedora: qt6-qtbase-gui; Arch: qt6-base).
+  - Windows: the game has been run under Wine on Linux only, not yet on a
+    Windows installation; Windows sound output (WASAPI) is untested.
+  - A graphics card with Vulkan (or DirectX 12 on Windows) is required.
+
+Movies
+  Movies are decoded by FFmpeg if it is installed (see README.txt);
+  without it they are skipped. Their colours use FFmpeg's standard
+  conversion, which has not been compared with the PlayStation 2's.
+
+What is not yet the original's own
+  - A new game starts from a recorded copy of the original's session values
+    (measured on a PlayStation 2 session), not from the original's own start-up
+    code. Play matches the development builds exactly; it is listed because it
+    was measured rather than reconstructed.
+  - Versus play and team moves are built from the original's code but have not
+    been compared against the original running.
+  - An item rising out of an opened chest sits at a slightly different height
+    than in the original while it rises (looks only; collecting is the same).
+  - While the realm map is shown, the game keeps the finished level loaded;
+    only the map's voice lines and sounds use the destination.
+
+Performance
+  On the tested machine (Radeon RX 580) the game holds 60 frames per second;
+  a rare single late frame (about one in 50,000) can still occur.
+
+Enhancements (not in the original)
+  - With the widescreen view, enemies in the widened margins are outside the
+    original game's view; they may wait until they come into it, as they would
+    have off the edge of a TV picture.
+  - No HUD scaling and no controller button remapping (keyboard keys can be
+    rebound).

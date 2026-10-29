@@ -2201,6 +2201,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdl_install"
+version = "0.1.0"
+dependencies = [
+ "gdl_core",
+ "gdl_formats",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "gdl_tools"
 version = "0.1.0"
 dependencies = [

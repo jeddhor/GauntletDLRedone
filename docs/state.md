@@ -557,6 +557,13 @@ original (PCSX2 reference on Xvfb :191, private captures):
    never writes back (enhancements.md); Start not reproduced with a
    virtual copy of the player's controller on the RX 580 under the
    player's settings (playtest.md, title_start_check --attract --xbox).
+   2026-10-28 (M21, the owner's installer specification): Qt 6 installer,
+   gdl_import, packages (decisions/0005-installer.md, research/release.md);
+   Linux complete and checked (batch and GUI installs into fresh homes, the
+   installed game runs; start-state template built in, hash-equal); the
+   Windows importer and game under Wine; the Windows installer waits for
+   the owner's approval to fetch Qt for Windows. Test installs filled the
+   data drive once (427 MB free); they are now made in /tmp and removed.
 
 ---
 

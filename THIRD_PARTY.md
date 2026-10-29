@@ -8,7 +8,7 @@ source/builds.
 New Rust and research-tool implementations are original project code. The
 project is not clean-room: the following pinned research was consulted.
 
-- [haekb WAD decoder](https://github.com/haekb/gdl_wad_decoder/tree/981f4ec9586903257e8f2161e918bbbe5263a6eb), MIT. The private comparison harness calls its unchanged table reader and hash/name helpers; these files are not included in the native executable or redistributed by this project.
+- [haekb WAD decoder](https://github.com/haekb/gdl_wad_decoder/tree/981f4ec9586903257e8f2161e918bbbe5263a6eb), MIT (Copyright (c) 2016 Housey). The private comparison harness calls its unchanged table reader and hash/name helpers; its code is not included in the native programs. Since M21 the release's `import/catalog.json` carries the archive entry names its dictionary gave (matched by path hash); the MIT notice is in THIRD_PARTY_LICENSES.txt.
 - [gdl_tools](https://github.com/MosesofEgypt/gdl_tools/tree/47799f19ec85fa49af87eec4c64a27ee1fc87d7c), LGPL 2.1 license text inspected. Format definitions, palette behavior, VIF encodings, strip assembly and world graph interpretation were consulted; no code was transplanted into Rust. The private comparison harness invokes its unchanged geometry decoder and original padding helper; these are not linked or distributed with the runtime. Audit precise notices before any future implementation reuse.
 - [GameCube native port](https://github.com/sabishii-bit/Gauntlet-Dark-Legacy-PC-Port/tree/2b23539febf2cdd894227ff005709bc37b0bea9e), GPL-3.0-only. Documentation/tree research only; no copied or linked runtime code.
 - [GameCube decompilation](https://github.com/sabishii-bit/Gauntlet-Dark-Legacy-Decompilation/tree/4fdf0492d5d828b16ee1a961c17bf855a8d2668f), documentation/tree inspection only; no blanket code-license assumption. External leaked Xbox symbol definitions were not imported.
@@ -27,5 +27,13 @@ project is not clean-room: the following pinned research was consulted.
 Direct Cargo dependencies: flate2 (MIT OR Apache-2.0), serde/serde_json (MIT OR
 Apache-2.0), sha2 (MIT OR Apache-2.0), png (MIT OR Apache-2.0), Bevy (MIT OR
 Apache-2.0), alsa 0.9.1 on Linux (Apache-2.0 OR MIT), cpal 0.15.3 on Windows
-(Apache-2.0). Cargo.lock records exact transitive versions. A full transitive
-license-notice/package audit is required at M21 and has not yet been performed.
+(Apache-2.0). Cargo.lock records exact transitive versions. Transitive audit
+(M21, 2026-10-28; tools/python/third_party_licenses.py → release/
+THIRD_PARTY_LICENSES.txt, shipped with the programs): the 290 crates compiled
+into gdl_play and gdl_import for Linux and Windows are under MIT, Apache-2.0,
+Zlib, BSD-2/3-Clause, ISC, Unlicense, MIT-0, 0BSD, CC0-1.0 or Unicode-3.0
+terms (one "Apache-2.0 OR GPL-2.0-only" taken under Apache-2.0), all
+compatible with GPL-3.0-or-later; their license and notice files are
+reproduced there.
+
+- [Qt 6](https://www.qt.io/) (Core, Gui, Widgets and platform plugins), LGPL-3.0-only: the installer (`installer/`) links it dynamically and unmodified — the system's Qt on Linux, Qt's DLLs shipped beside the installer on Windows. Not used by the game.

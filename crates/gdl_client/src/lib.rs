@@ -28,6 +28,28 @@ use bevy::{
 use gdl_formats::{animation::Animations, objects::Objects, texdef::TextureTable};
 use std::{collections::HashMap, error::Error, fs, path::Path};
 
+/// The per-user data directory: %APPDATA% on Windows, else
+/// $XDG_DATA_HOME (an absolute path) or ~/.local/share.
+pub fn data_home() -> Result<std::path::PathBuf, Box<dyn Error>> {
+    #[cfg(windows)]
+    {
+        Ok(std::env::var_os("APPDATA").map(std::path::PathBuf::from).ok_or("APPDATA is not set")?)
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(x) = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()) {
+            return Ok(x);
+        }
+        Ok(std::path::PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join(".local").join("share"))
+    }
+}
+
+/// The native saves' default directory (M18; run_play.py's default):
+/// <data home>/gdl-native/SLUS-20047/saves.
+pub fn default_save_dir() -> Result<std::path::PathBuf, Box<dyn Error>> {
+    Ok(data_home()?.join("gdl-native").join("SLUS-20047").join("saves"))
+}
+
 pub fn bounded_read(path: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
     use std::io::Read;
     let file = fs::File::open(path)?;
