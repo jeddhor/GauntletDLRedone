@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drive the Qt installer's pages on the private Xvfb (M21).
 
-  installer_gui_check.py TAG PACKAGE_DIR [--mount ISO]
+  installer_gui_check.py TAG PACKAGE_DIR [--mount ISO] [--cancel] [--qt-sandbox] [--home-root DIR]
 
 A fresh home (HOME, XDG_* under private/runs/installer-gui-TAG/home: no
 shortcut or save reaches the user's own folders) and GDL_NO_AUDIO for the
@@ -13,7 +13,11 @@ welcome → disc (waits for the probe) → destination (the default folder) →
 install (waits for the end) → finish (start the game), a screenshot of
 each page. With --cancel the installation is cancelled two seconds in
 (Escape, then Yes): nothing of it may remain (no data/, no staging
-directory). Report: private/reports/installer-gui-TAG.json.
+directory). With --qt-sandbox the installer (and the game it starts) runs
+in qt_bundle_check.py's sandbox with the system's Qt masked: the package's
+own Qt must carry it (loads recorded with LD_DEBUG=libs). --home-root puts
+the fresh home (and so the installation, ~780 MiB) under DIR, e.g. a tmpfs.
+Report: private/reports/installer-gui-TAG.json.
 """
 import json
 import pathlib
@@ -35,11 +39,14 @@ def main():
     tag, package = args[0], pathlib.Path(args[1]).resolve()
     iso = pathlib.Path(args[args.index('--mount') + 1]).resolve() if '--mount' in args else None
     cancel = '--cancel' in args
+    qt_sandbox = '--qt-sandbox' in args
+    home_root = pathlib.Path(args[args.index('--home-root') + 1]).resolve() if '--home-root' in args else None
     run = ROOT / 'private/runs' / f'installer-gui-{tag}'
     report = ROOT / 'private/reports' / f'installer-gui-{tag}.json'
     if run.exists() or report.exists():
         raise SystemExit(f'{run} or {report} exists')
-    home = run / 'home'
+    run.mkdir(parents=True)
+    home = (home_root / f'gdl-installer-gui-{tag}' / 'home') if home_root else run / 'home'
     home.mkdir(parents=True)
     env = environment()
     for k in list(env):
@@ -49,7 +56,17 @@ def main():
                XDG_CACHE_HOME=str(home / '.cache'), XDG_DESKTOP_DIR=str(home / 'Desktop'), GDL_NO_AUDIO='1', QT_QPA_PLATFORM='xcb')
     xenv = dict(DISPLAY=env['DISPLAY'], XAUTHORITY=env['XAUTHORITY'], PATH='/usr/bin:/bin')
     loop = mount = None
-    out = dict(package=str(package), shots=[], steps=[])
+    out = dict(package=str(package), home=str(home), shots=[], steps=[])
+    prefix = []
+    if qt_sandbox:
+        from qt_bundle_check import sandbox, verdict
+        # A system without Qt: only Qt is masked here. The game the installer
+        # starts needs the system's other libraries that the package also
+        # bundles (xkbcommon-x11 for winit, the xcb extensions for the
+        # Vulkan driver); qt_bundle_check.py masks those too.
+        prefix, out['qt_masked_files'] = sandbox(package, keep={f.name for f in (package / 'lib').iterdir()})
+        (run / 'ld').mkdir()
+        env.update(LD_DEBUG='libs', LD_DEBUG_OUTPUT=str(run / 'ld' / 'ld'))
 
     def x(*a):
         return subprocess.run(['xdotool', *a], env=xenv, capture_output=True, text=True).stdout.strip()
@@ -79,7 +96,7 @@ def main():
             if mount is None:  # the desktop may have mounted it already
                 mount = subprocess.run(['findmnt', '-n', '-o', 'TARGET', loop], capture_output=True, text=True).stdout.strip() or None
             out['mount'] = dict(loop=loop, at=mount)
-        proc = subprocess.Popen([str(package / 'GauntletDarkLegacy-Installer')], cwd=str(home), env=env,
+        proc = subprocess.Popen(prefix + [str(package / 'GauntletDarkLegacy-Installer')], cwd=str(home), env=env,
                                 stdout=open(run / 'installer.log', 'w'), stderr=subprocess.STDOUT)
         for _ in range(60):
             time.sleep(0.5)
@@ -137,6 +154,8 @@ def main():
             if mount:
                 subprocess.run(['udisksctl', 'unmount', '-b', loop], capture_output=True)
             subprocess.run(['udisksctl', 'loop-delete', '-b', loop], capture_output=True)
+        if qt_sandbox:
+            out['qt_sandbox'] = verdict(package, run / 'ld', 'libqxcb.so')
         report.write_text(json.dumps(out, indent=1) + '\n')
     print(json.dumps(out, indent=1))
 

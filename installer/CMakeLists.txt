@@ -20,6 +20,15 @@ qt_add_executable(gdl_installer WIN32
 target_link_libraries(gdl_installer PRIVATE Qt6::Widgets)
 target_compile_definitions(gdl_installer PRIVATE GDL_INSTALLER_VERSION="${PROJECT_VERSION}")
 set_target_properties(gdl_installer PROPERTIES OUTPUT_NAME "GauntletDarkLegacy-Installer")
+if(UNIX AND NOT APPLE)
+    # The Linux package carries Qt in lib/ and plugins/ beside the installer
+    # (tools/python/bundle_qt_linux.py). DT_RPATH, not RUNPATH: it also
+    # applies to the dependencies of those libraries and plugins.
+    set_target_properties(gdl_installer PROPERTIES BUILD_RPATH "$ORIGIN/lib")
+    target_link_options(gdl_installer PRIVATE -Wl,--disable-new-dtags)
+endif()
 if(MINGW)
-    target_link_options(gdl_installer PRIVATE -static-libgcc -static-libstdc++)
+    # Stripped at link time, without the PE time stamp (strip would insert
+    # one), so that rebuilds are byte-identical.
+    target_link_options(gdl_installer PRIVATE -static-libgcc -static-libstdc++ -s -Wl,--no-insert-timestamp)
 endif()

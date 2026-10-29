@@ -40,18 +40,21 @@ Decision:
 - **Packages** (`tools/package.sh`): a folder and archive per platform with
   the installer and `payload/` (gdl_play, gdl_import, import/, LICENSE,
   THIRD_PARTY.md, THIRD_PARTY_LICENSES.txt, README.txt, KNOWN_ISSUES.txt),
-  and the source archive. Linux uses the system's Qt 6; Windows ships Qt's
-  DLLs.
+  and the source archive. Both carry the installer's Qt (the owner,
+  2026-10-28: "I know it will bloat the installer but YES for both Linux
+  and Windows Qt should be bundled"): Linux copies Ubuntu's Qt and its less
+  common dependencies beside the installer (DT_RPATH, qt.conf); Windows
+  deploys Qt's DLLs with windeployqt. LIBRARY_LICENSES.txt holds their
+  notices, and the Qt source goes beside the packages.
 
 Why: the owner's specification; one importer shared by the installer, the
 command line and repair; the game's runtime keeps no dependency on Python,
 PCSX2, a BIOS or the development tree.
 
-Not decided here: Qt for Windows is not on this machine (Ubuntu ships no
-MinGW Qt), and fetching it (aqtinstall from PyPI or Qt's online installer)
-is a download of external code that needs the owner's approval. Until then
-the Windows installer is built only where a Qt for Windows is supplied
-(`QT_WIN_DIR`); the Windows game and importer build and run (under Wine).
+Qt for Windows (2026-10-28): not on this machine (Ubuntu ships no MinGW
+Qt). The owner provided a Windows machine with Qt 6.11.1 for MinGW over
+SSH; the Windows installer is built there (tools/windows/build-installer.ps1,
+run by package.sh with GDL_WINDOWS_HOST) instead of being cross-built here.
 
 Reversible: the installer is a thin front end over `gdl_import`; the
 packages can be repackaged (AppImage, MSI) without changing the importer.

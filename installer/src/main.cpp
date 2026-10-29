@@ -5,6 +5,7 @@
 //                                                the same work without pages
 //                                                (automated checks); progress
 //                                                on standard output
+//   GauntletDarkLegacy-Installer --list-discs    the disc page's list of drives
 //
 // The game's programs and reference files are in payload/ beside it.
 #include "installation.h"
@@ -14,6 +15,8 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QTextStream>
+
+#include <memory>
 
 static int batch(const QString &source, const QString &dest, bool shortcuts)
 {
@@ -64,11 +67,24 @@ static int batch(const QString &source, const QString &dest, bool shortcuts)
     return 0;
 }
 
+// --batch, --list-discs, --help and --version open no window: they run
+// without a display (a terminal, SSH) on a plain core application.
+static bool windowless(int argc, char **argv)
+{
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray a(argv[i]);
+        if (a == "--batch" || a == "--list-discs" || a == "--help" || a == "-h" || a == "--version" || a == "-v")
+            return true;
+    }
+    return false;
+}
+
 int main(int argc, char **argv)
 {
-    QApplication app(argc, argv);
-    QApplication::setApplicationName(QStringLiteral("Gauntlet Dark Legacy Installer"));
-    QApplication::setApplicationVersion(QStringLiteral(GDL_INSTALLER_VERSION));
+    std::unique_ptr<QCoreApplication> app(windowless(argc, argv) ? new QCoreApplication(argc, argv)
+                                                                 : new QApplication(argc, argv));
+    QCoreApplication::setApplicationName(QStringLiteral("Gauntlet Dark Legacy Installer"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(GDL_INSTALLER_VERSION));
     QCommandLineParser p;
     p.addHelpOption();
     p.addVersionOption();
@@ -76,7 +92,14 @@ int main(int argc, char **argv)
     p.addOption({QStringLiteral("source"), QStringLiteral("The disc, drive or image."), QStringLiteral("path")});
     p.addOption({QStringLiteral("dest"), QStringLiteral("The install folder."), QStringLiteral("path")});
     p.addOption({QStringLiteral("shortcuts"), QStringLiteral("With --batch: create the menu and desktop shortcuts.")});
-    p.process(app);
+    p.addOption({QStringLiteral("list-discs"), QStringLiteral("List the drives with a disc, as the disc page does.")});
+    p.process(*app);
+    if (p.isSet(QStringLiteral("list-discs"))) {
+        QTextStream out(stdout);
+        for (const DiscCandidate &c : discCandidates())
+            out << c.label << '\t' << QDir::toNativeSeparators(c.path) << Qt::endl;
+        return 0;
+    }
     if (p.isSet(QStringLiteral("batch"))) {
         if (!p.isSet(QStringLiteral("source")) || !p.isSet(QStringLiteral("dest"))) {
             QTextStream(stderr) << "--batch needs --source and --dest" << Qt::endl;
@@ -87,5 +110,5 @@ int main(int argc, char **argv)
     }
     InstallerWizard w;
     w.show();
-    return app.exec();
+    return app->exec();
 }

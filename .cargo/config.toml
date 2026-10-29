@@ -1,0 +1,5 @@
+# Windows builds (x86_64-pc-windows-gnu, docs/toolchain.md "Windows build"):
+# stripped at link time and without the PE time stamp that the MinGW linker
+# and strip would insert, so that rebuilds are byte-identical.
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--no-insert-timestamp", "-C", "strip=symbols"]

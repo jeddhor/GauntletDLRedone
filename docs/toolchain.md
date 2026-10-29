@@ -2,8 +2,9 @@
 
 Verified on 2026-10-12. Local development is Linux x86-64. Since 2026-10-28
 the client also builds for x86_64-pc-windows-gnu ("Windows build" below);
-it has run under Wine on this machine, not on a Windows installation. No
-native Windows package is currently claimed.
+it has run under Wine on this machine. The Windows package's installer and
+importer have run on a Windows 11 installation (research/release.md); the
+game itself has not yet run there.
 
 | Component | Exact observed version / identity |
 | --- | --- |
@@ -109,25 +110,69 @@ play on the host's speakers), DirectX 12.
 ## Installer and packages (2026-10-28, M21)
 
 The installer (`installer/`, docs/decisions/0005-installer.md) is C++17 on
-Qt 6 Widgets, built with CMake and Ninja:
+Qt 6 Widgets, built with CMake and Ninja. Both packages carry its Qt (the
+owner's decision, 2026-10-28: the user installs nothing first).
 
 | Component | Version |
 | --- | --- |
-| Qt (Linux, system) | 6.10.2 (Ubuntu qt6-base-dev 6.10.2+dfsg-7) |
-| CMake / Ninja | 4.2.3 (4.2.3-2ubuntu2) / 1.13.2 |
+| Qt (Linux, system; bundled into the package) | 6.10.2 (Ubuntu qt6-base-dev 6.10.2+dfsg-7) |
+| CMake / Ninja (Linux) | 4.2.3 (4.2.3-2ubuntu2) / 1.13.2 |
 | GCC (Linux) | 15.2.0 |
-| MinGW-w64 GCC (Windows cross) | 13.2.0, POSIX threads (g++-mingw-w64-x86-64-posix 13.2.0-6ubuntu1+26.1) |
+| bubblewrap (bundle checks) | /usr/bin/bwrap (Ubuntu 26.04) |
+| Windows build host | the owner's Windows 11 Pro machine over SSH (OpenSSH, PowerShell 7.6.7), working folder P:\gauntlet |
+| Qt (Windows) | 6.11.1 mingw_64, The Qt Company's official binaries (C:\Qt\6.11.1\mingw_64) |
+| MinGW-w64 GCC (Windows, Qt kit) | 13.1.0 x86_64-posix-seh-rev1, MinGW-Builds (C:\Qt\Tools\mingw1310_64) |
+| CMake / Ninja (Windows, Qt kit) | 3.30.5 / 1.12.1 |
+| MinGW-w64 GCC (Windows cross, game and importer) | 13.2.0, POSIX threads (g++-mingw-w64-x86-64-posix 13.2.0-6ubuntu1+26.1) |
 | Wine (Windows checks) | 10.0~repack-12ubuntu1 |
 
-`bash tools/package.sh linux OUT` builds the release programs and the
-installer and assembles the package (stripped copies). The Linux installer
-links the system's Qt 6; packages name the runtime packages users need.
+Linux: `bash tools/package.sh linux OUT` builds the release programs and
+the installer (DT_RPATH `$ORIGIN/lib`, installer/CMakeLists.txt), then
+tools/python/bundle_qt_linux.py copies Qt's libraries, the X11 and Wayland
+platform plugins (with xdg-shell, the bradient decorations and the compose
+and IBus input methods) and their less common dependencies into lib/ and
+plugins/ with a qt.conf: 38 files, 64.2 MiB (half of it ICU's data). Left
+to the system: the C library, the GCC runtime (libstdc++, libgcc_s,
+libgomp, libatomic), the GL/EGL dispatch libraries, core X11/xcb and
+wayland-client, fontconfig/freetype/harfbuzz, GLib, D-Bus, systemd and
+the compression libraries — every desktop has them and they must match
+the running system. bundled-libraries.txt records each file's Debian
+package. The package needs glibc 2.43: the game itself already does
+(acosf, asinf, atan2f, coshf and sinhf at GLIBC_2.43; pidfd_spawnp at
+2.39), and so does libQt6Gui; the libstdc++ floor is GLIBCXX_3.4.30 and
+CXXABI_1.3.15. A build for older distributions needs an older build
+environment (not done).
 
-Windows: `QT_WIN_DIR=… bash tools/package.sh windows OUT` cross-builds the
-game and the importer as in "Windows build" above and the installer with
-the POSIX-thread MinGW compilers against a Qt for Windows (MinGW build,
-Qt 6.10.2 to match the host's moc/uic/rcc through QT_HOST_PATH=/usr). No Qt
-for Windows is installed here: Ubuntu packages none, and fetching Qt's
-official MinGW binaries (aqtinstall from PyPI, or Qt's online installer)
-needs the project owner's approval. The Windows installer is therefore not
-built yet; the Windows game and importer are (and run under Wine).
+Windows: `GDL_WINDOWS_HOST=10.1.0.91 bash tools/package.sh windows OUT`
+cross-builds the game and the importer as in "Windows build" above, copies
+installer/ and tools/windows/build-installer.ps1 to the host, builds the
+installer there with the Qt kit's MinGW and deploys it with windeployqt
+(Qt Core, Gui, Widgets, qwindows, qmodernwindowsstyle and the MinGW
+runtime DLLs; no translations, shader compilers, software OpenGL, Network,
+Svg or image/icon/TLS/touch plugins: 9 files), and fetches the deployment
+and its notice inputs (the kit's qtbase SBOM and MinGW license files).
+`WIN_INSTALLER_DIR=DIR` packages an earlier deployment instead. The
+installer links with `-s -Wl,--no-insert-timestamp` (strip would insert a
+PE time stamp): two clean builds are byte-identical. The host's
+`deployed-files.txt` hashes are checked after the copy.
+
+Notices: tools/python/library_licenses.py writes each package's
+LIBRARY_LICENSES.txt — Linux: the Debian copyright file of every bundled
+binary package and the common-licenses texts they refer to; Windows: the
+42 third-party components Qt's SBOM (qtbase-6.11.1.spdx.json) records in
+the deployed Qt files with their copyright texts, their license texts from
+Qt's own LICENSES/, and the MinGW runtime's and Ubuntu mingw-w64's notices.
+
+Qt source (the LGPL's corresponding source), in private/qt-src/ and
+copied by package.sh to OUT/qt-source/ beside the packages:
+
+| File | SHA-256 | Verification |
+| --- | --- | --- |
+| windows/qtbase-everywhere-src-6.11.1.tar.xz | d9594a31228aa23ad6b531719a29b45f0f3989fe6c136d45767ea179f233c1ac | MD5 755fcf32… as download.qt.io's md5sums.txt; 22,492 of the 22,895 files of the kit's qtbase-6.11.1.source.spdx have its SHA-1 (CRLF line ends as on Windows), 402 are absent (tests, git files), 1 differs (.tag, written by git export) |
+| ubuntu/qt6-base_6.10.2+dfsg-7.dsc | 002cf6224c7569157884020e2575fbdb5588fe6558568ff791d64a1f99d1efc9 | Ubuntu resolute InRelease (gpgv: Ubuntu Archive Automatic Signing Key (2018)) → universe Sources.xz → these three SHA-256 |
+| ubuntu/qt6-base_6.10.2+dfsg.orig.tar.xz | b5f8b150b1f0dd8a3ec51764cfd7817562f6b543b5f37dc5cab7c7f1823d313d | as above |
+| ubuntu/qt6-base_6.10.2+dfsg-7.debian.tar.xz | 5071476712a4e641cbb730efb92c59bd9a15bf5be9f953ce114b99e4f8cfa758 | as above |
+
+Every bundled Qt file on Linux comes from qt6-base's binary packages. Not
+redistributed: the source of the MinGW runtime DLLs (GCC 13.1.0 with the
+GCC Runtime Library Exception; LIBRARY_LICENSES.txt points to it).

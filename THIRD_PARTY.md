@@ -36,4 +36,4 @@ terms (one "Apache-2.0 OR GPL-2.0-only" taken under Apache-2.0), all
 compatible with GPL-3.0-or-later; their license and notice files are
 reproduced there.
 
-- [Qt 6](https://www.qt.io/) (Core, Gui, Widgets and platform plugins), LGPL-3.0-only: the installer (`installer/`) links it dynamically and unmodified — the system's Qt on Linux, Qt's DLLs shipped beside the installer on Windows. Not used by the game.
+- [Qt 6](https://www.qt.io/) (Core, Gui, Widgets and platform plugins), LGPL-3.0-only: the installer (`installer/`) links it dynamically and unmodified, and both packages carry it beside the installer — Ubuntu's Qt 6.10.2 (with ICU, double-conversion, libb2, md4c, pcre2-16, the xcb utility libraries, xkbcommon, SM/ICE and wayland-cursor) on Linux, The Qt Company's Qt 6.11.1 for MinGW (with the MinGW-w64 runtime: libgcc_s, libstdc++ under GPL-3.0 with the GCC Runtime Library Exception, winpthreads) on Windows. Each package's LIBRARY_LICENSES.txt (tools/python/library_licenses.py) lists the files with their notices; Qt's source (qtbase 6.11.1, Ubuntu qt6-base 6.10.2+dfsg-7) is distributed beside the packages. Not used by the game.

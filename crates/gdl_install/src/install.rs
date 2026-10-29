@@ -234,10 +234,14 @@ pub fn install(src: &mut Source, dest: &Path, reference: &Path) -> R<()> {
         prog.report("extract", k as u64 + 1, total, 0.40, 0.95);
     }
     drop(bytes);
-    let mut mf = fs::OpenOptions::new().write(true).create_new(true).open(wad_dir.join("manifest.json"))?;
-    serde_json::to_writer_pretty(&mut mf, &manifest)?;
-    mf.write_all(b"\n")?;
-    mf.sync_all()?;
+    {
+        // Closed before the swap below: Windows cannot rename a folder
+        // while a file in it is open.
+        let mut mf = fs::OpenOptions::new().write(true).create_new(true).open(wad_dir.join("manifest.json"))?;
+        serde_json::to_writer_pretty(&mut mf, &manifest)?;
+        mf.write_all(b"\n")?;
+        mf.sync_all()?;
+    }
     fs::write(data.join("catalog.json"), &catalog_bytes)?;
     fs::copy(reference.join("supported-disc.json"), data.join("supported-disc.json"))?;
 
@@ -250,9 +254,9 @@ pub fn install(src: &mut Source, dest: &Path, reference: &Path) -> R<()> {
     let target = dest.join("data");
     let old = dest.join(format!(".gdl-old-{}", std::process::id()));
     if target.exists() {
-        fs::rename(&target, &old)?;
+        fs::rename(&target, &old).map_err(|e| format!("cannot move the previous installation's data aside ({}): {e}", target.display()))?;
     }
-    fs::rename(&stage.0, &target)?;
+    fs::rename(&stage.0, &target).map_err(|e| format!("cannot move the new data into place ({}): {e}", target.display()))?;
     let _ = fs::remove_dir_all(&old);
     emit(json!({"event": "done", "data": target.to_string_lossy()}));
     Ok(())

@@ -564,6 +564,17 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Windows importer and game under Wine; the Windows installer waits for
    the owner's approval to fetch Qt for Windows. Test installs filled the
    data drive once (427 MB free); they are now made in /tmp and removed.
+   2026-10-28 (owner: a Windows machine with Qt over SSH; bundle Qt in both
+   packages): the Windows installer is built there (Qt 6.11.1 MinGW,
+   windeployqt); the Linux package carries Ubuntu's Qt and its less common
+   dependencies (DT_RPATH, qt.conf); LIBRARY_LICENSES.txt and the verified
+   Qt sources ship with the packages (toolchain.md). Windows 11: installs
+   from the ISO and from the ISO mounted as a drive, shortcuts, the wizard
+   starts on the bundled Qt; the importer's staging swap failed there (the
+   manifest file still open) and is fixed. Linux checks with the system's
+   Qt masked pass (research/release.md). The Windows programs and installer
+   are now byte-reproducible. Open: the game on a Windows desktop, the
+   glibc 2.43 floor of the Linux build.
 
 ---
 

@@ -8,6 +8,19 @@ own disc (or an image of it) and checks every file against the supported
 release. No PlayStation 2 BIOS and no emulator are used.
 
 
+What you need
+-------------
+  - Your own copy of the game: the disc in a drive, or an image of it.
+  - 64-bit Windows (tested on Windows 11), or a 64-bit Linux distribution
+    with the GNU C library 2.43 or newer (for example Ubuntu 26.04). On
+    Linux the game uses X11 (Wayland desktops run it through XWayland) and
+    ALSA for sound.
+  - A graphics card with Vulkan (Windows: Vulkan or DirectX 12).
+  - About 1 GB of disk space.
+Nothing else has to be installed first: the libraries the installer needs
+(Qt) come with it in this package.
+
+
 Installing
 ----------
 Run GauntletDarkLegacy-Installer and follow its pages:
@@ -116,5 +129,8 @@ License
 -------
 This port is free software under the GNU General Public License, version 3
 or later (LICENSE). Third-party components and their notices are listed in
-THIRD_PARTY.md and THIRD_PARTY_LICENSES.txt. Gauntlet: Dark Legacy and its
-data belong to their owners; they are not part of this software.
+THIRD_PARTY.md and THIRD_PARTY_LICENSES.txt; the libraries that come with
+the installer are listed with their notices in LIBRARY_LICENSES.txt, and the
+source of the Qt they come from is distributed with this release
+(qt-source). Gauntlet: Dark Legacy and its data belong to their owners; they
+are not part of this software.
