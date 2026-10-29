@@ -7122,6 +7122,27 @@ fn present_hud(
         if let Some(sb) = &sim.message_box {
             list.extend(sim.game.hud.scroll_blits(sb));
         }
+        // NATIVE ENHANCEMENT (widescreen): the level end's TRANSITION_SCREEN
+        // (world_update's end-of-stage fade, before the tally or the realm
+        // map) covers the frame while play is still widened; the sides fade
+        // to black with it at its alpha, as they are black under the 4:3
+        // screens that follow (playtest 2026-10-29: the level showed beside
+        // it before the map).
+        if 512.0 < layout.hud_span
+            && white.is_some()
+            && let Some(t) = sim.game.hud.transition_blit()
+        {
+            let side = (layout.hud_span - 512.0) * 0.5;
+            for x in [-side, 512.0] {
+                let mut b = t.clone();
+                b.tex = white;
+                b.mask = None;
+                b.crop = [0.0, 1.0, 0.0, 1.0];
+                (b.x, b.y, b.w, b.h) = (x, 0.0, side, 384.0);
+                b.rgba = [0, 0, 0, t.rgba[3]];
+                list.push(b);
+            }
+        }
     }
     // The menu page: show_optmenu with the page's vblank count.
     let view = menu_view(&front, *screen, &ui);

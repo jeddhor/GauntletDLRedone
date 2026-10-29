@@ -1289,6 +1289,11 @@ impl Hud {
         self.set_hide(id, false);
     }
 
+    /// The TRANSITION_SCREEN blit while it is shown (for the presentation).
+    pub fn transition_blit(&self) -> Option<&Blit> {
+        self.transition.and_then(|id| self.blits.get(id)?.as_ref()).filter(|b| !b.hidden())
+    }
+
     /// TransitionBlitHide 0x126848.
     pub fn transition_hide(&mut self) {
         if let Some(id) = self.transition {

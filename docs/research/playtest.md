@@ -160,6 +160,21 @@ button): closed without a found cause. (2) With
 anti-aliasing on, the Display overlay washed the picture out: fixed
 (enhancements.md "Anti-aliasing").
 
+Playtest 2026-10-29 (widescreen): the screen before the realm map still
+showed the level in the sides. That screen is the level end's
+TRANSITION_SCREEN (the crossed weapons in lightning; world_update's
+end-of-stage fade), drawn over play, which is still widened then, so the
+2026-10-28 rule for full-frame screens never applied; it comes before the
+tally at every level exit too. The sides now fade to black with it
+(enhancements.md). Reproduced and checked on the RX 580 (kwin virtual
+output 1600×1000, widescreen fullscreen, the TEST harness): the Tower's G
+portal (as scenario map-g1) — before, the side columns stayed at the
+Tower's brightness (mean about 42) under the opaque transition; after,
+they fall to 0 over its two-second fade and the map follows bordered;
+G1's exit: black sides from the transition into the tally. The frame's
+centre is unchanged and the 1000 per-update hashes equal the previous
+build's.
+
 M12 walkthrough (2026-10-22, gdl_play on the private Xvfb through
 tools/python/client_driver.py; frames in private/runs/client-m12a,
 client-m12b, client-ex1..4, client-die4):

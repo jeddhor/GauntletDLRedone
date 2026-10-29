@@ -575,6 +575,13 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Qt masked pass (research/release.md). The Windows programs and installer
    are now byte-reproducible. Open: the game on a Windows desktop, the
    glibc 2.43 floor of the Linux build.
+   2026-10-29 (user: the widescreen sides still show the level on the
+   screen before the realm map): the level end's TRANSITION_SCREEN
+   (world_update's end-of-stage fade, while play is still widened; also
+   before the tally) had the level beside it; the sides now fade to black
+   with it at its alpha (enhancements.md). RX 580 at 1600×1000: the Tower's
+   G portal and G1's exit go dark beside it and stay bordered into the map
+   and the tally; per-update hashes equal the previous build's.
 
 ---
 

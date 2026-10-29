@@ -78,7 +78,15 @@ realm map, the select screen, the full-screen inventory and the front end
 (title, menus, attract screens) — the 3D view keeps rendering the level
 behind them, which in the widened sides showed frozen beside the 4:3
 screen until 2026-10-28 (playtest; checked on the RX 580 at 1920×1080:
-G1's exit tally with black sides, play still widened). Full-width blits of the flat TextureWhite (AAAWHITE: the trigger
+G1's exit tally with black sides, play still widened). The level end's
+TRANSITION_SCREEN (world_update's end-of-stage fade, two seconds before the
+tally or the realm map) is drawn while play is still widened: the sides
+are covered by black fills at the transition's alpha, so they darken as it
+fades in and are black once it is opaque (playtest 2026-10-29: the Tower
+showed beside it before the map; checked on the RX 580 at 1600×1000, the
+Tower's G portal and G1's exit: side columns from the scene's brightness to
+0 over the fade, the frame's centre unchanged, per-update hashes equal the
+previous build's). Full-width blits of the flat TextureWhite (AAAWHITE: the trigger
 camera's letterbox bars, fills) are stretched to the window's width;
 textured blits stay in the frame. The end-of-stage fade and lightning act
 on the scene's light, so they reach the widened sides.
