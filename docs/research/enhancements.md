@@ -148,7 +148,8 @@ subtitles beyond the original captions.
 F3's counter (mean frame rate and time over 60 frames, the worst of them);
 GDL_FRAME_LOG (per frame: interval, entities, update, player action,
 materials, visible meshes and materials, camera, Time delta, player body);
-GDL_SCENE_DUMP; tools/python/perf_bench.py; the `profile` feature (Chrome
+GDL_SOUND_LOG (per sound request: ID, ROM name, volume, pan, priority —
+cue checks without listening, e.g. scenario map-g1); GDL_SCENE_DUMP; tools/python/perf_bench.py; the `profile` feature (Chrome
 trace). See performance.md.
 
 ## Compatibility matrix (2026-10-28)

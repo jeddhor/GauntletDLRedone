@@ -542,6 +542,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    the open chest as in the reference (trace-G1-chest31-v3; native replay
    180/180 player updates, items but the content's y; regression r87 =
    r86 for all 146 replays; scenarios chest-g1 and death-g1 pass).
+   2026-10-28 (user: a blinking cursor over the game-over movie; the map
+   before G1 lacks "You are now entering THE POISON FIELDS!"): no original
+   menu is drawn during an attract entry (the title menu's arrow showed
+   through the FAIL movie); the map takes the destination's AUDS lines and
+   CurWorld (AudioEnterNextStage, AudioMapDot) with the stage +0x14 name
+   line ResolveWorldData fills; the AUDS record is LEVL +0x5a's (twelve
+   levels had another level's music and bank). Reference ref-stage-k2-v1
+   and ref-stage-g1-v1 equal the port (audio.md "Stage records", hud.md,
+   playtest.md).
 
 ---
 

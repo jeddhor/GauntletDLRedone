@@ -201,21 +201,19 @@ impl Game {
         }
     }
 
-    /// AudioEnterNextStage 0x15df80: the stage record's world sound
-    /// (+0x10 → SNDS id) and +0x14, queued, when both exist.
-    pub fn audio_enter_next_stage(&mut self) {
-        let Some(st) = self.sounds.stage.as_ref() else { return };
-        let (w, second) = (st.word_10, st.word_14);
-        let Some(&(id, _, _)) = usize::try_from(w).ok().and_then(|k| self.sounds.world.get(k)) else { return };
-        if 0 <= second {
-            self.vque_add(-1.0, QueEntry::new(id, 0xe0, 0x7f, 2));
-            self.vque_add(-1.0, QueEntry::new(second, 0xe0, 0x7f, 2));
-        }
+    /// AudioEnterNextStage 0x15df80 with the destination's lines
+    /// (sound::enter_next_stage_lines: "You are now entering" … the
+    /// level's name), both AudioVQueAdd4(−1, −1, id, 0xe0, 0x7f, 2).
+    pub fn audio_enter_next_stage(&mut self, lines: Option<(i32, i32)>) {
+        let Some((first, name)) = lines else { return };
+        self.vque_add(-1.0, QueEntry::new(first, 0xe0, 0x7f, 2));
+        self.vque_add(-1.0, QueEntry::new(name, 0xe0, 0x7f, 2));
     }
 
-    /// AudioMapDot 0x15e020: AudioFX(snd.145[CurWorld], 0xe0, 0x1e).
-    pub fn audio_map_dot(&mut self) {
-        let id = at(&self.sounds.cues.map_dot, i64::from(self.globals.cur_world));
+    /// AudioMapDot 0x15e020: AudioFX(snd.145[CurWorld], 0xe0, 0x1e) — on
+    /// the map CurWorld is the destination's (next_world's LoadWorldData).
+    pub fn audio_map_dot(&mut self, cur_world: i32) {
+        let id = at(&self.sounds.cues.map_dot, i64::from(cur_world));
         self.sfx_flat(id, 0xe0, 0x1e);
     }
 

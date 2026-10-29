@@ -329,6 +329,11 @@ impl AudioOut {
         self.banks.get(&b).and_then(Option::as_ref)
     }
 
+    /// The ROM name of a sound ID (diagnostics).
+    pub fn sound_name(&self, id: i32) -> Option<&str> {
+        self.rom.name_of(id)
+    }
+
     /// AudioTrack4 (AudioSFX/SFX2/SFX3, the queue): sound `id` with the
     /// request volume, pan word (AudioAng or a fixed pan) and priority.
     pub fn play(&mut self, id: i32, volume: i32, pan: i32, priority: i32) {

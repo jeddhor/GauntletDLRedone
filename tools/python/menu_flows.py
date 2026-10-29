@@ -158,6 +158,14 @@ FLOWS = {
     'press-start-exit': dict(
         steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('BackSpace') + [["wait", 1]] + k('Escape') + [["wait", 2]],
         expect=[r'front .*Title \{ at: 0 \}', r'front .*PressStart', r'^\d+ exit$']),
+    # In the Tower: pause → Quit Game → Yes → init_over (GAME OVER) → do_over's
+    # end: the FAIL movie (init_attract_mode 0x8002). Playtest 2026-10-28: the
+    # title menu's arrow showed through the movie.
+    'quit-game-movie': dict(
+        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Return') + [["wait", 3]] + k('space', 8, gap=1.5) + [["wait", 12]]
+        + k('i', 6, gap=1.5) + [["wait", 2]] + k('Escape') + [["wait", 1]] + k('Down', 4) + k('Return') + [["wait", 1]] + k('Down') + k('Return')
+        + [["wait", 2], ["shot", "over"], ["wait", 5], ["shot", "movie1"], ["wait", 2], ["shot", "movie2"], ["wait", 2], ["shot", "movie3"]],
+        expect=[r'paused=true Paused \{ tower: true, at: 4', r'ConfirmQuit \{ at: 1, tower: true', r'^\d+ front .*\| attract$']),
     # In a realm (G1, TEST autostart): pause → Quit Level → "Abort Level?"
     # (quitlevel_question) → Yes → back in the Tower.
     'pause-realm': dict(

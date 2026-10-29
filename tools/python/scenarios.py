@@ -56,6 +56,17 @@ SCENARIOS = {
                  {"at": 290, "dump": "key"}, {"at": 300, "teleport": [15.0, 10.3, -56.5]}, {"at": 500, "dump": "after"}],
         menu=[],
         checks=[("key", "keys", "==", 1), ("after", "keys", "==", 0), ("after", "potions", "==", 1)]),
+    # The Tower's G portal (reference-setup.md slot 6: (45.07, -6.43,
+    # -112.70) → G1) leads through the realm map, whose AudioEnterNextStage
+    # queues the destination's lines: S_ENTERING1G (G's SNDS 0, "You are
+    # now entering") and S_G1NAME (ResolveWorldData's "S_%sNAME").
+    # Playtest 2026-10-28: the map was silent.
+    'map-g1': dict(
+        level=None, updates=1000, sound_log=True,
+        actions=[{"at": 5, "dump": "start"}, {"at": 200, "teleport": [45.07, -6.43, -112.70]}],
+        menu=presses(TRIANGLE, 30, 8, 30),
+        checks=[("start", "world", "==", 13), ("sounds", "log", "contains", "S_ENTERING1G"), ("sounds", "log", "contains", "S_G1NAME"),
+                ("sounds", "order", "==", ["S_ENTERING1G", "S_G1NAME"])]),
     # G1's exit records the level as completed for the class and leads to the
     # Tower; the completion survives into the next level.
     'exit-g1': dict(
@@ -229,6 +240,8 @@ def run(tag, name, sc, saves_from=None, mutations=()):
         env['GDL_DEBUG_LEVEL'] = sc['level']
     if sc.get('frame_log'):
         env['GDL_FRAME_LOG'] = str(d / 'frames.log')
+    if sc.get('sound_log'):
+        env['GDL_SOUND_LOG'] = str(d / 'sounds.log')
     if sc.get('load_slot'):
         env['GDL_TEST_LOAD_SLOT'] = str(sc['load_slot'])
     if sc.get('level') is None:
@@ -239,6 +252,12 @@ def run(tag, name, sc, saves_from=None, mutations=()):
     for f in d.glob('state.*.json'):
         j = json.loads(f.read_text())
         dumps[j['label']] = j
+    if (d / 'sounds.log').exists():
+        # The sound requests (GDL_SOUND_LOG): the whole log and the order of
+        # the map's two voice lines.
+        log = (d / 'sounds.log').read_text()
+        names = [ln.split()[1] for ln in log.splitlines() if len(ln.split()) > 1]
+        dumps['sounds'] = dict(label='sounds', log=log, order=[n for n in names if n.startswith('S_ENTERING') or n.endswith('NAME')])
     if 'then' in sc:
         b = run(tag, f'{name}-b', dict(sc['then'], checks=[]), saves_from=d / 'saves', mutations=sc.get('mutate', []))
         dumps.update(b['dumps'])

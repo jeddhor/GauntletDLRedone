@@ -17,9 +17,20 @@ const MAP2_TOTTIME: i32 = 180;
 const GLOW_FADE: i32 = 60;
 const GLOW_HOLD: i32 = 10;
 
+/// What next_world's LoadWorldData of the destination (init_mapscreen,
+/// after MapMusicStart) gives the map: CurWorld for AudioMapDot and
+/// AudioEnterNextStage's lines (sound::enter_next_stage_lines). The port
+/// keeps the finished level's Game until the map ends.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MapDest {
+    pub world: i32,
+    pub enter: Option<(i32, i32)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct MapScreen {
     pub code: String,
+    pub dest: MapDest,
     /// The MAPS record when the map is shown (param 2 = 0 and LEVL +0x68).
     pub map: Option<[f32; 18]>,
     pub time: i32,
@@ -42,7 +53,7 @@ fn alpha(b: &mut Blit, a: i32) {
 impl Game {
     /// init_mapscreen(time, skip) for the next level `code` with its MAPS
     /// record.
-    pub fn init_mapscreen(&mut self, time: i32, skip: bool, code: &str, map: Option<[f32; 18]>) -> MapScreen {
+    pub fn init_mapscreen(&mut self, time: i32, skip: bool, code: &str, map: Option<[f32; 18]>, dest: MapDest) -> MapScreen {
         self.map_music_start();
         self.globals.game_mode = 0x400f;
         self.hud.reset_models();
@@ -53,6 +64,7 @@ impl Game {
         let map = if skip { None } else { map };
         MapScreen {
             code: code.to_string(),
+            dest,
             map,
             time: 0,
             time_left: time,
@@ -75,7 +87,7 @@ impl Game {
         match m.load_done {
             0 => {
                 if !m.skip {
-                    self.audio_enter_next_stage();
+                    self.audio_enter_next_stage(m.dest.enter);
                 }
                 m.load_done = 1;
             }
@@ -122,7 +134,7 @@ impl Game {
                             break;
                         }
                         m.dashes[i] = true;
-                        self.audio_map_dot();
+                        self.audio_map_dot(m.dest.world);
                     }
                     i += 1;
                 }

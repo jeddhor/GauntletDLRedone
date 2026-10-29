@@ -61,6 +61,8 @@ pub struct StageAudio {
     pub bank: String,
     pub word_10: i16,
     pub enter_sound: i16,
+    /// +0x14 as stored; ResolveWorldData replaces it at load with the
+    /// level's name line (gdl_core::game::sound::stage_name_line).
     pub word_14: i32,
     pub stream: String,
     pub areas: i16,
@@ -259,6 +261,20 @@ impl WorldData {
         };
         Ok(Self { chunks, levels, enemies, sounds, stages, cameras, boss_cameras, maps, world_dir })
     }
+
+    /// The AUDS index of LEVL record `level`: ResolveWorldData 0x161738
+    /// sets LEVL +0x64 = world_data +0x28 + LEVL +0x5a × 0x3c (a negative
+    /// +0x5a is stored as 0). Not the record's position: on this disc A2–A6,
+    /// J4–J6 and K1–K4 differ.
+    pub fn stage_index(&self, level: usize) -> Option<usize> {
+        let raw = &self.levels.get(level)?.raw;
+        Some(i16::from_le_bytes([raw[0x5a], raw[0x5b]]).max(0) as usize)
+    }
+
+    /// LEVL record `level`'s AUDS record (level_data +0x64).
+    pub fn stage_of(&self, level: usize) -> Option<&StageAudio> {
+        self.stages.get(self.stage_index(level)?)
+    }
 }
 
 #[cfg(test)]
@@ -278,5 +294,31 @@ mod tests {
         let w = WorldData::parse(&b).unwrap();
         assert_eq!((w.enemies[0].kind, w.enemies[0].name.as_str()), (13, "ZOM"));
         assert!(WorldData::parse(&b[..0x48]).is_err());
+    }
+
+    #[test]
+    fn level_stage_is_levl_5a() {
+        // Two LEVL records at 0x10 (+0x5a = 1 and −1, no enemies or boss
+        // camera) and two AUDS records after them; the directory follows.
+        let (levl, auds, dir) = (0x10, 0x10 + 2 * 0x10c, 0x10 + 2 * 0x10c + 2 * 0x3c);
+        let mut b = vec![0u8; dir + 32];
+        b[0..4].copy_from_slice(&(dir as u32).to_le_bytes());
+        b[4..8].copy_from_slice(&2u32.to_le_bytes());
+        for (k, (tag, at)) in [(b"LEVL", levl), (b"AUDS", auds)].into_iter().enumerate() {
+            let p = dir + 16 * k;
+            b[p..p + 4].copy_from_slice(&u32::from_be_bytes(*tag).to_le_bytes());
+            b[p + 4..p + 8].copy_from_slice(&(at as u32).to_le_bytes());
+            b[p + 8..p + 12].copy_from_slice(&2u32.to_le_bytes());
+        }
+        for (k, idx) in [1i16, -1].into_iter().enumerate() {
+            let p = levl + k * 0x10c;
+            b[p + 0x4c..p + 0x58].fill(0xff);
+            b[p + 0x8c..p + 0x8e].fill(0xff);
+            b[p + 0x5a..p + 0x5c].copy_from_slice(&idx.to_le_bytes());
+        }
+        b[auds + 0x3c..auds + 0x3c + 6].copy_from_slice(b"SECOND");
+        let w = WorldData::parse(&b).unwrap();
+        assert_eq!((w.stage_index(0), w.stage_index(1), w.stage_index(2)), (Some(1), Some(0), None));
+        assert_eq!(w.stage_of(0).map(|s| s.bank.as_str()), Some("SECOND"));
     }
 }

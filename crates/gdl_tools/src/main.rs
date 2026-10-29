@@ -1735,6 +1735,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let mut wdata_cache: std::collections::HashMap<String, gdl_formats::wdata::WorldData> = std::collections::HashMap::new();
         let mut levels_out = Vec::new();
         let (mut streams_total, mut streams_missing, mut snds_total, mut snds_missing, mut movies_missing) = (0, 0, 0, 0, 0);
+        let mut levels_without_enter = 0;
         for l in cfg["levels"].as_array().ok_or("levels")? {
             let wd = l["wdata"].as_str().ok_or("wdata")?.to_string();
             if !wdata_cache.contains_key(&wd) {
@@ -1748,8 +1749,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             if !movie_ok {
                 movies_missing += 1;
             }
-            let stage = w.stages.get(index).map(|a| gdl_core::game::sound::Stage {
-                bank: a.bank.clone(), word_10: a.word_10, enter_sound: a.enter_sound, word_14: a.word_14, stream: a.stream.clone(),
+            let stage = w.stage_of(index).map(|a| gdl_core::game::sound::Stage {
+                bank: a.bank.clone(), word_10: a.word_10, enter_sound: a.enter_sound, stream: a.stream.clone(),
                 areas: a.areas, word_2a: a.word_2a, parts: a.parts.clone(),
             });
             let mut streams = Vec::new();
@@ -1776,13 +1777,20 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 serde_json::json!([s.name, id.map(|i| format!("{i:#x}"))])
             }).collect();
+            // The map's AudioEnterNextStage lines when the level is entered
+            // from the Tower (ResolveWorldData with CurWorld 13).
+            let enter = gdl_core::game::sound::enter_next_stage_lines(w, &rom, index, 0xd);
+            if enter.is_none() {
+                levels_without_enter += 1;
+            }
             levels_out.push(serde_json::json!({"level": l["name"], "movie": movie, "movie_present": movie_ok,
+                "stage_record": w.stage_index(index), "enter_lines": enter.map(|(a, b)| [describe(a), describe(b)]),
                 "bank": stage.as_ref().map(|s| s.bank.clone()), "bank_present": stage.as_ref().map(|s| s.bank.is_empty() || bank_ok(&s.bank)),
                 "streams": streams, "world_sounds": snds.len(), "world_sounds_unresolved": snds.iter().filter(|v| v[1].is_null()).map(|v| v[0].clone()).collect::<Vec<_>>()}));
         }
         let summary = serde_json::json!({"rom_sounds": rom.sounds.len(), "rom_banks": rom.banks.len(), "elf_table_ids": ids_total, "elf_table_ids_unresolved": ids_missing,
             "music_streams": streams_total, "music_streams_missing": streams_missing, "world_sounds": snds_total, "world_sounds_unresolved": snds_missing,
-            "levels": levels_out.len(), "level_movies_missing": movies_missing, "movies_catalogued": movies.len(), "rom_banks_without_vbk": vbk_missing});
+            "levels": levels_out.len(), "levels_without_enter_lines": levels_without_enter, "level_movies_missing": movies_missing, "movies_catalogued": movies.len(), "rom_banks_without_vbk": vbk_missing});
         let report = serde_json::json!({"rom_sha256": hash(&rom_bytes), "summary": summary, "elf_tables": table_out, "levels": levels_out,
             "scope": "catalogue of event→asset bindings on the actual disc; event timing is covered by the replays (gameplay.md), not by this report"});
         let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[5])?;

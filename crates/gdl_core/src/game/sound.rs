@@ -15,6 +15,7 @@ use super::{Event, Game, R};
 use crate::numeric::{add_rz as add, div_rn as div, mul_rz as mul, sub_guarded_rz as sub};
 use gdl_formats::audio::AudioRom;
 use gdl_formats::elf::Elf;
+use gdl_formats::wdata::WorldData;
 
 type V3 = [f32; 3];
 
@@ -25,8 +26,6 @@ pub struct Stage {
     pub word_10: i16,
     /// Stage +0x12: world sound for AudioEffect 5 and AudioExplodeWall.
     pub enter_sound: i16,
-    /// Stage +0x14: AudioEnterNextStage's second line (−1: none).
-    pub word_14: i32,
     pub stream: String,
     pub areas: i16,
     pub word_2a: i16,
@@ -307,6 +306,37 @@ impl SoundTables {
         s.rom = Some(rom);
         Ok(s)
     }
+}
+
+/// ResolveWorldData 0x161738's stage +0x14 for LEVL record `level`: each
+/// LEVL record in order writes its AUDS record's +0x14 (a record shared by
+/// several levels keeps the last write) — AudioFindSound of sprintf
+/// "S_%sNAME" (0x2a9248) with the level code when LEVL +4 is non-zero and
+/// CurWorld is not 12, else −1. LoadWorldData resolves a WDATA when it
+/// loads it, before it stores the new CurWorld: `cur_world` is the world
+/// being left then.
+pub fn stage_name_line(w: &WorldData, rom: &AudioRom, level: usize, cur_world: i32) -> i32 {
+    let Some(stage) = w.stage_index(level) else { return -1 };
+    let mut line = -1;
+    for (k, r) in w.levels.iter().enumerate() {
+        if w.stage_index(k) == Some(stage) {
+            line = if r.word_04 != 0 && cur_world != 0xc { rom.find(&format!("S_{}NAME", r.code)).unwrap_or(-1) } else { -1 };
+        }
+    }
+    line
+}
+
+/// AudioEnterNextStage 0x15df80's two lines for LEVL record `level` once
+/// LoadWorldData made it level_data: its AUDS record's +0x10 world sound
+/// (GetWorldSound 0x15c4b8: the SNDS entry's AudioFindSound ID, none for a
+/// negative index or ID) and the +0x14 name line (stage_name_line); None
+/// when either is missing (nothing is queued).
+pub fn enter_next_stage_lines(w: &WorldData, rom: &AudioRom, level: usize, cur_world: i32) -> Option<(i32, i32)> {
+    let st = w.stage_of(level)?;
+    let snd = w.sounds.get(usize::try_from(st.word_10).ok()?)?;
+    let first = rom.find(&snd.name)?;
+    let name = stage_name_line(w, rom, level, cur_world);
+    (0 <= first && 0 <= name).then_some((first, name))
 }
 
 impl Game {

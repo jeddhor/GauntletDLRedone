@@ -744,11 +744,11 @@ impl Game {
                     })
                     .collect();
                 let snds: Vec<(String, i16, i16)> = inp.wdata.sounds.iter().map(|w| (w.name.clone(), w.volume, w.priority)).collect();
-                let stage = inp.wdata.stages.get(inp.level).map(|a| super::sound::Stage {
+                // level_data +0x64: the AUDS record LEVL +0x5a selects.
+                let stage = inp.wdata.stage_of(inp.level).map(|a| super::sound::Stage {
                     bank: a.bank.clone(),
                     word_10: a.word_10,
                     enter_sound: a.enter_sound,
-                    word_14: a.word_14,
                     stream: a.stream.clone(),
                     areas: a.areas,
                     word_2a: a.word_2a,

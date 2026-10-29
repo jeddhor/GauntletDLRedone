@@ -201,3 +201,8 @@ and replay convention): gdl_play c91768cd1e84076a…, gdl_tools
 b66b73cb42e60b99…; regression r87 equal to r86 for all 146 replays, menu
 flows 21/21 (menu-flows-m20-chest1), title_start_check 4/4
 (title-start-m20-chest1), scenarios chest-g1 and death-g1 (scenarios-chest1).
+Then (no menu over the game-over movie; the map's destination voice
+lines and dots; AUDS by LEVL +0x5a): gdl_play 6189a5d96f486314…,
+gdl_tools 189bcdcca63fd3e9…; regression r88 equal to r87 for all 146
+replays, menu flows 22/22 (menu-flows-mapvoice-all1), title_start_check
+4/4 (title-start-m20-mapvoice1), scenario map-g1 (scenarios-mapvoice4).

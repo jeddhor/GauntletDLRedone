@@ -103,6 +103,34 @@
 - AudioDemonFireBall 0x15fcb8 (enemy type 2 fireballs by CurWorld) and
   AudioSelect 0x15ce80 are ported (effects.rs, sound_cues.rs).
 
+## Stage records (2026-10-28)
+
+ResolveWorldData 0x161738 (LoadWorldData, when a world's WDATA is loaded)
+sets LEVL +0x64 = world_data +0x28 (AUDS) + LEVL +0x5a × 0x3c (a negative
++0x5a stored as 0): the stage record is LEVL +0x5a's, not the record's
+position. On this disc they differ for A2–A6, J4–J6 and K1–K4 (CASTLE's
+LEVL order is A1, A6, A2 …; SKY's K2, K3, K4, K1, K5); until 2026-10-28
+the port took the position, so those twelve levels had another level's
+bank, music stream and world-sound indices (A4 the Chimera's bank and
+CASTLE5, A5 CASTLE6). WorldData::stage_of now follows +0x5a; with it every
+level's streams carry its own code (av-catalog-v3). Reference
+(tools/python/reference_stage.py, paused captures): K2 (LEVL 0) → AUDS 1
+"sky2", name line 0x190002 (ref-stage-k2-v1); G1 → AUDS 0 "town1",
+0x150001 (ref-stage-g1-v1).
+
+The same pass writes each stage's +0x14 (the file holds −1): for every LEVL
+record in order, AudioFindSound(sprintf "S_%sNAME" 0x2a9248, the code)
+when LEVL +4 is non-zero and CurWorld is not 12, else −1 (a record shared
+by levels keeps the last). LoadWorldData stores the new CurWorld after
+this, so the test sees the world being left. AudioEnterNextStage (the
+map, hud.md) queues the world sound and this name line when both exist:
+sound::stage_name_line / enter_next_stage_lines; the client tracks the
+world a WDATA was loaded from (Session.wdata_from). Both K2 and G1 values
+above equal the port's. av-catalog-v3: all 51 realm levels have both lines
+(S_ENTERING1<L>, or S_ENTERING2<L> on the boss levels, then S_<code>NAME,
+all in the MAP_<L> banks); none for the Tower (the ROM has no S_L1NAME
+or S_L2NAME) and S1–S9 (world-sound index −1).
+
 ## Audiovisual catalog (M17, 2026-10-23)
 
 `gdl_tools av-catalog AUDATPS2.ROM SLUS_200.47 play-config.json

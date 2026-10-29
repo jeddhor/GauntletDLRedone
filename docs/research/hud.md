@@ -521,6 +521,23 @@ vblanks later the level starts. Without a record: TRANSITION_SCREEN
 (0, 0, 0x200, 0x140) for 0x78 vblanks. Verified natively (F9 from G1): the
 Forsaken Province map, path to Town, glow and the Town picture.
 
+The map's sounds belong to the destination: init_mapscreen calls
+MapMusicStart 0x15cf00 (LevelLetter of the WDATA still loaded — none
+leaving the Tower) and then next_world 0x1250f0, whose LoadWorldData makes
+the destination level_data, world_data and CurWorld. do_mapscreen's first
+step (load_done 0, unless skipping) runs AudioEnterNextStage 0x15df80:
+AudioVQueAdd4 of the destination's AUDS world sound (+0x10 → SNDS, e.g.
+S_ENTERING1G "You are now entering") and of the stage +0x14 that
+ResolveWorldData filled with "S_<code>NAME" (S_G1NAME); AudioStillPlaying
+then holds the map until both have played. AudioMapDot 0x15e020 plays
+snd.145[CurWorld] — the destination's S_MAPDOT<L>. Until 2026-10-28 the
+port used the finished level's tables and the file's +0x14 (−1): the map
+was silent (playtest.md), and dashes after the Tower played S_WARN
+(snd.145[13] = sound 0). The port keeps the finished level's Game during
+the map; MapDest carries the destination's CurWorld and lines (audio.md
+"Stage records"). Scenario map-g1: the Tower's G portal → the G1 map →
+S_ENTERING1G, S_G1NAME queued (GDL_SOUND_LOG).
+
 ## Sumner's speeches and captions
 
 SumnerLevelSpeechStart queues a speech for players with a new level tier
@@ -840,6 +857,16 @@ state 0" once per rendered frame instead of the level end's test; since
 with player 1 active but still in state 0 until do_player_select's first
 update (new_player), and a rendered frame before that update had ended
 the game (playtest.md, 2026-10-28).
+
+The FAIL movie runs as an attract entry with the client's front-end page
+left on the title menu (end_game). Until 2026-10-28 the title_menu record
+and its spinning arrow icon (start_optmenu's 3D icon) were drawn under and
+through the movie — the "blinking cursor" at the bottom of the picture
+(playtest.md); no original menu record is drawn during an attract entry
+now. Menu flow quit-game-movie (GDL_UI_TRACE "| attract", "| attract icon"
+when the icon is drawn) passes; the same flow on a build without the guard
+shows "attract icon" and the arrow at the bottom left
+(private/runs/client-overcursor0-control-quit-game-movie, 003-movie2).
 
 ## Sumner's hint pad (2026-10-22)
 

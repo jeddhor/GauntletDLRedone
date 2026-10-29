@@ -679,6 +679,10 @@ struct Session {
     title: String,
     /// CurWorld of the level played before this one (LastWorldPlayed).
     last_world: i32,
+    /// CurWorld when world_number's WDATA was loaded (LoadWorldData
+    /// resolves a WDATA before it stores the new CurWorld; −1 for the
+    /// session's first world): stage_name_line's `cur_world`.
+    wdata_from: i32,
     /// TowerStartPos (TowerSetStartPos before the Tower menu's shop): the
     /// start locator of the next Tower entry, else the realm's wing.
     tower_start: Option<i16>,
@@ -2578,7 +2582,7 @@ fn ui_trace(
     screen: Option<Res<Screen>>,
     ui: Res<Ui>,
     sim: Option<Res<Sim>>,
-    overlay: Res<gdl_client::enhance::Overlay>,
+    (overlay, icon): (Res<gdl_client::enhance::Overlay>, Res<MenuIcon>),
     mut exits: MessageReader<AppExit>,
     mut state: Local<(u64, String, Option<std::path::PathBuf>, bool)>,
 ) {
@@ -2616,6 +2620,11 @@ fn ui_trace(
     }
     if overlay.open {
         line += " | overlay";
+    }
+    if front.as_ref().is_some_and(|f| f.attract_run.is_some()) {
+        // An attract entry (movie, credits, …) and, if drawn over it, the
+        // menu's arrow icon.
+        line += if icon.shown { " | attract icon" } else { " | attract" };
     }
     if exits.read().next().is_some() {
         line = "exit".into();
@@ -4906,6 +4915,20 @@ fn slot_starts(front: &Front, sources: &Sources, records: &[Record; 4], controls
 /// music stream (BGPlayStream / AudioStreamSetVolume / AudioStreamStop).
 fn play_audio(audio: &mut Option<NonSendMut<gdl_client::audio::AudioOut>>, events: &[Event]) {
     let Some(a) = audio.as_mut() else { return };
+    // DIAGNOSTIC: GDL_SOUND_LOG=FILE appends each sound request (ID, ROM
+    // name, volume, pan, priority) — cue checks without listening.
+    static LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
+    let log = LOG.get_or_init(|| std::env::var_os("GDL_SOUND_LOG").and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok()).map(std::sync::Mutex::new));
+    if let Some(f) = log
+        && let Ok(mut f) = f.lock()
+    {
+        use std::io::Write as _;
+        for e in events {
+            if let Event::Sound { id, volume, priority, pan, .. } | Event::LoopSound { id, volume, priority, pan, .. } = e {
+                let _ = writeln!(f, "{id:#x} {} {volume:#x} {pan:#x} {priority:#x}", a.sound_name(*id).unwrap_or("?"));
+            }
+        }
+    }
     for e in events {
         match e {
             // The simulation's pan words (AudioAng or fixed pans).
@@ -6093,12 +6116,22 @@ fn present_see_thru(
 fn start_map(sim: &mut Sim, sources: &mut Sources, sets: &mut HudSets, front: &Front, session: &Session, k: usize, skip: bool) -> bool {
     let lv = &session.levels[k];
     let code = lv.name.clone();
+    let wdata = gdl_client::bounded_read(&lv.wdata).ok().and_then(|b| gdl_formats::wdata::WorldData::parse(&b).ok());
     let map = (|| -> Option<[f32; 18]> {
-        let w = gdl_formats::wdata::WorldData::parse(&gdl_client::bounded_read(&lv.wdata).ok()?).ok()?;
+        let w = wdata.as_ref()?;
         let rec = w.levels.get(lv.index)?;
         let i = i16::from_le_bytes([rec.raw[0x5c], rec.raw[0x5d]]);
         w.maps.get(usize::try_from(i).ok()?).copied()
     })();
+    // next_world's LoadWorldData: a new world's WDATA is resolved with the
+    // world being left as CurWorld; the same world's keeps its earlier
+    // resolution.
+    let from = if lv.world != session.world_number { session.world_number } else { session.wdata_from };
+    let enter = match (wdata.as_ref(), sim.game.sounds.rom.as_ref()) {
+        (Some(w), Some(rom)) => gdl_core::game::sound::enter_next_stage_lines(w, rom, lv.index, from),
+        _ => None,
+    };
+    let dest = gdl_core::game::mapscreen::MapDest { world: lv.world, enter };
     let key = format!("MAPS/level{code}");
     if !sources.packages.contains_key(&key) {
         let Ok(pkg) = package_entry(&front.catalog, &key, false).and_then(|v| load_package(&v)) else { return false };
@@ -6107,7 +6140,7 @@ fn start_map(sim: &mut Sim, sources: &mut Sources, sets: &mut HudSets, front: &F
     let set = gdl_client::hud_texture_set(&key, &sources.packages[&key].objects);
     sim.game.hud.add_texture_set(set);
     sets.keys.push(key);
-    let m = sim.game.init_mapscreen(0x78, skip, &code, map);
+    let m = sim.game.init_mapscreen(0x78, skip, &code, map, dest);
     sim.map = Some((m, k));
     true
 }
@@ -7004,9 +7037,12 @@ fn present_screen_adjust(front: Res<Front>, mut q: Query<&mut gdl_client::Displa
     }
 }
 
-/// The page drawn with an original menu record (front end or pause).
+/// The page drawn with an original menu record (front end or pause). None
+/// during an attract entry: do_over's end leaves the page on the title menu
+/// (end_game) under the FAIL movie, whose menu and arrow icon showed
+/// through the movie until 2026-10-28 (playtest).
 fn menu_view(front: &Front, screen: Screen, ui: &Ui) -> Option<(&'static str, usize)> {
-    if !(screen == Screen::Front || ui.paused) {
+    if !(screen == Screen::Front || ui.paused) || (screen == Screen::Front && front.attract_run.is_some()) {
         return None;
     }
     gdl_client::menu::page_record(&front.menu.page).filter(|(k, _)| front.menus.contains_key(k))
@@ -7462,6 +7498,7 @@ fn session_for(front: &Front, record: &Record, controls: profile::ControlOptions
         world_number: first.world,
         title: first.title.clone(),
         last_world: 0,
+        wdata_from: -1,
         tower_start: None,
         prefs: front.menu.prefs,
         current: idx,
@@ -9085,6 +9122,9 @@ fn advance_level(
         session.object_labels = labels.into_iter().chain(character_labels(&sources)).collect();
         if session.world_number != 0xd {
             session.last_world = session.world_number;
+        }
+        if session.world_number != session.levels[idx].world {
+            session.wdata_from = session.world_number;
         }
         session.world_number = session.levels[idx].world;
         session.title = session.levels[idx].title.clone();

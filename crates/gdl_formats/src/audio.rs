@@ -204,8 +204,12 @@ impl AudioRom {
     }
 
     /// AudioFindSound 0x1203e8: banks in order, names compared with
-    /// strncmp(…, 15); returns the record's stored ID.
+    /// strncmp(…, 15); returns the record's stored ID (none for an empty
+    /// name).
     pub fn find(&self, name: &str) -> Option<i32> {
+        if name.is_empty() {
+            return None;
+        }
         for bank in &self.banks {
             for g in bank.first as usize..(bank.first + bank.count) as usize {
                 if self.sounds.get(g).is_some_and(|(n, _)| n.bytes().take(15).eq(name.bytes().take(15))) {
@@ -222,6 +226,12 @@ impl AudioRom {
     pub fn length_of(&self, id: i32) -> Option<f32> {
         let bank = self.banks.get(usize::try_from(id >> 16).ok()?)?;
         self.sounds.get(usize::from(bank.first) + (id & 0xfff) as usize).map(|s| s.1)
+    }
+
+    /// The name record of an ID (as length_of finds it).
+    pub fn name_of(&self, id: i32) -> Option<&str> {
+        let bank = self.banks.get(usize::try_from(id >> 16).ok()?)?;
+        self.sounds.get(usize::from(bank.first) + (id & 0xfff) as usize).map(|s| s.0.as_str())
     }
 
     /// (bank, call) of an ID: bank = id >> 16, call = id & 0xfff.

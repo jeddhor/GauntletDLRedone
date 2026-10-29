@@ -127,6 +127,22 @@ scenario chest-g1 checks key → chest → potion. The ground potions with
 original (w7l1-potion-v1); the shown ones (367, 371, 372) were always
 collectable.
 
+Next playtest (same day): (1) a "blinking selection cursor" at the bottom
+of the game-over movie, "the one from the Start screen": the FAIL movie
+plays as an attract entry while the client's page is the title menu, and
+that menu record and its spinning arrow icon were drawn through the movie;
+fixed (hud.md "Game over"; menu flow quit-game-movie, with a control run
+on a build without the fix showing the arrow). (2) The map before G1 was
+silent where the original says "You are now entering THE POISON FIELDS!":
+AudioEnterNextStage takes the destination's lines after next_world's
+LoadWorldData, and the second line is a stage field ResolveWorldData fills
+at load ("S_<code>NAME"); the port used the finished level's tables and
+the file's −1. Fixed (audio.md "Stage records", hud.md realm map; scenario
+map-g1: S_ENTERING1G, S_G1NAME queued). Found on the way: the AUDS stage
+record is LEVL +0x5a's — twelve levels (A2–A6, J4–J6, K1–K4) had another
+level's music and bank — and the map dots after the Tower played S_WARN.
+Reference: ref-stage-k2-v1 and ref-stage-g1-v1 equal the port's values.
+
 M12 walkthrough (2026-10-22, gdl_play on the private Xvfb through
 tools/python/client_driver.py; frames in private/runs/client-m12a,
 client-m12b, client-ex1..4, client-die4):
