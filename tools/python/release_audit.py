@@ -16,8 +16,9 @@ included) is checked for:
               name (.PSS, .IRX, .ELF, SLUS_*, WAD.BIN, .p2s, .ps2 card, BIOS)
   saves       a file equal to one in the user's save folder, read only
               ($XDG_DATA_HOME/gdl-native/SLUS-20047/saves), or named save*.json
-  identity    the user's name in a path or e-mail address (raw, UTF-16LE),
-              this machine's mount and home paths
+  identity    the user's name in a home or mount path, the repository's
+              mount path, the git configuration's e-mail address and its
+              local part (raw and UTF-16LE)
   private     a member path under private/, target*/ or a reports/runs folder
 
 library-source/ holds third-party source archives: listed with their
@@ -30,6 +31,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -67,8 +69,13 @@ def private_hashes():
 
 
 def identity_needles():
+    """This machine's user and folders, and the e-mail address of the
+    repository's git configuration (read at run time; never stored)."""
     user = os.environ.get('USER') or pathlib.Path.home().name
     raw = {f'/home/{user}', f'/run/media/{user}', f'C:\\Users\\{user}', f'C:/Users/{user}', str(ROOT)}
+    email = subprocess.run(['bash', str(ROOT / 'tools/git-local.sh'), 'config', 'user.email'], capture_output=True, text=True).stdout.strip()
+    if email:
+        raw.update({email, email.split('@')[0]})
     needles = []
     for n in sorted(raw):
         needles.append((n, n.encode()))
@@ -128,7 +135,7 @@ def main():
     lib = out / 'library-source'
     library = {p.name: file_sha(p) for p in sorted(lib.iterdir())} if lib.exists() else {}
     result = {'scope': 'release folder private-data audit', 'out': str(out), 'private_hashes': len(known), 'save_files': len(saves),
-              'identity_needles': [label for label, _ in needles], 'scanned': scanned, 'library_source': library,
+              'identity_needles': len(needles), 'scanned': scanned, 'library_source': library,
               'findings': findings, 'pass': not findings}
     report.write_text(json.dumps(result, indent=1) + '\n')
     print(json.dumps({k: result[k] for k in ('private_hashes', 'save_files', 'scanned', 'pass')}, indent=1))

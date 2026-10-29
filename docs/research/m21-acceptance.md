@@ -53,7 +53,30 @@ check left for the owner is the game on a Windows desktop (below).
 
 ## Release identities
 
-FILLED AT PACKAGING (below).
+Built by tools/package.sh at commit 5d5d363 (programs) — the release's
+source archive is cut from the commit that adds this report (the programs'
+sources are unchanged by it):
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-0.1.0-linux-x86_64.tar.gz (37 MB; 106 MiB unpacked) | e2122433e2ae51a4… |
+| GauntletDarkLegacy-0.1.0-windows-x86_64.zip (40 MB; 108 MiB unpacked) | f73e7dff1a03647d… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | fed81993b5062b2f… / 380722debf06f424… / cc60906056b154c6… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | 2d8496c4890fc997… (byte-identical to the previous release's) / cc563344a8294b9e… / 887fb20d1cdbbb13… |
+| library-source/ (179 MiB) | qtbase 6.11.1, qt6-base 6.10.2+dfsg, GCC 13.1.0, mingw-builds 7ff96692, the kit's build-info (docs/toolchain.md) |
+
+Checks of these exact packages (2026-10-29):
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Ubuntu 20.04: libraries, install, verify, wizard, game, hashes vs this host | pass | old-distro-focal5 |
+| Linux 2026 host, system Qt masked: `--batch` | pass, 3.6 s | qt-bundle-batch-v7 |
+| Linux wizard with the ISO attached as a drive, game started | pass, 4.1 s | installer-gui-qt-v7 |
+| Update over the previous release (Linux): saves, settings, programs, verify, old save loaded | pass | update-v4 |
+| Update over the previous release (Windows 11, `--batch`): saves, programs, verify | pass, 27 s + 23 s | private/runs/windows-update-v1 |
+| Windows game under Wine vs the Linux game, both imported by their package's importer: 600 G1 updates | equal (and equal to the 2026-10-28 reference) | private/runs/wine-equiv-final-v1 |
+| Title → select on the RX 580 (window found by its release title) | 6/6 | title-start-m21-release1 |
+| Private-data audit of both packages, archives and the source archive | see research/release.md "Private-data audit" | release-audit-final2 |
 
 ## Remaining limitations
 

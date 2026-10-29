@@ -217,7 +217,23 @@ previous-data folder left; the new game started from the old save
 (GDL_TEST_LOAD_SLOT=1: the store numbers card file k as k + 1) and ran 300
 updates. Earlier runs: v1 (the test loaded slot 0: no such save), v2 (the
 settings TEST action falls on a rendered frame at its update; a frame that
-steps two updates missed it — the action is now repeated).
+steps two updates missed it — the action is now repeated). Rerun on the
+release's packages: update-v4 (pass).
+
+Windows 11 (the owner's machine over SSH, private/runs/windows-update-v1):
+the previous release's installer `--batch` from the ISO staged on P:
+(exit 0, 27 s; APPDATA redirected to a test folder), a save, its backup and
+settings.json placed in APPDATA, the release's installer over the same
+folder (exit 0, 23 s): the saves byte-identical, gdl_play.exe replaced and
+both programs equal to the package's, verify none differing, no leftover
+folder; the test folder removed afterwards. The installer is a GUI-subsystem
+program: PowerShell waits for it only through Start-Process -Wait.
+
+Under Wine 10.0 on the RX 580 (private/runs/wine-equiv-final-v1): the
+release's Windows package, imported by its gdl_import.exe, and its Linux
+package, imported by its gdl_import: 600 updates of a G1 TEST start give
+equal per-update hashes (and equal to the 2026-10-28 installed game's,
+boot-equiv-v2).
 
 ## Private-data audit (2026-10-29)
 
@@ -292,7 +308,16 @@ installed Linux game's (private/runs/boot-equiv-v2/inst-G1.state).
   The realm and ending movies take the same start-failure path
   (present_movie: no player → the movie ends).
 
-## Identities (2026-10-28, final packages)
+## Identities (2026-10-29, the M21 release)
+
+Commit 5d5d363 (programs): Linux package e2122433e2ae51a4… (tar.gz;
+installer fed81993b5062b2f…, gdl_play 380722debf06f424…, gdl_import
+cc60906056b154c6…); Windows package f73e7dff1a03647d… (zip; installer
+2d8496c4890fc997…, unchanged, gdl_play.exe cc563344a8294b9e…,
+gdl_import.exe 887fb20d1cdbbb13…). The checks of these packages:
+research/m21-acceptance.md.
+
+## Identities (2026-10-28, packages of b9f7496)
 
 Linux package (tools/package.sh): installer 5d7869977d3aaf93…, gdl_play
 a7398570c4836219… (unchanged since M21), gdl_import f4be7b9606dad7e1…;
