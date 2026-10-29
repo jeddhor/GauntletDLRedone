@@ -9369,12 +9369,28 @@ fn process_start() -> std::time::Instant {
 }
 
 /// A fatal error where a player sees it (M21): <data home>/gdl-native/
-/// last-error.txt and, on Windows (no console), a message box.
+/// last-error.txt and, on Windows (no console), a message box; on Linux,
+/// started from the desktop (stderr not a terminal) and not by a test or
+/// developer run (no GDL_* variable), the desktop's error dialog (kdialog
+/// or zenity, whichever is installed; nothing when neither is).
 fn report_fatal(msg: &str) {
     if let Ok(d) = gdl_client::data_home() {
         let d = d.join("gdl-native");
         let _ = std::fs::create_dir_all(&d);
         let _ = std::fs::write(d.join("last-error.txt"), msg);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use std::io::IsTerminal;
+        if !std::io::stderr().is_terminal() && !std::env::vars_os().any(|(k, _)| k.to_string_lossy().starts_with("GDL_")) {
+            let title = "Gauntlet: Dark Legacy";
+            let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE"));
+            // The other one only when this one is not installed (a closed
+            // or failed dialog is not shown again).
+            let kdialog = || std::process::Command::new("kdialog").args(["--title", title, "--error", msg]).status().is_ok();
+            let zenity = || std::process::Command::new("zenity").args(["--error", "--no-markup", "--title", title, "--text", msg]).status().is_ok();
+            let _ = if kde { kdialog() || zenity() } else { zenity() || kdialog() };
+        }
     }
     #[cfg(windows)]
     {
@@ -9390,11 +9406,25 @@ fn report_fatal(msg: &str) {
     }
 }
 
+/// A panic in the player's words: the renderer's "no GPU" (no Vulkan
+/// driver or device; Windows: no Vulkan or DirectX 12) names the remedy.
+fn fatal_text(info: &std::panic::PanicHookInfo) -> String {
+    let what = info.payload().downcast_ref::<String>().map(String::as_str).or_else(|| info.payload().downcast_ref::<&str>().copied()).unwrap_or("");
+    if what.contains("Unable to find a GPU") {
+        format!(
+            "No graphics card with {} support was found.\n\nThe game needs one. Install or update the graphics card's driver, then start the game again.\n\n(The renderer reported: {what})",
+            if cfg!(windows) { "Vulkan or DirectX 12" } else { "Vulkan" }
+        )
+    } else {
+        format!("The game stopped unexpectedly:\n{info}")
+    }
+}
+
 fn main() {
     let _ = process_start();
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        report_fatal(&format!("The game stopped unexpectedly:\n{info}"));
+        report_fatal(&fatal_text(info));
         default_hook(info);
     }));
     if let Err(error) = run() {

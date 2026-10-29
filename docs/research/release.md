@@ -195,6 +195,29 @@ gdl_play.exe installed by its gdl_import.exe (verify none differing): the
 per-update simulation hashes of 600 updates of a G1 TEST start equal the
 installed Linux game's (private/runs/boot-equiv-v2/inst-G1.state).
 
+## Missing dependencies (2026-10-29)
+
+- No Vulkan device (Linux: VK_DRIVER_FILES / VK_ICD_FILENAMES pointing to
+  an empty manifest, so the loader finds no driver; RX 580 machine, kwin
+  virtual session): Bevy's renderer panics "Unable to find a GPU!". Before:
+  last-error.txt held the raw panic with a source path and a desktop
+  launch showed nothing. Now the panic hook names the remedy ("No graphics
+  card with Vulkan support was found … Install or update the graphics
+  card's driver"; Windows: "Vulkan or DirectX 12"), written to
+  last-error.txt; on Windows in the message box, on Linux — stderr not a
+  terminal and no GDL_* variable (test and developer runs set them) — in
+  the desktop's dialog (kdialog on KDE, else zenity; the other only when
+  the first is not installed). Seen in the session (Qt forced to the
+  session's Xwayland: under a Wayland desktop Qt otherwise opens the
+  user's own display): the kdialog box with the message, then exit 101.
+  The Windows message box was not shown in session 0.
+- No FFmpeg (GDL_FFMPEG=/nonexistent/ffmpeg, title_start_check
+  noffmpeg1, --attract --wait-title): the boot's SONY screen during the
+  card check, the intro movie fails to start and is skipped, Press Start
+  after 31 frames (the movie played out: 3711), START → the title menu.
+  The realm and ending movies take the same start-failure path
+  (present_movie: no player → the movie ends).
+
 ## Identities (2026-10-28, final packages)
 
 Linux package (tools/package.sh): installer 5d7869977d3aaf93…, gdl_play
