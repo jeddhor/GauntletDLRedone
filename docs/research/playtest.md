@@ -143,6 +143,21 @@ record is LEVL +0x5a's — twelve levels (A2–A6, J4–J6, K1–K4) had another
 level's music and bank — and the map dots after the Tower played S_WARN.
 Reference: ref-stage-k2-v1 and ref-stage-g1-v1 equal the port's values.
 
+Next report (same day): (1) "pressing Start on the controller on Press
+Start does nothing; A works". Not reproduced: gilrs maps the player's
+controller (Microsoft Xbox Series S|X Controller, 045e:0b12, USB/xpad;
+SDL mapping "Xbox Series Controller") Start → BTN_START, and on the RX 580
+a virtual pad with that identity and those capabilities, START only,
+reached the title menu from the SONY/attract screens (title_start_check
+--attract --xbox, attract-xbox1/2: the client's own frames show the movie,
+Press Start, then Start/Options; the window imports had been stale), under
+the player's settings on kwin's Wayland socket (rx580-wl-copy) and after
+the attract movies played out to Press Start (rx580-wl-natural). No
+remapper is active (input-remapper has no controller preset; Steam was not
+running). Open: what differs on the player's desktop. (2) With
+anti-aliasing on, the Display overlay washed the picture out: fixed
+(enhancements.md "Anti-aliasing").
+
 M12 walkthrough (2026-10-22, gdl_play on the private Xvfb through
 tools/python/client_driver.py; frames in private/runs/client-m12a,
 client-m12b, client-ex1..4, client-die4):

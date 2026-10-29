@@ -110,6 +110,23 @@ Bevy gives every camera 4× MSAA by default; every native render before
 default 4; the baseline renders without (the GS has none): in G1's frozen
 frame 0.8 % of the pixels — edges — differ between 1× and 4×.
 
+The overlay's camera (order 3, after the HUD camera's DisplayToLinear)
+clears the target's textures to transparent and is composited onto the
+window with premultiplied blending. Until 2026-10-28 it loaded them: Bevy
+0.18.1 shares a target's textures per (target, HDR, MSAA) and performs no
+MSAA writeback (Camera::msaa_writeback is extracted, never consumed), so
+with MSAA it loaded the multisampled texture as the HUD camera left it —
+display values, before DisplayToLinear — and its resolve wrote those back
+as linear: the whole picture washed out while the overlay (or the F3
+counter) was up (playtest). A non-MSAA overlay camera is not possible: the
+2D depth texture is shared per target and a differing sample count fails
+wgpu validation. Checks: title-display at MSAA 4 and 1 (Xvfb: overlay
+frames equal within the setting's own text and edges, mean 0.6/255;
+closed-menu frames pixel-identical to the previous build); on the RX 580
+under the player's settings (Wayland fullscreen 1920×1080, widescreen,
+MSAA 4 vs 1, title_start_check --overlay): mean difference 0.5/255; F3's
+counter drawn, the rest unchanged.
+
 ## Key bindings
 
 gdl_client::controls: fourteen port-0 actions (the pad entries measured in

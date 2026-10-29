@@ -551,6 +551,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    levels had another level's music and bank). Reference ref-stage-k2-v1
    and ref-stage-g1-v1 equal the port (audio.md "Stage records", hud.md,
    playtest.md).
+   2026-10-28 (user: MSAA washes out the Display overlay; pad Start does
+   nothing on Press Start): the overlay camera clears and is composited
+   premultiplied instead of loading the multisampled texture Bevy 0.18
+   never writes back (enhancements.md); Start not reproduced with a
+   virtual copy of the player's controller on the RX 580 under the
+   player's settings (playtest.md, title_start_check --attract --xbox).
 
 ---
 

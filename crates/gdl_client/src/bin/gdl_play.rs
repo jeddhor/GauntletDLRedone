@@ -143,12 +143,30 @@ struct OverlayText;
 struct FpsText;
 
 /// The native overlay's camera (last, window pixels, crisp text outside
-/// the GS display decode) and its entities, hidden until used.
+/// the GS display decode) and its entities, hidden until used. It clears
+/// the target's shared textures to transparent and is composited
+/// premultiplied onto the window, which cameras 0–2 have written by then:
+/// Bevy 0.18 does no MSAA writeback (Camera::msaa_writeback is extracted,
+/// not consumed), so loading them with MSAA took the multisampled texture
+/// as the HUD camera left it — before DisplayToLinear — and the resolve
+/// put the undecoded frame back: the picture washed out while the overlay
+/// was open (playtest 2026-10-28). Its MSAA stays the others' (the 2D depth
+/// texture is shared per target; a differing sample count fails
+/// validation).
 fn setup_overlay(mut commands: Commands) {
     let layer = bevy::camera::visibility::RenderLayers::layer(OVERLAY_LAYER);
     commands.spawn((
         Camera2d,
-        Camera { order: 3, clear_color: ClearColorConfig::None, is_active: false, ..default() },
+        Camera {
+            order: 3,
+            clear_color: ClearColorConfig::Custom(Color::NONE),
+            output_mode: bevy::camera::CameraOutputMode::Write {
+                blend_state: Some(bevy::render::render_resource::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                clear_color: ClearColorConfig::None,
+            },
+            is_active: false,
+            ..default()
+        },
         Tonemapping::None,
         bevy::render::view::Hdr,
         bevy::core_pipeline::tonemapping::DebandDither::Disabled,

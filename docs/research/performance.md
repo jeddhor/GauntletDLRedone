@@ -206,3 +206,7 @@ lines and dots; AUDS by LEVL +0x5a): gdl_play 6189a5d96f486314…,
 gdl_tools 189bcdcca63fd3e9…; regression r88 equal to r87 for all 146
 replays, menu flows 22/22 (menu-flows-mapvoice-all1), title_start_check
 4/4 (title-start-m20-mapvoice1), scenario map-g1 (scenarios-mapvoice4).
+Then (the overlay camera composited instead of loading the MSAA texture):
+gdl_play 59cd59dfcb7bc876…; menu flows title-display at MSAA 4/1,
+pause-display-realm, options-all; title_start_check --attract --xbox
+--overlay --wayland under the player's settings (rx580-wl-copy, -msaa1).
