@@ -6,6 +6,7 @@ pub mod audio;
 pub mod catalog;
 pub mod controls;
 pub mod enhance;
+pub mod glyphs;
 pub mod menu;
 pub mod movie;
 pub mod settings;

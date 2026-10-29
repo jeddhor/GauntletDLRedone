@@ -44,3 +44,8 @@ Enhancements (not in the original)
     have off the edge of a TV picture.
   - No HUD scaling and no controller button remapping (keyboard keys can be
     rebound).
+  - Xbox button prompts: the Options → Controls picture still shows a
+    PlayStation 2 controller (its labels sit on the same positions of an
+    Xbox controller). Nintendo-layout controllers get the Xbox letters by
+    position, which differ from the letters printed on them; choose
+    PlayStation prompts in the settings if that is clearer.

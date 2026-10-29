@@ -582,6 +582,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    with it at its alpha (enhancements.md). RX 580 at 1600×1000: the Tower's
    G portal and G1's exit go dark beside it and stay bordered into the map
    and the tally; per-update hashes equal the previous build's.
+   2026-10-29 (user: show Xbox buttons for an Xbox controller): the
+   original's prompts are separate textures (BUTTON_X/O/SQ/TRI, d-pad
+   arrows), never text, so gdl_client::glyphs makes Xbox variants of the
+   four face buttons from them (the disc kept, A/B/X/Y drawn in the
+   symbols' stroke weight) and present_hud picks them by the
+   button_prompts setting (Automatic: the last controller used; Sony pads
+   and no controller keep the original). RX 580: the scroll, the Options
+   row and the select screen show the letters with the virtual Xbox Series
+   pad; the original without one; per-update hashes unchanged
+   (enhancements.md "Button prompts").
 
 ---
 

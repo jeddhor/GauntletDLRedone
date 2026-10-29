@@ -3,7 +3,7 @@
 //! stored in settings.json. The game waits while it is open. This module
 //! is the overlay's state and text; gdl_play draws it and feeds it keys.
 use crate::controls::{ACTIONS, Bindings};
-use crate::settings::Settings;
+use crate::settings::{Prompts, Settings};
 use bevy::input::keyboard::KeyCode;
 
 /// The overlay's input, already decoded from the keyboard.
@@ -41,12 +41,13 @@ enum Row {
     Msaa,
     ReduceFlashes,
     ShowFps,
+    Prompts,
     Controls,
     Original,
     Close,
 }
 
-const MAIN: [Row; 12] = [Row::Widescreen, Row::Blend, Row::Vsync, Row::FpsCap, Row::FrameQueue, Row::Fullscreen, Row::Msaa, Row::ReduceFlashes, Row::ShowFps, Row::Controls, Row::Original, Row::Close];
+const MAIN: [Row; 13] = [Row::Widescreen, Row::Blend, Row::Vsync, Row::FpsCap, Row::FrameQueue, Row::Fullscreen, Row::Msaa, Row::ReduceFlashes, Row::ShowFps, Row::Prompts, Row::Controls, Row::Original, Row::Close];
 const FPS_CAPS: [u32; 7] = [0, 30, 60, 75, 120, 144, 240];
 
 #[derive(Default, bevy::prelude::Resource)]
@@ -122,6 +123,14 @@ impl Overlay {
                 Row::Msaa => format!("Anti-aliasing        {}", if s.msaa <= 1 { "Off".to_string() } else { format!("{}x MSAA", s.msaa) }),
                 Row::ReduceFlashes => format!("Reduce flashes       {}", on(s.reduce_flashes)),
                 Row::ShowFps => format!("Frame rate (F3)      {}", on(s.show_fps)),
+                Row::Prompts => format!(
+                    "Button prompts       {}",
+                    match s.button_prompts {
+                        Prompts::Auto => "Automatic",
+                        Prompts::PlayStation => "PlayStation",
+                        Prompts::Xbox => "Xbox",
+                    }
+                ),
                 Row::Controls => "Player 1 keys...".to_string(),
                 Row::Original => "Original presentation".to_string(),
                 Row::Close => "Close".to_string(),
@@ -207,6 +216,11 @@ impl Overlay {
                     Row::Fullscreen => s.fullscreen = !s.fullscreen,
                     Row::ReduceFlashes => s.reduce_flashes = !s.reduce_flashes,
                     Row::ShowFps => s.show_fps = !s.show_fps,
+                    Row::Prompts => {
+                        let order = [Prompts::Auto, Prompts::PlayStation, Prompts::Xbox];
+                        let at = order.iter().position(|&p| p == s.button_prompts).unwrap_or(0);
+                        s.button_prompts = order[if back { (at + 2) % 3 } else { (at + 1) % 3 }];
+                    }
                     Row::FpsCap => {
                         let at = FPS_CAPS.iter().position(|&c| c == s.fps_cap).unwrap_or(0);
                         s.fps_cap = FPS_CAPS[if back { (at + FPS_CAPS.len() - 1) % FPS_CAPS.len() } else { (at + 1) % FPS_CAPS.len() }];
@@ -294,15 +308,32 @@ mod tests {
     }
 
     #[test]
+    fn button_prompts_cycle() {
+        let (mut o, mut s, mut b) = open();
+        while o.lines(&s, &b).iter().all(|l| !l.starts_with("> Button prompts")) {
+            o.input(Input::Down, &mut s, &mut b);
+        }
+        assert_eq!(o.input(Input::Right, &mut s, &mut b), Effect::Changed);
+        assert_eq!(s.button_prompts, Prompts::PlayStation);
+        o.input(Input::Accept, &mut s, &mut b);
+        assert_eq!(s.button_prompts, Prompts::Xbox);
+        o.input(Input::Left, &mut s, &mut b);
+        o.input(Input::Left, &mut s, &mut b);
+        assert_eq!(s.button_prompts, Prompts::Auto);
+        assert!(o.lines(&s, &b).iter().any(|l| l == "> Button prompts       Automatic"));
+    }
+
+    #[test]
     fn original_presentation_keeps_window_and_keys() {
         let (mut o, mut s, mut b) = open();
         s.widescreen = true;
         s.fullscreen = true;
         s.msaa = 4;
+        s.button_prompts = Prompts::Xbox;
         while o.lines(&s, &b).iter().all(|l| !l.starts_with("> Original")) {
             o.input(Input::Down, &mut s, &mut b);
         }
         o.input(Input::Accept, &mut s, &mut b);
-        assert!(!s.widescreen && s.fullscreen && s.msaa == 1 && !s.interpolate);
+        assert!(!s.widescreen && s.fullscreen && s.msaa == 1 && !s.interpolate && s.button_prompts == Prompts::Xbox);
     }
 }

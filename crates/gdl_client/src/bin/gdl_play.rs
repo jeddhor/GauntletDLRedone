@@ -3008,6 +3008,39 @@ struct HudSprite(usize);
 struct HudSets {
     keys: Vec<String>,
     images: HashMap<(u16, u16), Option<Handle<Image>>>,
+    /// NATIVE ENHANCEMENT (button prompts): the Xbox variants of the
+    /// face-button prompts among `images` (gdl_client::glyphs).
+    xbox: HashMap<(u16, u16), Handle<Image>>,
+}
+
+/// NATIVE ENHANCEMENT (button prompts): the prompts' style this frame
+/// (Settings::button_prompts; "auto" follows the controller whose button
+/// was pressed last, else the first one, else the original prompts).
+#[derive(Resource)]
+struct PromptStyle(gdl_client::glyphs::Style);
+
+fn track_prompt_style(
+    settings: Res<gdl_client::settings::Settings>,
+    pads: Query<(Entity, &Gamepad, Option<&Name>)>,
+    mut last: Local<Option<Entity>>,
+    mut style: ResMut<PromptStyle>,
+) {
+    use gdl_client::glyphs::{Style, pad_style};
+    use gdl_client::settings::Prompts;
+    let mut used: Vec<(Entity, &Gamepad, Option<&Name>)> = pads.iter().filter(|(_, _, n)| pad_used(*n)).collect();
+    used.sort_by_key(|(e, _, _)| *e);
+    if let Some((e, _, _)) = used.iter().find(|(_, g, _)| g.get_just_pressed().next().is_some()) {
+        *last = Some(*e);
+    }
+    let pad = used.iter().find(|(e, _, _)| Some(*e) == *last).or(used.first());
+    let now = match settings.button_prompts {
+        Prompts::PlayStation => Style::PlayStation,
+        Prompts::Xbox => Style::Xbox,
+        Prompts::Auto => pad.map_or(Style::PlayStation, |(_, g, n)| pad_style(g.vendor_id(), n.map_or("", |n| n.as_str()))),
+    };
+    if style.0 != now {
+        style.0 = now;
+    }
 }
 /// TriggerCamUpdate's letterbox blits (TextureWhite, colour 0): screen rows
 /// 0..BORDER_HT (0x30) and 0x130..0x180 of the 512×384 screen space.
@@ -6683,6 +6716,7 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, front: &Front
     }
     sets.keys = keys;
     sets.images.clear();
+    sets.xbox.clear();
 }
 
 /// One ScrollMessageBox loop pass per elapsed vblank batch (wall time at
@@ -7098,9 +7132,10 @@ fn present_hud(
     mut meshes: ResMut<Assets<Mesh>>,
     mut pool: HudSpriteQuery,
     mut quad: Local<Option<Handle<Mesh>>>,
-    (mut icon, layout): (ResMut<MenuIcon>, Res<FrameLayout>),
+    (mut icon, layout, prompts): (ResMut<MenuIcon>, Res<FrameLayout>, Res<PromptStyle>),
 ) {
     let playing = *screen == Screen::Playing;
+    let xbox = prompts.0 == gdl_client::glyphs::Style::Xbox;
     // NATIVE ENHANCEMENT (widescreen): full-width fills of the flat
     // TextureWhite (TriggerCamUpdate's letterbox, fades) reach the window's
     // sides; textured blits stay in the frame.
@@ -7296,8 +7331,22 @@ fn present_hud(
             } else {
                 sources.as_ref().and_then(|s| s.packages.get(&key_name))
             };
-            let img = pkg.and_then(|pkg| gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize)).map(|im| images.add(im));
+            let decoded = pkg.and_then(|pkg| Some((pkg, gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize)?)));
+            // NATIVE ENHANCEMENT (button prompts): BUTTON_X/O/SQ/TRI's
+            // Xbox letters beside the original.
+            if let Some((pkg, im)) = &decoded
+                && let Some(label) = pkg.objects.bitmap_definitions.iter().find(|d| d.bitmap_index as usize == t.index as usize).map(|d| d.label.as_str())
+                && let Some(rgba) = im.data.as_ref().and_then(|d| gdl_client::glyphs::xbox_variant(label, im.width(), im.height(), d))
+            {
+                let mut x = im.clone();
+                x.data = Some(rgba);
+                sets.xbox.insert(key, images.add(x));
+            }
+            let img = decoded.map(|(_, im)| images.add(im));
                 sets.images.insert(key, img);
+            }
+            if xbox && let Some(x) = sets.xbox.get(&key) {
+                return Some(x.clone());
             }
             sets.images[&key].clone()
         };
@@ -8950,6 +8999,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_plugins(gdl_client::GsMaterialPlugin)
         .init_resource::<Ui>()
         .init_resource::<HudSets>()
+        .insert_resource(PromptStyle(gdl_client::glyphs::Style::PlayStation))
         .init_resource::<MenuIcon>()
         .add_systems(Startup, (setup_static, setup_menu_icon, setup_overlay).chain())
         .insert_resource(TestHarness::from_env())
@@ -8961,6 +9011,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 enhancement_input,
                 apply_settings,
+                track_prompt_style,
                 front_system,
                 play_menu_cues,
                 run_attract,

@@ -75,13 +75,19 @@ players can play with controllers; a controller's Start joins in the Tower.
 Menus: arrows or d-pad choose, Enter or A/cross accepts, Escape/Backspace
 or Y/triangle goes back. On the "Press Start" screen, Back quits the game.
 
+Button prompts: with an Xbox-style controller (or most PC controllers) the
+game's on-screen buttons show A, B, X and Y instead of the PlayStation's
+cross, circle, square and triangle; with a PlayStation controller, or with
+no controller, they stay as the original's. Settings → Button prompts
+chooses Automatic (the controller used last), PlayStation or Xbox.
+
 
 Settings
 --------
 F10 (or Options → Display on the title, or Settings → Display in the pause
 menu) opens the settings: widescreen view, motion smoothing, VSync, frame
 cap, fullscreen, anti-aliasing, reduced flashes, the frame-rate counter,
-"Original presentation" and player 1's keys. F11 toggles fullscreen and F3
+button prompts, "Original presentation" and player 1's keys. F11 toggles fullscreen and F3
 the frame-rate counter. Options → Screen moves the picture, as the
 original's Screen Adjust did for TVs.
 

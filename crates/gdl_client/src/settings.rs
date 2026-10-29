@@ -38,6 +38,10 @@ pub struct Settings {
     pub texture_pack: Option<PathBuf>,
     /// Frame-time overlay (diagnostics).
     pub show_fps: bool,
+    /// The button prompts' style (gdl_client::glyphs): "auto" follows the
+    /// last controller used (Sony pads and no controller: PlayStation;
+    /// others: Xbox letters), or "playstation" / "xbox".
+    pub button_prompts: Prompts,
     /// Keyboard bindings for player 1 (action name → key names); empty: the
     /// built-in defaults.
     pub keys: std::collections::BTreeMap<String, Vec<String>>,
@@ -56,20 +60,32 @@ impl Default for Settings {
             reduce_flashes: false,
             texture_pack: None,
             show_fps: false,
+            button_prompts: Prompts::Auto,
             keys: Default::default(),
         }
     }
 }
 
+/// Settings::button_prompts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Prompts {
+    #[default]
+    Auto,
+    PlayStation,
+    Xbox,
+}
+
 impl Settings {
     /// The original presentation: no blending, the frame's aspect, no
-    /// anti-aliasing, no flash softening, no replacements (fidelity
-    /// comparisons; GDL_BASELINE=1). Window, sync and controls are kept.
+    /// anti-aliasing, no flash softening, no replacements, the PlayStation
+    /// prompts (fidelity comparisons; GDL_BASELINE=1).
     pub fn baseline() -> Self {
-        Self::default().with_baseline_presentation()
+        Self { button_prompts: Prompts::PlayStation, ..Self::default().with_baseline_presentation() }
     }
 
-    /// These settings with the original presentation (see `baseline`).
+    /// These settings with the original presentation (see `baseline`);
+    /// window, sync, controls and the button prompts are kept.
     pub fn with_baseline_presentation(&self) -> Self {
         Self { interpolate: false, widescreen: false, msaa: 1, reduce_flashes: false, texture_pack: None, ..self.clone() }
     }
@@ -129,6 +145,14 @@ mod tests {
     #[test]
     fn baseline_is_the_original_presentation() {
         let b = Settings::baseline();
-        assert!(!b.interpolate && !b.widescreen && b.msaa == 1 && b.texture_pack.is_none());
+        assert!(!b.interpolate && !b.widescreen && b.msaa == 1 && b.texture_pack.is_none() && b.button_prompts == Prompts::PlayStation);
+    }
+
+    #[test]
+    fn button_prompts_are_stored_by_name() {
+        let s: Settings = serde_json::from_str(r#"{"button_prompts": "xbox"}"#).unwrap();
+        assert_eq!(s.button_prompts, Prompts::Xbox);
+        assert_eq!(Settings::default().button_prompts, Prompts::Auto);
+        assert!(serde_json::to_string(&Settings::default()).unwrap().contains(r#""button_prompts":"auto""#));
     }
 }

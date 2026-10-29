@@ -4,7 +4,7 @@ Everything here is NATIVE — not part of the original game — and changes
 presentation only: the simulation keeps the original 30 Hz update and reads
 none of these settings. `GDL_BASELINE=1` gives the original presentation
 for fidelity comparisons (no blending, the frame's own shape, no MSAA, no
-flash softening, no texture replacements).
+flash softening, no texture replacements, the PlayStation button prompts).
 
 ## Settings
 
@@ -25,6 +25,7 @@ into place). `GDL_SETTINGS=FILE` reads another file and, like
 | reduce_flashes | false | false | brightening ambient specials at 30 % |
 | texture_pack | none | none | replacement PNG directory (read at startup) |
 | show_fps | false | (kept) | frame-rate counter |
+| button_prompts | "auto" | "playstation" (GDL_BASELINE; the overlay's "Original presentation" keeps it) | the face-button prompts' style: "auto", "playstation", "xbox" (Button prompts, below) |
 | keys | {} | (kept) | player 1's key bindings (action → key names) |
 
 ## Settings overlay and keys
@@ -146,6 +147,44 @@ C), the bound keys of the directions, cross, triangle and circle. Player 2's
 keys and gamepad buttons are fixed. GUI check (private/runs/client-m19-
 bind1): with cross bound to N, holding N attacks and Space no longer does.
 
+## Button prompts
+
+User request 2026-10-29: with an Xbox controller, triangle as "back" is
+hard to remember. The original's prompts are separate MBOX textures, not
+part of the screens: BUTTON_X, BUTTON_O, BUTTON_SQ, BUTTON_TRI (32×32
+format 66: an opaque black disc of 30 texels, rim alpha-blended, the
+symbol in antialiased strokes about 2.5 texels wide, 18 texels across;
+blue cross, orange circle, pink square, green triangle) and the d-pad
+arrows BUTTON_U/D/L/R. The game's text never names a button: strings
+leave a gap ("Press     when done.", "Press    to select.") that a button
+blit fills, and ENGLISH.ROM's control texts name actions (MAGIC, TURBO).
+So every prompt is one of these textures: the scroll box, the option
+menus' button rows, the select screens, Screen Adjust's arrows, the
+inventory's Continue.
+
+gdl_client::glyphs (presentation only; gdl_play's present_hud resolves a
+blit's texture): when a face-button texture is decoded, an Xbox variant is
+made from it — the opaque texels (disc and symbol) redrawn black, the rim
+kept, and the letter of the controller button that presses the same pad
+entry drawn over it (player_input: South → cross: A green, East → circle:
+B red, West → square: X blue, North → triangle: Y yellow; letters 16
+texels high in strokes 2.5 wide, 4×4 samples a texel). The d-pad arrows
+stay. `button_prompts` "auto" uses the controller whose button was pressed
+last (else the first connected one): Sony's (USB vendor 0x054c, or a name
+naming a PlayStation pad) keep the original prompts, every other
+controller gets the letters; no controller (keyboard): the original.
+Not changed: the Controls page's picture (opt_ctlblit: a PS2 pad; its
+labels sit on the same positions of an Xbox pad); Nintendo-layout pads get
+the Xbox letters by position (KNOWN_ISSUES).
+
+Checks (RX 580, kwin virtual 1600×1000; private/runs/title-start-glyphs-*,
+scratch frames): "xbox" — the Tower's welcome scroll reads "Press (Y) when
+done."; "auto" with the virtual Xbox Series pad (045e:0b12, as the
+player's) — the title Options menu's row "(Y) Back (A) Select" and the
+select screen's "(A) Select (Y) Back"; "auto" without a controller — the
+original triangle. 1000 per-update simulation hashes with "xbox" equal
+the previous build's (Tower → G portal run).
+
 ## Texture replacements
 
 gdl_client::texture_pack: a texture's name is the first 16 hex digits of
@@ -190,6 +229,7 @@ trace). See performance.md.
 | Settings overlay, F3, binding | works; game held while open | client-m19-ovl1 |
 | Texture pack | replacements drawn | G1 grey pack |
 | Menu flows (GUI, 16) | all pass on the final client | menu-flows-m20-final3 |
+| Xbox button prompts | letters on scroll, menus, select; original without a pad; hashes equal | title-start-glyphs-auto-xbox1, title-start-glyphs-select-xbox1 |
 
 Not provided: a render scale (the 3D renders at the window's own
 resolution — 1920×1080, 2560×1440 or 4K are native high resolutions),
