@@ -139,7 +139,7 @@ def main():
         time.sleep(25)
         game = subprocess.run(['pgrep', '-f', str(dest / 'gdl_play')], capture_output=True, text=True).stdout.split()
         out['game_started'] = bool(game)
-        win = x('search', '--name', 'Gauntlet: Dark Legacy - INTERIM')
+        win = x('search', '--name', '^Gauntlet: Dark Legacy$')
         if win:
             path = run / f'{len(out["shots"]):02d}-game.png'
             subprocess.run(['import', '-window', win.split()[0], str(path)], env=xenv, capture_output=True)

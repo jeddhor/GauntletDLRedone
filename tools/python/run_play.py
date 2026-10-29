@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the INTERIM native build: title → player select (saved characters,
+"""Launch the native game from the developer configuration: title → player select (saved characters,
 new characters of the eight base classes, or the PS2 capture's character
 imported) → the Tower and every realm, with native saves.
 

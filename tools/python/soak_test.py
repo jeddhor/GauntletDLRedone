@@ -95,7 +95,7 @@ def inside(run, binary, a):
             time.sleep(0.5)
             now = time.time() - start
             if 50 <= now and not (run / 'at-50s.png').exists():
-                win = subprocess.run(['xdotool', 'search', '--name', 'INTERIM native build'], capture_output=True, text=True).stdout.split()
+                win = subprocess.run(['xdotool', 'search', '--name', '^Gauntlet: Dark Legacy$'], capture_output=True, text=True).stdout.split()
                 if win:
                     subprocess.run(['import', '-window', win[0], str(run / 'at-50s.png')], capture_output=True)
             if now - last_sample >= 10:

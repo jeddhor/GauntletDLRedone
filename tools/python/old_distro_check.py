@@ -100,7 +100,7 @@ unset WAYLAND_DISPLAY
 {cmd} > {shlex.quote(str(out / 'podman.log'))} 2>&1 &
 C=$!
 for i in $(seq 1 600); do [ -e {shlex.quote(str(out / 'wizard-shot'))} ] && break; kill -0 $C 2>/dev/null || break; sleep 0.5; done
-W=$(xdotool search --name 'Gauntlet' 2>/dev/null | head -1)
+W=$(xdotool search --name 'Installer$' 2>/dev/null | head -1)
 [ -n "$W" ] && import -window "$W" {shlex.quote(str(out / 'wizard.png'))}
 wait $C
 ''')

@@ -90,7 +90,7 @@ class Session:
         self.win = ''
         for _ in range(120):
             time.sleep(1)
-            ids = self.x('search', '--name', 'INTERIM native build').split()
+            ids = self.x('search', '--name', '^Gauntlet: Dark Legacy$').split()
             if ids:
                 self.win = ids[0]
             if self.win and self.updates() >= 150:

@@ -603,7 +603,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    FFmpeg: movies skipped. The Windows package ships GCC 13.1.0's source
    with the MinGW-Builds patches; its programs no longer embed this
    machine's folders. release_audit.py: no game data, saves or private
-   paths in the release (research/release.md).
+   paths in the release (research/release.md). The window title is
+   "Gauntlet: Dark Legacy" (was "… - INTERIM native build"; the test tools
+   find the client by that exact title); title_start_check m21-release1:
+   6/6 on the RX 580. Final acceptance report: research/m21-acceptance.md.
 
 ---
 

@@ -81,7 +81,7 @@ def trial(run, binary, ui, e, attract=False, only='gdl-test-pad', opts=()):
         ui.syn()
 
     def shot(label):
-        win = subprocess.run(['xdotool', 'search', '--name', 'INTERIM native build'], capture_output=True, text=True).stdout.split()
+        win = subprocess.run(['xdotool', 'search', '--name', '^Gauntlet: Dark Legacy$'], capture_output=True, text=True).stdout.split()
         if win:
             subprocess.run(['import', '-window', win[0], str(run / f'{label}.png')], capture_output=True)
 
@@ -145,7 +145,7 @@ def trial(run, binary, ui, e, attract=False, only='gdl-test-pad', opts=()):
         time.sleep(3)
         cross()
         time.sleep(6)
-        win = subprocess.run(['xdotool', 'search', '--name', 'INTERIM native build'], capture_output=True, text=True).stdout.split()
+        win = subprocess.run(['xdotool', 'search', '--name', '^Gauntlet: Dark Legacy$'], capture_output=True, text=True).stdout.split()
         if win:
             subprocess.run(['import', '-window', win[0], str(run / 'after.png')], capture_output=True)
     finally:

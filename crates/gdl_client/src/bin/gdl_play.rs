@@ -1,8 +1,9 @@
 // A release build on Windows opens no console window (M21); fatal errors
 // go to report_fatal.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
-//! INTERIM PLAYTEST build with the front end (M17 interim) and native
-//! saves (M18): title → the original player-select screen (saved
+//! The native game client (window title "Gauntlet: Dark Legacy"; before
+//! the M21 release "… - INTERIM native build"): the front end (M17) and
+//! native saves (M18): title → the original player-select screen (saved
 //! characters on the native card, new characters, Hidden codes; the PS2
 //! capture's character import behind GDL_DEBUG_NATIVE_SELECT) → the Tower
 //! and every realm, with the original pause menus, shop, map and Manage
@@ -6665,9 +6666,9 @@ fn present_player(
         }
         if ui.details {
             t.push_str(&format!(
-                "\n\nINTERIM BUILD (the M12 slice is not accepted). player updates {}\n\
+                "\n\nNative port (SLUS-20047). player updates {}\n\
                  Native, compared with reference traces: players, enemies, items, effects, world animation, camera\n\
-                 Approximate: session globals start from the capture, audio mixing, the GS's per-draw truncation in lighting\n\
+                 Approximate: a new game's session values (measured), audio mixing, the GS's per-draw truncation in lighting\n\
                  F9: debug skip to next level{}",
                 sim.updates,
                 g.log.unsupported.iter().find(|(_, n)| 0 < **n).map_or(String::new(), |(k, _)| format!("\nunported path hit: {k}")),
@@ -8983,7 +8984,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_plugins({
             let plugins = DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Gauntlet: Dark Legacy - INTERIM native build".into(),
+                    title: "Gauntlet: Dark Legacy".into(),
                     resolution: (1280, 896).into(),
                     present_mode: if settings.vsync { bevy::window::PresentMode::AutoVsync } else { bevy::window::PresentMode::AutoNoVsync },
                     mode: if settings.fullscreen { bevy::window::WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current) } else { bevy::window::WindowMode::Windowed },

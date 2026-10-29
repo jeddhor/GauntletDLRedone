@@ -13,7 +13,7 @@ do not reach it. Steps: ["key", "a+w", seconds] (XTEST key holds on the client's
 window), ["wait", seconds], ["shot", label] (an import of the client's own
 window), ["quit"]. Only this session's window is used: PCSX2's reference
 window shares the display and the game's name, so the window must carry the
-INTERIM title and belong to this run's process group, and keys are sent only
+client's exact title (^Gauntlet: Dark Legacy$) and belong to this run's process group, and keys are sent only
 while it has the focus. Everything goes to private/runs/client-TAG/ (frames,
 log, queue). The client's F2 key prints a DEBUG item dump to the log.
 """
@@ -92,7 +92,7 @@ def serve(tag, steps):
         win = ''
         for _ in range(180):
             time.sleep(1)
-            for w in x('search', '--name', 'INTERIM native build').split():
+            for w in x('search', '--name', '^Gauntlet: Dark Legacy$').split():
                 pid = x('getwindowpid', w)
                 if pid and os.getpgid(int(pid)) == p.pid:
                     win = w
