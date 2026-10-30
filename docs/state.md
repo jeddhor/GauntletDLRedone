@@ -607,6 +607,19 @@ original (PCSX2 reference on Xvfb :191, private captures):
    "Gauntlet: Dark Legacy" (was "… - INTERIM native build"; the test tools
    find the client by that exact title); title_start_check m21-release1:
    6/6 on the RX 580. Final acceptance report: research/m21-acceptance.md.
+   2026-10-29 (user: installing works on Linux and Windows from the ISO
+   and from the disc, "everything seems to work"; put the repository on
+   GitHub as jeddhor/GauntletDLRedone, private, and the packages as release
+   1.0.0): the version is 1.0.0 (fbbdb54); the packages were rebuilt and
+   checked again (research/m21-acceptance.md "Release identities (1.0.0)":
+   only version strings and the programs' code layout differ from 0.1.0;
+   600 G1 updates equal across 1.0.0 Linux, 1.0.0 under Wine and 0.1.0;
+   Ubuntu 20.04, updates over 0.1.0 on Linux and Windows 11, title → select
+   6/6). The history was audited before the push (research/release.md
+   "Release 1.0.0 and the GitHub repository"); the repository's remote is
+   origin (git@github.com:jeddhor/GauntletDLRedone.git), the release is the
+   tag v1.0.0 with both packages, the source archive and library-source
+   attached.
 
 ---
 

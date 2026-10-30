@@ -285,6 +285,11 @@ session 0), with the final package (identities below), P:\gauntlet:
   creates its window but renders no frame in 60 s (session 0's
   non-interactive window station shows no window; the frame loop waits
   for redraws): the game has not yet run on a Windows installation.
+- The owner's tests on the desktop (2026-10-29, the 0.1.0 packages,
+  owner's report): installing from the ISO and from the physical disc
+  works on Windows and on Linux, and "everything seems to work" (the game
+  played on the Windows desktop; the owner's report names no individual
+  feature).
 
 Under Wine 10.0 on the RX 580 (kwin virtual session), the final package's
 gdl_play.exe installed by its gdl_import.exe (verify none differing): the
@@ -313,6 +318,33 @@ installed Linux game's (private/runs/boot-equiv-v2/inst-G1.state).
   after 31 frames (the movie played out: 3711), START → the title menu.
   The realm and ending movies take the same start-failure path
   (present_movie: no player → the movie ends).
+
+## Release 1.0.0 and the GitHub repository (2026-10-29)
+
+The owner asked for the repository on GitHub (jeddhor/GauntletDLRedone,
+private) and for the tested packages as release 1.0.0. The version is set
+in Cargo.toml's workspace and installer/CMakeLists.txt (it is recorded in
+the import manifest's converter_version and install.json; nothing compares
+it). Packages built at fbbdb54 (identities in research/m21-acceptance.md
+"Release identities (1.0.0)"): against the 0.1.0 packages only the
+installers' version strings, the programs (code layout), KNOWN_ISSUES.txt
+and the Windows notice's installer hash differ. Checks of the 1.0.0
+packages, all passing: old-distro-focal6 (Ubuntu 20.04), update-v5 (Linux,
+over 0.1.0), private/runs/windows-update-v2 (Windows 11 over SSH, over
+0.1.0; the test saves of client-m19-ovl1), qt-bundle-batch-v8,
+installer-gui-qt-v9, private/runs/wine-equiv-1.0.0-v1 (600 G1 updates: the
+1.0.0 Linux and Wine runs equal each other and the 0.1.0 runs),
+title-start-m21-release-v100 (6/6, the packaged gdl_play).
+
+Before the first push every blob of the history (2819 blobs, 474 commits)
+was checked with release_audit.py's tests: no game data (3142 private
+identities), no save, no private or disc-format path, no credential
+pattern. Three superseded file versions named this machine's user folder or
+the owner's e-mail local part (docs/state.md, research/release.md, an
+earlier release_audit.py; all generic at HEAD); every commit's author line
+carries the owner's name and address. A clone needs no
+private/source-control.git: tools/git-local.sh falls back to the clone's
+.git (checked on a fresh clone: same tree as the local HEAD).
 
 ## Identities (2026-10-29, the M21 release)
 
