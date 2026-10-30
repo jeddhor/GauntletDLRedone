@@ -2169,7 +2169,7 @@ dependencies = [
 
 [[package]]
 name = "gdl_client"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "alsa",
  "bevy",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "gdl_core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "gdl_formats",
  "serde",
@@ -2194,7 +2194,7 @@ dependencies = [
 
 [[package]]
 name = "gdl_formats"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "flate2",
  "serde",
@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "gdl_install"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "gdl_core",
  "gdl_formats",
@@ -2213,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "gdl_tools"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "gdl_core",
  "gdl_formats",

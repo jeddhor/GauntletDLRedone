@@ -11,10 +11,9 @@ Platforms
     (on Wayland desktops through XWayland). The Linux programs need the GNU
     C library 2.31 or newer and GCC 10's C++ library (distributions from
     2020 on: Ubuntu 20.04, Debian 11, Fedora 32, RHEL 9 and newer).
-  - Windows: installing has been tested on Windows 11, from an image file
-    and from an image mounted as a disc drive (no physical disc yet). The
-    game itself has run under Wine on Linux, not yet on a Windows
-    installation; Windows sound output (WASAPI) is untested.
+  - Windows: tested on Windows 11 — installing from the disc in a drive,
+    from an image file and from an image mounted as a disc drive, and
+    playing. Older Windows versions are untested.
   - A graphics card with Vulkan (or DirectX 12 on Windows) is required.
 
 Movies

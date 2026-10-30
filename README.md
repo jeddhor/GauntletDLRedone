@@ -1,24 +1,40 @@
 # Gauntlet: Dark Legacy — native PS2 reconstruction
 
-Implementation follows [the master plan](Gauntlet_Dark_Legacy_PS2_Rust_Bevy_Master_Plan.md).
-The port is in development. The native game runs the original rules from the
-user's own disc: the Tower, all realms and bosses, one to four players, the
-original HUD, menus, audio and movies, and saves; a character has been played
-from a new game to the ending (docs/coverage.md M15). Native enhancements
-(widescreen, motion blending at the display's rate, key bindings, texture
-packs; docs/research/enhancements.md) are optional, and the performance and
-platform checks are in docs/research/performance.md. Linux is the
-development platform; the Windows build (docs/toolchain.md "Windows build")
-has run under Wine only. Import tooling, inspectors and comparison
-harnesses sit beside it in crates/gdl_tools and tools/python.
+A native Linux and Windows port of the PlayStation 2 game Gauntlet: Dark
+Legacy (USA release SLUS-20047), reconstructed from the original program and
+data in Rust and Bevy; the implementation follows
+[the master plan](Gauntlet_Dark_Legacy_PS2_Rust_Bevy_Master_Plan.md).
+Release 1.0.0 is the complete port
+([acceptance report](docs/research/m21-acceptance.md)). The native game runs
+the original rules from the player's own disc: the Tower, all realms and
+bosses, one to four players, the original HUD, menus, audio and movies, and
+saves; a character has been played from a new game to the ending
+(docs/coverage.md M15). Native enhancements (widescreen, motion blending at
+the display's rate, key bindings, Xbox button prompts, texture packs;
+docs/research/enhancements.md) are optional, and the performance and
+platform checks are in docs/research/performance.md. Import tooling,
+inspectors and comparison harnesses sit beside it in crates/gdl_tools and
+tools/python.
+
+**To play**, download the Linux or Windows package from the
+[releases](https://github.com/jeddhor/GauntletDLRedone/releases), run its
+installer and point it at your own copy of the game: the disc in a drive, a
+disc image or a copied folder. No game files are included or downloaded.
+The package's README.txt ([release/README.txt](release/README.txt)) is the
+player's guide; [release/KNOWN_ISSUES.txt](release/KNOWN_ISSUES.txt) lists
+the limits.
 
 See [milestone coverage](docs/coverage.md), [current state](docs/state.md),
 [toolchain](docs/toolchain.md) and [disc profile](profiles/ps2/slus-20047.json).
-Retail assets, BIOS files, saves and reference captures remain local and ignored.
+Retail assets, BIOS files, saves and reference captures remain local and
+ignored (private/). Linux is the development platform; the Windows programs
+are cross-built and the Windows installer is built with Qt's MinGW kit
+(docs/toolchain.md "Windows build").
 
-The session's root .git path is reserved read-only. Source history is kept in
-private/source-control.git; use `bash tools/git-local.sh status` and other normal
-Git commands through that wrapper. Its commits contain code/docs only.
+In the development working copy the root .git path is reserved, so its
+history is kept in private/source-control.git; the tools reach it through
+`bash tools/git-local.sh` (normal Git commands), which uses the clone's own
+.git when that folder is absent. Commits contain code and docs only.
 
 Build the pinned Rust workspace:
 
@@ -247,8 +263,11 @@ INSTALL_DIR/gdl_play   # after copying target/release/gdl_play into INSTALL_DIR
 ```
 
 See [decision 0005](docs/decisions/0005-installer.md) and
-[release research](docs/research/release.md); the Windows package needs a
-Qt for Windows (`QT_WIN_DIR`, docs/toolchain.md).
+[release research](docs/research/release.md). The Linux package is built in
+an Ubuntu 20.04 container (tools/linux/); the Windows package's installer is
+built on a Windows machine with Qt's MinGW kit, over SSH
+(`GDL_WINDOWS_HOST=HOST bash tools/package.sh windows private/dist`) or
+beforehand (`WIN_INSTALLER_DIR`; docs/toolchain.md).
 
 ## License
 
