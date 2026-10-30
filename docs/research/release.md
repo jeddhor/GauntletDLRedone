@@ -345,7 +345,18 @@ nothing at HEAD. 124 superseded file versions hold an identity string —
 120 of docs/state.md this machine's home folder, 3 of research/release.md
 its mount path, one earlier release_audit.py the owner's e-mail local part
 — and every commit's author line carries the owner's name and address
-(by design; worth deciding before the repository is made public). A clone needs no
+(by design; worth deciding before the repository is made public).
+
+release_audit.py over the 1.0.0 release folder: release-audit-v100a passed
+but read no file of the source archive — that archive had been cut with
+git archive from inside private/dist-1.0.0, so it held only the
+(ignored) private/ folder's tracked files, none; package.sh always cuts it
+from the root. Recut from the root (310 files, every tracked file of
+156d27e), release-audit-v100b: both packages (41 and 22 files), their
+archives and the source archive, no findings. The audit now also requires
+the source archive to hold exactly the files its commit tracks (an archive
+cut from a subfolder is reported as incomplete; checked on such an
+archive). A clone needs no
 private/source-control.git: tools/git-local.sh falls back to the clone's
 .git (checked on a fresh clone: same tree as the local HEAD).
 

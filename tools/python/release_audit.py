@@ -20,6 +20,8 @@ included) is checked for:
               mount path, the git configuration's e-mail address and its
               local part (raw and UTF-16LE)
   private     a member path under private/, target*/ or a reports/runs folder
+  source      the source archive (NAME-source-COMMIT.tar.gz) holding fewer or
+              more files than COMMIT tracks
 
 library-source/ holds third-party source archives: listed with their
 SHA-256 (docs/toolchain.md records each one's provenance), not unpacked.
@@ -132,6 +134,15 @@ def main():
                 if needle in data:
                     findings.append({'kind': 'identity', 'file': where, 'contains': label, 'count': data.count(needle)})
         scanned[target.name] = n
+        # The source archive must hold every tracked file of its commit (an
+        # archive cut from a subfolder holds only that folder's files).
+        src = re.search(r'-source-([0-9a-f]{7,40})\.tar\.gz$', target.name)
+        if src:
+            tree = subprocess.run(['bash', str(ROOT / 'tools/git-local.sh'), 'ls-tree', '-r', '--name-only', src.group(1)],
+                                  capture_output=True, text=True).stdout.split('\n')
+            expected = len([p for p in tree if p])
+            if n != expected:
+                findings.append({'kind': 'incomplete source archive', 'file': target.name, 'files': n, 'commit_files': expected})
     lib = out / 'library-source'
     library = {p.name: file_sha(p) for p in sorted(lib.iterdir())} if lib.exists() else {}
     result = {'scope': 'release folder private-data audit', 'out': str(out), 'private_hashes': len(known), 'save_files': len(saves),
