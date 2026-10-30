@@ -17,8 +17,8 @@ included) is checked for:
   saves       a file equal to one in the user's save folder, read only
               ($XDG_DATA_HOME/gdl-native/SLUS-20047/saves), or named save*.json
   identity    the user's name in a home or mount path, the repository's
-              mount path, the git configuration's e-mail address and its
-              local part (raw and UTF-16LE)
+              mount path, the global git configuration's name, e-mail
+              address and its local part (raw and UTF-16LE)
   private     a member path under private/, target*/ or a reports/runs folder
   source      the source archive (NAME-source-COMMIT.tar.gz) holding fewer or
               more files than COMMIT tracks
@@ -70,12 +70,23 @@ def private_hashes():
     return known
 
 
+def owner_identity():
+    """The machine owner's name and e-mail address: the global git
+    configuration's (the repository's own user.* is its public commit
+    identity, research/release.md "History rewrite")."""
+    def get(key):
+        return subprocess.run(['git', 'config', '--global', key], capture_output=True, text=True).stdout.strip()
+    return get('user.name'), get('user.email')
+
+
 def identity_needles():
-    """This machine's user and folders, and the e-mail address of the
-    repository's git configuration (read at run time; never stored)."""
+    """This machine's user and folders, and the owner's name and e-mail
+    address (read at run time; never stored)."""
     user = os.environ.get('USER') or pathlib.Path.home().name
     raw = {f'/home/{user}', f'/run/media/{user}', f'C:\\Users\\{user}', f'C:/Users/{user}', str(ROOT)}
-    email = subprocess.run(['bash', str(ROOT / 'tools/git-local.sh'), 'config', 'user.email'], capture_output=True, text=True).stdout.strip()
+    name, email = owner_identity()
+    if name:
+        raw.add(name)
     if email:
         raw.update({email, email.split('@')[0]})
     needles = []

@@ -345,7 +345,7 @@ nothing at HEAD. 124 superseded file versions hold an identity string —
 120 of docs/state.md this machine's home folder, 3 of research/release.md
 its mount path, one earlier release_audit.py the owner's e-mail local part
 — and every commit's author line carries the owner's name and address
-(by design; worth deciding before the repository is made public).
+(by design then; rewritten the same day, "History rewrite" below).
 
 release_audit.py over the 1.0.0 release folder: release-audit-v100a passed
 but read no file of the source archive — that archive had been cut with
@@ -359,6 +359,63 @@ cut from a subfolder is reported as incomplete; checked on such an
 archive). A clone needs no
 private/source-control.git: tools/git-local.sh falls back to the clone's
 .git (checked on a fresh clone: same tree as the local HEAD).
+
+## History rewrite (2026-10-29)
+
+The owner asked for their name and e-mail address to be removed from every
+commit. private/runs/history-scrub-v1/scrub.py (one-off; it reads the name
+and address from the global git configuration at run time) wrote a new
+object for every commit and for the tag v1.0.0, oldest first:
+
+- Author, committer and tagger lines with the owner's name and address:
+  `jeddhor <9143343+jeddhor@users.noreply.github.com>`, the GitHub
+  account's no-reply address (GitHub links the commits to the account).
+  Time stamps kept; the two early "Native port development" commits are
+  unchanged.
+- The 124 file versions listed above: the home folder in docs/state.md's
+  PATH line is now `$HOME`, the mount path in research/release.md
+  `/run/media/$USER`; the old release_audit.py's hard-coded address local
+  part is dropped (later versions read it from the configuration).
+- Every reference to one of the repository's own commits (441: 439 in 240
+  file versions, 2 in commit messages; 16 commits, all named by 7 digits)
+  is now the same-length prefix of the rewritten commit, so the records
+  name commits that exist. The old → new map is
+  private/runs/history-scrub-v1/commit-map.txt (private reports name old
+  commits); the history before the rewrite is the bundle beside it.
+
+Checks before any ref moved (private/runs/history-scrub-v1/verify.log): for
+all 477 commit pairs the parents (mapped), time stamps, messages
+(references mapped), paths and modes are the same, and each of the 2,037
+changed lines equals its old line with the replacements applied (a
+separate, line-wise implementation); none of the 7,012 objects reachable
+from the new refs holds the owner's user name (any case), a word of the
+name, the address or its local part (raw or UTF-16LE); no new 7-digit
+commit prefix is ambiguous; git fsck is clean. The new tip differs from the
+old one in 22 lines of 8 documents (the mapped references).
+history-audit-scrub-neg1, run while origin/main still named the old
+history, flagged the 475 old commits and the 124 old file versions (the
+new commit check works); after the push history-audit-scrub1 (477
+commits, 2,833 blobs, 16 identity strings): no findings.
+
+The packages are unchanged: no file in either names a commit. v1.0.0 now
+tags 853d127, and the source archive was cut again from it:
+GauntletDarkLegacy-1.0.0-source-853d127.tar.gz (310 files, every tracked
+file of the commit; SHA-256 94001a1968c5cdbe…), release-audit-v100d: no
+findings. On GitHub, main and v1.0.0 were force-pushed (with leases on the
+old values), and the release's source archive, SHA256SUMS and notes were
+replaced; every asset downloaded again equals the local file.
+
+GitHub keeps commits that no ref reaches: after the push the old commits
+are still served by ID (checked by full and by short ID) to whoever can
+read the repository, and its activity view lists the force push. Removing
+them takes deleting and recreating the repository (the gh token lacks the
+delete_repo scope) or GitHub Support — to do before the repository is made
+public.
+
+The repository's own configuration now sets user.name and user.email to
+that public identity. release_audit.py and history_audit.py take the
+owner's identity from the global configuration and include the name;
+history_audit.py also checks every commit and annotated tag.
 
 ## Identities (2026-10-29, the M21 release)
 

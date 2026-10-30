@@ -8,11 +8,13 @@ Every blob reachable from any ref (tools/git-local.sh rev-list --objects
 (disc, WAD entries, ISO, captures, start states, BIOS), equal to one of the
 user's saves (read only), a disc-format or private/target*/runs/reports
 path, the identity strings (this machine's user folders, the repository's
-mount path, the git configuration's e-mail address and its local part; raw
-and UTF-16LE), and credential patterns (private keys, GitHub/AWS/Slack
-tokens). Commit author lines are not checked: they carry the configured
-name and address by design. Findings name the blob's path and the first
-commit holding it; identity strings are reported by index, not spelled out.
+mount path, the global git configuration's name, e-mail address and its
+local part; raw and UTF-16LE), and credential patterns (private keys,
+GitHub/AWS/Slack tokens). Every commit and annotated tag (author, committer
+and tagger lines, messages) gets the identity check too: the repository's
+own user.* is its public identity (research/release.md "History rewrite").
+Findings name the blob's path and the first commit holding it, or the
+commit or tag; identity strings are reported by index, not spelled out.
 Report: private/reports/history-audit-TAG.json.
 """
 import collections
@@ -78,13 +80,28 @@ def main():
                 findings.append({'kind': 'identity', **where, 'needle': i, 'count': data.count(needle)})
         if SECRETS.search(data):
             findings.append({'kind': 'credential pattern', **where})
+    tags = [o for o, t in (line.split() for line in git('for-each-ref', '--format=%(objectname) %(objecttype)', 'refs/tags').decode().splitlines()) if t == 'tag']
+    for oid in git('rev-list', '--all').decode().split() + tags:
+        cat.stdin.write(oid.encode() + b'\n')
+        cat.stdin.flush()
+        _, kind, size = cat.stdout.readline().split()
+        data = cat.stdout.read(int(size))
+        cat.stdout.read(1)
+        for i, (_, needle) in enumerate(needles):
+            if needle in data:
+                findings.append({'kind': f'identity in {kind.decode()}', 'object': oid[:7], 'needle': i, 'count': data.count(needle)})
     cat.stdin.close()
     cat.wait()
     head = git('rev-parse', 'HEAD').decode().strip()
     head_paths = set(git('ls-tree', '-r', '--name-only', 'HEAD').decode().splitlines())
     head_blobs = {line.split()[2] for line in git('ls-tree', '-r', 'HEAD').decode().splitlines()}
     for f in findings:
-        f['at_head'] = f['path'] in head_paths if f['kind'] == 'name' else f['blob'] in head_blobs
+        if f['kind'] == 'name':
+            f['at_head'] = f['path'] in head_paths
+        elif 'object' in f:
+            f['at_head'] = head.startswith(f['object'])
+        else:
+            f['at_head'] = f['blob'] in head_blobs
     result = {'scope': 'every blob reachable from any ref', 'head': head, 'commits': len(git('rev-list', '--all').split()),
               'blobs': len(blobs), 'private_hashes': len(known), 'save_files': len(saves), 'identity_needles': len(needles),
               'findings': findings, 'at_head': [f for f in findings if f['at_head']],

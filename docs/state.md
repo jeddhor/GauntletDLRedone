@@ -620,6 +620,22 @@ original (PCSX2 reference on Xvfb :191, private captures):
    origin (git@github.com:jeddhor/GauntletDLRedone.git), the release is the
    tag v1.0.0 with both packages, the source archive and library-source
    attached.
+   2026-10-29 (user: clean up the data drive; scrub the owner's name and
+   e-mail address from all commits): removed the cargo build folders
+   (target, target-dev, target-dev2, target-prof, target-win; rebuilt on
+   demand), private/dist (the 0.1.0 packages; identities in
+   research/release.md), private/dist-a8ab163 (pre-release build) and
+   private/disc-repeat (byte-identical to private/disc); dist-1.0.0's
+   library-source/ is hard-linked to private/library-src. 11,058 report and
+   run files of 64 KiB or more were compressed with zstd (name.zst; `zstd -d`
+   restores; list in private/reports/compressed-2026-10-29.txt, each copy
+   tested); kept as they were: every trace-* (the reference traces,
+   regress.sh's inputs), campaign end states, scene-*, reference-*,
+   pss-inspect-* and the 21 reports a tool names. Data drive: 1.9 → 45 GB
+   free (this folder 66 → 24 GB). The history was rewritten to the public
+   identity jeddhor (research/release.md "History rewrite"): v1.0.0 tags
+   853d127, the release's source archive was cut again, both pushed; the
+   old commits stay on GitHub until the repository is recreated.
 
 ---
 

@@ -69,6 +69,7 @@ which adds these records (the programs' sources are unchanged by it):
 | Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | 0916c848aff6c614… / d00ca65fbd110aa3… / e5f2f6da4177a983… |
 | Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | 7d8160684c12f1ed… / 8318a8e268bda3bc… / 928619134fd1a0c7… |
 | library-source/ (179 MiB) | unchanged: qtbase 6.11.1, qt6-base 6.10.2+dfsg, GCC 13.1.0, mingw-builds 7ff96692, the kit's build-info (docs/toolchain.md) |
+| GauntletDarkLegacy-1.0.0-source-853d127.tar.gz (310 files; v1.0.0's commit since the history rewrite, research/release.md "History rewrite") | 94001a1968c5cdbe… |
 
 Against the 0.1.0 packages the owner tested, file by file: the installers
 differ only in the version string (Windows: 4 bytes, "0.1.0" → "1.0.0" in
@@ -90,6 +91,8 @@ Checks of the 1.0.0 packages (2026-10-29):
 | Linux wizard with the ISO attached as a drive, system Qt masked, game started | pass, 8.1 s | installer-gui-qt-v9 |
 | 600 G1 updates: 1.0.0 Linux, 1.0.0 Windows under Wine, each imported by its own gdl_import | all equal, and equal to 0.1.0's Linux and Wine runs | private/runs/wine-equiv-1.0.0-v1 |
 | Title → select on the RX 580 with the packaged gdl_play | 6/6 | title-start-m21-release-v100 |
+| Private-data audit: both packages, their archives and the source archive (cut again after the history rewrite) | pass, no findings | release-audit-v100d |
+| Private-data audit of the whole history, commit and tag lines included | pass, no findings | history-audit-scrub1 |
 
 Checks of the 0.1.0 packages (2026-10-29; their identities in
 research/release.md "Identities (2026-10-29, the M21 release)"):
