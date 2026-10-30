@@ -45,6 +45,18 @@ pub struct Settings {
     /// Keyboard bindings for player 1 (action name → key names); empty: the
     /// built-in defaults.
     pub keys: std::collections::BTreeMap<String, Vec<String>>,
+    /// Graphics (post-1.0 enhancements; research/enhancements.md
+    /// "Graphics"). "sharp": every base texture at the GPU's level of
+    /// detail with 16× anisotropic filtering over a full mip chain
+    /// (texfilter); "original": the GS's filtering.
+    pub texture_filter: TextureFilter,
+    /// Contrast-adaptive sharpening of the 3D view, percent (0: off).
+    pub sharpen: u32,
+    /// Full colour precision: no 16-bit frame with its dither, no integer
+    /// truncation at the GS multiplies.
+    pub full_colour: bool,
+    /// Lightmaps sampled with a cubic B-spline instead of bilinearly.
+    pub smooth_lightmaps: bool,
 }
 
 impl Default for Settings {
@@ -62,8 +74,32 @@ impl Default for Settings {
             show_fps: false,
             button_prompts: Prompts::Auto,
             keys: Default::default(),
+            texture_filter: TextureFilter::Original,
+            sharpen: 0,
+            full_colour: false,
+            smooth_lightmaps: false,
         }
     }
+}
+
+/// Settings::texture_filter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextureFilter {
+    #[default]
+    Original,
+    Sharp,
+}
+
+/// The graphics fields taken together (the overlay's preset row).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Graphics {
+    /// The original presentation's graphics: every enhancement off.
+    Original,
+    /// Every enhancement at its recommended value.
+    Enhanced,
+    /// Anything else.
+    Custom,
 }
 
 /// Settings::button_prompts.
@@ -87,7 +123,26 @@ impl Settings {
     /// These settings with the original presentation (see `baseline`);
     /// window, sync, controls and the button prompts are kept.
     pub fn with_baseline_presentation(&self) -> Self {
-        Self { interpolate: false, widescreen: false, msaa: 1, reduce_flashes: false, texture_pack: None, ..self.clone() }
+        Self { interpolate: false, widescreen: false, msaa: 1, reduce_flashes: false, texture_pack: None, ..self.with_graphics(Graphics::Original) }
+    }
+
+    /// These settings with the graphics fields of a preset (Custom: unchanged).
+    pub fn with_graphics(&self, g: Graphics) -> Self {
+        match g {
+            Graphics::Original => Self { texture_filter: TextureFilter::Original, sharpen: 0, full_colour: false, smooth_lightmaps: false, ..self.clone() },
+            Graphics::Enhanced => Self { texture_filter: TextureFilter::Sharp, sharpen: 40, full_colour: true, smooth_lightmaps: true, ..self.clone() },
+            Graphics::Custom => self.clone(),
+        }
+    }
+
+    /// Which preset the graphics fields match.
+    pub fn graphics(&self) -> Graphics {
+        for g in [Graphics::Original, Graphics::Enhanced] {
+            if self.with_graphics(g) == *self {
+                return g;
+            }
+        }
+        Graphics::Custom
     }
 
     /// The settings file beside a save directory.
@@ -116,6 +171,7 @@ impl Settings {
             _ => 4,
         };
         self.frame_queue = self.frame_queue.clamp(1, 3);
+        self.sharpen = self.sharpen.min(100);
         if 0 < self.fps_cap {
             self.fps_cap = self.fps_cap.clamp(30, 1000);
         }
@@ -146,6 +202,23 @@ mod tests {
     fn baseline_is_the_original_presentation() {
         let b = Settings::baseline();
         assert!(!b.interpolate && !b.widescreen && b.msaa == 1 && b.texture_pack.is_none() && b.button_prompts == Prompts::PlayStation);
+    }
+
+    #[test]
+    fn graphics_presets() {
+        let s = Settings::default();
+        assert_eq!(s.graphics(), Graphics::Original);
+        let e = s.with_graphics(Graphics::Enhanced);
+        assert_eq!(e.graphics(), Graphics::Enhanced);
+        assert!(e.texture_filter == TextureFilter::Sharp && e.full_colour && e.smooth_lightmaps && 0 < e.sharpen);
+        let c = Settings { sharpen: 80, ..e.clone() };
+        assert_eq!(c.graphics(), Graphics::Custom);
+        // The original presentation turns every graphics enhancement off.
+        assert_eq!(c.with_baseline_presentation().graphics(), Graphics::Original);
+        assert_eq!(Settings::baseline().graphics(), Graphics::Original);
+        let mut h: Settings = serde_json::from_str(r#"{"texture_filter": "sharp", "sharpen": 250}"#).unwrap();
+        h.sanitise();
+        assert_eq!((h.texture_filter, h.sharpen), (TextureFilter::Sharp, 100));
     }
 
     #[test]

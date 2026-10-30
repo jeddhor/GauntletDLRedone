@@ -203,7 +203,9 @@ fn main() {
                 ..default()
             }),
             ..default()
-        }))
+        })
+        // The group's TAA needs bevy_post_process, which is not built.
+        .disable::<bevy::anti_alias::AntiAliasPlugin>())
         .add_systems(Startup, setup)
         .add_systems(Update, browse)
         .run();

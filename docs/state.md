@@ -636,6 +636,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    identity jeddhor (research/release.md "History rewrite"): v1.0.0 tags
    853d127, the release's source archive was cut again, both pushed; the
    old commits stay on GitHub until the repository is recreated.
+   2026-10-29/30 (user: graphical enhancements — less blurry, higher-
+   resolution-looking textures and updated lighting; plan approved with
+   checkpoints A, B, C): Checkpoint A is built (research/enhancements.md
+   "Graphics"): sharp texture filtering, sharpening, full colour at the
+   original's mean level, smooth lightmaps, a Graphics page with presets;
+   alpha to coverage was tried and dropped. The original presentation stays
+   pixel-identical to 1.0 (five frozen scenes) and the simulation hashes
+   unchanged; tools/python/frozen_frames.py makes the frozen comparisons.
+   Waiting for the user's playtest before the upscaler comparison
+   (Checkpoint B).
 
 ---
 

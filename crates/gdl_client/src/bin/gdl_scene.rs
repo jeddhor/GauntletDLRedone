@@ -493,7 +493,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     ..default()
                 }),
                 ..default()
-            }),
+            })
+            // The group's TAA needs bevy_post_process, which is not built.
+            .disable::<bevy::anti_alias::AntiAliasPlugin>(),
         )
         .add_plugins(gdl_client::GsMaterialPlugin)
         .add_systems(Startup, setup)

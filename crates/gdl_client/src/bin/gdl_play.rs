@@ -347,6 +347,85 @@ fn apply_settings(settings: Res<gdl_client::settings::Settings>, mut windows: Qu
     }
 }
 
+/// apply_graphics' last applied state: sharp filter, sharpening, shader switches.
+type GraphicsApplied = (bool, u32, gdl_client::Enhance);
+
+/// NATIVE ENHANCEMENT graphics settings (research/enhancements.md
+/// "Graphics"), each applied when it changes: the texture filter
+/// (texfilter: every base texture's levels and sampler), the switches
+/// every GsMaterial reads (sharp sampling, full colour, smooth lightmaps),
+/// the 3D camera's contrast-adaptive sharpening and the final pass's
+/// 16-bit output.
+fn apply_graphics(
+    settings: Res<gdl_client::settings::Settings>,
+    (mut last, mut reprepare): (Local<Option<GraphicsApplied>>, Local<u8>),
+    queue: Res<bevy::render::renderer::RenderQueue>,
+    (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<gdl_client::GsMaterial>>),
+    mut cas: Query<&mut bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening, With<FollowCamera>>,
+    mut finals: Query<&mut gdl_client::DisplayToLinear>,
+    mut after: Query<&mut Camera, With<AfterWorldCamera>>,
+) {
+    // A material keeps the texture views and samplers it was prepared with
+    // (its bindless slab slots; Bevy 0.18.1 orders no material preparation
+    // after the images'): a live filter switch left speckled anisotropic /
+    // isotropic differences (frozen-sd-sharp-live). Every material is
+    // prepared again two frames after a switch, when the switched images are
+    // on the GPU. What a live switch still leaves against a fresh start is
+    // the order of tied translucent layers (new slots), e.g. G1's red
+    // glows: frozen-live5-* (research/enhancements.md "Graphics").
+    if 0 < *reprepare {
+        *reprepare -= 1;
+        if *reprepare == 0 {
+            for _ in materials.iter_mut() {}
+        }
+    }
+    if !settings.is_changed() {
+        return;
+    }
+    let s = &*settings;
+    let sharp = s.texture_filter == gdl_client::settings::TextureFilter::Sharp;
+    // TEST switch GDL_SHARP_BIAS: the sharp filter's LOD bias (experiments).
+    let lod_bias = std::env::var("GDL_SHARP_BIAS").ok().and_then(|v| v.parse().ok()).unwrap_or(gdl_client::texfilter::LOD_BIAS);
+    let enhance = gdl_client::Enhance { sharp, full_colour: s.full_colour, smooth_lightmaps: s.smooth_lightmaps, lod_bias };
+    let now = (sharp, s.sharpen, enhance);
+    // Before the first change everything is the original presentation.
+    let was = last.unwrap_or((false, 0, gdl_client::Enhance::default()));
+    if now.0 != was.0 {
+        gdl_client::texfilter::apply(&mut images, sharp);
+        *reprepare = 2;
+    }
+    if now.2 != was.2 || last.is_none() {
+        gdl_client::write_enhance(&queue, enhance);
+    }
+    for mut c in &mut cas {
+        let (on, strength) = (0 < s.sharpen, s.sharpen as f32 / 100.0);
+        if c.enabled != on || c.sharpening_strength != strength {
+            c.enabled = on;
+            c.sharpening_strength = strength;
+        }
+    }
+    // The 3D view's post-processing survives the next camera's MSAA
+    // resolve only through a writeback.
+    let writeback = if 0 < s.sharpen { bevy::camera::MsaaWriteback::Always } else { bevy::camera::MsaaWriteback::Auto };
+    for mut c in &mut after {
+        if c.msaa_writeback != writeback {
+            c.msaa_writeback = writeback;
+        }
+    }
+    // The GS frame's 16-bit output and dither, or with full colour its
+    // mean level (GDL_NO_DITHER: neither).
+    let no_dither = std::env::var_os("GDL_NO_DITHER").is_some();
+    let dither = if s.full_colour || no_dither { 0.0 } else { 1.0 };
+    let mean = if s.full_colour && !no_dither { 1.0 } else { 0.0 };
+    for mut d in &mut finals {
+        if d.dither != dither || d.mean_level != mean {
+            d.dither = dither;
+            d.mean_level = mean;
+        }
+    }
+    *last = Some(now);
+}
+
 /// The settings overlay and the frame-rate counter, placed in the PS2
 /// frame's rectangle (window pixels).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -2802,7 +2881,17 @@ fn diagnostic_scene_dump(
         bytes.hash(&mut h);
         h.finish()
     };
-    let image = |h: Option<&Handle<Image>>| h.and_then(|h| images.get(h)).map(|i| (i.width(), i.height(), i.data.as_deref().map(digest)));
+    // Size, texel digest, levels and the sampler's anisotropy and level
+    // clamp (texfilter state).
+    let image = |h: Option<&Handle<Image>>| {
+        h.and_then(|h| images.get(h)).map(|i| {
+            let s = match &i.sampler {
+                bevy::image::ImageSampler::Descriptor(d) => Some((d.anisotropy_clamp, d.lod_max_clamp)),
+                bevy::image::ImageSampler::Default => None,
+            };
+            (i.width(), i.height(), i.data.as_deref().map(digest), i.texture_descriptor.mip_level_count, s)
+        })
+    };
     let mut lines: Vec<String> = q
         .iter()
         .filter(|(_, v, ..)| v.get())
@@ -2994,6 +3083,11 @@ struct TrailPart {
 }
 #[derive(Component)]
 struct FollowCamera;
+
+/// The first camera drawn over the 3D view (order 1): with MSAA it takes
+/// the 3D camera's post-processed picture back first (gdl_client::writeback).
+#[derive(Component)]
+struct AfterWorldCamera;
 #[derive(Component)]
 struct Hud;
 /// The player panels' render layer: a fixed 512×384 orthographic view (the
@@ -3190,8 +3284,10 @@ fn setup_static(mut commands: Commands, presentation: Res<Presentation>) {
         Projection::custom(Ps2Projection::new(tan_v * 640.0 / 384.0, tan_v, 1.0, 65536.0)),
         Transform::default(),
         FollowCamera,
+        // NATIVE ENHANCEMENT (Settings::sharpen; apply_graphics): off until set.
+        bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening { enabled: false, sharpening_strength: 0.0, denoise: false },
     ));
-    commands.spawn((Camera2d, Camera { order: 1, clear_color: ClearColorConfig::None, ..default() }, Tonemapping::None, bevy::render::view::Hdr, bevy::core_pipeline::tonemapping::DebandDither::Disabled));
+    commands.spawn((Camera2d, Camera { order: 1, clear_color: ClearColorConfig::None, ..default() }, Tonemapping::None, bevy::render::view::Hdr, bevy::core_pipeline::tonemapping::DebandDither::Disabled, AfterWorldCamera));
     commands.spawn((
         Camera2d,
         Camera { order: 2, clear_color: ClearColorConfig::None, ..default() },
@@ -4121,6 +4217,9 @@ struct TexMods {
     born: Option<u64>,
     /// Materials by base image, built on first use (scroll targets).
     by_image: Option<HashMap<AssetId<Image>, Vec<AssetId<gdl_client::GsMaterial>>>>,
+    /// gdl_client::texfilter::generation() at the last copy: a texture
+    /// filter switch copies every current frame in again (NATIVE).
+    filter_gen: u32,
 }
 
 enum TexModKind {
@@ -4200,7 +4299,7 @@ fn spawn_texmod_list(
         mods.push(TexModState { kind, count: tm.count, start: tm.start, divisor: tm.divisor, counter: tm.counter });
     }
     if !mods.is_empty() {
-        commands.spawn((TexMods { mods, aframe: 0, accumulated: 0.0, born: None, by_image: None }, LevelEntity));
+        commands.spawn((TexMods { mods, aframe: 0, accumulated: 0.0, born: None, by_image: None, filter_gen: gdl_client::texfilter::generation() }, LevelEntity));
     }
 }
 
@@ -4221,6 +4320,16 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut q: Query<&mut TexMods>, m
                 }
             }
             tm.by_image = Some(map);
+            // NATIVE ENHANCEMENT (texfilter): animated textures keep their
+            // own levels under the sharp filter (cheaper frame uploads).
+            let (mut targets, mut frame_ids) = (Vec::new(), Vec::new());
+            for m in &tm.mods {
+                if let TexModKind::Frames { target, frames } = &m.kind {
+                    targets.push(target.id());
+                    frame_ids.extend(frames.iter().map(|f| f.id()));
+                }
+            }
+            gdl_client::texfilter::set_animated(&mut images, &targets, &frame_ids);
         }
         // Under GDL_FREEZE_AT one AFrame per update stepped since this
         // list's first run, whatever frame its spawn landed in, all of them
@@ -4235,7 +4344,9 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut q: Query<&mut TexMods>, m
         // Only the modifiers that stepped are re-applied: every frame target
         // re-inserted (a texture upload each) and every scroll material
         // re-prepared on each step cost about 1.6 ms a frame (M20 profile).
-        let mut dirty = vec![first; tm.mods.len()];
+        let refilter = tm.filter_gen != gdl_client::texfilter::generation();
+        tm.filter_gen = gdl_client::texfilter::generation();
+        let mut dirty = vec![first || refilter; tm.mods.len()];
         let mut steps = 0;
         while match due {
             Some(n) => tm.aframe < n,
@@ -8993,10 +9104,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }),
                 ..default()
             });
+            // Of the anti-aliasing plugins only sharpening (Settings::sharpen):
+            // the group's TAA orders itself after bevy_post_process's motion
+            // blur, which this build does not include.
+            let plugins = plugins.disable::<bevy::anti_alias::AntiAliasPlugin>();
             // GDL_NO_GAMEPADS: automated runs (client_driver.py) ignore the
             // machine's physical controllers.
             if std::env::var_os("GDL_NO_GAMEPADS").is_some() { plugins.disable::<bevy::gilrs::GilrsPlugin>() } else { plugins }
         })
+        // CAS orders its node after FXAA's (inactive without its component).
+        .add_plugins((bevy::anti_alias::fxaa::FxaaPlugin, bevy::anti_alias::contrast_adaptive_sharpening::CasPlugin, gdl_client::writeback::MsaaWritebackPlugin))
         .add_plugins(gdl_client::GsMaterialPlugin)
         .init_resource::<Ui>()
         .init_resource::<HudSets>()
@@ -9012,6 +9129,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 enhancement_input,
                 apply_settings,
+                apply_graphics,
                 track_prompt_style,
                 front_system,
                 play_menu_cues,

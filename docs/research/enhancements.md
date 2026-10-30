@@ -27,6 +27,121 @@ into place). `GDL_SETTINGS=FILE` reads another file and, like
 | show_fps | false | (kept) | frame-rate counter |
 | button_prompts | "auto" | "playstation" (GDL_BASELINE; the overlay's "Original presentation" keeps it) | the face-button prompts' style: "auto", "playstation", "xbox" (Button prompts, below) |
 | keys | {} | (kept) | player 1's key bindings (action → key names) |
+| texture_filter | "original" | "original" | "sharp": base textures at the GPU's level of detail, 16× anisotropic, over full mip chains (Graphics, below) |
+| sharpen | 0 | 0 | contrast-adaptive sharpening of the 3D view, percent (0, 20 … 100) |
+| full_colour | false | false | no 16-bit frame, dither or integer truncation, at the original's mean level |
+| smooth_lightmaps | false | false | lightmaps sampled with a cubic B-spline |
+
+## Graphics (post-1.0, 2026-10-30)
+
+User request 2026-10-29 (after 1.0.0): sharper, higher-resolution-looking
+textures and better lighting; the approved plan's first step (Checkpoint
+A) is real-time filtering and the colour pipeline, no new art. Every
+setting is presentation only and off in the original presentation; the
+overlay's "Graphics..." page (F10 → Graphics...) shows them with a preset
+row: Original (all off), Enhanced (sharp, sharpening 40 %, full colour,
+smooth lightmaps), or Custom. New installs keep Original until the
+Enhanced defaults are approved.
+
+- Sharp texture filtering (gdl_client::texfilter). The GS samples a
+  record's level 0 bilinearly, or for records with mips the level
+  log2(1/Q) + K (textures.md "Mip selection"), chosen for 448 lines.
+  Sharp samples every base texture with the GPU's own level of detail at
+  the window's resolution and 16× anisotropy, over the disc's levels
+  continued to 1×1 by generated ones (2×2 box in linear light, colour
+  weighted by alpha; cut-outs — texels either rejected by the GS test,
+  AREF 1, or at least 0x80 — stay binary in every level, binarised at the
+  threshold that keeps level 0's coverage, ties in 8×8 Bayer order). LOD
+  bias −0.5 (NATIVE choice; GDL_SHARP_BIAS overrides, TEST): frozen
+  frames at 1920×1080 with biases 0, −1 and −2 (runs frozen-e-sharp0/m1/m2)
+  show C2's distant cliff sharper than the GS formula already at 0; near
+  the player textures are magnified and every choice samples level 0 (only
+  replacement textures sharpen those). Texture modifiers' frames keep
+  their own levels and their targets only follow the sampler: frame steps
+  re-upload the target, and with generated chains that cost about 3 ms on
+  the frames that stepped (perf-bench gfx-p1-sharp against
+  gfx-p1-sharp-nochain; anisotropy 1 or 4 made no difference,
+  GDL_SHARP_ANISO, TEST). Switching back restores the decoded levels byte
+  for byte (texfilter tests).
+- Sharpening: Bevy's contrast-adaptive sharpening (CAS) on the 3D camera
+  only — the HUD and 2D screens are drawn after it. With MSAA every window
+  camera shares one multisampled texture and the next camera's resolve
+  put the unsharpened picture back; Bevy 0.18.1 extracts
+  Camera::msaa_writeback but this build has no node for it (see
+  "Anti-aliasing"), so gdl_client::writeback draws the 3D camera's result
+  back into the multisampled texture before the first 2D camera's pass
+  (its msaa_writeback set to Always while sharpening is on). A first
+  version with an extracted marker component and a per-frame prepare
+  system changed the draw order of equal-depth cut-out faces: G1's
+  original-presentation frame differed in 3,491 spear-edge pixels with
+  every effect off (scene dumps identical; first observation kept in
+  private/runs/frozen-base-p1h); the node now adds no per-frame system and
+  the frame is identical again. The anti-aliasing plugin group is not
+  built: its TAA orders itself after bevy_post_process's motion blur
+  (absent); FXAA (inactive) and CAS are added singly, and gdl_scene and the
+  texture laboratory disable the group too.
+- Full colour: the frame is held in floating point without the PSMCT16S
+  output, its dither and the integer truncations of the multiplies (GS
+  output stage, rendering.md), at the original's mean level: DIMX holds
+  each offset −4..3 twice, so over a 4×4 cell the stored value of an
+  integer x averages max(x − 4, 0) (248 at most) and the continuous value
+  goes 4.5 down (DisplayToLinear mean_level; the base write before the
+  lightmap pass likewise), each integer product 0.5. Additive draws add
+  their mean step (−4.5) but not below 0 (the GS's darkening by faint
+  texels is left out). Mean RGB over the 3D area (frozen frames, 1920×1080):
+  Tower 33.8/26.6/10.5 against the original's 33.9/26.7/10.5, G1
+  20.1/22.8/9.3 against 20.3/23.0/9.6, C2 96.5/88.1/47.7 against
+  96.4/88.1/47.8; without the shift it was 7–9 brighter (run frozen-e-full).
+  The final pass converts the HUD too, so it loses the grain as well.
+- Smooth lightmaps: the 4-bit lightmaps sampled as a cubic B-spline (four
+  bilinear taps) instead of bilinearly; the lightmap texels are unchanged.
+  Baked shading on walls and floors loses its texel steps (the Tower's
+  walls and tree, frozen-e-lm2).
+- Tried and dropped: alpha to coverage for cut-outs ("smooth cut-outs").
+  The original's alpha test passes almost everything above 0 (AREF 1), so
+  the cut-out edge lies in the dark bilinear fringe; partial coverage there
+  stippled it into jagged dark outlines (G1's spearmen, frozen-e-a2c), worse
+  than the original's edges.
+
+Switching live (the overlay, or GDL_TEST_ACTIONS "settings" at update
+150): texfilter::apply switches every registered texture, texture
+modifiers copy their current frame in again (texfilter::generation), and
+every material is prepared again two frames later — a material keeps the
+texture views and samplers it was prepared with (its bindless slots;
+Bevy 0.18.1 orders no material preparation after the images'), and
+without that a live switch left speckled anisotropic/isotropic surfaces
+(frozen-sd-sharp-live: 207,548 pixels against a fresh start). Against a
+fresh start in the new mode a live switch now leaves 6,026 (G1) and 20,655
+(C2) pixels, mean 0.03 and 0.12 of 255, in tied translucent layers (G1's
+red additive glows, a glow over a C2 pillar) while scene dumps — every
+drawn mesh's texels, levels, sampler and material parameters — are
+identical: the re-prepared materials take new slots, which reorders ties;
+the residual moved with the re-preparation schedule (immediately, +2, +1/+3/+6
+frames; frozen-live3/4/5-*). Sharpening, full colour and smooth lightmaps
+switch off pixel-identically (frozen-live-off-*).
+
+Checks (RX 580, 2026-10-30; private/runs/gfx-ref holds the binaries:
+gdl_play-d100e5f is the 1.0 sources built here, gdl_play-cpA this
+checkpoint, SHA-256 c3bf9a7d…7b51b): tools/python/frozen_frames.py (frozen
+frames of the Tower, G1, J5, C2 and H4 in a virtual kwin output, own HOME
+and saves): the original presentation is pixel-identical to the 1.0 build
+in all five (frozen-cpa-base against frozen-base-ref); 600 G1 updates with
+every enhancement on at 1920×1080 have the same per-update simulation
+hashes as the original presentation and the 1.0 build
+(private/runs/gfx-simhash-cpA); uncapped frame times at 1920×1080
+widescreen with MSAA 4 (perf_bench.py gfx-p1j-cur / gfx-p1j-enh; mean /
+p99 ms): Tower 11.76 / 18.41 → 10.95 / 16.93, G1 walk 8.90 / 12.61 →
+8.79 / 12.50, C2 9.99 / 14.82 → 10.29 / 17.17, J5 9.39 / 19.88 → 8.93 /
+14.69 (within run-to-run spread); peak memory +8..17 MB (the generated
+levels); title_start_check gfx-cpa1 6/6, and with Enhanced settings and
+the Xbox pad through the attract sequence to the overlay
+(gfx-cpa1-enh-overlay) 2/2, the overlay listing "Graphics...". Comparison
+sheets: private/runs/gfx-checkpoint-a (current settings above, Enhanced
+below; 2× crops near the player and in the distance). The 146
+reference-trace replays (tools/regress.sh r89) equal r88 (no simulation
+code changed). The Windows build (x86_64-pc-windows-gnu, gdl_play-cpA.exe)
+under Wine on the RX 580 with Enhanced settings: the same 600 G1 update
+hashes as Linux (private/runs/gfx-wine-cpA).
 
 ## Settings overlay and keys
 
@@ -37,7 +152,8 @@ entries; since 2026-10-28, when the playtest found no graphics options in
 the menus), opens the settings overlay (gdl_client::enhance, drawn by gdl_play on
 its own last camera in window pixels, outside the GS display decode): every
 field above but the texture pack (frames queued as "lowest latency",
-"default", "more buffering"), "Original presentation" (the baseline's
+"default", "more buffering"; the graphics fields on its "Graphics..."
+page), "Original presentation" (the baseline's
 presentation, window and keys kept) and a key-binding page. The game waits
 while it is open (simulate's waiting branch: audio polls, no update), and
 keys still held when it closes are ignored by the game until released (so
@@ -129,7 +245,9 @@ display values, before DisplayToLinear — and its resolve wrote those back
 as linear: the whole picture washed out while the overlay (or the F3
 counter) was up (playtest). A non-MSAA overlay camera is not possible: the
 2D depth texture is shared per target and a differing sample count fails
-wgpu validation. Checks: title-display at MSAA 4 and 1 (Xvfb: overlay
+wgpu validation. The same missing writeback dropped any post-processing
+of the 3D camera under MSAA; gdl_client::writeback (2026-10-30, "Graphics")
+performs it for the first 2D camera while sharpening is on. Checks: title-display at MSAA 4 and 1 (Xvfb: overlay
 frames equal within the setting's own text and edges, mean 0.6/255;
 closed-menu frames pixel-identical to the previous build); on the RX 580
 under the player's settings (fullscreen 1920×1080 through Xwayland, widescreen,
@@ -230,6 +348,10 @@ trace). See performance.md.
 | Texture pack | replacements drawn | G1 grey pack |
 | Menu flows (GUI, 16) | all pass on the final client | menu-flows-m20-final3 |
 | Xbox button prompts | letters on scroll, menus, select; original without a pad; hashes equal | title-start-glyphs-auto-xbox1, title-start-glyphs-select-xbox1 |
+| Graphics (2026-10-30): original presentation | pixel-identical to the 1.0 build (Tower, G1, J5, C2, H4) | frozen-base-p1j vs frozen-base-ref |
+| Graphics: every enhancement on, 600 G1 updates | simulation hashes equal to the original presentation and 1.0 | gfx-simhash-p1j |
+| Graphics: frame time, 1920×1080, MSAA 4 | Enhanced within run-to-run spread of the current settings | perf-bench-gfx-p1j-cur / -enh |
+| Graphics: reference-trace replays (146) | all equal to r88 | tools/regress.sh r89 |
 
 Not provided: a render scale (the 3D renders at the window's own
 resolution — 1920×1080, 2560×1440 or 4K are native high resolutions),

@@ -14,6 +14,9 @@ struct Settings {
     // whether the widescreen view continues outside it.
     frame: vec4<f32>,
     wide: f32,
+    // NATIVE ENHANCEMENT (full colour precision): the 16-bit dithered
+    // frame's mean level without its steps (see below).
+    mean_level: f32,
 };
 @group(0) @binding(2) var<uniform> settings: Settings;
 
@@ -46,6 +49,12 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let d = dm[u32((p.y & 3) * 4 + (p.x & 3))];
         let v = clamp(floor(rgb * 255.0 + 0.001) + d, vec3(0.0), vec3(255.0));
         rgb = floor(v / 8.0) * 8.0 / 255.0;
+    } else if settings.mean_level > 0.5 {
+        // The DIMX matrix holds each offset −4..3 twice: over its 4×4 cell
+        // the stored v << 3 of an integer x averages max(x − 4, 0) (248 at
+        // most), so the continuous value goes 4.5 down — the original's
+        // tone without its grain and bands.
+        rgb = clamp(rgb * 255.0 - 4.5, vec3(0.0), vec3(248.0)) / 255.0;
     }
     return vec4(srgb_to_linear(rgb), c.a);
 }

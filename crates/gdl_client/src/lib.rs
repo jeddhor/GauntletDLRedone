@@ -10,11 +10,13 @@ pub mod glyphs;
 pub mod menu;
 pub mod movie;
 pub mod settings;
+pub mod texfilter;
 pub mod texture_pack;
+pub mod writeback;
 
 use bevy::{
     asset::RenderAssetUsages,
-    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
+    image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     mesh::{Indices, MeshVertexBufferLayoutRef},
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
@@ -153,9 +155,10 @@ impl Plugin for GsMaterialPlugin {
 /// (binding 7) and written once per change (write_point_lights). In each
 /// material's uniform they made every material re-prepared whenever an
 /// effect's light moved (the Sorceress's square attack: the frame time
-/// doubled).
+/// doubled). After them, the NATIVE ENHANCEMENT switches every material
+/// reads (write_enhance; gs.wgsl PointLights.enhance).
 static POINT_LIGHTS: std::sync::OnceLock<Buffer> = std::sync::OnceLock::new();
-pub const POINT_LIGHT_BYTES: u64 = 16 * 16;
+pub const POINT_LIGHT_BYTES: u64 = 16 * 16 + 16;
 
 /// The shared point-light buffer (GsMaterialPlugin::finish creates it).
 pub fn point_light_buffer() -> Buffer {
@@ -172,6 +175,26 @@ pub fn write_point_lights(queue: &RenderQueue, pos: &[Vec4; 8], col: &[Vec4; 8])
         }
     }
     queue.write_buffer(buffer, 0, &bytes);
+}
+
+/// The shader's enhancement switches (gs.wgsl PointLights.enhance; 0 off):
+/// sharp texture filtering, full colour precision, smooth lightmaps, the
+/// sharp filter's level-of-detail bias.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Enhance {
+    pub sharp: bool,
+    pub full_colour: bool,
+    pub smooth_lightmaps: bool,
+    /// The sharp filter's level-of-detail bias (0 otherwise).
+    pub lod_bias: f32,
+}
+
+/// Write the enhancement switches after the point lights.
+pub fn write_enhance(queue: &RenderQueue, e: Enhance) {
+    let Some(buffer) = POINT_LIGHTS.get() else { return };
+    let v = [f32::from(u8::from(e.sharp)), f32::from(u8::from(e.full_colour)), f32::from(u8::from(e.smooth_lightmaps)), if e.sharp { e.lod_bias } else { 0.0 }];
+    let bytes: Vec<u8> = v.iter().flat_map(|c| c.to_le_bytes()).collect();
+    queue.write_buffer(buffer, 256, &bytes);
 }
 
 /// The final pass of the last camera: the frame holds GS display values
@@ -195,11 +218,15 @@ pub struct DisplayToLinear {
     /// the widescreen 3D view continues beyond it).
     pub frame: Vec4,
     pub wide: f32,
+    /// 1 without `dither`: NATIVE ENHANCEMENT (Settings::full_colour) — the
+    /// 16-bit dithered frame's mean level (x − 4.5 of 255, at most 248)
+    /// without its steps and grain.
+    pub mean_level: f32,
 }
 
 impl Default for DisplayToLinear {
     fn default() -> Self {
-        Self { enabled: 1.0, offset_x: 0.0, offset_y: 0.0, dither: 1.0, frame: Vec4::new(0.0, 0.0, 1.0, 1.0), wide: 0.0 }
+        Self { enabled: 1.0, offset_x: 0.0, offset_y: 0.0, dither: 1.0, frame: Vec4::new(0.0, 0.0, 1.0, 1.0), wide: 0.0, mean_level: 0.0 }
     }
 }
 
@@ -646,28 +673,6 @@ pub struct MaterialSet {
     pub unresolved: Vec<u32>,
 }
 
-/// GS CLAMP_1 of a bitmap record: flag 0x8 selected WMT CLAMP in every G1
-/// draw matched to a record (observed); flag 0x4 → WMS CLAMP is a HYPOTHESIS
-/// by symmetry (draws with both clamps were not matched to records).
-fn record_sampler(flags: u16) -> ImageSampler {
-    mip_sampler(flags, 0)
-}
-
-/// record_sampler with `max_level` mip levels: setTexInfo's TEX1 with the
-/// render settings the fixture holds (+0x370 MMAG 1 linear, +0x36c MMIN 5
-/// LINEAR_MIPMAP_LINEAR, +0x368 L 0, +0x364 K bias 0; research/textures.md).
-fn mip_sampler(flags: u16, max_level: u8) -> ImageSampler {
-    let mut sampler = ImageSamplerDescriptor::linear();
-    sampler.address_mode_u = if flags & 0x4 != 0 { ImageAddressMode::ClampToEdge } else { ImageAddressMode::Repeat };
-    sampler.address_mode_v = if flags & 0x8 != 0 { ImageAddressMode::ClampToEdge } else { ImageAddressMode::Repeat };
-    if 0 < max_level {
-        sampler.mipmap_filter = ImageFilterMode::Linear;
-        sampler.lod_min_clamp = 0.0;
-        sampler.lod_max_clamp = f32::from(max_level);
-    }
-    ImageSampler::Descriptor(sampler)
-}
-
 /// An Rgba8Unorm image holding `levels` (level 0 first, each max(1, size >>
 /// k)) as its mip chain.
 fn mip_image(width: u16, height: u16, levels: Vec<Vec<u8>>, sampler: ImageSampler) -> Image {
@@ -758,7 +763,9 @@ pub fn materials_for(
             unresolved.push(bitmap.index);
             // A magenta placeholder image: texture modifiers (MBSetRomTexture /
             // MBCopyTexture) may later copy a decoded frame into this record.
-            let image = images.add(raw_image(1, 1, vec![255, 0, 204, 128], TextureFormat::Rgba8Unorm, record_sampler(bitmap.flags)));
+            let key = texfilter::TexKey { flags: bitmap.flags, levels: 1, animated: false, borrowed: false };
+            let image = images.add(raw_image(1, 1, vec![255, 0, 204, 128], TextureFormat::Rgba8Unorm, texfilter::sampler(key, texfilter::sharp())));
+            texfilter::register(image.id(), key);
             record_images.insert(bitmap.index as u16, image.clone());
             base.insert(
                 bitmap.index as u16,
@@ -804,7 +811,13 @@ pub fn materials_for(
         if 0 < max_level {
             mipmapped.insert(bitmap.index as u16);
         }
-        let image = images.add(mip_image(width, height, levels, mip_sampler(bitmap.flags, max_level)));
+        // NATIVE ENHANCEMENT (texfilter, "sharp"): the chain continued to
+        // 1×1 and an anisotropic sampler; the original keeps these levels.
+        let key = texfilter::TexKey { flags: bitmap.flags, levels: levels.len() as u8, animated: false, borrowed: false };
+        let sharp = texfilter::sharp();
+        let levels = texfilter::with_chain(width.into(), height.into(), levels, sharp);
+        let image = images.add(mip_image(width, height, levels, texfilter::sampler(key, sharp)));
+        texfilter::register(image.id(), key);
         labels.entry(candidates[0].label.to_uppercase()).or_insert_with(|| image.clone());
         record_images.insert(bitmap.index as u16, image.clone());
         base.insert(

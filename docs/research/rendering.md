@@ -79,6 +79,13 @@ once to the final value (DisplayToLinear, see "GS output stage"), not per
 draw; nested CameraFace nodes use the nearest one; VU1 lighting is
 evaluated per fragment (the VU lights vertices).
 
+NATIVE ENHANCEMENTS (post-1.0; enhancements.md "Graphics"): sharp texture
+filtering (texfilter.rs), full colour precision, smooth lightmaps and
+sharpening change this path only when set; the original presentation is
+unchanged. Their shader switches ride in the shared point-light buffer
+(gs.wgsl PointLights.enhance, lib.rs write_enhance), so turning one on
+re-prepares no material.
+
 ## Verification
 
 - Actual disc: the decoded lightmaps equal the dump's uploads (12/12); the

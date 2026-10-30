@@ -27,6 +27,11 @@ game itself has not yet run there.
 | FFmpeg (movie video, optional runtime) | 8.0.1-3ubuntu2, /usr/bin/ffmpeg, SHA-256 bdf6aabffdba7411edff8d36c389d695257fcdf823d196020176e117612862f6 (docs/decisions/0003-movies.md) |
 
 The Bevy build uses desktop image/sprite/text/render plus 3D mesh/PBR features.
+Since 2026-10-30 also `bevy_anti_alias` (contrast-adaptive sharpening,
+research/enhancements.md "Graphics"): bevy_anti_alias 0.18.1 was already in
+Cargo.lock and the registry cache, so the lockfile is unchanged. Its
+plugin group is not used (TAA needs bevy_post_process, not built); FXAA and
+CAS are added singly.
 No audio/physics/gameplay system is being represented by the texture laboratory.
 Native window rendering worked locally. GPU log notes a missing optional
 VK_EXT_physical_device_drm extension; it did not prevent the viewer from rendering.

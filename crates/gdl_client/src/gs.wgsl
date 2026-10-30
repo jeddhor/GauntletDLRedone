@@ -35,10 +35,14 @@ struct GsParams {
 };
 
 // Point lights, shared by every material: position + radius, colour +
-// attenuation (lib.rs POINT_LIGHTS).
+// attenuation (lib.rs POINT_LIGHTS), then the NATIVE ENHANCEMENT switches
+// (lib.rs write_enhance; all 0 is the original presentation): x sharp
+// texture filtering (texfilter.rs), y full colour precision, z smooth
+// lightmaps, w the sharp filter's level-of-detail bias.
 struct PointLights {
     pos: array<vec4<f32>, 8>,
     col: array<vec4<f32>, 8>,
+    enhance: vec4<f32>,
 };
 
 #ifdef BINDLESS
@@ -112,11 +116,42 @@ fn gs_dither(frag: vec2<f32>) -> f32 {
 
 // TFX MODULATE on the GS: (Cv × Ct) >> 7 per channel in integers — the
 // vertex colour as sent (0..255, 128 = 1.0; `cv` here in that ratio) and
-// the texel 0..255; the result as a display value.
-fn gs_modulate(cv: vec3<f32>, tex: vec3<f32>) -> vec3<f32> {
+// the texel 0..255; the result as a display value. `full` (NATIVE
+// ENHANCEMENT, full colour precision): the same product without its steps,
+// at the truncation's mean level (−0.5).
+fn gs_modulate(cv: vec3<f32>, tex: vec3<f32>, full: bool) -> vec3<f32> {
+    if full {
+        return max(clamp(cv, vec3(0.0), vec3(255.0 / 128.0)) * tex - 0.5 / 255.0, vec3(0.0));
+    }
     let v = floor(clamp(cv * 128.0, vec3(0.0), vec3(255.0)) + 0.001);
     let t = floor(tex * 255.0 + 0.5);
     return floor(v * t / 128.0) / 255.0;
+}
+
+// NATIVE ENHANCEMENT (smooth lightmaps): the lightmap's cubic B-spline
+// through four bilinear taps (Sigg & Hadwiger, GPU Gems 2 ch. 20). The
+// 4-bit lightmaps' texel steps and 16 levels become smooth gradients; the
+// level 0 taps need no derivatives.
+fn bspline_r(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> f32 {
+    let size = vec2<f32>(textureDimensions(t, 0));
+    let p = uv * size - 0.5;
+    let i = floor(p);
+    let f = p - i;
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    let w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    let w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    let w3 = f3 / 6.0;
+    let g0 = w0 + w1;
+    let g1 = w2 + w3;
+    let h0 = (i - 1.0 + w1 / g0 + 0.5) / size;
+    let h1 = (i + 1.0 + w3 / g1 + 0.5) / size;
+    let t00 = textureSampleLevel(t, s, vec2(h0.x, h0.y), 0.0).r;
+    let t10 = textureSampleLevel(t, s, vec2(h1.x, h0.y), 0.0).r;
+    let t01 = textureSampleLevel(t, s, vec2(h0.x, h1.y), 0.0).r;
+    let t11 = textureSampleLevel(t, s, vec2(h1.x, h1.y), 0.0).r;
+    return g0.y * (g0.x * t00 + g1.x * t10) + g1.y * (g0.x * t01 + g1.x * t11);
 }
 
 @fragment
@@ -129,6 +164,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let params = material;
     let pl_data = plights;
 #endif
+    let sharp = pl_data.enhance.x > 0.5;
+    let full = pl_data.enhance.y > 0.5;
     var rgb = params.tint.rgb;
     var alpha = params.tint.a;
 #ifdef VERTEX_COLORS
@@ -175,14 +212,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let lod = max(log2(depth) + params.scale.z, 0.0);
 #ifdef BINDLESS
     let t_lod = textureSampleLevel(bindless_textures_2d[material_indices[slot].base_texture], bindless_samplers_filtering[material_indices[slot].base_sampler], uv, lod);
-    let t_auto = textureSample(bindless_textures_2d[material_indices[slot].base_texture], bindless_samplers_filtering[material_indices[slot].base_sampler], uv);
+    let t_auto = textureSampleBias(bindless_textures_2d[material_indices[slot].base_texture], bindless_samplers_filtering[material_indices[slot].base_sampler], uv, pl_data.enhance.w);
 #else
     let t_lod = textureSampleLevel(base_texture, base_sampler, uv, lod);
-    let t_auto = textureSample(base_texture, base_sampler, uv);
+    let t_auto = textureSampleBias(base_texture, base_sampler, uv, pl_data.enhance.w);
 #endif
-    let t = select(t_auto, t_lod, params.scale.w > 0.5);
+    // Sharp (NATIVE ENHANCEMENT, texfilter.rs): the GPU's own level of
+    // detail at the window's resolution, anisotropic, for every texture.
+    let t = select(t_auto, t_lod, params.scale.w > 0.5 && !sharp);
     if params.options.x > 0.5 {
-        rgb = gs_modulate(rgb, t.rgb);
+        rgb = gs_modulate(rgb, t.rgb, full);
         alpha = alpha * t.a * (255.0 / 128.0);
     }
 #endif
@@ -206,18 +245,32 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #endif
 #ifdef VERTEX_UVS_B
 #ifdef BINDLESS
-    let lm = textureSample(bindless_textures_2d[material_indices[slot].lightmap_texture], bindless_samplers_filtering[material_indices[slot].lightmap_sampler], in.uv_b).r;
+    let lm_bilinear = textureSample(bindless_textures_2d[material_indices[slot].lightmap_texture], bindless_samplers_filtering[material_indices[slot].lightmap_sampler], in.uv_b).r;
+    let lm_smooth = bspline_r(bindless_textures_2d[material_indices[slot].lightmap_texture], bindless_samplers_filtering[material_indices[slot].lightmap_sampler], in.uv_b);
 #else
-    let lm = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r;
+    let lm_bilinear = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r;
+    let lm_smooth = bspline_r(lightmap_texture, lightmap_sampler, in.uv_b);
 #endif
+    let lm = select(lm_bilinear, lm_smooth, pl_data.enhance.z > 0.5);
     if params.options.y > 0.5 {
         // The base pass's own frame write truncates before the lightmap
         // pass reads it back (opaque texels; translucent ones blend first).
+        // Full colour: that write's mean level without its steps — the
+        // DIMX matrix holds each offset −4..3 twice, so the dithered 16-bit
+        // write of x averages max(x − 4, 0) for integer x, x − 4.5 here.
         if params.extra.w > 0.5 && alpha >= 0.999 {
-            rgb = gs_write(rgb, in.position.xy);
+            if full {
+                rgb = clamp(rgb - 4.5 / 255.0, vec3(0.0), vec3(248.0 / 255.0));
+            } else {
+                rgb = gs_write(rgb, in.position.xy);
+            }
         }
         // ALPHA_1 Cd × As >> 7 in integers (As: the lightmap's CLUT alpha).
-        rgb = floor(floor(min(rgb, vec3(1.0)) * 255.0 + 0.5) * floor(lm * 255.0 + 0.5) / 128.0) / 255.0;
+        if full {
+            rgb = max(min(rgb, vec3(1.0)) * (lm * 255.0 / 128.0) - 0.5 / 255.0, vec3(0.0));
+        } else {
+            rgb = floor(floor(min(rgb, vec3(1.0)) * 255.0 + 0.5) * floor(lm * 255.0 + 0.5) / 128.0) / 255.0;
+        }
     }
 #endif
     // Av (0..255) must exceed AREF 1.
@@ -232,6 +285,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // alpha leaves the bit clear). So: the base pass's alpha test, then the
     // frame (the base blended over what was there) times the lightmap.
 #ifdef VERTEX_UVS_B
+    if full {
+        return vec4(vec3(min(lm * 255.0 / 128.0, 1.0)), 1.0);
+    }
     return vec4(vec3(min(floor(lm * 255.0 + 0.5) / 128.0, 1.0)), 1.0);
 #else
     return vec4(1.0);
@@ -240,6 +296,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef ADDITIVE
     // ALPHA 0x48 Cs·As + Cd: (Cs × As) >> 7 in integers with As up to 0xff
     // (2.0), the sum saturating (COLCLAMP) — premultiplied, blended One/One.
+    if full {
+        // The truncated product and the write's step at their mean level
+        // (−0.5, −4), not below 0: the GS's darkening by faint texels is
+        // left out.
+        return vec4(max(min(rgb, vec3(1.0)) * min(alpha, 255.0 / 128.0) - 4.5 / 255.0, vec3(0.0)), 1.0);
+    }
     let cs = floor(min(rgb, vec3(1.0)) * 255.0 + 0.5);
     let as_ = min(floor(alpha * 128.0), 255.0);
     let v = min(floor(cs * as_ / 128.0), vec3(255.0));
