@@ -1757,7 +1757,23 @@ Second report (user, 2026-10-30, after playing Checkpoint A):
   drawn, so a chest vanished. Now: smoke burst and charred remains
   (frozen-chest43, G1 chest 43, DEBUG damage 50 with flags 0x421).
   Generators (G1's GRU gravestones) show GENDEST's flying chunks
-  (frozen-gen171). Which boxes the user meant is not confirmed.
+  (frozen-gen171).
+  Follow-up (user's screenshot: a cracked wooden crate on a wooden deck):
+  the crates are "secret walls" — kind 10 subtype 0x2a items with no tree
+  (health 25; level geometry bound to the item; G1 has 14, as hedge
+  blocks, and its sign says "MULTIPLE HITS DESTROY SECRET WALLS"). In
+  DamageItem a hit that leaves health starts HITCOL at the hit point; the
+  killing hit calls AudioExplodeWall, AddItemHitCol(killed: HITDIE) and
+  DeleteItem → RemoveItemGeo — no break animation, the wall vanishes.
+  Reference: w7l1-crate7-v1 (slot 6, player 0 written to (4.8, 10.0,
+  −53.9), WARPED, 360 idle vblanks), Up then cross held; trace-crate7-v1:
+  G1 item 7's health 25 → 18 → 11 → 4, deleted at vb 74; shots crate-72/78
+  (private/runs/barrels/ref): the hedge block is gone between vb 76 and 78,
+  the passage open. HITCOL and HITDIE draw EXPLDSML_/EXPLBIG_ texture
+  modifier frames whose first frames are clear, so the port drew neither
+  and the crate simply vanished; with the sequence modifiers each hit
+  sparks and the last one bursts (frozen-crate7b: DEBUG hits of 7, the
+  burst at the item's centre since DEBUG hits take that as the hit point).
 - "An enemy sometimes spawns white, or turns white after being hit, and
   stays white": skin views were kept per enemy slot and never reset. A
   death sets MBTreeSetAmbientAdd(tree, 999) (damage_enemy 0x13a57c) and,

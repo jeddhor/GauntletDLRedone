@@ -666,6 +666,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    nothing or a still first frame; a red barrel's explosion now matches
    reference shots (private/runs/barrels/ref). DamageItem's MBOX_NewObject
    leftovers are drawn (scorch and splat decals, burst chests' remains).
+   The user's "boxes" are secret walls (cracked crates, kind 10 subtype
+   0x2a): in the original too they vanish when destroyed, with a hit spark
+   per hit and a burst on the last (reference trace and shots) — the port
+   drew neither, now it does.
    A reused enemy slot starts with no skin (MBNodeInit), so a new enemy no
    longer inherits a dead one's near-white ambient add (bot runs: 38 and
    166 stuck enemies in G1/G2 → 0, simulation unchanged).
