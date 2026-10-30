@@ -656,6 +656,21 @@ original (PCSX2 reference on Xvfb :191, private captures):
    sequence after the ending); GUI flow select-back. Also fixed: the MSAA
    writeback's 2× pipeline crashed the client at startup where the
    adapter lacks 2× for Rgba16Float (lavapipe).
+   2026-10-30 (user's second playtest: Enhanced as the default with 40 %
+   sharpening; red barrels "fall apart with no explosion"; breakable boxes
+   "just disappear"; enemies stuck white after a hit or from their spawn):
+   Enhanced is the default. Effect trees and item trees now run their
+   sequences' texture modifiers (DoSeqTexMods) and a modifier's target
+   blends as its frames need — the barrel fireball, hit sparks and kill
+   bursts, chest and generator bursts, poison clouds and more had shown
+   nothing or a still first frame; a red barrel's explosion now matches
+   reference shots (private/runs/barrels/ref). DamageItem's MBOX_NewObject
+   leftovers are drawn (scorch and splat decals, burst chests' remains).
+   A reused enemy slot starts with no skin (MBNodeInit), so a new enemy no
+   longer inherits a dead one's near-white ambient add (bot runs: 38 and
+   166 stuck enemies in G1/G2 → 0, simulation unchanged).
+   Details: research/playtest.md "Playtest after 1.0", rendering.md
+   "Sequence texture modifiers".
 
 ---
 

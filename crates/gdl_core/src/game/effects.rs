@@ -1552,7 +1552,7 @@ impl Game {
                         if magic {
                             self.start_fx_no_loop(0x20, item_pos)?;
                             self.start_fx_no_loop(0x21, item_pos)?;
-                            // MBOX_NewObject("ITEMEXP0"): presentation.
+                            self.add_item_debris(slot, "ITEMEXP0");
                             self.delete_item(slot, true);
                             self.help(0x87, usize::MAX);
                         }
@@ -1604,6 +1604,10 @@ impl Game {
                         let item_pos = self.items.records[slot].v3(0x40);
                         self.start_fx_no_loop(0x1f, item_pos)?;
                         self.start_fx_no_loop(0x21, item_pos)?;
+                        // 0x15ab64: the definition's subtype (+4) 0x30 leaves
+                        // CHESTSEXP0, others CHESTGEXP0.
+                        let silver = self.items.definitions[self.items.records[slot].definition()].subtype() == 0x30;
+                        self.add_item_debris(slot, if silver { "CHESTSEXP0" } else { "CHESTGEXP0" });
                         self.delete_item(slot, true);
                     }
                 }
@@ -1714,7 +1718,9 @@ impl Game {
                         } else {
                             self.audio_poison_barrel(at)?;
                         }
-                        // MBOX_NewObject debris (0x2a88f8 / 0x2a8900): presentation.
+                        // MBOX_NewObject 0x2a88f8 / 0x2a8900: the scorch or
+                        // splat decal (Game::item_debris).
+                        self.add_item_debris(slot, if st == 0x2c { "BAREXP0" } else { "BARPOI0" });
                         shown = false;
                         result = -2;
                         killed = false;
@@ -1740,6 +1746,13 @@ impl Game {
             self.add_item_hit_col(at, flags, killed)?;
         }
         Ok(result as f32)
+    }
+
+    /// DamageItem's MBOX_NewObject(name, item node, its parent, 0x80800)
+    /// (Game::item_debris).
+    fn add_item_debris(&mut self, slot: usize, name: &'static str) {
+        let r = &self.items.records[slot];
+        self.item_debris.push(super::ItemDebris { name, rows: r.matrix(), position: r.position() });
     }
 
     /// AddItemHitCol 0x17dcf8(position, flags, killed): StartFXSub(0,

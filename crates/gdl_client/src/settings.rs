@@ -74,10 +74,12 @@ impl Default for Settings {
             show_fps: false,
             button_prompts: Prompts::Auto,
             keys: Default::default(),
-            texture_filter: TextureFilter::Original,
-            sharpen: 0,
-            full_colour: false,
-            smooth_lightmaps: false,
+            // The Enhanced preset (the user's choice after the checkpoint A
+            // playtest, 2026-10-30).
+            texture_filter: TextureFilter::Sharp,
+            sharpen: 40,
+            full_colour: true,
+            smooth_lightmaps: true,
         }
     }
 }
@@ -207,8 +209,10 @@ mod tests {
     #[test]
     fn graphics_presets() {
         let s = Settings::default();
-        assert_eq!(s.graphics(), Graphics::Original);
-        let e = s.with_graphics(Graphics::Enhanced);
+        assert_eq!(s.graphics(), Graphics::Enhanced);
+        // A settings file from before the graphics fields gets them too.
+        assert_eq!(serde_json::from_str::<Settings>(r#"{"msaa": 2}"#).unwrap().graphics(), Graphics::Enhanced);
+        let e = s.with_graphics(Graphics::Original).with_graphics(Graphics::Enhanced);
         assert_eq!(e.graphics(), Graphics::Enhanced);
         assert!(e.texture_filter == TextureFilter::Sharp && e.full_colour && e.smooth_lightmaps && 0 < e.sharpen);
         let c = Settings { sharpen: 80, ..e.clone() };

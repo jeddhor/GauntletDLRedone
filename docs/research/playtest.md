@@ -1726,3 +1726,54 @@ port reclaims the player (joy_remap back to port 0, controller_lost 0).
   on the fixed build (menu-flows-fix1-all); title_start_check fix1 6/6
   and fix1-attract-xbox 2/2 on the RX 580.
 
+Second report (user, 2026-10-30, after playing Checkpoint A):
+
+- Enhanced should be the default and 40 % sharpening is right: Settings'
+  defaults are the Enhanced preset (settings files without the graphics
+  fields, such as 1.0's, take it too).
+- "Red barrels are supposed to explode but they just fall apart": the
+  original (reference shots private/runs/barrels/ref, w7l1-barrel363-v2
+  — slot 6 with player 0 written beside G1's single-player red barrels
+  363/364, a WARPED position; Up then attack) shows a billowing fireball
+  about a third of the screen wide for ~0.9 s with the staves flying, then
+  a scorched patch. The port drew only the red light and the staves:
+  WEAPONS' EXPLOSION tree (EffectHeaders 0x18) is one camera-facing quad
+  (±6 units, ScaleFX 1.75) whose texture FBALL_EXP00 is all clear; its 15
+  fireball frames come from the ACTIVE sequence's texture modifier list
+  (DoSeqTexMods), which the client did not run, and the clear target made
+  the material a 0.5 cut-out, rejecting every frame texel (alpha ≤ 126 of
+  128) anyway. Both fixed (rendering.md "Sequence texture modifiers");
+  native frames frozen-barrel363fix2 match the reference sequence. The
+  scorch is DamageItem's MBOX_NewObject("BAREXP0", item node, parent,
+  0x80800): a SCORCHED_EARTH ground decal, now drawn (frozen-barrel363d2
+  scene dump: one decal per barrel). G1 red barrels 361 and others need two
+  or more players (+0xe0); 363, 364, 333 and 360 are single-player.
+- "Breakable boxes just disappear when shot": the only breakable item
+  trees on the disc are the barrels (BAROBJ, BAREXP, BARPOI; every realm's
+  ITEMS package); brown ones play their break animation natively. Chests
+  (kind 2) hit by blast damage (flag 0x400, at least 5) burst: DamageItem
+  starts CHESTDEST and DESTSMOKE and leaves CHESTGEXP0 / CHESTSEXP0 (by
+  subtype 0x30) — the burst's animated frames and the remains were not
+  drawn, so a chest vanished. Now: smoke burst and charred remains
+  (frozen-chest43, G1 chest 43, DEBUG damage 50 with flags 0x421).
+  Generators (G1's GRU gravestones) show GENDEST's flying chunks
+  (frozen-gen171). Which boxes the user meant is not confirmed.
+- "An enemy sometimes spawns white, or turns white after being hit, and
+  stays white": skin views were kept per enemy slot and never reset. A
+  death sets MBTreeSetAmbientAdd(tree, 999) (damage_enemy 0x13a57c) and,
+  for small enemies or an enemy removed while its skin ran, nothing ends
+  it before the slot is freed; the next enemy in that slot (generators
+  reuse slots constantly; find_enemy_slot also steals live ones) drew with
+  the add. The original's SetEnemyObj makes a new node (MBNewNode →
+  MBNodeInit 0x1cf528: +0x5c = −1, +0x58 = 0, +0x6a = 0), so a new enemy
+  starts clean; init_enemy and Death's statue swap now reset the slot's
+  view. Bot runs (game_run --bot, 20,000 updates; the stale_skins report
+  lists live enemies drawing a skin with none running): G1 38 and G2 166
+  episodes before, 0 after, every other report field equal
+  (private/reports/skins).
+- Checks of the fixed build: workspace tests and clippy clean; the 146
+  replays (regress r90) equal r89; original-presentation frozen frames of
+  five levels identical to 1.0 (base-fx1); all 23 menu flows pass with the
+  new Enhanced defaults on the private Xvfb (menu-flows-fix2-all);
+  title_start_check fix2 6/6 and fix2-attract-xbox 2/2 on the RX 580.
+

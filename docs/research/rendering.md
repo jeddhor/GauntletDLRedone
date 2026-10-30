@@ -834,6 +834,71 @@ replayed by tools/python/gs_replay.py (gsreplay-b4flash-v1): the silhouette
 averages 183/220/183. Native frames of B4, C3 and J6 (scene batch
 2026-10-24) show the same silhouette at 179/219/179.
 
+A new enemy starts without a skin: SetEnemyObj's MBNewNode runs MBNodeInit
+0x1cf528 (+0x5c = −1, +0x58 = 0: MBTreeSetAltTex's mode and texture;
++0x6a = 0: MBTreeSetAmbientAdd), so init_enemy (and Death's statue swap)
+reset the slot's Game::skin_views entry. Before 2026-10-30 a reused slot
+kept the previous enemy's view — most often damage_enemy's death add 999
+(0x13a57c) — and the new enemy drew near-white until its own skin ended
+(research/playtest.md "Playtest after 1.0").
+
+## Sequence texture modifiers (2026-10-30)
+
+Animation sequences carry texture modifiers too: the 0x30-byte sequence
+record's +0x28 (count, i16) and +0x2c (first index into the package's
+0x58-byte texmod table, whose entries then have owner = the tree index),
++0x24 its repeat flag. DoAnimateTree 0x1129e8 and AnimateATreeFrame 0x112c04
+call DoSeqTexMods 0x113208(tree, sequence, (int)(frame + 0.5) or the
+reversed frame): per modifier, when count × divisor < frame and the
+sequence repeats and count × divisor ≥ 2 the frame wraps modulo that,
+then DoTexModSeqSub 0x110d10 — the routine DoTexModNode 0x1132d0 jumps to
+for type-3 nodes (request_tree_texmods: frame swaps clamped to the last
+frame, fades, scrolls). The client ran only type-3 nodes' modifiers; it now
+builds each sequence's list in tree_texmods (whole tree, active while that
+sequence plays) for effect trees (EffectHeaders, missiles, familiars,
+enemy missiles, powerup trees) and item trees. Users on the disc (every
+ANIM package scanned): WEAPONS 28 trees (EXPLOSION, EXPSMALL, HITCOL,
+HITDIE, BLOODHIT/DIE, SPARKS, FIREHIT/DIE, ACIDDIE, LIGHTDIE, GENDEST,
+CHESTDEST, POISONEXP1–3, EXPRING, MAGICFX, MP_LIGHT, FW_SHLD_ACTIVE,
+L_SHLD_ACTIVE, ELECBREATHE, PHOENIX_FBALL, BOSS_BREATHE, LEVELUP_*), POWERUPS
+10 (breath icons), the class SFX packages (VAL/WAR/WIZ powers), item
+packages (IT, TRANS, FORCEF/FORCEF_S, boss-level coins) and monster
+packages (projectiles, bombs, TREEHIT/DIE; ACI, DJINN, DRIDER and YETI
+body sequences — character and critter trees are drawn by other paths
+that do not run them yet: a coverage gap, unknowns.md).
+
+Texture modifier alpha: materials_for chose Opaque / cut-out / blended
+from a record's own level-0 texels. A target whose texels are all clear
+(FBALL_EXP00, EXPLDSML_00, EXPLBIG_00, SUICIDE_RING00) read as a cut-out,
+while its frames are soft (FBALL_EXP02…28: alpha up to 126 of 128), and the
+0.5 test rejected every frame texel. A target now takes the most
+transparent class of itself and its frames (records of the same package).
+
+Evidence: a G1 red barrel (single-player 364, then 363 in a chain).
+Reference: w7l1-barrel363-v2 (slot 6, player 0 written to (−2.8, 25.45,
+−250.8) — WARPED — then 360 idle vblanks), Up 4 vblanks, cross held;
+screenshots at 12…140 vblanks (private/runs/barrels/ref/shot-*.png): the
+fireball from vb 34 to vb 86, red staves flying, then the scorch decal.
+Trace trace-barrel363-v1 (--enemies, items): 364 hit at vb 22, +0xdc/+0xde
+1 and +0xda 96 at 24, deleted at 120; 363 at 32/130 — the native sim
+matches (game_run b363-detail). Native frames (RX 580): frozen-barrel363
+(before: red light and staves only), frozen-barrel363fix2 (the fireball
+grows, reddens and fades over ~24 updates). Original-presentation frozen
+frames of TOWER, G1, J5, C2 and H4 stay identical to 1.0 (base-fx1).
+Residual: after the fireball the settled break frames (BAREXPACTI F16–F24:
+staves lying flat, height ≤ 0.46, radius ~4) draw bright red natively,
+while the reference shows them dark against the scorch (unknowns.md).
+
+DamageItem's leftovers: MBOX_NewObject(name, item node, node parent,
+0x80800) → MBNewObject → MBNewNode copies the item node's local matrix
+(0x1d4d10) under the item's parent, so the object outlives the item:
+BAREXP0 (SCORCHED_EARTH, ±2.45 ground quad) and BARPOI0
+(GREEN_BARREL_UNDERSPLAT) under exploded barrels, CHESTGEXP0 / CHESTSEXP0
+(subtype 0x30) where a chest burst, ITEMEXP0 for an item a blast destroyed.
+Game::item_debris lists them (presentation); gdl_play draws each at the
+item's world matrix with node flags 0x80800 until the level ends (an item
+on a moving floor would leave it in place: approximation).
+
 ## Client performance: material preparation (2026-10-24, night)
 
 Reported with the M12 acceptance: the Sorceress's square attack (effect

@@ -220,6 +220,22 @@ pub struct Globals {
     pub anim_time_scale: f32,
 }
 
+/// An object DamageItem leaves where an item was destroyed:
+/// MBOX_NewObject(name, item node, the node's parent, 0x80800) — a new node
+/// under the item's parent with the item node's local matrix (MBNewObject →
+/// MBNewNode copies it), so it stays when the item is deleted. BAREXP0
+/// (SCORCHED_EARTH) and BARPOI0 (GREEN_BARREL_UNDERSPLAT) are ground decals
+/// under exploded barrels; CHESTGEXP0 / CHESTSEXP0 a burst chest's remains;
+/// ITEMEXP0 an item destroyed by a blast. Here: the item record's world
+/// matrix at that moment. APPROXIMATION: under a moving floor the original's
+/// node would ride the floor (its parent); this one stays put.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ItemDebris {
+    pub name: &'static str,
+    pub rows: [[f32; 3]; 3],
+    pub position: [f32; 3],
+}
+
 /// Presentation side effects requested by the simulation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Event {
@@ -344,6 +360,9 @@ pub struct Game {
     pub item_alpha: std::collections::HashMap<usize, i32>,
     /// ReplaceItemAtree: item slots drawing another tree (presentation).
     pub item_trees: std::collections::HashMap<usize, String>,
+    /// DamageItem's MBOX_NewObject leftovers, in creation order
+    /// (presentation; drawn until the level ends).
+    pub item_debris: Vec<ItemDebris>,
     /// SumnerHintTime (tower hint pad timer).
     pub sumner_hint_time: f32,
     /// PlayerProcessPowerups' animation requests for each player's attached

@@ -709,11 +709,13 @@ fn raw_image(width: u16, height: u16, data: Vec<u8>, format: TextureFormat, samp
 /// trilinear filter; the LOD is chosen per part (object_meshes: K =
 /// lod_k / 16, the shader's log2(1/Q) + K). Lightmap texels carry the
 /// observed shared CLUT alpha 8 × index (DBP 0x2300 upload in the G1 dump;
-/// HYPOTHESIS for other packages).
+/// HYPOTHESIS for other packages). `texmods` are the package's texture
+/// modifiers: a target's material blends as its frames need (see below).
 pub fn materials_for(
     objects: &Objects,
     table: &TextureTable,
     textures: &[u8],
+    texmods: &[gdl_formats::animation::TexMod],
     images: &mut Assets<Image>,
     materials: &mut Assets<GsMaterial>,
 ) -> MaterialSet {
@@ -724,6 +726,9 @@ pub fn materials_for(
     let mut lightmaps = HashMap::new();
     let mut mipmapped = std::collections::HashSet::new();
     let mut unresolved = Vec::new();
+    // Each decoded record's level-0 alpha class (0 opaque, 1 cut-out, 2
+    // blended; the alpha_mode rule below).
+    let mut class_of: HashMap<u16, u8> = HashMap::new();
     for bitmap in &objects.bitmap_records {
         if bitmap.format == 146 {
             match bitmap.decode_lightmap_indices(textures) {
@@ -807,6 +812,7 @@ pub fn materials_for(
         } else {
             AlphaMode::Blend
         };
+        class_of.insert(bitmap.index as u16, if opaque { 0 } else if binary { 1 } else { 2 });
         let max_level = (levels.len() - 1) as u8;
         if 0 < max_level {
             mipmapped.insert(bitmap.index as u16);
@@ -833,6 +839,27 @@ pub fn materials_for(
                 draw: GsDraw { cull: true, ..default() },
             }),
         );
+    }
+    // A texture modifier's frames (MBSetRomTexture: frame base + counter,
+    // records of this package) are what its target draws, so the target's
+    // material takes the most transparent class among the target and its
+    // frames. A target whose own texels are all clear reads as a cut-out
+    // while its frames are soft: WEAPONS' FBALL_EXP (the EXPLOSION and
+    // EXPSMALL trees' quad; frames alpha up to 126 of 128) drew no texel
+    // through the 0.5 cut-out test, so barrel explosions showed only their
+    // light (user playtest 2026-10-30; reference shots
+    // private/runs/barrels/ref, research/rendering.md "Sequence texture
+    // modifiers").
+    for tm in texmods {
+        let (Ok(target), Ok(first)) = (u16::try_from(tm.target), u16::try_from(tm.frame_base)) else { continue };
+        let frames = (0..tm.count.unsigned_abs()).filter_map(|k| first.checked_add(k)).filter_map(|r| class_of.get(&r).copied()).max();
+        let (Some(own), Some(frames), Some(handle)) = (class_of.get(&target).copied(), frames, base.get(&target)) else { continue };
+        if own < frames
+            && let Some(m) = materials.get_mut(handle)
+        {
+            m.alpha_mode = if frames == 2 { AlphaMode::Blend } else { AlphaMode::Mask(0.5) };
+            class_of.insert(target, frames);
+        }
     }
     let mut unknown = GsMaterial::solid(Color::srgb(1.0, 0.0, 0.8), AlphaMode::Opaque);
     unknown.draw.cull = true;

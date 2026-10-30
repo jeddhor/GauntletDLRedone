@@ -62,7 +62,8 @@ fn setup(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
 ) {
-    let set = gdl_client::materials_for(&source.objects, &source.table, &source.textures, &mut images, &mut materials);
+    // No ANIM package here, so no texture modifiers.
+    let set = gdl_client::materials_for(&source.objects, &source.table, &source.textures, &[], &mut images, &mut materials);
     let unresolved_materials = set.unresolved.clone();
     let (cache, unsupported) = gdl_client::object_meshes(&source.objects, &set, &mut materials, &mut meshes);
     let triangles: usize = cache

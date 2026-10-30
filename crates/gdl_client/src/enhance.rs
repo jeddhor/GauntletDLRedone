@@ -417,7 +417,8 @@ mod tests {
 
     #[test]
     fn graphics_page_presets_and_rows() {
-        let (mut o, mut s, mut b) = open();
+        let (mut o, s, mut b) = open();
+        let mut s = s.with_graphics(Graphics::Original);
         while o.lines(&s, &b).iter().all(|l| !l.starts_with("> Graphics...")) {
             o.input(Input::Down, &mut s, &mut b);
         }

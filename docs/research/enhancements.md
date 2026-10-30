@@ -27,10 +27,10 @@ into place). `GDL_SETTINGS=FILE` reads another file and, like
 | show_fps | false | (kept) | frame-rate counter |
 | button_prompts | "auto" | "playstation" (GDL_BASELINE; the overlay's "Original presentation" keeps it) | the face-button prompts' style: "auto", "playstation", "xbox" (Button prompts, below) |
 | keys | {} | (kept) | player 1's key bindings (action → key names) |
-| texture_filter | "original" | "original" | "sharp": base textures at the GPU's level of detail, 16× anisotropic, over full mip chains (Graphics, below) |
-| sharpen | 0 | 0 | contrast-adaptive sharpening of the 3D view, percent (0, 20 … 100) |
-| full_colour | false | false | no 16-bit frame, dither or integer truncation, at the original's mean level |
-| smooth_lightmaps | false | false | lightmaps sampled with a cubic B-spline |
+| texture_filter | "sharp" | "original" | "sharp": base textures at the GPU's level of detail, 16× anisotropic, over full mip chains (Graphics, below) |
+| sharpen | 40 | 0 | contrast-adaptive sharpening of the 3D view, percent (0, 20 … 100) |
+| full_colour | true | false | no 16-bit frame, dither or integer truncation, at the original's mean level |
+| smooth_lightmaps | true | false | lightmaps sampled with a cubic B-spline |
 
 ## Graphics (post-1.0, 2026-10-30)
 
@@ -40,8 +40,10 @@ A) is real-time filtering and the colour pipeline, no new art. Every
 setting is presentation only and off in the original presentation; the
 overlay's "Graphics..." page (F10 → Graphics...) shows them with a preset
 row: Original (all off), Enhanced (sharp, sharpening 40 %, full colour,
-smooth lightmaps), or Custom. New installs keep Original until the
-Enhanced defaults are approved.
+smooth lightmaps), or Custom. Enhanced is the default (the user's
+choice after the Checkpoint A playtest, 2026-10-30, sharpening 40 %
+included); settings files without the graphics fields, such as 1.0's,
+take it too.
 
 - Sharp texture filtering (gdl_client::texfilter). The GS samples a
   record's level 0 bilinearly, or for records with mips the level

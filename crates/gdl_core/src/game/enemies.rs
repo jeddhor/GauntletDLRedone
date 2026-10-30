@@ -496,6 +496,15 @@ impl Game {
         if let Some(p) = self.enemy_floor_parent.get_mut(i) {
             *p = None;
         }
+        // The new node draws no skin: MBNodeInit 0x1cf528 sets +0x5c = −1
+        // and +0x58 = 0 (MBTreeSetAltTex's mode and texture) and +0x6a = 0
+        // (MBTreeSetAmbientAdd). A reused slot otherwise kept the previous
+        // enemy's — a death's ambient add 999 or a flash — and the new enemy
+        // drew near-white until its own skin next ended (user playtest
+        // 2026-10-30; game_run stale_skins).
+        if let Some(v) = self.skin_views.enemies.get_mut(i) {
+            *v = super::skin::SkinView::default();
+        }
         if 4 <= level {
             level = 2;
         }
@@ -1181,7 +1190,11 @@ impl Game {
                     }
                 }
                 // SetEnemyObj(…, 1) swaps the statue model; matrix preserved
-                // (CopyMat4 around it), then UpdateObjWorldMat into the new node.
+                // (CopyMat4 around it), then UpdateObjWorldMat into the new node
+                // (MBNodeInit: no skin).
+                if let Some(v) = self.skin_views.enemies.get_mut(i) {
+                    *v = super::skin::SkinView::default();
+                }
                 self.enemy_update_obj_world_mat(i)?;
                 self.enemy_update_offsets(i)?;
                 return Ok(0);

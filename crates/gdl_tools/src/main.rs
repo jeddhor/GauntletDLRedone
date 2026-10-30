@@ -3779,6 +3779,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             return Ok(());
         }
         let mut samples = Vec::new();
+        // Diagnostics: live enemies (state 1) whose tree draws a skin or an
+        // ambient add (Game::skin_views) while their own skin (+0x1f8) is
+        // not running — nothing clears that view until the next SetSkinFX.
+        // Per slot: [slot, type, first update, last update, mode, texture,
+        // ambient]; the first 500 episodes.
+        let mut stale_skins: Vec<serde_json::Value> = Vec::new();
+        let mut stale_open: std::collections::BTreeMap<usize, (i32, usize, usize, gdl_core::game::skin::SkinView)> = Default::default();
         // DEBUG spawn=TYPE:LEVEL:AI:FRAME[:DX:DZ[:DY]][;...]: generate_enemy beside
         // player 0 at that update; `spawned` traces the first one every 5 updates.
         let spawns: Vec<Vec<f32>> = match opts.get("spawn") {
@@ -4025,6 +4032,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let r = game.debug_damage_boss().map_err(|e| e.0)?;
                     eprintln!("boss-kill at {f}: CritterDamage {r}");
                 }
+                // DEBUG damage_item=SLOT:DAMAGE:UPDATE[;...]: DamageItem(damage,
+                // slot, flags 0, player 0) before that update (breakable checks).
+                for one in opts.get("damage_item").map(|v| v.split(';').collect::<Vec<_>>()).unwrap_or_default() {
+                    let v: Vec<f32> = one.split(':').filter_map(|x| x.parse().ok()).collect();
+                    if v.len() == 3 && v[2] as usize == f && (v[0] as usize) < game.items.records.len() {
+                        let r = game.damage_item(v[1], v[0] as usize, 0, 0).map_err(|e| e.0)?;
+                        eprintln!("damage_item at {f}: slot {} → {r}", v[0]);
+                    }
+                }
                 if assist_on && explore::assist(&mut game, start_health) {
                     assists += 1;
                 }
@@ -4032,6 +4048,23 @@ fn run() -> Result<(), Box<dyn Error>> {
                     g.update_controls(&pads)?;
                     g.do_players().map(|_| ())
                 });
+                for (k, e) in game.enemies.iter().enumerate() {
+                    let v = game.skin_views.enemies.get(k).copied().unwrap_or_default();
+                    let stale = e.i32_(0xc8) == 1 && e.f32_(0x1f8) <= 0.0 && v != Default::default();
+                    match (stale, stale_open.get_mut(&k)) {
+                        (true, Some(o)) => o.2 = f,
+                        (true, None) => {
+                            stale_open.insert(k, (e.i32_(0), f, f, v));
+                        }
+                        (false, Some(_)) => {
+                            let (t, a, z, v) = stale_open.remove(&k).unwrap_or((0, 0, 0, v));
+                            if stale_skins.len() < 500 {
+                                stale_skins.push(serde_json::json!([k, t, a, z, v.mode, v.tex, v.ambient]));
+                            }
+                        }
+                        (false, None) => {}
+                    }
+                }
                 if let (Some(path), true) = (opts.get("navdump"), 0 < navdump_at && f + 1 == navdump_at) {
                     write_navdump(&game, path, f + 1)?;
                     // With a bot: its own graph too (PATH.bot.json), and with
@@ -4077,7 +4110,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let probe: Vec<_> = opts.get("probe").map(|w| w.split(';').filter_map(|q| { let v: Vec<f32> = q.split(':').filter_map(|t| t.parse().ok()).collect(); (v.len() == 2 || v.len() == 5).then_some(v) })
                         .map(|q| { let mut c = game.collision.clone(); let (top, len, rad) = if q.len() == 5 { (q[2], q[3], q[4]) } else { (r.v3(0x50)[1] + 60.0, 120.0, 0.0) }; let h = c.floor_collide(rad, 0.0, -len, [q[0], top, q[1]], true, 0).ok().and_then(|(c, _)| c.solid); serde_json::json!([q, h.map(|h| (h.object, h.position[1]))]) }).collect()).unwrap_or_default();
                     // itemw=SLOT,...: those item records' +0xd8, +0xde, +0xe1, +0xe2.
-                    let itemw: Vec<_> = opts.get("itemw").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.items.records.len()).map(|o| { let ir = &game.items.records[o]; serde_json::json!([o, format!("{:#x}", ir.u16_(0xd8)), ir.i8_(0xde), ir.u8_(0xe1), ir.u8_(0xe2), ir.f32_(0xfc), ir.f32_(0xe8), ir.v3(0x60)]) }).collect()).unwrap_or_default();
+                    let itemw: Vec<_> = opts.get("itemw").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.items.records.len()).map(|o| { let ir = &game.items.records[o]; serde_json::json!([o, format!("{:#x}", ir.u16_(0xd8)), ir.i8_(0xde), ir.u8_(0xe1), ir.u8_(0xe2), ir.f32_(0xfc), ir.f32_(0xe8), ir.v3(0x60), ir.i8_(0xdc), ir.i16_(0xda), game.item_anims.get(o).and_then(|a| a.as_ref()).map(|a| (a.clock.sequence, a.clock.frame, a.current))]) }).collect()).unwrap_or_default();
                     // itemrec=SLOT,...: those item records whole (hex; diagnostics).
                     let itemrec: Vec<_> = opts.get("itemrec").map(|w| w.split(',').filter_map(|o| o.parse::<usize>().ok()).filter(|&o| o < game.items.records.len()).map(|o| serde_json::json!([o, game.items.records[o].0.iter().map(|b| format!("{b:02x}")).collect::<String>()])).collect()).unwrap_or_default();
                     let see_thru = serde_json::json!([game.see_thru[0].chest, game.see_thru[0].contents, format!("{:?}", game.see_thru[0].icon), r.u32_(0x138)]);
@@ -4173,6 +4206,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         // itemdump=1: the item records, definitions, wobjs and item-world
         // object words at the end of the run (compare_items.py --after-updates).
         report["check_num"] = serde_json::json!(game.collision.check_num());
+        for (k, (t, a, z, v)) in stale_open {
+            if stale_skins.len() < 500 {
+                stale_skins.push(serde_json::json!([k, t, a, z, v.mode, v.tex, v.ambient]));
+            }
+        }
+        report["stale_skins"] = serde_json::json!(stale_skins);
         report["treasures"] = serde_json::json!(treasures_at_load.iter().map(|&s| serde_json::json!({"slot": s, "subtype": game.items.definitions[game.items.records[s].definition()].subtype(), "taken": !game.items.records[s].active()})).collect::<Vec<_>>());
         // end_state=PATH: the start JSON again with the players' records and
         // the globals at the end of the run (a next level's start state for

@@ -85,6 +85,7 @@ def main():
     ap.add_argument('--pexp', help='DEBUG precondition: player 0 gains the experience of level N (ModifyExp, PlayerUpdateAtts)')
     ap.add_argument('--quest', help='DEBUG: QuestItemState 2 at this update')
     ap.add_argument('--boss-kill', help='DEBUG: lethal CritterDamage on the boss at this update')
+    ap.add_argument('--damage-item', help='DEBUG: DamageItem(DAMAGE, SLOT, flags 0, player 0) at an update: SLOT:DAMAGE:UPDATE[;...] (breakable checks)')
     ap.add_argument('--replay', help='per-update replay of a reference_trace --player trace')
     ap.add_argument('--enemy-replay', help='per-update replay of a reference_trace --player --enemies trace through do_enemies')
     ap.add_argument('--items-seed', help='export_live_items.py JSON replacing the loaded items (replays)')
@@ -354,6 +355,8 @@ def main():
         cmd += [f'quest={a.quest}']
     if a.boss_kill:
         cmd += [f'boss-kill={a.boss_kill}']
+    if a.damage_item:
+        cmd += [f'damage_item={a.damage_item}']
     if a.boss_health:
         cmd += [f'boss_health={a.boss_health}']
     subprocess.run(cmd, check=True)

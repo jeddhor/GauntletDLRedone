@@ -1376,6 +1376,44 @@ fn present_critter_shadows(
     }
 }
 
+/// DamageItem's leftovers (Game::item_debris: the barrels' scorch and splat
+/// decals, burst chests' remains, ITEMEXP0): each object at the destroyed
+/// item's matrix under the mirror root, with MBOX_NewObject's node flags
+/// 0x80800, until the level ends. Before 2026-10-30 none was drawn.
+#[derive(Component)]
+struct ItemDebrisNode;
+
+#[allow(clippy::too_many_arguments)]
+fn present_item_debris(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    libs: Res<Libraries>,
+    (session, sources): (Res<Session>, Res<Sources>),
+    mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    mut variants: ResMut<PartVariants>,
+    mut pending: ResMut<PendingTreePsys>,
+    root: Query<Entity, With<MirrorRoot>>,
+    nodes: Query<(), With<ItemDebrisNode>>,
+) {
+    let debris = &sim.game.item_debris;
+    let have = nodes.iter().count();
+    if debris.len() <= have {
+        return;
+    }
+    let Ok(r) = root.single() else { return };
+    let order = search_order(&session, &sources);
+    for d in &debris[have..] {
+        let rows = d.rows.map(Vec3::from_array);
+        let e = commands.spawn((ItemDebrisNode, record_transform(rows, Vec3::from_array(d.position)), Visibility::Inherited, LevelEntity)).id();
+        commands.entity(r).add_child(e);
+        // MBOX_FindObject_Sub over the loaded object files; an absent
+        // object leaves the node empty (it still counts).
+        if let Some(parts) = libs.ordered(&order).find_map(|l| l.by_label.get(d.name)) {
+            spawn_parts(&mut commands, e, vec![(Vec3::ZERO, parts.clone(), 0x80800, None, None)], &mut materials, &mut variants, &mut pending);
+        }
+    }
+}
+
 /// The compass (StartCompass: POWERUPS' COMPASS object under the world
 /// root; UpdateCompass: shown with GamePrefs +0x18 outside menus, at
 /// MBWindowTo3D(CompassZ 10, CompassPos (64, 128)), scale CompassScale 1.5,
@@ -1816,6 +1854,13 @@ fn apply_material_requests(
 /// (MBTreeSetAltTex); −4 fades in and −5 out over `count` frames from
 /// `start` (DoTexFadeSub → MBTreeSetAlpha); −2/−3 scroll U or V
 /// (DoTexScrollSub, request_tree_texmods).
+/// A sequence's modifiers (DoSeqTexMods 0x113208, from DoAnimateTree and
+/// AnimateATreeFrame: the 0x30-byte sequence record's +0x28 count and +0x2c
+/// first index into the package's texmod table, owner = the tree) run the
+/// same DoTexModSeqSub on the whole tree while that sequence plays; a
+/// repeating sequence (+0x24) wraps the frame past count × divisor (when
+/// that is at least 2). WEAPONS' EXPLOSION quad draws FBALL_EXP's frames this
+/// way — without them its all-clear base texture showed nothing.
 #[derive(Clone)]
 struct NodeTexMod {
     subtree: Vec<usize>,
@@ -1824,6 +1869,8 @@ struct NodeTexMod {
     count: i16,
     start: i16,
     divisor: i32,
+    /// A sequence's modifier: (sequence index, its repeat flag).
+    seq: Option<(usize, bool)>,
 }
 
 fn tree_texmods(p: &Package, tree: &gdl_formats::animation::Tree) -> Vec<NodeTexMod> {
@@ -1850,7 +1897,23 @@ fn tree_texmods(p: &Package, tree: &gdl_formats::animation::Tree) -> Vec<NodeTex
             })
             .map(|n| n.index as usize)
             .collect();
-        out.push(NodeTexMod { subtree, target: t.target, frame_base: t.frame_base, count: t.count, start: t.start, divisor: t.divisor });
+        out.push(NodeTexMod { subtree, target: t.target, frame_base: t.frame_base, count: t.count, start: t.start, divisor: t.divisor, seq: None });
+    }
+    let table = gdl_formats::animation::texmods(&p.anim_bytes).unwrap_or_default();
+    let all: Vec<usize> = tree.nodes.iter().map(|n| n.index as usize).collect();
+    for (s, q) in tree.sequences.iter().enumerate() {
+        let field = |o: usize, n: usize| q.raw.get(o..o + n);
+        let (Some(count), Some(first), Some(repeat)) = (
+            field(0x28, 2).map(|b| i16::from_le_bytes([b[0], b[1]])),
+            field(0x2c, 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+            field(0x24, 2).map(|b| i16::from_le_bytes([b[0], b[1]])),
+        ) else {
+            continue;
+        };
+        for k in 0..count.max(0) as i32 {
+            let Some(t) = usize::try_from(first + k).ok().and_then(|i| table.get(i)) else { continue };
+            out.push(NodeTexMod { subtree: all.clone(), target: t.target, frame_base: t.frame_base, count: t.count, start: t.start, divisor: t.divisor, seq: Some((s, repeat != 0)) });
+        }
     }
     out
 }
@@ -1894,8 +1957,18 @@ fn calc_tex_scroll(t: f32, p2: f32, p3: f32, frame: i32) -> (f32, f32) {
     (add, scale - add)
 }
 
-fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, f: i32, meshes: &[(Entity, usize)], req: &mut MatRequests) {
+fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, f: i32, seq: usize, meshes: &[(Entity, usize)], req: &mut MatRequests) {
     for m in mods {
+        let mut f = f;
+        if let Some((s, repeat)) = m.seq {
+            if s != seq {
+                continue;
+            }
+            let span = i32::from(m.count) * m.divisor;
+            if span < f && repeat && 2 <= span {
+                f %= span;
+            }
+        }
         let d = f - i32::from(m.start);
         match m.frame_base {
             -4 | -5 => {
@@ -2607,7 +2680,7 @@ struct TestHarness {
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
     /// {"at": u, "health": h[, "player": k]} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
-    /// {"at": u, "boss_kill": true} (DEBUG) |
+    /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "damage_item": [slot, damage(, flags)]} (DEBUG) |
     /// {"at": u, "save": card file} for player 1 |
     /// {"at": u, "settings": {...}}: fields merged into the M19 settings
     /// and stored, as the settings overlay does (M20 platform checks)].
@@ -3190,7 +3263,8 @@ fn build_library(
     images: &mut Assets<Image>,
     materials: &mut Assets<gdl_client::GsMaterial>,
 ) -> Library {
-    let set = gdl_client::materials_for(&pkg.objects, &pkg.table, &pkg.textures, images, materials);
+    let texmods = gdl_formats::animation::texmods(&pkg.anim_bytes).unwrap_or_default();
+    let set = gdl_client::materials_for(&pkg.objects, &pkg.table, &pkg.textures, &texmods, images, materials);
     let (parts, _) = gdl_client::object_meshes(&pkg.objects, &set, materials, meshes);
     assemble_library(pkg, set, parts)
 }
@@ -3737,7 +3811,8 @@ fn spawn_bodies(commands: &mut Commands, root: Entity, sources: &Sources, sessio
 #[allow(clippy::too_many_arguments)]
 fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerChar, session: &Session, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<gdl_client::GsMaterial>) {
     let character = &pc.character;
-    let set = gdl_client::materials_for(&character.objects, &character.table, &character.textures, images, materials);
+    let texmods = gdl_formats::animation::texmods(&character.anim_bytes).unwrap_or_default();
+    let set = gdl_client::materials_for(&character.objects, &character.table, &character.textures, &texmods, images, materials);
     // DoPlayerTexMods 0x12f0a8 (do_items): the model package's texture modifiers
     // (PlayerModelData +0x24 — the magic classes' <colour>_HANDGLOW, 5
     // frames; the Jester's BOMB); the SFX package's (+0x48) run with the
@@ -4061,7 +4136,8 @@ fn spawn_level(
     materials: &mut Assets<gdl_client::GsMaterial>,
 ) -> Library {
     let level = &session.level;
-    let set = gdl_client::materials_for(&level.objects, &level.table, &level.textures, images, materials);
+    let texmods = gdl_formats::animation::texmods(&level.anim_bytes).unwrap_or_default();
+    let set = gdl_client::materials_for(&level.objects, &level.table, &level.textures, &texmods, images, materials);
     let (parts, _) = gdl_client::object_meshes(&level.objects, &set, materials, meshes);
     let names: HashMap<_, _> = level.objects.definitions.iter().map(|d| (d.label.as_str(), d.object_index as u32)).collect();
     let nodes = &session.world.nodes;
@@ -5195,6 +5271,16 @@ fn simulate(
                 && let Err(e) = sim.game.debug_damage_boss()
             {
                 sim.error = Some(format!("TEST boss_kill: {}", e.0));
+            }
+            // {"damage_item": [slot, damage(, flags)]}: DEBUG DamageItem(damage,
+            // slot, flags (default 0), player 0), as a hit by player 1
+            // (breakable checks; 0x421 is a barrel blast's).
+            if let Some(v) = a["damage_item"].as_array().map(|v| v.iter().filter_map(|x| x.as_f64()).collect::<Vec<_>>())
+                && let [slot, dmg, rest @ ..] = v.as_slice()
+                && let Some(slot) = Some(*slot as usize).filter(|&s| s < sim.game.items.records.len())
+                && let Err(e) = sim.game.damage_item(*dmg as f32, slot, rest.first().map_or(0, |&f| f as u32), 0)
+            {
+                sim.error = Some(format!("TEST damage_item: {}", e.0));
             }
             if let Some(port) = a["disconnect"].as_u64() {
                 harness.disconnect = Some((port as usize, a["reconnect_after"].as_u64().unwrap_or(120)));
@@ -6474,7 +6560,7 @@ fn present_effect_trees(
         if let Some(lib) = libs.0.get(&fx.pkg)
             && !mods.is_empty()
         {
-            request_tree_texmods(mods, lib, index, &meshes, &mut req);
+            request_tree_texmods(mods, lib, index, seq, &meshes, &mut req);
         }
     }
 }
@@ -6564,7 +6650,7 @@ fn present_item_trees(
         if let Some(lib) = libs.0.get(&pkg)
             && !mods.is_empty()
         {
-            request_tree_texmods(mods, lib, index, &meshes, &mut req);
+            request_tree_texmods(mods, lib, index, anim.current as usize, &meshes, &mut req);
         }
     }
 }
@@ -9154,7 +9240,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, (refresh_characters, test_players).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, present_critter_shadows, (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                (advance_level, (refresh_characters, test_players).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
