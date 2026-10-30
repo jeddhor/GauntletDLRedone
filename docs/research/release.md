@@ -336,13 +336,16 @@ installer-gui-qt-v9, private/runs/wine-equiv-1.0.0-v1 (600 G1 updates: the
 1.0.0 Linux and Wine runs equal each other and the 0.1.0 runs),
 title-start-m21-release-v100 (6/6, the packaged gdl_play).
 
-Before the first push every blob of the history (2819 blobs, 474 commits)
-was checked with release_audit.py's tests: no game data (3142 private
-identities), no save, no private or disc-format path, no credential
-pattern. Three superseded file versions named this machine's user folder or
-the owner's e-mail local part (docs/state.md, research/release.md, an
-earlier release_audit.py; all generic at HEAD); every commit's author line
-carries the owner's name and address. A clone needs no
+Before the first push every blob of the history was checked with
+release_audit.py's tests (a scratch scan of 473 commits, then
+tools/python/history_audit.py, report history-audit-v100a: 475 commits,
+2829 blobs, 3142 private identities, the owner's 4 save files): no game
+data, no save, no private or disc-format path, no credential pattern;
+nothing at HEAD. 124 superseded file versions hold an identity string —
+120 of docs/state.md this machine's home folder, 3 of research/release.md
+its mount path, one earlier release_audit.py the owner's e-mail local part
+— and every commit's author line carries the owner's name and address
+(by design; worth deciding before the repository is made public). A clone needs no
 private/source-control.git: tools/git-local.sh falls back to the clone's
 .git (checked on a fresh clone: same tree as the local HEAD).
 
