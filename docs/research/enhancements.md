@@ -70,7 +70,11 @@ Enhanced defaults are approved.
   Camera::msaa_writeback but this build has no node for it (see
   "Anti-aliasing"), so gdl_client::writeback draws the 3D camera's result
   back into the multisampled texture before the first 2D camera's pass
-  (its msaa_writeback set to Always while sharpening is on). A first
+  (its msaa_writeback set to Always while sharpening is on; its blit
+  pipelines are made at startup for the sample counts the adapter supports
+  for Rgba16Float — an unconditional 2× pipeline ended the client at
+  startup on lavapipe, which offers 1, 4 and 8: menu flow select-back1,
+  2026-10-30). A first
   version with an extracted marker component and a per-frame prepare
   system changed the draw order of equal-depth cut-out faces: G1's
   original-presentation frame differed in 3,491 spear-edge pixels with

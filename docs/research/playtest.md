@@ -1683,3 +1683,46 @@ Device loss (GUI, scenarios-m16-v2 controller-reconnect): port 1 reports
 no device in G1; after joyGetStatus's 60 polls player 1 is lost, the game
 holds under ControllerMessageBox's CONTROLLERMISSING text, and START on the
 port reclaims the player (joy_remap back to port 0, controller_lost 0).
+
+## Playtest after 1.0 (user, 2026-10-30)
+
+- "An elevator in the Poison Fields with a rainbow texture and a green
+  switch beside it; I pressed every button at point-blank range": the first
+  area (G1), the user on the floor beside it. That is G1ELEV1 (object 1083,
+  wobj inity 19.8, starty −8: the platform with the animated pinwheel), at
+  the bottom from the load. Its triggers (item dump at load, lever-g1a):
+  BRIDGEPAD 418 riding on it (flags 0x50c: every active player on the
+  bound object, toggling with the +0x100 timer), TRIGGER3 428 on the floor
+  beside it (flags 0x9: a touch clears byte_16 bit 0x20 — the lift comes
+  down) and TRIGGER3 429 at the top (flags 0xa: a touch sets it — the lift
+  goes up). So the floor post only calls the lift down; with the lift
+  already down a touch changes nothing. Headless (game_run, lever-g1d-*):
+  walking onto the platform starts it at once and it reaches the top 2 s
+  later (−8 → 0 at 4 units/s); walking to the floor post touches it (+0xe2 1)
+  with the lift staying down. Client (RX 580, frozen-lift-g1b): the walk
+  onto the platform carries the player up beside the upper deck; the floor
+  post's top shows red once the lift is up. The trigger code is
+  instruction-derived (item_runtime process_trigger, process_item_wobjs)
+  and its elevator case replays equal against trace-J4-combat-v2
+  (J4ELEV1); this lift itself was not captured in the reference.
+  "All switches might be suspect": kind-5 subtype-0x1f levers ("TRIGGERS",
+  G2 item 537 → G2BAR_WALL, G4 511–514; none in G1) take a hit
+  (DamageItem sets +0xe2 0xf: G4 512 by a melee swing, lever-g4c-atk) and
+  a touch; G4 512 raises G4ELEV12 in the headless run. The legitimate bot
+  campaign to the ending (M15) uses pads, triggers and shot switches.
+- "Back (Y) on the Save/Load menu before loading a character leads to a
+  broken avatar selection; Escape does not close it": Back on the select
+  screen's New/Load menu with nobody else in is sel_leave → psel_abort_req,
+  and do_player_select then calls init_titlescreen 0x1841a0 (0x189b94..
+  0x189ba4; after the final level instead EndTower, inactivate_player for
+  each and init_attract_mode(0x8000), 0x189b5c..0x189b84). The client had
+  kept an interim message there, and the empty game went on into the
+  Tower with no player (v1.0: "UNSUPPORTED camera: front-end fixed
+  camera"). Now the session ends and the Press Start page follows (or the
+  attract sequence after the ending). GUI flow select-back (menu_flows.py;
+  the select reads player 1's keys, triangle I): select-back4 passes
+  (Press Start, then Start reaches the select screen again); the same
+  flow on the 1.0 binary fails (select-back-v100). All 23 menu flows pass
+  on the fixed build (menu-flows-fix1-all); title_start_check fix1 6/6
+  and fix1-attract-xbox 2/2 on the RX 580.
+

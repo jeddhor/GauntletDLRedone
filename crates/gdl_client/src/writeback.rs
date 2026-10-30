@@ -34,14 +34,18 @@ use bevy::{
             CachedRenderPipelineId, LoadOp, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
             SpecializedRenderPipelines, StoreOp,
         },
-        renderer::RenderContext,
+        renderer::{RenderAdapter, RenderContext},
         view::ViewTarget,
     },
 };
 
-/// The blit pipelines into the HDR target at 2 and 4 samples (Settings::msaa).
+/// The blit pipelines into the HDR target at 2 and 4 samples
+/// (Settings::msaa), each only where the adapter supports that count for
+/// the format: a 2× pipeline made unconditionally failed wgpu validation
+/// on lavapipe (Rgba16Float: 1, 4, 8 samples) and ended the client at
+/// startup (menu flow select-back1, 2026-10-30).
 #[derive(Resource)]
-struct WritebackPipelines([(u32, CachedRenderPipelineId); 2]);
+struct WritebackPipelines(Vec<(u32, CachedRenderPipelineId)>);
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 struct GdlMsaaWriteback;
@@ -58,11 +62,22 @@ impl Plugin for MsaaWritebackPlugin {
     }
 }
 
-fn init_writeback(mut commands: Commands, pipeline_cache: Res<PipelineCache>, mut pipelines: ResMut<SpecializedRenderPipelines<BlitPipeline>>, blit: Res<BlitPipeline>) {
-    let ids = [2, 4].map(|samples| {
-        let key = BlitPipelineKey { texture_format: ViewTarget::TEXTURE_FORMAT_HDR, blend_state: None, samples };
-        (samples, pipelines.specialize(&pipeline_cache, &blit, key))
-    });
+fn init_writeback(
+    mut commands: Commands,
+    pipeline_cache: Res<PipelineCache>,
+    mut pipelines: ResMut<SpecializedRenderPipelines<BlitPipeline>>,
+    blit: Res<BlitPipeline>,
+    adapter: Res<RenderAdapter>,
+) {
+    let features = adapter.get_texture_format_features(ViewTarget::TEXTURE_FORMAT_HDR);
+    let ids = [2, 4]
+        .into_iter()
+        .filter(|&n| features.flags.sample_count_supported(n))
+        .map(|samples| {
+            let key = BlitPipelineKey { texture_format: ViewTarget::TEXTURE_FORMAT_HDR, blend_state: None, samples };
+            (samples, pipelines.specialize(&pipeline_cache, &blit, key))
+        })
+        .collect();
     commands.insert_resource(WritebackPipelines(ids));
 }
 

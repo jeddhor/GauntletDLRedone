@@ -2127,10 +2127,10 @@ struct Sim {
     /// F9 (DEBUG): the pending exit skips game_main's level end.
     debug_skip: bool,
     /// game mode 0x400b: the select screen, and its end (Done: the Tower;
-    /// abort: the title).
+    /// abort: the title; after the final level: the attract sequence).
     select: Option<gdl_core::game::pselect::PSelect>,
     select_done: bool,
-    select_quit: bool,
+    select_quit: Option<gdl_core::game::pselect::SelectEnd>,
     /// The level init_next_level enters after the select screen.
     select_next: Option<usize>,
     /// The level to load once the shop finished (after the select screen).
@@ -5483,7 +5483,7 @@ fn simulate(
             Ok(SelectEnd::Running) => sim.select = Some(ps),
             // init_next_level: the Tower with the players chosen.
             Ok(SelectEnd::Done) => sim.select_done = true,
-            Ok(SelectEnd::Title | SelectEnd::Attract) => sim.select_quit = true,
+            Ok(end @ (SelectEnd::Title | SelectEnd::Attract)) => sim.select_quit = Some(end),
             Err(e) => sim.error = Some(format!("do_player_select: {}", e.0)),
         }
         let new: Vec<Event> = sim.game.events.drain(..).collect();
@@ -7822,7 +7822,7 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
             game.setup_player_display(k);
         }
     }
-    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, weapon_hidden: [false; 4], exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, weapon_hidden: [false; 4], exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: None, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     // The stage music starts from the level's BGMusicStart request.
     let _ = stage;
@@ -7859,7 +7859,7 @@ fn start_flyby(world: &mut EcsWorld, idx: usize) -> Result<(), Box<dyn Error>> {
     world.insert_resource(sources);
     world.insert_resource(session);
     world.insert_resource(hud_sets);
-    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, weapon_hidden: [false; 4], exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: false, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
+    world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, weapon_hidden: [false; 4], exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select: None, select_done: false, select_quit: None, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: Some(flyby), flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
         a.stop_all();
@@ -8464,6 +8464,25 @@ fn front_system(world: &mut EcsWorld) {
         if toggle || !keys.is_empty() {
             world.resource_mut::<Front>().title_timeout = 1800.0;
         }
+    }
+    // do_player_select's ends without a game (0x189b4c..0x189ba4): every
+    // player left (Back on New/Load: sel_leave) → init_titlescreen 0x1841a0,
+    // the Press Start page; after the final level (LastFinished 8/3) →
+    // EndTower 0x126730, inactivate_player 0x1319a0 for each and
+    // init_attract_mode(0x8000). Until 2026-10-30 the client showed an
+    // interim message here and the empty game went on into init_over and a
+    // select screen without players (playtest: no way out).
+    if screen == Screen::Playing
+        && let Some(end) = world.get_resource::<Sim>().and_then(|s| s.select_quit)
+    {
+        end_game(world);
+        let mut front = world.resource_mut::<Front>();
+        if end == gdl_core::game::pselect::SelectEnd::Attract {
+            start_attract(&mut front, 0x8000);
+        } else {
+            exit_attract(&mut front);
+        }
+        return;
     }
     if screen == Screen::Playing && world.get_resource::<Sim>().is_some_and(|s| s.game.restart_req && s.game.globals.game_mode != 0x400e) {
         // game_main's RestartReq: everything ends, init_attract_mode(0x8009)
@@ -9262,10 +9281,6 @@ fn advance_level(
         }
         Some(MovieThen::Shop(k)) => start_shop(&mut sim, &front, k),
         None => {}
-    }
-    // do_player_select aborted: init_titlescreen (every player left).
-    if std::mem::take(&mut sim.select_quit) {
-        session.finished = Some("Every player left the select screen; the title screen follows (Esc).".into());
     }
     // do_player_select done: init_next_level (the Tower).
     if std::mem::take(&mut sim.select_done) {

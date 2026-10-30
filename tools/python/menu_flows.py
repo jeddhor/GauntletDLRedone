@@ -158,6 +158,16 @@ FLOWS = {
     'press-start-exit': dict(
         steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('BackSpace') + [["wait", 1]] + k('Escape') + [["wait", 2]],
         expect=[r'front .*Title \{ at: 0 \}', r'front .*PressStart', r'^\d+ exit$']),
+    # Title → Start → the select screen → Back on New/Load (triangle: the
+    # select reads player 1's keys, I; the only player leaves: sel_leave →
+    # psel_abort_req) → init_titlescreen, the Press Start
+    # page; then Start again reaches the select screen. Playtest 2026-10-30:
+    # the empty game went on into a select screen without players.
+    'select-back': dict(
+        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Return') + [["wait", 3], ["shot", "select"]] + k('i')
+        + [["wait", 3], ["shot", "after-back"]] + k('Return') + [["wait", 1]] + k('Return') + [["wait", 3], ["shot", "select-again"]],
+        expect=[r'front .*Title \{ at: 0 \}', r'playing .*\| select world 13', r'front .*PressStart', r'front .*Title \{ at: 0 \}',
+                r'playing .*\| select world 13']),
     # In the Tower: pause → Quit Game → Yes → init_over (GAME OVER) → do_over's
     # end: the FAIL movie (init_attract_mode 0x8002). Playtest 2026-10-28: the
     # title menu's arrow showed through the movie.

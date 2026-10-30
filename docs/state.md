@@ -646,6 +646,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    unchanged; tools/python/frozen_frames.py makes the frozen comparisons.
    Waiting for the user's playtest before the upscaler comparison
    (Checkpoint B).
+   2026-10-30 (user's playtest: a G1 elevator switch that "does nothing";
+   Back on the select screen's Save/Load menu leaves a broken screen): the
+   elevator (G1ELEV1) behaves as the original's trigger code — the floor
+   post only calls the lift down, the platform itself rises when stood on
+   (research/playtest.md "Playtest after 1.0"); levers (shot switches)
+   respond to hits and touches. The select-screen Back now ends at the
+   title screen as do_player_select does (init_titlescreen; the attract
+   sequence after the ending); GUI flow select-back. Also fixed: the MSAA
+   writeback's 2× pipeline crashed the client at startup where the
+   adapter lacks 2× for Rgba16Float (lavapipe).
 
 ---
 
