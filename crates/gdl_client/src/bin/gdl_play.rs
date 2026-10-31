@@ -134,6 +134,143 @@ impl Default for FrameLayout {
 #[derive(Resource)]
 struct SettingsDir(Option<std::path::PathBuf>);
 
+/// The configuration file the game started with (absolute): the HD texture
+/// generator's child process reads the same disc.
+#[derive(Resource)]
+struct ConfigPath(std::path::PathBuf);
+
+/// NATIVE ENHANCEMENT (HD textures): the generator (gdl_play --hd-generate)
+/// as a child process while Settings::hd_textures is on and the pack is not
+/// complete; its "progress" lines on a reader thread.
+#[derive(Default)]
+struct HdJob {
+    child: Option<std::process::Child>,
+    progress: std::sync::Arc<std::sync::Mutex<(usize, usize)>>,
+    /// The pack is complete and in use (texture_pack::set_generated).
+    applied: bool,
+    /// The last run's failure (shown until the setting is toggled).
+    failed: Option<String>,
+    /// Settings::hd_textures last frame.
+    was_on: bool,
+}
+
+/// Run, watch and stop the HD texture generator; put a complete pack in use
+/// (decoded textures take it from the next level) and report its state on
+/// the settings overlay's row.
+fn hd_textures_job(settings: Res<gdl_client::settings::Settings>, config: Res<ConfigPath>, mut overlay: ResMut<gdl_client::enhance::Overlay>, mut job: Local<HdJob>) {
+    use gdl_client::enhance::HdStatus;
+    use gdl_client::hd::generate;
+    let on = settings.hd_textures;
+    let toggled = on != job.was_on;
+    job.was_on = on;
+    if !on {
+        if let Some(mut c) = job.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+            eprintln!("HD textures: generator stopped");
+        }
+        if job.applied {
+            gdl_client::texture_pack::set_generated(None);
+            job.applied = false;
+            eprintln!("HD textures: off");
+        }
+        job.failed = None;
+        return;
+    }
+    if job.applied {
+        overlay.hd = HdStatus::Ready;
+        return;
+    }
+    if toggled {
+        job.failed = None;
+    }
+    let mut finished = false;
+    if let Some(c) = job.child.as_mut() {
+        match c.try_wait() {
+            Ok(None) => {
+                let (done, total) = *job.progress.lock().unwrap();
+                overlay.hd = HdStatus::Generating { done, total };
+                return;
+            }
+            Ok(Some(status)) => {
+                job.child = None;
+                finished = true;
+                eprintln!("HD textures: generator ended ({status})");
+                if !status.success() {
+                    job.failed = Some(format!("generator exit {status}"));
+                }
+            }
+            Err(e) => {
+                job.child = None;
+                job.failed = Some(e.to_string());
+            }
+        }
+    }
+    if let Some(e) = &job.failed {
+        overlay.hd = HdStatus::Failed(e.clone());
+        return;
+    }
+    let dir = match generate::pack_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            overlay.hd = HdStatus::Failed(e.to_string());
+            return;
+        }
+    };
+    if generate::is_complete(&dir) {
+        eprintln!("HD textures: in use ({})", dir.display());
+        gdl_client::texture_pack::set_generated(Some(dir));
+        job.applied = true;
+        overlay.hd = HdStatus::Ready;
+        return;
+    }
+    if finished {
+        // A run that ended without a complete pack is not restarted until
+        // the setting is switched off and on.
+        job.failed = Some("the pack is incomplete".into());
+        overlay.hd = HdStatus::Failed("the pack is incomplete".into());
+        return;
+    }
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            job.failed = Some(e.to_string());
+            return;
+        }
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("--hd-generate").arg(&config.0).arg(&dir).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: no console for the child.
+        cmd.creation_flags(0x0800_0000);
+    }
+    match cmd.spawn() {
+        Ok(mut child) => {
+            *job.progress.lock().unwrap() = (0, 0);
+            if let Some(out) = child.stdout.take() {
+                let progress = job.progress.clone();
+                std::thread::spawn(move || {
+                    use std::io::BufRead;
+                    for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                        let f: Vec<&str> = line.split(' ').collect();
+                        if let ["progress", _, done, total] = f[..]
+                            && let (Ok(d), Ok(t)) = (done.parse(), total.parse())
+                        {
+                            *progress.lock().unwrap() = (d, t);
+                        }
+                    }
+                });
+            }
+            job.child = Some(child);
+            eprintln!("HD textures: generator started ({})", dir.display());
+            overlay.hd = HdStatus::Generating { done: 0, total: 0 };
+        }
+        Err(e) => job.failed = Some(e.to_string()),
+    }
+}
+
 /// The render layer of the native overlay camera (settings, frame rate).
 const OVERLAY_LAYER: usize = 2;
 
@@ -356,6 +493,7 @@ type GraphicsApplied = (bool, u32, gdl_client::Enhance);
 /// every GsMaterial reads (sharp sampling, full colour, smooth lightmaps),
 /// the 3D camera's contrast-adaptive sharpening and the final pass's
 /// 16-bit output.
+#[allow(clippy::too_many_arguments)]
 fn apply_graphics(
     settings: Res<gdl_client::settings::Settings>,
     (mut last, mut reprepare): (Local<Option<GraphicsApplied>>, Local<u8>),
@@ -2236,7 +2374,7 @@ fn torch_lights(fires: &[(Vec3, Vec3)]) -> Vec<Torch> {
             let n = members.len() as f32;
             let p = members.iter().map(|m| m.0).sum::<Vec3>() / n;
             let c = members.iter().map(|m| m.1).sum::<Vec3>() / n;
-            let phase = (p.x * 12.9898 + p.z * 78.233).sin().abs() * 6.283;
+            let phase = (p.x * 12.9898 + p.z * 78.233).sin().abs() * std::f32::consts::TAU;
             Torch { position: (p + Vec3::Y) * MIRROR, colour: c, phase }
         })
         .collect()
@@ -2287,6 +2425,7 @@ const SHADOW_DISTANCE: f32 = 120.0;
 /// NotShadowCaster. Runs only with shadows on (the marker changes entity
 /// archetypes, and with them the order of tied draws): all meshes once,
 /// then those whose material changed.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn mark_shadow_casters(
     mut commands: Commands,
     settings: Res<gdl_client::settings::Settings>,
@@ -6937,6 +7076,7 @@ fn present_item_trees(
 /// key, no OANIM frames): the nodes posed at the enemy's sequence and frame
 /// (DoAnimation through the shared tree pose), with the tree's texture
 /// modifiers.
+#[allow(clippy::type_complexity)]
 fn present_enemy_trees(
     sim: Res<Sim>,
     sources: Res<Sources>,
@@ -9183,14 +9323,36 @@ fn hd_census_cli(config: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let out = std::path::absolute(out)?;
     let (cfg, catalog) = config_catalog(config)?;
     let elf_bytes = gdl_client::bounded_read(Path::new(cfg["elf"].as_str().ok_or("config elf")?))?;
-    let presets = gdl_formats::elf::Elf::parse(&elf_bytes)?.object("preset_list")?.to_vec();
+    let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
+    let presets = elf.object("preset_list")?.to_vec();
     let t = std::time::Instant::now();
     let entries = gdl_client::hd::census::census(&catalog, &presets)?;
     let texels: u64 = entries.iter().map(|e| u64::from(e.width) * u64::from(e.height)).sum();
-    let report = serde_json::json!({"scope": "RESEARCH: HD texture census (gdl_client::hd::census) of the catalog's OBJECTS packages", "textures": entries.len(), "texels": texels, "seconds": t.elapsed().as_secs_f64(), "entries": entries});
+    let effect_info = gdl_client::hd::census::effect_info_names(&elf);
+    let keep = gdl_client::hd::classify::classify(&entries, &effect_info);
+    let report = serde_json::json!({"scope": "RESEARCH: HD texture census (gdl_client::hd::census) of the catalog's OBJECTS packages", "textures": entries.len(), "texels": texels, "seconds": t.elapsed().as_secs_f64(), "effect_info": effect_info, "keep": keep, "entries": entries});
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&out)?;
     serde_json::to_writer(&mut file, &report)?;
     println!("{} textures, {texels} texels, {:.1} s → {}", entries.len(), t.elapsed().as_secs_f64(), out.display());
+    Ok(())
+}
+
+/// --hd-generate: the HD texture pack into `out` (a child of the settings
+/// overlay, or a command line run). A parent stops it by ending the process
+/// (or closing its stdout); what is written stays and a later run resumes.
+fn hd_generate_cli(config: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
+    use std::io::Write;
+    let out = std::path::absolute(out)?;
+    let (cfg, catalog) = config_catalog(config)?;
+    let elf_bytes = gdl_client::bounded_read(Path::new(cfg["elf"].as_str().ok_or("config elf")?))?;
+    let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
+    let presets = elf.object("preset_list")?.to_vec();
+    let effect_info = gdl_client::hd::census::effect_info_names(&elf);
+    let m = gdl_client::hd::generate::generate(&catalog, &presets, &effect_info, &out, |p| {
+        let mut o = std::io::stdout().lock();
+        writeln!(o, "progress {} {} {}", p.stage, p.done, p.total).is_ok() && o.flush().is_ok()
+    })?;
+    println!("done {} complete {} generated {} kept {} textures {} {:.1} s {}", out.display(), m.complete, m.generated, m.kept.len(), m.textures, m.seconds, m.adapter);
     Ok(())
 }
 
@@ -9224,7 +9386,8 @@ fn hd_check_cli(weights: &Path, dump: &Path, pack: &Path, limit: usize) -> Resul
         Ok((info.width as usize, info.height as usize, buf))
     };
     // Group by size, in batches the device takes.
-    let mut by_size: std::collections::BTreeMap<(usize, usize), Vec<(String, u16, Vec<u8>)>> = Default::default();
+    type Texture = (String, u16, Vec<u8>);
+    let mut by_size: std::collections::BTreeMap<(usize, usize), Vec<Texture>> = Default::default();
     for (stem, flags) in rows {
         let (wd, ht, px) = read(&dump.join(format!("{stem}.png")))?;
         by_size.entry((wd, ht)).or_default().push((stem, flags, px));
@@ -9284,6 +9447,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     {
         return hd_census_cli(Path::new(config), Path::new(out));
     }
+    // NATIVE ENHANCEMENT: gdl_play --hd-generate CONFIG.json OUT_DIR, the HD
+    // texture pack (gdl_client::hd::generate) with "progress STAGE DONE
+    // TOTAL" lines on stdout (the settings overlay runs it as a child).
+    if let [flag, config, out] = args.as_slice()
+        && flag == "--hd-generate"
+    {
+        return hd_generate_cli(Path::new(config), Path::new(out));
+    }
     // RESEARCH: gdl_play --hd-check WEIGHTS DUMP_DIR PACK_DIR [LIMIT]: the
     // GPU network (gdl_client::hd) on a GDL_TEXTURE_DUMP directory against a
     // pack of upscale_compare.py's numpy outputs.
@@ -9298,6 +9469,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         [c] => std::path::PathBuf::from(c),
         _ => return Err("Usage: gdl_play [CONFIG.json]".into()),
     };
+    let config_abs = std::path::absolute(&config_path)?;
     let cfg: Value = serde_json::from_slice(&gdl_client::bounded_read(&config_path)?)?;
     if cfg["base"].as_str() == Some("config") {
         let dir = config_path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
@@ -9435,6 +9607,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     let settings = gdl_client::settings::Settings::load(&saves);
     let settings_dir = (std::env::var_os("GDL_BASELINE").is_none() && std::env::var_os("GDL_SETTINGS").is_none()).then(|| saves.clone());
     gdl_client::texture_pack::configure(settings.texture_pack.clone());
+    // A complete HD texture pack is in use from the start, front end
+    // included (hd_textures_job generates a missing one).
+    if settings.hd_textures
+        && let Ok(dir) = gdl_client::hd::generate::pack_dir()
+        && gdl_client::hd::generate::is_complete(&dir)
+    {
+        gdl_client::texture_pack::set_generated(Some(dir));
+    }
     if let Some(slot) = store.migrate_slot_zero()? {
         println!("save0000 (interim slot numbering) moved to save{slot:04}; the old file is kept as migrated-save0000");
     }
@@ -9633,6 +9813,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<gdl_client::enhance::Overlay>()
         .init_resource::<FrameLayout>()
         .insert_resource(SettingsDir(settings_dir))
+        .insert_resource(ConfigPath(config_abs))
         .insert_resource(front)
         .insert_resource(Screen::Front)
         .insert_resource(presentation)
@@ -9685,6 +9866,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(Startup, (setup_static, setup_menu_icon, setup_overlay).chain())
         .insert_resource(TestHarness::from_env())
         .add_systems(Last, (frame_limiter, ui_trace, frame_log, diagnostic_shots, diagnostic_scene_dump))
+        .add_systems(Update, hd_textures_job)
         .add_systems(PostUpdate, (interpolate_transforms.before(bevy::transform::TransformSystems::Propagate), mark_shadow_casters, present_shadow_light))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(

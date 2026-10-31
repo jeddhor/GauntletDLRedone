@@ -716,6 +716,18 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (pixels against 1.0, else an equal scene dump — G1's spear tie — with
    particle-only differences re-captured: the 1.0 binary itself flips H4).
    Current build: pass. Next: the HD texture generator (plan steps 8–10).
+   Same day, more playtest reports: Death in G1 summoned but not drawn
+   (enemies were drawn only through OANIM frames; node trees now drawn), the
+   barrel carriers' poison gas vanishing (SuicideExplosion's morph and scale
+   were missing) — fixed, replays r92 equal r91 (playtest.md "Playtest after
+   Checkpoint C"); a "wireframe echo" by crates and chest contents shown as
+   "a tiny sprite and a big piece of paper" await the user's screenshots.
+   HD textures built (plan steps 8–10, enhancements.md "HD textures"): the
+   census, the effect / sky classification, the Real-ESRGAN network as wgpu
+   compute (exact against the Checkpoint B pack), the resumable pack writer,
+   the loader and the Graphics page's "HD textures" row that runs it. The
+   whole pack: 6 min 22 s, 2.0 GB on the RX 580; in the game +167–282 MiB
+   video memory and 1–3 s longer level starts.
 
 ---
 

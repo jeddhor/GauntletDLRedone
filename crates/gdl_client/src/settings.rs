@@ -74,6 +74,10 @@ pub struct Settings {
     pub bloom: bool,
     /// Anti-aliasing by SMAA (a post-process) instead of MSAA.
     pub smaa: bool,
+    /// The generated HD textures (hd::generate: 4× Real-ESRGAN; effects
+    /// and skies keep their originals). Turning it on generates the pack
+    /// once; not part of the presets (Original turns it off).
+    pub hd_textures: bool,
 }
 
 impl Default for Settings {
@@ -105,6 +109,7 @@ impl Default for Settings {
             ambient_occlusion: true,
             bloom: true,
             smaa: false,
+            hd_textures: false,
         }
     }
 }
@@ -178,6 +183,7 @@ impl Settings {
                 shadows: false,
                 ambient_occlusion: false,
                 bloom: false,
+                hd_textures: false,
                 ..self.clone()
             },
             Graphics::Enhanced => Self {
@@ -280,7 +286,13 @@ mod tests {
         assert_eq!(c.with_baseline_presentation().graphics(), Graphics::Original);
         assert_eq!(Settings::baseline().graphics(), Graphics::Original);
         let b = Settings::baseline();
-        assert!(!b.more_lights && !b.torch_lights && !b.shadows && !b.ambient_occlusion && !b.bloom && !b.smaa);
+        assert!(!b.more_lights && !b.torch_lights && !b.shadows && !b.ambient_occlusion && !b.bloom && !b.smaa && !b.hd_textures);
+        // HD textures: off by default, outside the presets (Enhanced keeps
+        // them as they are), off with Original.
+        assert!(!Settings::default().hd_textures);
+        let hd = Settings { hd_textures: true, ..Settings::default() };
+        assert_eq!(hd.graphics(), Graphics::Enhanced);
+        assert!(hd.with_graphics(Graphics::Enhanced).hd_textures && !hd.with_graphics(Graphics::Original).hd_textures);
         let mut h: Settings = serde_json::from_str(r#"{"texture_filter": "sharp", "sharpen": 250}"#).unwrap();
         h.sanitise();
         assert_eq!((h.texture_filter, h.sharpen), (TextureFilter::Sharp, 100));

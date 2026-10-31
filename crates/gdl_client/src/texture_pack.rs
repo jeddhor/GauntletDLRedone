@@ -7,31 +7,45 @@
 //! DIR/index.tsv (the TEXDEF label and the record's flags, 0x4/0x8 clamp
 //! U/V: research tooling); a texture pack (Settings::texture_pack) replaces a texture
 //! with PACK/<name>.png of any size (alpha halved back, one mip level).
-//! Lightmaps are not replaced. Without either, nothing is hashed.
+//! The generated HD pack (hd::generate, the same names and format) comes
+//! after the user's pack: their replacements win. Lightmaps are not
+//! replaced. Without a pack or a dump, nothing is hashed.
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 struct Config {
     pack: Option<PathBuf>,
+    generated: Option<PathBuf>,
     dump: Option<PathBuf>,
 }
 
-static CONFIG: OnceLock<Config> = OnceLock::new();
+static CONFIG: RwLock<Config> = RwLock::new(Config { pack: None, generated: None, dump: None });
 
-/// Set once at startup (later calls are ignored): the pack directory, and
-/// the dump directory from GDL_TEXTURE_DUMP.
+/// At startup: the user's pack directory, and the dump directory from
+/// GDL_TEXTURE_DUMP.
 pub fn configure(pack: Option<PathBuf>) {
     let dump = std::env::var_os("GDL_TEXTURE_DUMP").map(PathBuf::from);
     if let Some(d) = &dump {
         let _ = std::fs::create_dir_all(d);
     }
-    let _ = CONFIG.set(Config { pack: pack.filter(|p| p.is_dir()), dump });
+    if let Ok(mut c) = CONFIG.write() {
+        c.pack = pack.filter(|p| p.is_dir());
+        c.dump = dump;
+    }
+}
+
+/// The generated HD pack in use (None: off); textures decoded from then on
+/// (the next level's) take it.
+pub fn set_generated(dir: Option<PathBuf>) {
+    if let Ok(mut c) = CONFIG.write() {
+        c.generated = dir.filter(|p| p.is_dir());
+    }
 }
 
 /// Whether a pack or a dump is configured.
 pub fn active() -> bool {
-    CONFIG.get().is_some_and(|c| c.pack.is_some() || c.dump.is_some())
+    CONFIG.read().is_ok_and(|c| c.pack.is_some() || c.generated.is_some() || c.dump.is_some())
 }
 
 /// A texture's file name stem.
@@ -47,8 +61,8 @@ pub fn name(width: u16, height: u16, rgba: &[u8]) -> String {
 /// texture, after writing it (with its TEXDEF `label` and record `flags`)
 /// to the dump directory when one is set.
 pub fn replace(width: u16, height: u16, rgba: &[u8], label: &str, flags: u16) -> Option<(u32, u32, Vec<u8>)> {
-    let cfg = CONFIG.get()?;
-    if cfg.pack.is_none() && cfg.dump.is_none() {
+    let cfg = CONFIG.read().ok()?;
+    if cfg.pack.is_none() && cfg.generated.is_none() && cfg.dump.is_none() {
         return None;
     }
     let stem = name(width, height, rgba);
@@ -60,7 +74,7 @@ pub fn replace(width: u16, height: u16, rgba: &[u8], label: &str, flags: u16) ->
             let _ = index.and_then(|mut f| writeln!(f, "{stem}\t{label}\t{width}x{height}\t{flags:#x}"));
         }
     }
-    read_png(&cfg.pack.as_ref()?.join(format!("{stem}.png")))
+    [&cfg.pack, &cfg.generated].into_iter().flatten().find_map(|dir| read_png(&dir.join(format!("{stem}.png"))))
 }
 
 fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), Box<dyn std::error::Error>> {

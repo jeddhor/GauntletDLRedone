@@ -8,7 +8,8 @@ The Rust crates compiled into gdl_play and gdl_import for Linux and Windows
 out), each with its license expression and the license/notice files of its
 package in the local Cargo registry (identical texts printed once, with the
 crates that carry them); then the name dictionary the shipped catalog uses
-(MIT) and Qt 6 (LGPL-3.0, the installer). Offline; reads only local files.
+(MIT), Real-ESRGAN (BSD-3-Clause, the HD texture network's weights) and
+Qt 6 (LGPL-3.0, the installer). Offline; reads only local files.
 """
 import pathlib
 import re
@@ -79,6 +80,13 @@ def main():
             'import/catalog.json names the game archive\'s entries with the name',
             'dictionary of haekb/gdl_wad_decoder (commit 981f4ec9586903257e8f2161e918bbbe5263a6eb),',
             'matched by path hash. Its license:', '', dictionary.read_text().strip()]
+    esrgan = ROOT / 'crates/gdl_client/assets/hd/LICENSE-Real-ESRGAN.txt'
+    out += ['', '', 'REAL-ESRGAN', '=' * 11, '',
+            'gdl_play (HD textures, a native enhancement) contains network weights derived',
+            'from Real-ESRGAN v0.3.0\'s released realesr-general-x4v3 and',
+            'realesr-general-wdn-x4v3 checkpoints (mixed 0.5 / 0.5), and runs an',
+            'independently written implementation of its SRVGGNetCompact network.',
+            'Real-ESRGAN: https://github.com/xinntao/Real-ESRGAN. Its license:', '', esrgan.read_text().strip()]
     out += ['', '', 'QT', '=' * 2, '',
             'The installer (GauntletDarkLegacy-Installer) uses the Qt 6 libraries (Qt Core,',
             'Qt Gui, Qt Widgets and their platform plugins), (C) The Qt Company Ltd and',

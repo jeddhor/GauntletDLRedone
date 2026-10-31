@@ -61,16 +61,16 @@ impl Weights {
 /// The convolution kernel: 8×8 invocations, each 2×2 pixels × 16 output
 /// channels (accumulators written out, so they stay in registers); input
 /// channels in chunks of 8 through workgroup memory with a one-texel halo;
-/// weights read with workgroup-uniform indices from the transposed layout
-/// [in][tap][out] (Upscaler::new), 16 contiguous floats per step (one wide
-/// scalar load).
+/// weights of the dispatch's 16 output channels from a uniform block
+/// ([in][tap][out], WBLOCK bytes, bound at a dynamic offset) read with
+/// workgroup-uniform indices (scalar loads on AMD).
 fn conv_shader() -> String {
     let mut acc = String::new();
     let mut add = String::new();
     let mut store = String::new();
     for j in 0..16 {
         acc += &format!("    var a{j} = vec4<f32>(0.0);\n");
-        add += &format!("                a{j} += weights[wb + {j}u] * v;\n");
+        add += &format!("                a{j} += w{}.{} * v;\n", j / 4, ["x", "y", "z", "w"][j % 4]);
         store += &format!("        put(a{j}, g * 16u + {j}u, n, px, py);\n");
     }
     format!(
@@ -84,6 +84,7 @@ struct Conv {{
 @group(0) @binding(1) var<storage, read> weights: array<f32>;
 @group(0) @binding(2) var<storage, read> src: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(4) var<uniform> wts: array<vec4<f32>, 2304>;
 
 var<workgroup> tile: array<f32, 2592>;
 
@@ -105,22 +106,34 @@ fn put(a: vec4<f32>, o: u32, n: u32, px: u32, py: u32) {{
 
 @compute @workgroup_size(8, 8, 1)
 fn conv(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {{
-    let n = wg.z / p.groups;
-    let g = wg.z % p.groups;
+    let n = wg.z;
+    let g = p.p0;
     let x0 = wg.x * 16u;
     let y0 = wg.y * 16u;
     let plane = p.h * p.w;
-{acc}    for (var c0 = 0u; c0 < p.cin; c0 += 8u) {{
-        for (var i = li; i < 2592u; i += 64u) {{
-            let ci = c0 + i / 324u;
-            let r = i % 324u;
-            let sy = i32(y0 + r / 18u) - 1;
-            let sx = i32(x0 + r % 18u) - 1;
-            var v = 0.0;
-            if (ci < p.cin && 0 <= sy && 0 <= sx && u32(sy) < p.h && u32(sx) < p.w) {{
-                v = src[(n * p.cin + ci) * plane + u32(sy) * p.w + u32(sx)];
+{acc}    // This invocation's tile texels (the same in every channel): index
+    // li + 64 k, its offset in a source plane, or none outside it.
+    var offs: array<i32, 6>;
+    for (var k = 0u; k < 6u; k++) {{
+        let r = li + 64u * k;
+        let sy = i32(y0 + r / 18u) - 1;
+        let sx = i32(x0 + r % 18u) - 1;
+        offs[k] = select(-1, sy * i32(p.w) + sx, r < 324u && 0 <= sy && 0 <= sx && u32(sy) < p.h && u32(sx) < p.w);
+    }}
+    for (var c0 = 0u; c0 < p.cin; c0 += 8u) {{
+        for (var ci = 0u; ci < 8u; ci++) {{
+            let c = c0 + ci;
+            let base = (n * p.cin + c) * plane;
+            for (var k = 0u; k < 6u; k++) {{
+                let r = li + 64u * k;
+                if (r < 324u) {{
+                    var v = 0.0;
+                    if (c < p.cin && 0 <= offs[k]) {{
+                        v = src[base + u32(offs[k])];
+                    }}
+                    tile[ci * 324u + r] = v;
+                }}
             }}
-            tile[i] = v;
         }}
         workgroupBarrier();
         let cn = min(8u, p.cin - c0);
@@ -128,7 +141,11 @@ fn conv(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid:
             for (var k = 0u; k < 9u; k++) {{
                 let t = ci * 324u + (lid.y * 2u + k / 3u) * 18u + lid.x * 2u + k % 3u;
                 let v = vec4<f32>(tile[t], tile[t + 1u], tile[t + 18u], tile[t + 19u]);
-                let wb = p.w_off + ((c0 + ci) * 9u + k) * p.cout + g * 16u;
+                let wi = ((c0 + ci) * 9u + k) * 4u;
+                let w0 = wts[wi];
+                let w1 = wts[wi + 1u];
+                let w2 = wts[wi + 2u];
+                let w3 = wts[wi + 3u];
 {add}            }}
         }}
         workgroupBarrier();
@@ -177,6 +194,10 @@ pub struct Upscaler {
     device: wgpu::Device,
     queue: wgpu::Queue,
     weights: wgpu::Buffer,
+    /// Per convolution and 16-channel output group, the WBLOCK uniform
+    /// block's offset in `blocks`.
+    blocks: wgpu::Buffer,
+    block_at: Vec<Vec<u64>>,
     convs: Vec<(u32, u32, Option<u32>, u32, u32)>,
     conv: wgpu::ComputePipeline,
     shuffle: wgpu::ComputePipeline,
@@ -184,6 +205,9 @@ pub struct Upscaler {
     max_binding: u64,
     pub adapter: String,
 }
+
+/// One output group's weights: 64 in × 9 taps × 16 out floats.
+const WBLOCK: u64 = 64 * 9 * 16 * 4;
 
 /// Bytes one network item needs in its largest buffer (64 channels).
 pub fn item_bytes(padded_w: usize, padded_h: usize) -> u64 {
@@ -233,23 +257,63 @@ impl Upscaler {
             contents: &floats.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>(),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let pipeline = |source: String, entry: &str| {
+        // The uniform blocks: per output group [in][tap][16 out], each at a
+        // WBLOCK-sized slot (a multiple of the 256-byte offset alignment).
+        let align = u64::from(limits.min_uniform_buffer_offset_alignment).max(1);
+        let slot = WBLOCK.next_multiple_of(align);
+        let mut block_bytes = Vec::new();
+        let mut block_at = Vec::new();
+        for &(w_off, _, _, cin, cout) in &weights.convs {
+            let mut at = Vec::new();
+            for g in 0..cout / 16 {
+                at.push(block_bytes.len() as u64);
+                let mut block = Vec::with_capacity(slot as usize);
+                for ci in 0..cin {
+                    for k in 0..9 {
+                        for j in 0..16 {
+                            let co = g * 16 + j;
+                            block.extend(weights.floats[(w_off + (co * cin + ci) * 9 + k) as usize].to_le_bytes());
+                        }
+                    }
+                }
+                block.resize(slot as usize, 0);
+                block_bytes.extend(block);
+            }
+            block_at.push(at);
+        }
+        let blocks = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("srvgg weight blocks"), contents: &block_bytes, usage: wgpu::BufferUsages::UNIFORM });
+        let entry = |binding, ty| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None };
+        let storage = |read_only| wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only }, has_dynamic_offset: false, min_binding_size: None };
+        let conv_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("srvgg conv"),
+            entries: &[
+                entry(0, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }),
+                entry(1, storage(true)),
+                entry(2, storage(true)),
+                entry(3, storage(false)),
+                entry(4, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: true, min_binding_size: std::num::NonZeroU64::new(WBLOCK) }),
+            ],
+        });
+        let conv_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("srvgg conv"), bind_group_layouts: &[&conv_layout], push_constant_ranges: &[] });
+        let pipeline = |source: String, entry: &str, layout: Option<&wgpu::PipelineLayout>| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(entry), source: wgpu::ShaderSource::Wgsl(source.into()) });
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
-                layout: None,
+                layout,
                 module: &module,
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
                 cache: None,
             })
         };
-        let (conv, shuffle) = (pipeline(conv_shader(), "conv"), pipeline(SHADER.to_string(), "shuffle"));
+        let (conv, shuffle) = (pipeline(conv_shader(), "conv", Some(&conv_pipeline_layout)), pipeline(SHADER.to_string(), "shuffle", None));
         let max_binding = u64::from(limits.max_storage_buffer_binding_size).min(limits.max_buffer_size);
         Ok(Self {
             device,
             queue,
             weights: weights_buf,
+            blocks,
+            block_at,
             convs,
             conv,
             shuffle,
@@ -293,33 +357,38 @@ impl Upscaler {
         let words = |w: [u32; 12]| w.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
         let mut keep = Vec::new();
         for (k, &(w_off, b_off, a_off, cin, cout)) in self.convs.iter().enumerate() {
-            let groups = cout.div_ceil(16);
-            let params = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("srvgg conv"),
-                contents: &words([n as u32, cin, cout, ph as u32, pw as u32, w_off, b_off, a_off.unwrap_or(u32::MAX), groups, 0, 0, 0]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
             let (src, dst) = match k {
                 0 => (&input, &a),
                 _ if k % 2 == 1 => (&a, &b),
                 _ => (&b, &a),
             };
-            let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.conv.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.weights.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: src.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: dst.as_entire_binding() },
-                ],
-            });
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
             pass.set_pipeline(&self.conv);
-            pass.set_bind_group(0, &bind, &[]);
-            pass.dispatch_workgroups(pw.div_ceil(16) as u32, ph.div_ceil(16) as u32, n as u32 * groups);
+            for (g, &at) in self.block_at[k].iter().enumerate() {
+                let params = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("srvgg conv"),
+                    contents: &words([n as u32, cin, cout, ph as u32, pw as u32, w_off, b_off, a_off.unwrap_or(u32::MAX), 1, g as u32, 0, 0]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &self.conv.get_bind_group_layout(0),
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: self.weights.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 2, resource: src.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 3, resource: dst.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &self.blocks, offset: 0, size: std::num::NonZeroU64::new(WBLOCK) }),
+                        },
+                    ],
+                });
+                pass.set_bind_group(0, &bind, &[at as u32]);
+                pass.dispatch_workgroups(pw.div_ceil(16) as u32, ph.div_ceil(16) as u32, n as u32);
+                keep.push(params);
+            }
             drop(pass);
-            keep.push(params);
             // One layer per submission (each short for the driver's
             // watchdog), queued back to back.
             self.queue.submit([std::mem::replace(&mut enc, d.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("srvgg") })).finish()]);

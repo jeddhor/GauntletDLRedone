@@ -114,6 +114,47 @@ pub fn material_texels(objects: &Objects, table: &TextureTable, textures: &[u8],
     Some((def.label.clone(), rgba))
 }
 
+/// A decoded texture of a package: (bitmap record, TEXDEF / OBJECTS label,
+/// GS RGBA, only hud_image decodes it).
+pub type Decoded = (usize, String, Vec<u8>, bool);
+
+/// Every bitmap record of a loaded package the client can draw, decoded as
+/// materials_for does (and, for front-end and realm map packages, as
+/// hud_image does where materials_for cannot).
+fn decode_package(f: &Files, prefix: &str) -> Vec<Decoded> {
+    let front = FRONT_PACKAGES.contains(&prefix) || prefix.starts_with("MAPS/");
+    let mut out = Vec::new();
+    for i in 0..f.objects.bitmap_records.len() {
+        if let Some((label, rgba)) = material_texels(&f.objects, &f.table, &f.textures, i) {
+            out.push((i, label, rgba, false));
+        } else if front && let Some(rgba) = crate::hud_rgba(&f.objects, &f.table, &f.textures, i) {
+            let label = f.objects.bitmap_definitions.iter().find(|d| d.bitmap_index as usize == i).map_or(String::new(), |d| d.label.clone());
+            out.push((i, label, rgba, true));
+        }
+    }
+    out
+}
+
+/// The catalog's OBJECTS package prefixes, sorted.
+pub fn package_prefixes(catalog: &Catalog) -> Vec<String> {
+    catalog.labels().iter().filter_map(|l| l.strip_suffix("/OBJECTS.PS2")).map(str::to_string).collect()
+}
+
+/// A decoded texture with its record's (width, height, flags).
+pub type PackageTexture = (Decoded, (u16, u16, u16));
+
+/// A package's decoded textures.
+pub fn package_textures(catalog: &Catalog, prefix: &str) -> Result<Vec<PackageTexture>, Box<dyn Error>> {
+    let f = load(catalog, prefix)?;
+    Ok(decode_package(&f, prefix)
+        .into_iter()
+        .map(|d| {
+            let b = &f.objects.bitmap_records[d.0];
+            (d, (b.width, b.height, b.flags))
+        })
+        .collect())
+}
+
 /// A particle system's texture label (setupParms: the record's name, or the
 /// default particle for its blend).
 fn psys_label(record: &[u8], presets: &[u8], dir: Option<[f32; 3]>, world: bool) -> Option<String> {
@@ -126,28 +167,22 @@ fn psys_label(record: &[u8], presets: &[u8], dir: Option<[f32; 3]>, world: bool)
 /// Every texture of the catalog's OBJECTS packages with its uses. `presets`
 /// is the ELF's preset_list (world particle systems).
 pub fn census(catalog: &Catalog, presets: &[u8]) -> Result<Vec<Entry>, Box<dyn Error>> {
-    let prefixes: Vec<String> = catalog.labels().iter().filter_map(|l| l.strip_suffix("/OBJECTS.PS2")).map(str::to_string).collect();
+    let prefixes = package_prefixes(catalog);
     let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
     // Particle texture labels with their uses, matched once every package's
     // labels are known.
     let mut particles: Vec<(String, Use)> = Vec::new();
+    // Texture modifier targets (upper-case name) and their frames' names:
+    // a particle texture that is a target animates through its frames.
+    let mut frame_links: Vec<(String, Vec<String>)> = Vec::new();
     for prefix in &prefixes {
         let Ok(f) = load(catalog, prefix) else { continue };
         // MAPS/level<code>: the realm map screen's texture set (start_map).
         let front = FRONT_PACKAGES.contains(&prefix.as_str()) || prefix.starts_with("MAPS/");
         // Record → census name.
         let mut names: HashMap<usize, String> = HashMap::new();
-        for (i, b) in f.objects.bitmap_records.iter().enumerate() {
-            let material = material_texels(&f.objects, &f.table, &f.textures, i);
-            let hud = if front && material.is_none() { crate::hud_rgba(&f.objects, &f.table, &f.textures, i) } else { None };
-            let (label, rgba, hud_only) = match (material, hud) {
-                (Some((label, rgba)), _) => (label, rgba, false),
-                (None, Some(rgba)) => {
-                    let label = f.objects.bitmap_definitions.iter().find(|d| d.bitmap_index as usize == i).map_or(String::new(), |d| d.label.clone());
-                    (label, rgba, true)
-                }
-                (None, None) => continue,
-            };
+        for (i, label, rgba, hud_only) in decode_package(&f, prefix) {
+            let b = &f.objects.bitmap_records[i];
             let name = crate::texture_pack::name(b.width, b.height, &rgba);
             let e = entries.entry(name.clone()).or_insert_with(|| Entry {
                 name: name.clone(),
@@ -166,13 +201,11 @@ pub fn census(catalog: &Catalog, presets: &[u8]) -> Result<Vec<Entry>, Box<dyn E
             }
             names.insert(i, name);
         }
-        // Object index → its parts' texture names, each with whether the
+        // Object index → its parts' bitmap records, each with whether the
         // part has a lightmap record.
         let lightmap = |i: u16| f.objects.bitmap_records.get(i as usize).is_some_and(|b| b.format == 146);
-        let object_names = |o: usize| -> Vec<(String, bool)> {
-            f.objects.objects.get(o).map_or(Vec::new(), |o| {
-                o.parts.iter().filter_map(|p| names.get(&(p.texture_index as usize)).map(|n| (n.clone(), lightmap(p.lightmap_index)))).collect()
-            })
+        let object_records = |o: usize| -> Vec<(usize, bool)> {
+            f.objects.objects.get(o).map_or(Vec::new(), |o| o.parts.iter().map(|p| (p.texture_index as usize, lightmap(p.lightmap_index))).collect())
         };
         let mut by_label: HashMap<String, usize> = HashMap::new();
         let mut index_of: HashMap<String, usize> = HashMap::new();
@@ -182,11 +215,10 @@ pub fn census(catalog: &Catalog, presets: &[u8]) -> Result<Vec<Entry>, Box<dyn E
                 index_of.entry(d.label.to_uppercase()).or_insert(o);
             }
         }
-        let mut add = |name: &str, u: Use| {
-            if let Some(e) = entries.get_mut(name) {
-                e.uses.insert(u);
-            }
-        };
+        // Uses by bitmap record (texture modifiers copy a target's to its
+        // frames below), then by census name.
+        let mut rec_uses: HashMap<usize, Vec<Use>> = HashMap::new();
+        let mut add = |record: usize, u: Use| rec_uses.entry(record).or_default().push(u);
         // World nodes (spawn_level): an object on non-particle nodes with
         // +0x28 == 1 or file flag 0x80000000; MB flags = record +0x18, | 4
         // for file flags & 0x1001 == 1, | 1 for file flag 0x8000.
@@ -230,8 +262,8 @@ pub fn census(catalog: &Catalog, presets: &[u8]) -> Result<Vec<Entry>, Box<dyn E
                     flags |= 1;
                 }
                 let Some(&o) = by_label.get(&node.label) else { continue };
-                for (name, lightmapped) in object_names(o) {
-                    add(&name, Use { kind: UseKind::World, flags, package: prefix.clone(), who: node.label.clone(), lightmapped, radius: node.radius.round() as i32 });
+                for (record, lightmapped) in object_records(o) {
+                    add(record, Use { kind: UseKind::World, flags, package: prefix.clone(), who: node.label.clone(), lightmapped, radius: node.radius.round() as i32 });
                 }
             }
         }
@@ -247,8 +279,8 @@ pub fn census(catalog: &Catalog, presets: &[u8]) -> Result<Vec<Entry>, Box<dyn E
                     let who = format!("{}:{}", tree.label, node.label);
                     let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
                     if node.flags & 1 == 0 && node.node_type != 2 && let Some(&o) = by_label.get(&label) {
-                        for (name, lightmapped) in object_names(o) {
-                            add(&name, Use { kind: UseKind::Tree, flags, package: prefix.clone(), who: who.clone(), lightmapped, radius: 0 });
+                        for (record, lightmapped) in object_records(o) {
+                            add(record, Use { kind: UseKind::Tree, flags, package: prefix.clone(), who: who.clone(), lightmapped, radius: 0 });
                         }
                     } else if node.node_type == 4 && 0x38 <= node.raw.len() {
                         let base = tree.file_offset as usize;
@@ -265,23 +297,52 @@ pub fn census(catalog: &Catalog, presets: &[u8]) -> Result<Vec<Entry>, Box<dyn E
                         for e in &node.oanim {
                             let Some(&base) = index_of.get(&e.name.to_uppercase()) else { continue };
                             for k in 0..e.count.max(1) as usize {
-                                for (name, lightmapped) in object_names(base + k) {
-                                    add(&name, Use { kind: UseKind::Tree, flags, package: prefix.clone(), who: who.clone(), lightmapped, radius: 0 });
+                                for (record, lightmapped) in object_records(base + k) {
+                                    add(record, Use { kind: UseKind::Tree, flags, package: prefix.clone(), who: who.clone(), lightmapped, radius: 0 });
                                 }
                             }
                         }
                     }
                 }
             }
-            // Texture modifiers: frame records of this package.
-            for tm in gdl_formats::animation::texmods(bytes).unwrap_or_default() {
-                let target = usize::try_from(tm.target).ok().and_then(|t| names.get(&t)).cloned().unwrap_or_else(|| tm.target_name.to_uppercase());
-                let Ok(first) = usize::try_from(tm.frame_base) else { continue };
-                for k in 0..tm.count.unsigned_abs() as usize {
-                    if let Some(name) = names.get(&(first + k)) {
-                        add(name, Use { kind: UseKind::Frame, flags: 0, package: prefix.clone(), who: target.clone(), lightmapped: false, radius: 0 });
+            // Texture modifiers: a frame record (MBSetRomTexture: frame base
+            // + counter, records of this package) is drawn wherever its
+            // target is, so it takes the target record's uses. The header
+            // table (world, item and sequence modifiers) and type-3 tree
+            // nodes' own records (tree_texmods).
+            let mut mods = gdl_formats::animation::texmods(bytes).unwrap_or_default();
+            for tree in &anim.trees {
+                let base = tree.file_offset as usize;
+                let Some(h0) = bytes.get(base..base + 4).map(|v| u32::from_le_bytes(v.try_into().unwrap()) as usize) else { continue };
+                for node in tree.nodes.iter().filter(|n| n.node_type == 3) {
+                    if let Ok(t) = gdl_formats::animation::texmod_at(bytes, base + h0 + node.sequence_info_offset as usize) {
+                        mods.push(t);
                     }
                 }
+            }
+            for tm in mods {
+                let (Ok(target), Ok(first)) = (usize::try_from(tm.target), usize::try_from(tm.frame_base)) else { continue };
+                let target_label = tm.target_name.to_uppercase();
+                let inherited = rec_uses.get(&target).cloned().unwrap_or_default();
+                let mut frames = Vec::new();
+                for k in 0..tm.count.unsigned_abs() as usize {
+                    let r = first + k;
+                    if r == target {
+                        continue;
+                    }
+                    let list = rec_uses.entry(r).or_default();
+                    list.push(Use { kind: UseKind::Frame, flags: 0, package: prefix.clone(), who: target_label.clone(), lightmapped: false, radius: 0 });
+                    list.extend(inherited.iter().cloned());
+                    if let Some(n) = names.get(&r) {
+                        frames.push(n.clone());
+                    }
+                }
+                frame_links.push((target_label, frames));
+            }
+        }
+        for (record, uses) in rec_uses {
+            if let Some(e) = names.get(&record).and_then(|n| entries.get_mut(n)) {
+                e.uses.extend(uses);
             }
         }
     }
@@ -291,11 +352,27 @@ pub fn census(catalog: &Catalog, presets: &[u8]) -> Result<Vec<Entry>, Box<dyn E
         by_label.entry(e.label.to_uppercase()).or_default().push(e.name.clone());
     }
     for (label, u) in particles {
-        for name in by_label.get(&label).into_iter().flatten() {
+        let frames = frame_links.iter().filter(|(t, _)| *t == label).flat_map(|(_, f)| f.iter());
+        for name in by_label.get(&label).into_iter().flatten().chain(frames) {
             if let Some(e) = entries.get_mut(name) {
                 e.uses.insert(u.clone());
             }
         }
     }
     Ok(entries.into_values().collect())
+}
+
+/// EffectInfo 0x23fa78's tree names (0x50 × {name[0x20], zmod, alpha}):
+/// the effects InitEffects binds from WEAPONS / POWERUPS.
+pub fn effect_info_names(elf: &gdl_formats::elf::Elf) -> Vec<String> {
+    let Ok(table) = elf.object("EffectInfo") else { return Vec::new() };
+    table
+        .chunks_exact(0x28)
+        .take(0x50)
+        .filter_map(|e| {
+            let raw = &e[..0x20];
+            let name = &raw[..raw.iter().position(|&b| b == 0).unwrap_or(raw.len())];
+            (!name.is_empty()).then(|| String::from_utf8_lossy(name).to_uppercase())
+        })
+        .collect()
 }

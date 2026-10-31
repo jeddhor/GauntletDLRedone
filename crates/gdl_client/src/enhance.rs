@@ -64,10 +64,11 @@ enum GRow {
     Shadows,
     AmbientOcclusion,
     Bloom,
+    HdTextures,
     Back,
 }
 
-const GRAPHICS: [GRow; 11] = [
+const GRAPHICS: [GRow; 12] = [
     GRow::Preset,
     GRow::TextureFilter,
     GRow::Sharpen,
@@ -78,12 +79,26 @@ const GRAPHICS: [GRow; 11] = [
     GRow::Shadows,
     GRow::AmbientOcclusion,
     GRow::Bloom,
+    GRow::HdTextures,
     GRow::Back,
 ];
 const SHARPEN: [u32; 6] = [0, 20, 40, 60, 80, 100];
 
+/// The generated HD texture pack's state, as gdl_play reports it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum HdStatus {
+    #[default]
+    Missing,
+    Ready,
+    /// The generator runs: textures done of total (total 0: scanning).
+    Generating { done: usize, total: usize },
+    Failed(String),
+}
+
 #[derive(Default, bevy::prelude::Resource)]
 pub struct Overlay {
+    /// The HD pack's state (the HD textures row).
+    pub hd: HdStatus,
     pub open: bool,
     /// Closed with keys still down: the game ignores the keyboard until
     /// every key is released (Enter would otherwise press Start).
@@ -103,10 +118,10 @@ fn on(v: bool) -> &'static str {
 impl Overlay {
     pub fn toggle(&mut self) -> Effect {
         if self.open {
-            *self = Self { held: true, ..Self::default() };
+            *self = Self { held: true, hd: self.hd.clone(), ..Self::default() };
             Effect::Closed
         } else {
-            *self = Self { open: true, ..Self::default() };
+            *self = Self { open: true, hd: self.hd.clone(), ..Self::default() };
             Effect::None
         }
     }
@@ -164,11 +179,26 @@ impl Overlay {
                     GRow::Shadows => format!("Character shadows    {}", if s.shadows { "Shadow maps" } else { "Original" }),
                     GRow::AmbientOcclusion => format!("Ambient occlusion    {}", on(s.ambient_occlusion)),
                     GRow::Bloom => format!("Bloom                {}", on(s.bloom)),
+                    GRow::HdTextures => format!(
+                        "HD textures          {}",
+                        match (s.hd_textures, &self.hd) {
+                            (false, _) => "Off".to_string(),
+                            (true, HdStatus::Ready) => "On".to_string(),
+                            (true, HdStatus::Missing) => "On (starting...)".to_string(),
+                            (true, HdStatus::Generating { total: 0, .. }) => "On (reading the disc...)".to_string(),
+                            (true, HdStatus::Generating { done, total }) => format!("On (generating {} %)", done * 100 / total),
+                            (true, HdStatus::Failed(e)) => format!("On (failed: {})", e.chars().take(40).collect::<String>()),
+                        }
+                    ),
                     GRow::Back => "Back".to_string(),
                 };
                 out.push(format!("{}{text}", mark(k)));
             }
             out.push(String::new());
+            if GRAPHICS.get(self.cursor) == Some(&GRow::HdTextures) {
+                out.push("HD textures: made once from your disc (several minutes, about 2 GB);".to_string());
+                out.push("they show from the next level. Effects and skies stay original.".to_string());
+            }
             out.push("Arrows / d-pad: choose   Enter / pad A / Left / Right: change".to_string());
             out.push("Escape / pad B: back".to_string());
             return out;
@@ -293,6 +323,7 @@ impl Overlay {
                     GRow::Shadows => s.shadows = !s.shadows,
                     GRow::AmbientOcclusion => s.ambient_occlusion = !s.ambient_occlusion,
                     GRow::Bloom => s.bloom = !s.bloom,
+                    GRow::HdTextures => s.hd_textures = !s.hd_textures,
                     GRow::Back => {
                         if i != Input::Accept {
                             return Effect::None;
@@ -480,6 +511,26 @@ mod tests {
         // Back returns to the main page at "Graphics...".
         o.input(Input::Back, &mut s, &mut b);
         assert!(o.open && o.lines(&s, &b).iter().any(|l| l == "> Graphics..."));
+    }
+
+    #[test]
+    fn hd_textures_row_toggles_and_shows_the_pack_state() {
+        let (mut o, mut s, mut b) = open();
+        o.cursor = MAIN.iter().position(|r| *r == Row::Graphics).unwrap();
+        o.input(Input::Accept, &mut s, &mut b);
+        o.cursor = GRAPHICS.iter().position(|r| *r == GRow::HdTextures).unwrap();
+        let row = |o: &Overlay, s: &Settings| o.lines(s, &Bindings::default()).into_iter().find(|l| l.contains("HD textures  ")).unwrap();
+        assert!(row(&o, &s).ends_with("Off"));
+        assert_eq!(o.input(Input::Accept, &mut s, &mut b), Effect::Changed);
+        assert!(s.hd_textures);
+        o.hd = HdStatus::Generating { done: 0, total: 0 };
+        assert!(row(&o, &s).contains("reading the disc"));
+        o.hd = HdStatus::Generating { done: 50, total: 200 };
+        assert!(row(&o, &s).contains("generating 25 %"));
+        o.hd = HdStatus::Ready;
+        assert!(row(&o, &s).ends_with("On"));
+        // The note under the page while the row is selected.
+        assert!(o.lines(&s, &Bindings::default()).iter().any(|l| l.contains("made once from your disc")));
     }
 
     #[test]

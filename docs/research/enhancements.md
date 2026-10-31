@@ -437,6 +437,98 @@ fixed by gdl_play-p4e, which differs from p4d only there. Menu flows
 (software renderer, default = Enhanced settings) menu-flows-gfx-p4e:
 23/23 pass.
 
+### HD textures (plan steps 8–10, 2026-10-31)
+
+The user's choice at Checkpoint B: Real-ESRGAN general-x4v3 at denoise
+0.5 for every category except glows, fire and magic effects and skies and
+backdrops. Generated on the player's machine from their own disc; nothing
+retail-derived ships.
+
+- Network (gdl_client::hd::esrgan): SRVGGNetCompact (34 3×3 convolutions
+  with PReLU, PixelShuffle ×4 plus the nearest-upsampled input) as wgpu
+  compute on a device of its own; weights from tools/python/hd_weights.py
+  (the two upstream checkpoints mixed 0.5 / 0.5 in float32, embedded,
+  4,853,208 bytes, SHA-256 e6626f1f…ef4b; THIRD_PARTY.md). Kernel: 8×8
+  invocations of 2×2 pixels × 16 output channels, input chunks of 8
+  channels with a halo in workgroup memory, each output group's weights a
+  36,864-byte uniform block at a dynamic offset (scalar reads), one
+  submission per layer of at most about 2 M padded texels (short: the
+  device drives the desktop too; a first version with one submission per
+  batch of 268 MB had the RX 580's context reset by the driver).
+- Processing (hd::prep): upscale_compare.py's — PAD 12, wrapped or
+  replicated per the record's clamp flags, transparent texels filled from
+  kept neighbours, opaque / cut-out / blended alpha classes kept, numpy's
+  float32 order and round-half-to-even. Check against the Checkpoint B
+  numpy pack (gdl_play --hd-check): all 2,207 C2 textures, mean difference
+  0.0000 / 255, largest 1 (the plan's limit: mean ≤ 1 / 255); 27 s of
+  network time on the RX 580 (from 109 s for the first kernel).
+- Census (hd::census, gdl_play --hd-census): every OBJECTS package of the
+  catalog (643: levels, realm maps, monsters, every player class, colour
+  and tier, items, weapons, the front end), each bitmap record decoded as
+  materials_for (and, for the front-end and realm-map packages, hud_image)
+  does and named by texture_pack's hash: 20,596 distinct textures, 100.9 M
+  texels, the largest 256×256. Each texture's uses: world nodes (MB flags,
+  lightmapped part, node radius), package tree nodes (MB flags, tree),
+  particle systems (by texture label) and texture modifier frames (a frame
+  takes its target record's uses: header-table, sequence and type-3 node
+  modifiers).
+- Which textures keep their originals (hd::classify; unit-tested):
+  particle textures; additive draws; blended textures drawn without depth
+  writes or camera-facing; nodes of effect trees (EffectInfo's 80 names,
+  the trees InitEffects binds by name, trees with "FX" in the label — the
+  bosses' attacks — and the players' SFX packages' powers and combos, not
+  their thrown weapons or familiars); frames of those, and blended frames
+  whose target no traced draw uses (fire, spit, steam and glow sets found
+  by name elsewhere); skies: static, world-only, never lightmapped, not
+  camera-facing, on a node of radius ≥ 60 (or ≥ 40 on at most two nodes).
+  On this disc: 6,854 textures (13.3 M texels) keep their originals (89
+  skies and backdrops — horizons, star fields, cloud and fog layers, C2's
+  SANDBACK —, the rest effects); 13,742 are generated. Rules first tried and
+  dropped: radius alone (siege posts, fences, webs), every animated blended
+  texture (water, rapids, coins, keys), a texel-softness measure (SANDBACK
+  11, ICEHORIZON3 32 against ground 24–46). Known misses, upscaled: some
+  world fire sets drawn as ordinary blended meshes (houses' fireplaces), the
+  realm map's glow overlays and other HUD glows (the user chose HUD
+  upscaled); a few animated items (a key, wizard heads) stay original with
+  the untraced frames. Labels were checked against the result, not used.
+- Pack (hd::generate, gdl_play --hd-generate CONFIG DIR): the data
+  directory's gdl-native/SLUS-20047/hd-textures/<generator>/ —
+  realesr-general-x4v3-dn05-<model hash>-p<processing version> (DEBUG
+  GDL_HD_DIR: another root) — one `<name>.png` per texture (texture_pack's
+  format: 4×, alpha doubled), written atomically by worker threads while
+  the GPU runs the next batch; existing files are skipped, so an
+  interrupted run resumes; manifest.json (generator, model SHA-256,
+  processing version, the kept textures with their reasons) marks the pack
+  complete. The texture pack loader takes the user's own pack first, then
+  the generated one.
+- Setting and overlay: Settings::hd_textures (off by default; not part of
+  the presets, Original turns it off). The Graphics page's "HD textures"
+  row turns it on; gdl_play then runs the generator as a child process
+  (hd_textures_job) and shows its progress on the row, stops it when the
+  setting is turned off, and puts a complete pack in use: textures decoded
+  from then on take it (the next level; the front end after a restart).
+- Results (RX 580, this disc): the whole pack in 6 min 22 s (gdl_play
+  --hd-generate, 13,742 textures; peak 1.2 GB of memory), 2.0 GB on disk,
+  manifest complete. Its files match the Checkpoint B numpy pack where both
+  have the texture (36 of a 300-texture trial: 7 identical, the rest within
+  1 / 255). In the game (frozen-c-hd against frozen-c-all2, everything on):
+  surfaces, characters, items and foliage gain the Checkpoint B detail; C2's
+  SANDBACK sky and the Tower's crystals and glows unchanged. Cost
+  (perf_bench, 1920×1080, everything on, without → with): video memory
+  +167 to +282 MiB (whole-GPU samples beside the desktop's 2.5 GB), level
+  start 0.66–0.78 s → 1.9–3.4 s (PNG decoding and mip chains), resident
+  memory 0.52–0.63 → 0.86–1.13 GB, frame time within run-to-run spread
+  (mean −0.8 to +0.4 ms). The plan's 2× fallback for video memory is not
+  needed at these sizes. GUI checks on the real GPU: with the setting on
+  and no pack, the game starts the generator and it runs to its end
+  (frozen-hdjob, DEBUG GDL_HD_LIMIT 40); turning the setting off mid-run
+  stops it, the files written stay (frozen-hdjob3: 101); a parent that
+  ends closes the child's output and the child stops. The Windows build
+  (x86_64-pc-windows-gnu) under Wine runs the network on Vulkan with the
+  same result (50 C2 textures, mean 0.0000 / 255, max 1); Direct3D 12, which
+  wgpu may choose on Windows, is not checked here. The original
+  presentation passes baseline_gate.py (gate-hd3; H4 re-captured once).
+
 ## Settings overlay and keys
 
 F10, or the options lists' NATIVE last entry "Display" (title Options,
@@ -653,6 +745,9 @@ trace). See performance.md.
 | Lighting (2026-10-31): original presentation | identical to 1.0 in the Tower, J5, C2; G1 (spear tie order) and H4 (flame particles) differ once Bevy's SMAA and bloom plugins are built in, reproduced by two empty render systems ("Lighting") | frozen-base-p4d, frozen-bis-* |
 | Lighting: every effect on, 600 G1 updates | simulation hashes equal to Checkpoint A and 1.0; Windows build under Wine the same | gfx-simhash-p4d, gfx-wine-p4d |
 | Original presentation gate (2026-10-31, user's decision): frames and scene dumps against 1.0 | the Tower, J5, C2, H4 identical; G1 draw order (dump equal) | tools/python/baseline_gate.py, baseline-gate-gate-aofix3 |
+| HD textures (2026-10-31): generator against the Checkpoint B numpy pack | all 2,207 C2 textures mean 0.0000 / 255, max 1 | gdl_play --hd-check |
+| HD textures: the whole pack on the RX 580 | 13,742 textures, 6 min 22 s, 2.0 GB; 6,854 kept original (effects, skies) | private/runs/hd/root, pack manifest |
+| HD textures: in the game | +167–282 MiB video memory, level start +1.2–2.7 s, frame time unchanged | perf-bench-gfx-hd1-*, frozen-c-hd |
 | Lighting: frame time, 1920×1080 | everything on: mean 9.9–11.9 ms, p99 14.2–20.1 ms (Tower, C2 over 16.7) | perf-bench-gfx-p4d-* |
 | Lighting: reference-trace replays (146) | all equal to r90 | tools/regress.sh r91 |
 | Lighting: GUI | title_start_check 6/6, with everything on to the overlay 2/2; menu flows 23/23 | title-start-gfx-p4e*, menu-flows-gfx-p4e |
