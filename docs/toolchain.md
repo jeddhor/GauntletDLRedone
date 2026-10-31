@@ -43,6 +43,10 @@ post-processing plugin group and adds BloomPlugin and SmaaPlugin singly
 (the group's MSAA writeback duplicates gdl_client::writeback); the
 texture laboratory and gdl_scene disable it. THIRD_PARTY_LICENSES.txt
 (tools/python/third_party_licenses.py) picks the crates up at release.
+Since 2026-10-31 (HD textures, research/enhancements.md) gdl_client names
+wgpu =27.0.1 directly, without default features — the version and the
+features Bevy 0.18.1 already builds (Cargo.lock gains only the dependency
+edge, no package): the generator opens its own compute device.
 No audio/physics/gameplay system is being represented by the texture laboratory.
 Native window rendering worked locally. GPU log notes a missing optional
 VK_EXT_physical_device_drm extension; it did not prevent the viewer from rendering.

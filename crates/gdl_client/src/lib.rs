@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod controls;
 pub mod enhance;
 pub mod glyphs;
+pub mod hd;
 pub mod menu;
 pub mod movie;
 pub mod settings;
@@ -328,23 +329,7 @@ pub fn hud_texture_set(name: &str, objects: &Objects) -> gdl_core::game::hud::Te
 /// runtime identity alpha CLUT at CBP 0x2300 (research/textures.md).
 pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index: usize) -> Option<Image> {
     let b = objects.bitmap_records.get(index)?;
-    let rgba = if b.format == 146 {
-        b.decode_lightmap_indices(textures).ok()?.into_iter().flat_map(|i| [255, 255, 255, i * 8]).collect()
-    } else if b.format == 130 {
-        let n = b.width as usize * b.height as usize;
-        let start = b.texture_offset as usize;
-        textures.get(start..start.checked_add(n)?)?.iter().flat_map(|&a| [255, 255, 255, a]).collect()
-    } else {
-        let def = table.bitmaps.iter().find(|t| t.texture_offset == b.texture_offset && t.format == b.format && t.width == b.width && t.height == b.height)?;
-        let mut rgba = def.decode_base_rgba(textures).ok()?;
-        // 16-bit texel alpha → TEXA TA1 0x80 / TA0 0 (as materials_for).
-        if matches!(b.format, 0 | 16 | 48) {
-            for p in rgba.chunks_exact_mut(4) {
-                p[3] = if p[3] != 0 { 0x80 } else { 0 };
-            }
-        }
-        rgba
-    };
+    let rgba = hud_rgba(objects, table, textures, index)?;
     let mut sampler = ImageSamplerDescriptor::linear();
     sampler.set_address_mode(ImageAddressMode::ClampToEdge);
     // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack).
@@ -355,6 +340,25 @@ pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index
         return Some(raw_image(w as u16, h as u16, new, TextureFormat::Rgba8Unorm, ImageSampler::Descriptor(sampler)));
     }
     Some(raw_image(b.width, b.height, rgba, TextureFormat::Rgba8Unorm, ImageSampler::Descriptor(sampler)))
+}
+
+/// A HUD texture's raw GS RGBA (hud_image): formats 146 and 130 as white
+/// with the texel as alpha, others the record's first TEXDEF candidate.
+pub fn hud_rgba(objects: &Objects, table: &TextureTable, textures: &[u8], index: usize) -> Option<Vec<u8>> {
+    let b = objects.bitmap_records.get(index)?;
+    Some(if b.format == 146 {
+        b.decode_lightmap_indices(textures).ok()?.into_iter().flat_map(|i| [255, 255, 255, i * 8]).collect()
+    } else if b.format == 130 {
+        let n = b.width as usize * b.height as usize;
+        let start = b.texture_offset as usize;
+        textures.get(start..start.checked_add(n)?)?.iter().flat_map(|&a| [255, 255, 255, a]).collect()
+    } else {
+        let def = table.bitmaps.iter().find(|t| t.texture_offset == b.texture_offset && t.format == b.format && t.width == b.width && t.height == b.height)?;
+        let mut rgba = def.decode_base_rgba(textures).ok()?;
+        // 16-bit texel alpha → TEXA TA1 0x80 / TA0 0 (as materials_for).
+        texa_alpha(b.format, &mut rgba);
+        rgba
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
@@ -766,6 +770,28 @@ fn raw_image(width: u16, height: u16, data: Vec<u8>, format: TextureFormat, samp
     image
 }
 
+/// The TEXDEF record materials_for draws a bitmap record with: the only
+/// one matching its offset, format and size, unless the record is flagged
+/// 0x20 (none: the record stays a placeholder until a texture modifier
+/// copies a frame into it).
+pub fn record_texdef<'a>(table: &'a TextureTable, bitmap: &gdl_formats::objects::ObjectBitmap) -> Option<&'a gdl_formats::texdef::Bitmap> {
+    let mut candidates = table.bitmaps.iter().filter(|b| {
+        b.texture_offset == bitmap.texture_offset && b.format == bitmap.format && b.width == bitmap.width && b.height == bitmap.height
+    });
+    let first = candidates.next()?;
+    (candidates.next().is_none() && bitmap.flags & 0x20 == 0).then_some(first)
+}
+
+/// TEXA for 16-bit texel formats (0, 16, 48): texel alpha 1 → TA1 0x80,
+/// 0 → TA0 0 (the G1 dump's TEXA).
+pub fn texa_alpha(format: u8, rgba: &mut [u8]) {
+    if matches!(format, 0 | 16 | 48) {
+        for p in rgba.chunks_exact_mut(4) {
+            p[3] = if p[3] != 0 { 0x80 } else { 0 };
+        }
+    }
+}
+
 /// GS-equivalent materials keyed by bitmap record index. Texels stay raw
 /// (Rgba8Unorm); 16-bit texel alpha becomes TEXA's TA1 0x80 / TA0 0 (the G1
 /// dump's TEXA). Records with mips get their whole chain and TEX1's
@@ -818,12 +844,10 @@ pub fn materials_for(
             .collect();
         // Level 0 and, for records with mips, every level (the GS uploads
         // them all and samples with TEX1's LOD).
-        let decoded = if candidates.len() == 1 && bitmap.flags & 0x20 == 0 {
-            let levels: Vec<Vec<u8>> = (0..=candidates[0].mipmap_count).map_while(|k| candidates[0].decode_level_rgba(textures, k).ok()).collect();
+        let decoded = record_texdef(table, bitmap).and_then(|def| {
+            let levels: Vec<Vec<u8>> = (0..=def.mipmap_count).map_while(|k| def.decode_level_rgba(textures, k).ok()).collect();
             (!levels.is_empty()).then_some(levels)
-        } else {
-            None
-        };
+        });
         if candidates.len() == 1 {
             label_index.entry(candidates[0].label.to_uppercase()).or_insert(bitmap.index as u16);
         }
@@ -850,10 +874,8 @@ pub fn materials_for(
             );
             continue;
         };
-        if matches!(bitmap.format, 0 | 16 | 48) {
-            for p in levels.iter_mut().flat_map(|l| l.chunks_exact_mut(4)) {
-                p[3] = if p[3] != 0 { 0x80 } else { 0 };
-            }
+        for l in levels.iter_mut() {
+            texa_alpha(bitmap.format, l);
         }
         // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack;
         // one level, so the GS LOD selection does not apply to it).

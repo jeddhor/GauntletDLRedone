@@ -37,6 +37,13 @@ impl Catalog {
         Ok(Self { entries })
     }
 
+    /// Every resolvable label (upper case), sorted.
+    pub fn labels(&self) -> Vec<&str> {
+        let mut v: Vec<&str> = self.entries.keys().map(String::as_str).collect();
+        v.sort_unstable();
+        v
+    }
+
     pub fn has(&self, label: &str) -> bool {
         self.entries.contains_key(&label.to_uppercase())
     }

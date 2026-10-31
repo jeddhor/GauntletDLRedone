@@ -2055,11 +2055,17 @@ impl Game {
     }
 
     /// SuicideExplosion 0x17e938(damage, position): CurWorld 7/0xb a
-    /// POISONEXP1 (0x19) blast (radius 7.5, damage flags 0x800), otherwise
-    /// effect 0x16 (radius 6, flags 0x421) plus flame 0x1c; then 0x50.
+    /// POISONEXP1 (0x19) blast (radius 7.5, damage flags 0x800) that turns
+    /// into the lingering gas (SfxSetMorph 2 s → 0x1a, 0x1b, as a poison
+    /// barrel's after 4 s) spread ScaleFX 2.5/1/2.5, otherwise effect 0x16
+    /// (radius 6, flags 0x421) plus flame 0x1c; then 0x50.
     pub fn suicide_explosion(&mut self, damage: f32, position: V3) -> R<()> {
-        // SuicideExplosion 0x17e938. ScaleFX/SfxSetMorph/SfxSetLight are
-        // presentation; every effect still takes a slot.
+        // SuicideExplosion 0x17e938 (private/reports/ghidra-enemies2). Every
+        // effect takes a slot; SfxSetLight is presentation. Before
+        // 2026-10-31 SfxSetMorph and ScaleFX were left out as presentation —
+        // but the morph is the effect's own state (the next effects and
+        // their timer), so a barrel carrier's gas vanished instead of
+        // lingering (user playtest).
         if self.globals.cur_world == 7 || self.globals.cur_world == 0xb {
             let Some(i) = self.start_fx_missile(0.0, 0x19, position, [0.0; 3], 0x2b, 0, 4, 0)? else {
                 return unsupported("SuicideExplosion without POISONEXP1 (the original writes through effect -1)");
@@ -2067,6 +2073,11 @@ impl Game {
             self.sfx_set_damage(i, damage, 7.5, 0.0, 0x800, 0);
             if let Some(n) = self.effects.nodes[i].as_mut() {
                 n.position[1] = sub(n.position[1], 1.0)?;
+            }
+            // SfxSetMorph(i, 2.0, 0x1a, 0x1b), then ScaleFX(i, 2.5, 1.0, 2.5).
+            self.sfx_set_morph(i, 2.0, 0x1a, 0x1b);
+            if let Some(n) = self.effects.nodes[i].as_mut() {
+                n.stretch = [2.5, 1.0, 2.5];
             }
         } else {
             let Some(h) = self.effects.tables.headers.get(0x16).copied().flatten() else { return Ok(()) };

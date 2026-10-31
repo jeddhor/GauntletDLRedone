@@ -14,4 +14,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sha2 = "=0.10.9"
 png = "=0.18.1"
+# The HD texture generator's compute device (gdl_client::hd::esrgan): the
+# version Bevy 0.18.1 already builds, no features of its own.
+wgpu = { version = "=27.0.1", default-features = false }
 bevy = { version = "=0.18.1", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_log", "bevy_winit", "bevy_window", "bevy_render", "bevy_image", "bevy_sprite", "bevy_sprite_render", "bevy_core_pipeline", "bevy_anti_alias", "smaa_luts", "ktx2", "zstd_rust", "bevy_post_process", "bevy_color", "bevy_camera", "bevy_text", "bevy_pbr", "bevy_light", "default_font", "png", "x11", "keyboard", "bevy_gilrs"] }

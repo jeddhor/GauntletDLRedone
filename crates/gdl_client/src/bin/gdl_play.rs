@@ -2887,6 +2887,7 @@ struct TestHarness {
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
     /// {"at": u, "health": h[, "player": k]} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
     /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "damage_item": [slot, damage(, flags)]} (DEBUG) |
+    /// {"at": u, "spawn": [type, level, ai(, dx, dz)]} (DEBUG) |
     /// {"at": u, "save": card file} for player 1 |
     /// {"at": u, "settings": {...}}: fields merged into the M19 settings
     /// and stored, as the settings overlay does (M20 platform checks)].
@@ -5531,6 +5532,25 @@ fn simulate(
             {
                 sim.error = Some(format!("TEST damage_item: {}", e.0));
             }
+            // {"spawn": [type, level, ai(, dx, dz)]}: DEBUG generate_enemy
+            // beside player 1 (default 8 units on z), dropped onto the floor
+            // as check_enemy_pos does for generators (game_run's --spawn).
+            if let Some(v) = a["spawn"].as_array().map(|v| v.iter().filter_map(|x| x.as_f64()).collect::<Vec<_>>())
+                && let [t, level, ai, rest @ ..] = v.as_slice()
+            {
+                let p = sim.game.players[0].v3(0x50);
+                let (dx, dz) = (rest.first().copied().unwrap_or(0.0) as f32, rest.get(1).copied().unwrap_or(8.0) as f32);
+                match sim.game.generate_enemy(1.0, [p[0] + dx, p[1], p[2] + dz], *t as i32, *level as i32, [0.0, 0.0, -1.0], *ai as i32, 0, 1) {
+                    Ok(k) if 0 <= k => {
+                        let at = sim.game.enemies[k as usize].v3(0x40);
+                        if let Err(e) = sim.game.check_enemy_pos_pub([at[0], p[1] + 2.0, at[2]], None, k as usize) {
+                            sim.error = Some(format!("TEST spawn: {}", e.0));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => sim.error = Some(format!("TEST spawn: {}", e.0)),
+                }
+            }
             if let Some(port) = a["disconnect"].as_u64() {
                 harness.disconnect = Some((port as usize, a["reconnect_after"].as_u64().unwrap_or(120)));
                 harness.lost_ticks = 0;
@@ -6261,6 +6281,15 @@ fn present_world(
                         let parts = libs.0.get(pkg).and_then(|lib| lib.by_label.get(&l)).cloned().map(|p| vec![(Vec3::ZERO, p, 0, None, None)]);
                         (Some(l), parts, tf)
                     }
+                    // A tree of object nodes without OANIM frames (Death's
+                    // DEATH1/DEATH2: type-1 nodes only): its nodes, posed
+                    // by present_enemy_trees (playtest 2026-10-31: Death
+                    // summoned in G1 was not drawn).
+                    None if !frames.0.get(pkg).is_some_and(|m| m.contains_key(&tree)) => {
+                        let key = format!("T{pkg}:{tree}");
+                        let parts = (slot.key.as_deref() != Some(key.as_str())).then(|| tree_parts(&sources, &libs, pkg, &tree));
+                        (Some(key), parts, tf)
+                    }
                     None => (None, None, tf),
                 }
             }
@@ -6900,6 +6929,51 @@ fn present_item_trees(
             && !mods.is_empty()
         {
             request_tree_texmods(mods, lib, index, anim.current as usize, &meshes, &mut req);
+        }
+    }
+}
+
+/// Enemies drawn as object-node trees (present_world's "T<pkg>:<tree>"
+/// key, no OANIM frames): the nodes posed at the enemy's sequence and frame
+/// (DoAnimation through the shared tree pose), with the tree's texture
+/// modifiers.
+fn present_enemy_trees(
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    slots: Query<(&Slot, &Children, &Visibility)>,
+    mut parts: Query<(Entity, &TreeNodeIdx, &mut Transform, Option<&OFrame>, &mut Visibility), Without<Slot>>,
+    (libs, mut req, mut texmods): (Res<Libraries>, ResMut<MatRequests>, Local<HashMap<(String, usize), Vec<NodeTexMod>>>),
+) {
+    for (slot, children, vis) in &slots {
+        if slot.kind != SlotKind::Enemy || *vis == Visibility::Hidden {
+            continue;
+        }
+        let Some((pkg, label)) = slot.key.as_deref().and_then(|k| k.strip_prefix('T')).and_then(|k| k.split_once(':')) else { continue };
+        let Some(Some(anim)) = sim.game.enemy_anims.get(slot.index) else { continue };
+        let Some(p) = sources.packages.get(pkg) else { continue };
+        let Some(a) = p.anim.as_ref() else { continue };
+        let Some(tree) = a.trees.iter().position(|t| t.label == label) else { continue };
+        let seq = anim.clock.sequence as usize;
+        let frame = anim.clock.frame.max(0.0);
+        let Ok(pose) = gdl_client::tree_pose(a, tree, &p.anim_bytes, seq, frame, true) else { continue };
+        let index = object_frame(frame, a.trees.get(tree).and_then(|t| t.sequences.get(seq)));
+        let mut meshes = Vec::new();
+        for child in children.iter() {
+            if let Ok((e, idx, mut tf, of, mut v)) = parts.get_mut(child) {
+                if let Some(m) = pose.get(idx.0) {
+                    *tf = Transform::from_matrix(*m);
+                }
+                if let Some(f) = of {
+                    show_oframe(f, seq as u16, index, &mut v);
+                }
+                meshes.push((e, idx.0));
+            }
+        }
+        let mods = texmods.entry((pkg.to_string(), tree)).or_insert_with(|| a.trees.get(tree).map(|t| tree_texmods(p, t)).unwrap_or_default());
+        if let Some(lib) = libs.0.get(pkg)
+            && !mods.is_empty()
+        {
+            request_tree_texmods(mods, lib, index, seq, &meshes, &mut req);
         }
     }
 }
@@ -9088,11 +9162,137 @@ fn installed_config() -> Result<std::path::PathBuf, Box<dyn Error>> {
     Ok(cfg)
 }
 
+/// The configuration's catalog (paths relative to an installed config).
+fn config_catalog(config_path: &Path) -> Result<(Value, gdl_client::catalog::Catalog), Box<dyn Error>> {
+    let cfg: Value = serde_json::from_slice(&gdl_client::bounded_read(config_path)?)?;
+    if cfg["base"].as_str() == Some("config") {
+        let dir = config_path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        std::env::set_current_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let cat_cfg = &cfg["catalog"];
+    let catalog = gdl_client::catalog::Catalog::open(
+        Path::new(cat_cfg["names"].as_str().ok_or("catalog names")?),
+        Path::new(cat_cfg["archive"].as_str().ok_or("catalog archive")?),
+        Path::new(cat_cfg["root"].as_str().ok_or("catalog root")?),
+    )?;
+    Ok((cfg, catalog))
+}
+
+/// RESEARCH (--hd-census): every texture with its uses, as JSON.
+fn hd_census_cli(config: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
+    let out = std::path::absolute(out)?;
+    let (cfg, catalog) = config_catalog(config)?;
+    let elf_bytes = gdl_client::bounded_read(Path::new(cfg["elf"].as_str().ok_or("config elf")?))?;
+    let presets = gdl_formats::elf::Elf::parse(&elf_bytes)?.object("preset_list")?.to_vec();
+    let t = std::time::Instant::now();
+    let entries = gdl_client::hd::census::census(&catalog, &presets)?;
+    let texels: u64 = entries.iter().map(|e| u64::from(e.width) * u64::from(e.height)).sum();
+    let report = serde_json::json!({"scope": "RESEARCH: HD texture census (gdl_client::hd::census) of the catalog's OBJECTS packages", "textures": entries.len(), "texels": texels, "seconds": t.elapsed().as_secs_f64(), "entries": entries});
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&out)?;
+    serde_json::to_writer(&mut file, &report)?;
+    println!("{} textures, {texels} texels, {:.1} s → {}", entries.len(), t.elapsed().as_secs_f64(), out.display());
+    Ok(())
+}
+
+/// RESEARCH (--hd-check): per texture and in total, the mean and largest
+/// channel difference (0..255) between the GPU network with the generator's
+/// processing and a reference pack.
+fn hd_check_cli(weights: &Path, dump: &Path, pack: &Path, limit: usize) -> Result<(), Box<dyn Error>> {
+    use gdl_client::hd::{esrgan, prep};
+    let w = esrgan::Weights::parse(&gdl_client::bounded_read(weights)?)?;
+    let up = esrgan::Upscaler::new(&w)?;
+    println!("adapter {}", up.adapter);
+    let index = std::fs::read_to_string(dump.join("index.tsv"))?;
+    let mut rows: Vec<(String, u16)> = Vec::new();
+    for line in index.lines() {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() == 4 && !rows.iter().any(|r| r.0 == f[0]) && pack.join(format!("{}.png", f[0])).exists() {
+            rows.push((f[0].to_string(), u16::from_str_radix(f[3].trim_start_matches("0x"), 16)?));
+        }
+    }
+    rows.truncate(limit);
+    let read = |path: &Path| -> Result<(usize, usize, Vec<u8>), Box<dyn Error>> {
+        let mut d = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path)?));
+        d.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+        let mut r = d.read_info()?;
+        let mut buf = vec![0; r.output_buffer_size().ok_or("png size")?];
+        let info = r.next_frame(&mut buf)?;
+        buf.truncate(info.buffer_size());
+        if info.color_type != png::ColorType::Rgba {
+            return Err(format!("{}: {:?}", path.display(), info.color_type).into());
+        }
+        Ok((info.width as usize, info.height as usize, buf))
+    };
+    // Group by size, in batches the device takes.
+    let mut by_size: std::collections::BTreeMap<(usize, usize), Vec<(String, u16, Vec<u8>)>> = Default::default();
+    for (stem, flags) in rows {
+        let (wd, ht, px) = read(&dump.join(format!("{stem}.png")))?;
+        by_size.entry((wd, ht)).or_default().push((stem, flags, px));
+    }
+    let t = std::time::Instant::now();
+    let (mut sum, mut count, mut worst, mut over1) = (0f64, 0u64, 0u8, 0usize);
+    let mut gpu = 0f64;
+    let mut textures = 0usize;
+    for ((wd, ht), list) in by_size {
+        let (pw, ph) = (wd + 2 * prep::PAD, ht + 2 * prep::PAD);
+        for chunk in list.chunks(up.batch_size(pw, ph)) {
+            let preps: Vec<prep::Prepared> = chunk.iter().map(|(_, flags, px)| prep::prepare(px, wd, ht, *flags)).collect();
+            let mut items: Vec<&[f32]> = preps.iter().map(|p| p.rgb.as_slice()).collect();
+            items.extend(preps.iter().filter_map(|p| p.alpha.as_deref()));
+            let tg = std::time::Instant::now();
+            let outs = up.run(&items, pw, ph, prep::PAD)?;
+            gpu += tg.elapsed().as_secs_f64();
+            let mut alpha_k = preps.len();
+            for (k, ((stem, _, _), p)) in chunk.iter().zip(&preps).enumerate() {
+                let alpha = p.alpha.as_ref().map(|_| {
+                    alpha_k += 1;
+                    outs[alpha_k - 1].as_slice()
+                });
+                let ours = prep::finish(p, &outs[k], alpha);
+                let (_, _, theirs) = read(&pack.join(format!("{stem}.png")))?;
+                let (mut s, mut m) = (0u64, 0u8);
+                for (a, b) in ours.iter().zip(&theirs) {
+                    let d = a.abs_diff(*b);
+                    s += u64::from(d);
+                    m = m.max(d);
+                }
+                let mean = s as f64 / ours.len() as f64;
+                if 1.0 < mean {
+                    over1 += 1;
+                    println!("{stem} {wd}x{ht} mean {mean:.3} max {m}");
+                }
+                sum += s as f64;
+                count += ours.len() as u64;
+                worst = worst.max(m);
+                textures += 1;
+            }
+        }
+    }
+    println!("{textures} textures: mean {:.4} / 255, max {worst}, {over1} over 1 / 255 mean; {:.1} s in all, {gpu:.1} s in the network", sum / count.max(1) as f64, t.elapsed().as_secs_f64());
+    Ok(())
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     // gdl_play [CONFIG.json]: the developer configuration written by
     // tools/python/run_play.py, else an installation's data/config.json,
     // whose paths are relative to it ("base": "config").
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    // RESEARCH: gdl_play --hd-census CONFIG.json NEW_REPORT.json (the HD
+    // texture census, gdl_client::hd::census; no window).
+    if let [flag, config, out] = args.as_slice()
+        && flag == "--hd-census"
+    {
+        return hd_census_cli(Path::new(config), Path::new(out));
+    }
+    // RESEARCH: gdl_play --hd-check WEIGHTS DUMP_DIR PACK_DIR [LIMIT]: the
+    // GPU network (gdl_client::hd) on a GDL_TEXTURE_DUMP directory against a
+    // pack of upscale_compare.py's numpy outputs.
+    if let [flag, weights, dump, pack, rest @ ..] = args.as_slice()
+        && flag == "--hd-check"
+    {
+        let limit = rest.first().and_then(|l| l.to_str()?.parse().ok()).unwrap_or(usize::MAX);
+        return hd_check_cli(Path::new(weights), Path::new(dump), Path::new(pack), limit);
+    }
     let config_path = match args.as_slice() {
         [] => installed_config()?,
         [c] => std::path::PathBuf::from(c),
@@ -9498,7 +9698,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, (refresh_characters, test_players).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, present_item_trees, present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                (advance_level, (refresh_characters, test_players).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

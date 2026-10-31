@@ -82,7 +82,13 @@ closure; the interim player driver), ProcessEffects.
   tree returns no missile as Errorf does), MissileCollidePlayer and the
   missile/blast-vs-player paths of ProcessEffects; Random 0x1d6b00.
 - SuicideExplosion (worlds 7/0xb): POISONEXP1 blast, radius 7.5, damage
-  level_data+0xbc × 50, flags 0x2b (hits players, enemies, items).
+  level_data+0xbc × 50, flags 0x2b (hits players, enemies, items), damage
+  flags 0x800 (poison: a gas mask's shield flag 0x2000 cancels it), then
+  SfxSetMorph(2 s, 0x1a, 0x1b) — the lingering gas, POISONEXP2/3, as a
+  poison barrel's after 4 s — and ScaleFX(2.5, 1, 2.5)
+  (private/reports/ghidra-enemies2/0017e938). Until 2026-10-31 the morph
+  and scale were left out as presentation, so a barrel carrier's gas
+  vanished after half a second (playtest.md "Playtest after Checkpoint C").
 - Melee: PlayerMotion's attack decision (target within reach + 1 → action
   0x27, small enemy → 0x52, else the throw 0x5c), DoPlayerAction's exit/entry
   event bits for attack actions, PlayerMotion's melee consumption,

@@ -23,6 +23,7 @@ project is not clean-room: the following pinned research was consulted.
   modification and distribution with the notice preserved; obtain and verify
   the exact notice text and include it in release notices at M21.
 - [Bevy v0.18.1](https://github.com/bevyengine/bevy/tree/v0.18.1), MIT OR Apache-2.0; native desktop dependency and API/example research.
+- [Real-ESRGAN v0.3.0](https://github.com/xinntao/Real-ESRGAN/tree/v0.3.0), BSD-3-Clause (Copyright (c) 2021, Xintao Wang). The HD texture generator (`gdl_client::hd::esrgan`, a NATIVE ENHANCEMENT) is an independently written wgpu implementation of its SRVGGNetCompact network and embeds weights derived from its released checkpoints realesr-general-x4v3.pth (SHA-256 8dc7edb9…6292) and realesr-general-wdn-x4v3.pth (1641f8c4…6dca), release assets v0.2.5.0, mixed 0.5 / 0.5 in float32 by tools/python/hd_weights.py into crates/gdl_client/assets/hd/realesr-general-x4v3-dn05.bin (SHA-256 e6626f1f…ef4b; provenance in the .json beside it). The license text is crates/gdl_client/assets/hd/LICENSE-Real-ESRGAN.txt and goes into the release's notices. Research tooling (private, not distributed) also ran its Python inference code's architecture in numpy and the realesrgan-ncnn-vulkan 20220424 program for comparison.
 
 Direct Cargo dependencies: flate2 (MIT OR Apache-2.0), serde/serde_json (MIT OR
 Apache-2.0), sha2 (MIT OR Apache-2.0), png (MIT OR Apache-2.0), Bevy (MIT OR

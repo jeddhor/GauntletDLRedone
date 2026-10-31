@@ -1793,3 +1793,35 @@ Second report (user, 2026-10-30, after playing Checkpoint A):
   new Enhanced defaults on the private Xvfb (menu-flows-fix2-all);
   title_start_check fix2 6/6 and fix2-attract-xbox 2/2 on the RX 580.
 
+## Playtest after Checkpoint C (user, 2026-10-31)
+
+- Ambient occlusion's "ghost" outline and the swirl pools' lines:
+  enhancements.md "Lighting" (occlusion of the light-baked world only).
+- "Summoning Death is not working at all" (G1, the gem on the switch near
+  the end): the simulation summons him — switches 311/312 (BRIDGEPAD
+  subtype 0x1d, trigger flags 0x200a) set DEATH 51's +0xf8 bit 0 through
+  ActivateNearestEnemy (flag 0x2000), the statue path spawns the type-0x1e
+  enemy, his 0x66 loop plays and he drains health (game_run with
+  --itemw/--itemrec, private/runs/hd scratch) — but the client drew no
+  model: enemies were drawn only through OANIM frame trees, and Death's
+  DEATH1/DEATH2 trees hold type-1 object nodes only. Now such trees are
+  drawn as their nodes, posed at the enemy's sequence and frame
+  (present_enemy_trees). DEATH1's textures are RDEATH_* (red; the statue's
+  are the *_STONE set, hence the pale A1 statue in the reference). Frozen
+  frames: frozen-death-g1 (before: the hint, no Death) and frozen-death-g1b.
+- "The enemies that carry the green barrels on their backs are supposed to
+  explode into gas clouds": the barrel carriers are the suicide bombers
+  (ZOMS: GREEN_BARREL with a lit fuse; move_logic18 runs at a player and
+  explodes). Their gas vanished after half a second: SuicideExplosion's
+  SfxSetMorph and ScaleFX were missing (gameplay.md). Now the cloud
+  lingers and morphs as a poison barrel's does; game_run DEBUG spawn
+  13:6:18 beside the player: POISONEXP1 at update 90, POISONEXP2 120–165,
+  POISONEXP3 at 180, health falling in the cloud; with the gas mask's
+  flags (GASMASK definition +0x3c: 0x2008, shield bit 0x2000) no damage. Client
+  frames frozen-gas-300 / -330 (GDL_TEST_ACTIONS "spawn", a DEBUG action
+  added for this). "They lob barrels / spray gas": not in the data — the
+  bag carriers (ZOMB, LIZB_BAG) throw ZOM_BOMB's small bombs (BOMB00).
+- Open, awaiting the user's screenshots: a "wireframe echo" around crates,
+  and chest contents shown as "a tiny sprite and a big piece of paper".
+  The X-ray chest view looks the same with every enhancement on as in the
+  original presentation (frozen-xray-c-all / -c-orig).
