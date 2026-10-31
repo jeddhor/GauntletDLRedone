@@ -1821,7 +1821,27 @@ Second report (user, 2026-10-30, after playing Checkpoint A):
   frames frozen-gas-300 / -330 (GDL_TEST_ACTIONS "spawn", a DEBUG action
   added for this). "They lob barrels / spray gas": not in the data — the
   bag carriers (ZOMB, LIZB_BAG) throw ZOM_BOMB's small bombs (BOMB00).
-- Open, awaiting the user's screenshots: a "wireframe echo" around crates,
-  and chest contents shown as "a tiny sprite and a big piece of paper".
-  The X-ray chest view looks the same with every enhancement on as in the
-  original presentation (frozen-xray-c-all / -c-orig).
+- Chest contents "a tiny sprite under a plain white square": the square is
+  the chest's own NULL1 quad, which SetItem hides (player.md "Chests and
+  explosions"); now hidden (frozen-chestfix). The content keeps OpenChest's
+  0.2 scale.
+- With HD textures on, "the dissolve leaves a copy of the menu with a
+  checkerboard pattern": the fire burn's z-mask frames were replaced by
+  their upscaled versions, whose holes are not exactly transparent; masks
+  now keep the disc's texels (enhancements.md "HD textures").
+- Open: the "wireframe echo" by a crate (the user's screenshot: a dark
+  crate, a thin dark outline offset from it on the green-lit floor, a step
+  in the floor's brightness across it). Not reproduced: G1's world crates
+  lie under the upper deck; its shootwall crates in the barn (#06, #09) and
+  the AO term beside #06 show no echo (frozen-sw6-all, -sw9-all,
+  -sw6-aoterm). Smooth lightmaps darken some polygon seams slightly
+  (frozen-echo-all against -echo-nosmooth, C2: 4,548 pixels darker by more
+  than 30 of 765) but nothing like the screenshot's step. Captures with an
+  effect off can differ in their enemies too (sw9 without shadows: HUD
+  health 4987 against 4991), so whole-frame diffs mix both. The simulation
+  is not the cause: the same G1 run (the sw9 teleport and health actions,
+  300 updates, lavapipe) gives equal per-update state hashes with
+  everything on twice and with shadows off. The frame number counts from
+  the process start, and loading takes more or fewer frames by setting,
+  so HYPOTHESIS: these shots were taken before the freeze at update 260. Waiting on the user: where it was, and which Graphics row (ambient
+  occlusion, character shadows, smooth lightmaps, more lights) removes it.

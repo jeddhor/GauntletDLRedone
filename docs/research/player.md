@@ -270,6 +270,21 @@ it takes the world origin (HYPOTHESIS, gameplay.md "Statues").
   chain's products); native keeps it on the chest's matrix — a labelled
   residual, unknowns.md). Before the fix the content was placed loose but linked, so a
   chest's potion could never be picked up (playtest 2026-10-28).
+- SetItem's tail hides the NULL1 node itself: 0x1529c4–0x1529d4 store the
+  node's object in +0xf8 and call MBTreeSetFlags(object, 1, 0) (0x1d0190;
+  flag 1: the node's own object is not drawn, its children are). CHEST's
+  and CHESTS's NULL1 holds a two-triangle quad with texture 0 (ITEMS_G
+  CHESTNULL1, radius 1.867); the client drew it, a pale square standing in
+  an opened chest with the content small at its foot (playtest
+  2026-10-31: "a big piece of paper" over a Turbo). gdl_play's item_parts
+  now hides that node for kind-2 items (SetItem; not for the X-ray view's
+  icon tree, which do_see_thru's AtreeInit makes). OpenChest's content
+  scale is 0x3e4ccccd (0.2) at node +0x40/+0x44/+0x48 with
+  MBTreeSetFlags(content, 8, 0) (0x158ae8–0x158b1c); the client scales the
+  whole content tree by 0.2 (HYPOTHESIS: flag 8's reach, as for the
+  level-99 head below; no reference frame of an opened chest). Frozen
+  frame: frozen-chestfix (G1 chest 43 opened with a key, a potion inside,
+  no quad).
 - DamageItem 0x15a620 on chests: a potion blast (flag 0x200) on a chest
   holding Death writes the chest DEFINITION's subtype to 1 (shared data),
   swaps the content to APPLE, plays AudioDeathDies and sets +0xf2 =

@@ -327,14 +327,16 @@ pub fn hud_texture_set(name: &str, objects: &Objects) -> gdl_core::game::hud::Te
 /// (8-bit, no palette: the CREDITS font page, texels 0/107/126/128) is read
 /// as white with the texel as GS alpha: the credits dump binds it to the
 /// runtime identity alpha CLUT at CBP 0x2300 (research/textures.md).
-pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index: usize) -> Option<Image> {
+pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index: usize, replace: bool) -> Option<Image> {
     let b = objects.bitmap_records.get(index)?;
     let rgba = hud_rgba(objects, table, textures, index)?;
     let mut sampler = ImageSamplerDescriptor::linear();
     sampler.set_address_mode(ImageAddressMode::ClampToEdge);
-    // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack).
+    // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack), not
+    // for z masks (`replace` false).
     let label = objects.bitmap_definitions.iter().find(|d| d.bitmap_index as usize == index).map_or("", |d| d.label.as_str());
-    if texture_pack::active()
+    if replace
+        && texture_pack::active()
         && let Some((w, h, new)) = texture_pack::replace(b.width, b.height, &rgba, label, b.flags)
     {
         return Some(raw_image(w as u16, h as u16, new, TextureFormat::Rgba8Unorm, ImageSampler::Descriptor(sampler)));

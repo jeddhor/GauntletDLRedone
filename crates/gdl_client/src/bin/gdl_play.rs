@@ -3522,6 +3522,9 @@ struct HudSprite(usize);
 struct HudSets {
     keys: Vec<String>,
     images: HashMap<(u16, u16), Option<Handle<Image>>>,
+    /// The same textures as z masks: always the disc's texels (no texture
+    /// pack or HD replacement).
+    masks: HashMap<(u16, u16), Option<Handle<Image>>>,
     /// NATIVE ENHANCEMENT (button prompts): the Xbox variants of the
     /// face-button prompts among `images` (gdl_client::glyphs).
     xbox: HashMap<(u16, u16), Handle<Image>>,
@@ -6244,7 +6247,11 @@ fn item_tree_packages<'a>(sources: &'a Sources, items: &'a [String]) -> Vec<&'a 
 /// The current level's object library key (not a configured package).
 const LEVEL_LIB: &str = "#LEVEL";
 
-fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str) -> Model {
+/// `set_item_kind2`: the model of a kind-2 item placed by SetItem, whose tail
+/// (0x15296c) hides the tree node "<prefix>NULL1" — the chests' content
+/// anchor, a quad with texture 0 — with MBTreeSetFlags(node, 1): its own
+/// object only (playtest 2026-10-31: a white square in an opened chest).
+fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str, set_item_kind2: bool) -> Model {
     let own = items.len() + 1;
     // Static models: the item packages and POWERUPS, then the level's own
     // table (HYPOTHESIS: the search order across tables; names rarely recur).
@@ -6258,7 +6265,11 @@ fn item_parts(sources: &Sources, libs: &Libraries, items: &[String], name: &str)
                 let parent = usize::try_from(node.parent).ok().and_then(|i| sums.get(i).copied()).unwrap_or(Vec3::ZERO);
                 let at = parent + Vec3::from_array(node.initial_position);
                 sums.push(at);
+                let first = out.len();
                 tree_node_model(p, lib, tree, node, at, &mut out);
+                if set_item_kind2 && node.label == "NULL1" {
+                    out[first..].iter_mut().for_each(|e| e.2 |= 1);
+                }
             }
             if !out.is_empty() {
                 return out;
@@ -6507,7 +6518,7 @@ fn present_world(
                     if slot.key.as_deref() == Some(key.as_str()) {
                         (Some(key), None, tf)
                     } else {
-                        (Some(key), Some(item_parts(&sources, &libs, items, &name)), tf)
+                        (Some(key), Some(item_parts(&sources, &libs, items, &name, kind == 2)), tf)
                     }
                 }
             }
@@ -6704,7 +6715,8 @@ fn present_see_thru(
         *tf = t;
         *vis = Visibility::Inherited;
         if view.1.as_deref() != Some(name.as_str()) {
-            spawn_parts(&mut commands, entity, item_parts(&sources, &libs, items, &name), &mut materials, &mut variants, &mut pending);
+            // The contents' icon tree comes from do_see_thru's AtreeInit, not SetItem.
+            spawn_parts(&mut commands, entity, item_parts(&sources, &libs, items, &name, false), &mut materials, &mut variants, &mut pending);
             view.1 = Some(name);
         }
     }
@@ -7377,6 +7389,7 @@ fn init_hud(game: &mut Game, sources: &Sources, session: &Session, front: &Front
     }
     sets.keys = keys;
     sets.images.clear();
+    sets.masks.clear();
     sets.xbox.clear();
 }
 
@@ -7975,9 +7988,14 @@ fn present_hud(
     let mut slots: Vec<_> = pool.iter_mut().collect();
     slots.sort_by_key(|s| s.0.0);
     for (i, b) in list.iter().enumerate() {
-        let mut resolve = |t: gdl_core::game::hud::TexRef| -> Option<Handle<Image>> {
+        // `mask`: a z-mask blit's texture (the fire scroll's burnt hole and
+        // the parchment's silhouette) keeps the disc's texels — coverage
+        // is decided at alpha 0 exactly, which an upscaled texture's noise
+        // breaks (playtest 2026-10-31: HD textures left a checkered copy of
+        // a burnt menu).
+        let mut resolve = |t: gdl_core::game::hud::TexRef, mask: bool| -> Option<Handle<Image>> {
             let key = (t.set, t.index);
-            if !sets.images.contains_key(&key) {
+            if !(if mask { &sets.masks } else { &sets.images }).contains_key(&key) {
                 let key_name = sets.keys.get(t.set as usize).cloned().unwrap_or_else(|| "STATIC".into());
             let pkg = if 100 <= t.set {
                 // Front sets: STATIC, TITLE, SELECT, then SONY, GROUP1, CREDITS.
@@ -7992,10 +8010,11 @@ fn present_hud(
             } else {
                 sources.as_ref().and_then(|s| s.packages.get(&key_name))
             };
-            let decoded = pkg.and_then(|pkg| Some((pkg, gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize)?)));
+            let decoded = pkg.and_then(|pkg| Some((pkg, gdl_client::hud_image(&pkg.objects, &pkg.table, &pkg.textures, t.index as usize, !mask)?)));
             // NATIVE ENHANCEMENT (button prompts): BUTTON_X/O/SQ/TRI's
             // Xbox letters beside the original.
-            if let Some((pkg, im)) = &decoded
+            if !mask
+                && let Some((pkg, im)) = &decoded
                 && let Some(label) = pkg.objects.bitmap_definitions.iter().find(|d| d.bitmap_index as usize == t.index as usize).map(|d| d.label.as_str())
                 && let Some(rgba) = im.data.as_ref().and_then(|d| gdl_client::glyphs::xbox_variant(label, im.width(), im.height(), d))
             {
@@ -8004,16 +8023,19 @@ fn present_hud(
                 sets.xbox.insert(key, images.add(x));
             }
             let img = decoded.map(|(_, im)| images.add(im));
-                sets.images.insert(key, img);
+                if mask { &mut sets.masks } else { &mut sets.images }.insert(key, img);
+            }
+            if mask {
+                return sets.masks[&key].clone();
             }
             if xbox && let Some(x) = sets.xbox.get(&key) {
                 return Some(x.clone());
             }
             sets.images[&key].clone()
         };
-        let Some(image) = resolve(b.tex.unwrap()) else { continue };
+        let Some(image) = resolve(b.tex.unwrap(), false) else { continue };
         let (mask, mask_rect) = match b.mask {
-            Some((t, r)) => (resolve(t), Vec4::from_array(r)),
+            Some((t, r)) => (resolve(t, true), Vec4::from_array(r)),
             None => (None, Vec4::ZERO),
         };
         let gs = |c: [u8; 4]| Vec4::from_array(c.map(|v| f32::from(v) / 128.0));

@@ -720,14 +720,20 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (enemies were drawn only through OANIM frames; node trees now drawn), the
    barrel carriers' poison gas vanishing (SuicideExplosion's morph and scale
    were missing) — fixed, replays r92 equal r91 (playtest.md "Playtest after
-   Checkpoint C"); a "wireframe echo" by crates and chest contents shown as
-   "a tiny sprite and a big piece of paper" await the user's screenshots.
+   Checkpoint C"). From the user's screenshots: the "big piece of paper"
+   in an opened chest was the chest's NULL1 quad, which SetItem hides —
+   now hidden (player.md); the "wireframe echo" by a crate (a secret-wall
+   box) is not reproduced yet and waits on where it was and which Graphics
+   row removes it (playtest.md).
    HD textures built (plan steps 8–10, enhancements.md "HD textures"): the
    census, the effect / sky classification, the Real-ESRGAN network as wgpu
    compute (exact against the Checkpoint B pack), the resumable pack writer,
    the loader and the Graphics page's "HD textures" row that runs it. The
    whole pack: 6 min 22 s, 2.0 GB on the RX 580; in the game +167–282 MiB
-   video memory and 1–3 s longer level starts.
+   video memory and 1–3 s longer level starts. User's playtest with HD on:
+   the menus' and scrolls' fire burn left a checkered copy of the menu —
+   its z masks had taken the upscaled frames, whose holes are not exactly
+   transparent; masks now keep the disc's texels (enhancements.md).
 
 ---
 

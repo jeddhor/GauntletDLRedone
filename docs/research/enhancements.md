@@ -501,6 +501,19 @@ retail-derived ships.
   processing version, the kept textures with their reasons) marks the pack
   complete. The texture pack loader takes the user's own pack first, then
   the generated one.
+- Z masks keep the disc's texels (playtest 2026-10-31: "the dissolve leaves
+  a copy of the menu with a checkerboard pattern"). The menus' and message
+  scrolls' fire burn hides what lies under its hole where the
+  greenCircTransM frame's alpha is exactly 0, and clips the fire to the
+  parchment's silhouette the same way (hud.md). The upscaled mask frames
+  are not exactly 0 there: in two frames checked, 33 % and 17 % of the
+  hole texels came out at alpha 1 or more (up to 11 and 87), so scattered
+  blocks of the menu stayed inside the hole until the burn ended. gdl_play now looks up a blit's mask texture with no
+  replacement (the user's pack or the generated one: HudSets::masks,
+  hud_image's `replace`); the textures that are drawn keep theirs. The
+  pack still holds the 21 mask frames, unused. llvmpipe menu-burn frames:
+  client-hdburn1-menu-burn (before: parchment blocks in the hole) and
+  client-hdburn3-menu-burn (a clean hole).
 - Setting and overlay: Settings::hd_textures (off by default; not part of
   the presets, Original turns it off). The Graphics page's "HD textures"
   row turns it on; gdl_play then runs the generator as a child process
@@ -703,7 +716,8 @@ flags; research tooling, 2026-10-30); a pack's PACK/<name>.png (any size, 8-bit 
 it with the alpha halved back, one mip level. Lossless for alpha up to
 0x80; the few textures with alpha above 0x80 (additive glows) clamp there.
 World, model, item, effect, particle and HUD textures are covered;
-lightmaps are not. Checked with a pack greying all 2062 textures (G1
+lightmaps and the HUD's z masks (the fire burn's hole and silhouette:
+coverage at alpha 0 exactly) are not. Checked with a pack greying all 2062 textures (G1
 frozen frame: textured surfaces grey, vertex-coloured panels and lightmap
 tints kept).
 
