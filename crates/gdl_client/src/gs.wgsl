@@ -10,6 +10,7 @@
 #import bevy_pbr::mesh_view_bindings as view_bindings
 #import bevy_pbr::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT
 #import bevy_pbr::shadows::fetch_directional_shadow
+#import bevy_pbr::prepass_utils
 #ifdef BINDLESS
 #import bevy_pbr::mesh_bindings::mesh
 #import bevy_render::bindless::{bindless_samplers_filtering, bindless_textures_2d}
@@ -356,14 +357,51 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     rgb = rgb * mix(SHADOW_SHADE, 1.0, shadow);
 #ifdef SCREEN_SPACE_AMBIENT_OCCLUSION
 #ifdef GS_OPAQUE
-    // NATIVE ENHANCEMENT ambient occlusion: Bevy's SSAO of the 3D camera's
-    // prepass (opaque parts) shades the opaque draws, light baked or not.
     let ao = textureLoad(view_bindings::screen_space_ambient_occlusion_texture, vec2<i32>(in.position.xy), 0i).r;
-    rgb = rgb * mix(1.0, ao, AO_STRENGTH);
-    // DEBUG (GDL_DEBUG_AO, enhance2.w 1): the occlusion term alone.
-    if pl_enhance2(pl).w > 0.5 {
+    // NATIVE ENHANCEMENT ambient occlusion: Bevy's SSAO of the 3D camera's
+    // prepass shades the light-baked world (opaque parts whose lightmap is
+    // folded in), the prepass holding those alone (gs_prepass.wgsl).
+    // Objects (characters, enemies, items, exits; lit by VU1) neither cast
+    // nor take it: their screen-space halo on the floor behind followed a
+    // moving character as a faint second outline, and their own stacked
+    // parts' small steps showed as lines (the exits' swirl pools; playtest
+    // 2026-10-31). The shadow maps ground them instead.
+    if 0.5 < params.options.y {
+        rgb = rgb * mix(1.0, ao, AO_STRENGTH);
+    }
+    // DEBUG (GDL_DEBUG_AO, enhance2.w; opaque draws): 1 the occlusion term
+    // alone (also where it is not applied), 2 the prepass normal, 3 the
+    // occlusion term with red where this fragment lies in front of the
+    // prepass depth (a surface the prepass left out) and blue behind it
+    // (should not pass the depth test), 4 the prepass's and this
+    // fragment's view distances in bands (red, green), 5 the draw's
+    // lighting class.
+    let debug = pl_enhance2(pl).w;
+    if 0.5 < debug && debug < 1.5 {
         rgb = vec3(ao);
     }
+#ifdef NORMAL_PREPASS
+    if 1.5 < debug && debug < 2.5 {
+        rgb = prepass_utils::prepass_normal(in.position, 0u) * 0.5 + vec3(0.5);
+    }
+#endif
+#ifdef DEPTH_PREPASS
+    if 4.5 < debug {
+        // 5: the draw's lighting: red unlit, green lightmapped, blue VU1-lit
+        // (light_dir.w 1), times the occlusion term.
+        rgb = select(select(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), 0.5 < params.light_dir.w), vec3(0.0, 1.0, 0.0), 0.5 < params.options.y) * (0.25 + 0.75 * ao);
+    } else if 3.5 < debug {
+        // 4: the prepass's view distance in bands of 1/4 unit (reverse-Z
+        // infinite, clip_from_view[3][2] = near).
+        let z = view.clip_from_view[3][2] / max(prepass_utils::prepass_depth(in.position, 0u), 1e-9);
+        let zf = view.clip_from_view[3][2] / max(in.position.z, 1e-9);
+        rgb = vec3(fract(z * 4.0), fract(zf * 4.0), 0.5);
+    } else if 2.5 < debug {
+        let d = prepass_utils::prepass_depth(in.position, 0u);
+        let rel = (in.position.z - d) / max(d, 1e-9);
+        rgb = select(select(vec3(ao), vec3(0.0, 0.0, 1.0), rel < -1e-3), vec3(1.0, 0.0, 0.0), 1e-3 < rel);
+    }
+#endif
 #endif
 #endif
     // Av (0..255) must exceed AREF 1.

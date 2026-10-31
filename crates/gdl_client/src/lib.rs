@@ -206,8 +206,10 @@ pub struct Enhance {
 pub fn write_enhance(queue: &RenderQueue, e: Enhance) {
     let Some(buffer) = POINT_LIGHTS.get() else { return };
     let b = |v: bool| f32::from(u8::from(v));
-    // DEBUG GDL_DEBUG_AO: gs.wgsl shows the ambient occlusion term alone.
-    let debug_ao = b(std::env::var_os("GDL_DEBUG_AO").is_some());
+    // DEBUG GDL_DEBUG_AO=1..5: gs.wgsl's ambient occlusion views (the term,
+    // the prepass normal, depth against the prepass, depth bands, the
+    // lighting class); a value that is not a number means 1.
+    let debug_ao = std::env::var("GDL_DEBUG_AO").ok().map_or(0.0, |v| v.parse::<f32>().unwrap_or(1.0));
     let v = [b(e.sharp), b(e.full_colour), b(e.smooth_lightmaps), if e.sharp { e.lod_bias } else { 0.0 }, b(e.shadows), 0.0, 0.0, debug_ao];
     let bytes: Vec<u8> = v.iter().flat_map(|c| c.to_le_bytes()).collect();
     queue.write_buffer(buffer, MAX_POINT_LIGHTS as u64 * 32, &bytes);
@@ -621,7 +623,8 @@ impl Material for GsMaterial {
         // the main pass and holds only the opaque parts that write depth:
         // its texture sampling differs from the main pass's level of detail,
         // so a cut-out's alpha test could keep a texel the main pass rejects
-        // and its depth would hide what lies behind.
+        // and its depth would hide what lies behind. Of those, its fragment
+        // shader keeps the light-baked world's alone (gs_prepass.wgsl).
         if descriptor.vertex.shader_defs.iter().any(|d| matches!(d, bevy::shader::ShaderDefVal::Bool(n, true) if n == "PREPASS_PIPELINE")) {
             if key.mesh_key.contains(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO) {
                 descriptor.primitive.cull_mode = None;
@@ -640,7 +643,8 @@ impl Material for GsMaterial {
             }
             return Ok(());
         }
-        // Opaque draws (ambient occlusion applies to them only).
+        // Opaque draws (ambient occlusion applies to the light-baked world's
+        // among them: gs.wgsl).
         if key.mesh_key.intersection(MeshPipelineKey::BLEND_RESERVED_BITS) == MeshPipelineKey::BLEND_OPAQUE
             && !key.mesh_key.contains(MeshPipelineKey::MAY_DISCARD)
             && let Some(f) = descriptor.fragment.as_mut()

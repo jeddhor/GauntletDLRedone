@@ -702,6 +702,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    presentation stays identical to 1.0 in three of five frozen scenes; the
    other two change with any added render-world system (open question for
    the user). Viewer: private/runs/checkpoint-c/index.html (local only).
+   2026-10-31, Checkpoint C playtest: the user approved every lighting
+   effect, all on by default in Enhanced. Reported: with ambient
+   occlusion a faint second outline followed the character, and straight
+   dark lines crossed the Tower's swirl pools. Cause: the occlusion's
+   screen-space halo around objects on the floor behind them, and the
+   exit model's stacked pit parts. Fix: ambient occlusion is cast by and
+   applied to the light-baked world only (research/enhancements.md
+   "Lighting"); the shadow maps ground the objects. Reproduced and
+   checked at the level circle (GDL_DEBUG_TELEPORT; GDL_DEBUG_AO debug
+   views 1–5).
 
 ---
 

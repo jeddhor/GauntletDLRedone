@@ -292,18 +292,51 @@ decides) and off in the original presentation.
   motion blending: each pair of shots identical).
 - Ambient occlusion (Settings::ambient_occlusion). Bevy's SSAO (GTAO
   with a visibility bitmask, effect radius fixed at 0.73 view units,
-  quality High) from a depth and normal prepass of the 3D camera, applied
-  to opaque draws (gs.wgsl GS_OPAQUE: the final colour × the occlusion).
+  quality High) from a depth and normal prepass of the 3D camera, of and
+  on the light-baked world only: opaque parts whose lightmap is folded
+  into the base pass (GsParams options.y; gs_prepass.wgsl discards the
+  others in the prepass with normals — not in the shadow map's — and
+  gs.wgsl multiplies only those draws' final colour by the occlusion).
   The prepass holds only opaque parts that write depth and culls as the
   main pass: a cut-out's alpha test there samples another level of detail
   than the main pass, and a texel it kept but the main pass rejected would
   hide what lies behind (gs_prepass.wgsl, GsMaterial::specialize). SSAO
   needs a single-sampled view, so with it the window cameras use no MSAA
   and the 3D view takes SMAA where MSAA was chosen
-  (Settings::msaa_in_use / smaa_in_use). Result: contact shading around
-  feet, items and barrels and in wall–floor creases; open floor about
-  0.98; mean brightness 4–5 % lower (C2 96.2 → 91.8, G1 20.0 → 19.2 red;
-  frozen-p4-ao1; GDL_DEBUG_AO shows the term alone, frozen-p4-aodebug).
+  (Settings::msaa_in_use / smaa_in_use).
+  Objects lit by VU1 (players, enemies, items, exits, critters) neither
+  cast nor take it since the Checkpoint C playtest (2026-10-31, the
+  Tower's level circle): with them in the prepass, the occlusion left a
+  dark halo on the floor behind a character, strongest on the far side,
+  that followed him as a faint second outline (Bevy 0.18's bitmask GTAO
+  computes a distance falloff but does not apply it, so a figure several
+  units in front still occludes the floor behind it on screen); and the
+  exits' swirl pools showed straight dark lines: the pool's ring and pit
+  are an object, its opaque pit parts at slightly different heights under
+  the translucent swirl — steps the original's flat shading never shows
+  (frozen-dbg-circle-m4: the prepass depth in bands; frozen-dbg-circle-m5:
+  the ring and pit VU1-lit, the floor lightmapped; the prepass and the
+  main pass agree on every visible opaque surface, frozen-dbg-circle-m3).
+  The shadow maps ground the objects instead. Frozen frames at the level
+  circle (GDL_DEBUG_TELEPORT 45.07,−6.43,−104.70 and 30,−6.43,−104.70):
+  the pool as without occlusion and no halo (frozen-fix2-circle,
+  frozen-fix2-centre and their -dbg views, against frozen-dbg-circle-ao,
+  frozen-dbg-centre-a). Left: the floor's T-junction cracks (single
+  pixels along some polygon edges, where the background shows through in
+  the original too) are faint dotted lines in the occlusion.
+  Result: contact shading in the world's own creases (wall–floor
+  junctions, steps, plinths, corners), objects untouched; frame means
+  (red, whole frame) without → with it: Tower 28.4 → 27.5, G1 19.6 →
+  19.0, C2 82.9 → 79.3, J5 33.0 → 32.1, H4 20.2 → 19.7 (frozen-c-shadows
+  against frozen-c-ao2; the earlier occlusion of every opaque draw gave
+  27.2, 18.9, 78.8, 32.1, 19.6, frozen-c-ao). The original presentation
+  is unaffected (frozen-base-aofix2 against frozen-base-ref: the Tower,
+  J5, C2 and H4 identical, G1 the known 3,491 pixels).
+  DEBUG GDL_DEBUG_AO (opaque draws): 1 the occlusion term alone, 2 the
+  prepass normal, 3 the occlusion with red where the draw lies in front
+  of the prepass depth and blue behind it, 4 the prepass's and the draw's
+  view distances in quarter-unit bands (red, green), 5 the lighting
+  class (red unlit, green lightmapped, blue VU1-lit) × the occlusion.
 - SMAA (Settings::smaa; "Anti-aliasing: Off / 2x / 4x MSAA / SMAA"): Bevy's
   SMAA on the 3D view. Polygon edges as smooth as 4× MSAA in G1; cut-out
   edges (the spearmen's tridents) slightly more stepped.
@@ -331,8 +364,9 @@ decides) and off in the original presentation.
   the dumps differ only in the psys sprite meshes, and the scene dump
   diagnostic itself flips H4 as well — the frozen-frame harness steps
   particles per update, but which emitters are stepped during a catch-up
-  follows the frame in which the updates land, a real-time effect.
-  Neither is a change in what the original presentation draws; the
+  follows the frame in which the updates land, a real-time effect (a
+  later run, frozen-base-aofix2, has H4 identical to 1.0 again with the
+  same render schedule). Neither is a change in what the original presentation draws; the
   1.0-identity gate is sensitive to Bevy's render schedule. The user
   decides at Checkpoint C between a new gate (scene dumps and the
   remaining scenes) and hand-written SMAA and bloom passes without render
@@ -605,6 +639,7 @@ trace). See performance.md.
 | Lighting: frame time, 1920×1080 | everything on: mean 9.9–11.9 ms, p99 14.2–20.1 ms (Tower, C2 over 16.7) | perf-bench-gfx-p4d-* |
 | Lighting: reference-trace replays (146) | all equal to r90 | tools/regress.sh r91 |
 | Lighting: GUI | title_start_check 6/6, with everything on to the overlay 2/2; menu flows 23/23 | title-start-gfx-p4e*, menu-flows-gfx-p4e |
+| Lighting: ambient occlusion on the light-baked world only (playtest 2026-10-31) | the level circle's swirl pool as without occlusion, no halo around the player; original presentation unchanged; frame time within run-to-run spread of p4e (A/B pair: Tower 11.66 → 11.62, G1 10.04 → 9.91, H4 10.33 → 10.08 ms mean); title_start_check 6/6 and 2/2 to the overlay with no validation errors (final binary gdl_play-aofix3) | frozen-fix2-*, frozen-base-aofix2, perf-bench-gfx-ab1-*, title-start-gfx-aofix3* |
 
 Not provided: a render scale (the 3D renders at the window's own
 resolution — 1920×1080, 2560×1440 or 4K are native high resolutions),

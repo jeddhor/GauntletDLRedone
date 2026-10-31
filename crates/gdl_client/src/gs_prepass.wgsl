@@ -1,8 +1,9 @@
 // NATIVE ENHANCEMENT: the GS material in Bevy's prepass and shadow passes
 // (character shadows, ambient occlusion; research/enhancements.md
 // "Lighting"). Depth only, with gs.wgsl's alpha test (Av must exceed AREF
-// 1) for materials that may discard; the normal prepass writes the
-// interpolated world normal.
+// 1) for materials that may discard; the 3D camera's prepass (the one with
+// normals, ambient occlusion's) holds the light-baked world alone (gs.wgsl)
+// and writes the interpolated world normal.
 #import bevy_pbr::prepass_io::VertexOutput
 #ifdef PREPASS_FRAGMENT
 #import bevy_pbr::prepass_io::FragmentOutput
@@ -44,15 +45,22 @@ struct GsBindings {
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var base_sampler: sampler;
 #endif
 
+fn gs_params(in: VertexOutput) -> GsParams {
+#ifdef BINDLESS
+    let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
+    return material_array[material_indices[slot].material];
+#else
+    return material;
+#endif
+}
+
 // Av as gs.wgsl computes it (constant × vertex × texel alpha; the chrome
 // mapping is left out).
 fn gs_alpha(in: VertexOutput) -> f32 {
 #ifdef BINDLESS
     let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
-    let params = material_array[material_indices[slot].material];
-#else
-    let params = material;
 #endif
+    let params = gs_params(in);
     var alpha = params.tint.a;
 #ifdef VERTEX_COLORS
     alpha = alpha * in.color.a;
@@ -78,6 +86,13 @@ fn gs_alpha(in: VertexOutput) -> f32 {
 #ifdef PREPASS_FRAGMENT
 @fragment
 fn fragment(in: VertexOutput) -> FragmentOutput {
+#ifdef NORMAL_PREPASS
+    // Ambient occlusion's prepass: the light-baked world only (options.y,
+    // the lightmap folded in), not the shadow map's.
+    if gs_params(in).options.y < 0.5 {
+        discard;
+    }
+#endif
 #ifdef MAY_DISCARD
     if floor(gs_alpha(in) * 128.0) <= 1.0 {
         discard;
