@@ -17,7 +17,8 @@ struct GsParams {
     tint: vec4<f32>,
     // x: base texture bound, y: lightmap bound, z/w: UV shift add.
     options: vec4<f32>,
-    // VU1 lighting: xyz towards the light (w = enabled); rgb dir colour, a ambient.
+    // VU1 lighting: xyz towards the light (w = enabled; −1: no VU1
+    // lighting at all, pbBlit sprites); rgb dir colour, a ambient.
     light_dir: vec4<f32>,
     light: vec4<f32>,
     // x: unlit colour add (× (1 + x)), y: lit ambient add, z: TEX1 K,
@@ -35,14 +36,16 @@ struct GsParams {
 };
 
 // Point lights, shared by every material: position + radius, colour +
-// attenuation (lib.rs POINT_LIGHTS), then the NATIVE ENHANCEMENT switches
-// (lib.rs write_enhance; all 0 is the original presentation): x sharp
-// texture filtering (texfilter.rs), y full colour precision, z smooth
-// lightmaps, w the sharp filter's level-of-detail bias.
+// attenuation (lib.rs POINT_LIGHTS; the used slots first, radius 0 ends
+// them), then the NATIVE ENHANCEMENT switches (lib.rs write_enhance; all 0
+// is the original presentation): x sharp texture filtering (texfilter.rs),
+// y full colour precision, z smooth lightmaps, w the sharp filter's
+// level-of-detail bias; enhance2 reserved (0).
 struct PointLights {
-    pos: array<vec4<f32>, 8>,
-    col: array<vec4<f32>, 8>,
+    pos: array<vec4<f32>, 32>,
+    col: array<vec4<f32>, 32>,
     enhance: vec4<f32>,
+    enhance2: vec4<f32>,
 };
 
 #ifdef BINDLESS
@@ -79,22 +82,50 @@ struct GsBindings {
 // attenuation × (1 − d²/r²) × cosθ / d, 1) — the 7.5 is the VU normal scale
 // (5-bit unpack, ITOF4 − 7.5) against positions and lights × 8. Evaluated
 // per fragment here (the VU lights vertices).
-fn point_lights(plights: PointLights, n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
-    var pl = vec3(0.0);
-    for (var i = 0u; i < 8u; i = i + 1u) {
-        let lp = plights.pos[i];
-        if lp.w > 0.0 {
-            let v = lp.xyz - p;
-            let d = max(length(v), 0.001);
-            let fall = 1.0 - (d * d) / (lp.w * lp.w);
-            let cos_t = dot(n, v / d);
-            if fall > 0.0 && cos_t > 0.0 {
-                let k = min(7.5 * plights.col[i].a * fall * cos_t / d, 1.0);
-                pl = pl + plights.col[i].rgb * k;
-            }
+// The buffer is read in place (`pl`: the material's slot in the bindless
+// array; a copy of the whole struct per fragment costs registers).
+fn pl_pos(pl: u32, i: u32) -> vec4<f32> {
+#ifdef BINDLESS
+    return plights_array[pl].pos[i];
+#else
+    return plights.pos[i];
+#endif
+}
+
+fn pl_col(pl: u32, i: u32) -> vec4<f32> {
+#ifdef BINDLESS
+    return plights_array[pl].col[i];
+#else
+    return plights.col[i];
+#endif
+}
+
+fn pl_enhance(pl: u32) -> vec4<f32> {
+#ifdef BINDLESS
+    return plights_array[pl].enhance;
+#else
+    return plights.enhance;
+#endif
+}
+
+fn point_lights(pl: u32, n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+    var sum = vec3(0.0);
+    for (var i = 0u; i < 32u; i = i + 1u) {
+        let lp = pl_pos(pl, i);
+        if lp.w <= 0.0 {
+            break;
+        }
+        let v = lp.xyz - p;
+        let d = max(length(v), 0.001);
+        let fall = 1.0 - (d * d) / (lp.w * lp.w);
+        let cos_t = dot(n, v / d);
+        if fall > 0.0 && cos_t > 0.0 {
+            let c = pl_col(pl, i);
+            let k = min(7.5 * c.a * fall * cos_t / d, 1.0);
+            sum = sum + c.rgb * k;
         }
     }
-    return pl;
+    return sum;
 }
 
 // One write to the PSMCT16S frame with DTHE (rendering.md "GS output
@@ -159,13 +190,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef BINDLESS
     let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
     let params = material_array[material_indices[slot].material];
-    let pl_data = plights_array[material_indices[slot].lights];
+    let pl = material_indices[slot].lights;
 #else
     let params = material;
-    let pl_data = plights;
+    let pl = 0u;
 #endif
-    let sharp = pl_data.enhance.x > 0.5;
-    let full = pl_data.enhance.y > 0.5;
+    let enhance = pl_enhance(pl);
+    let sharp = enhance.x > 0.5;
+    let full = enhance.y > 0.5;
     var rgb = params.tint.rgb;
     var alpha = params.tint.a;
 #ifdef VERTEX_COLORS
@@ -177,13 +209,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let d = max(dot(n, params.light_dir.xyz), 0.0);
         // VU1 program A: min(ambient + light, 128) + point lights, ≤ 255.
         let base = min(vec3(1.0), vec3(params.light.a + params.scale.y) + d * params.light.rgb);
-        rgb = rgb * min(base + point_lights(pl_data, n, in.world_position.xyz), vec3(255.0 / 128.0));
+        rgb = rgb * min(base + point_lights(pl, n, in.world_position.xyz), vec3(255.0 / 128.0));
     } else {
         // VU1 program B (vertex colours, lightmap pass): min(colour × scale,
         // 128) + point lights, ≤ 255. HYPOTHESIS: the scale is
-        // MBLightmapMod / MBNoShadeMod's 1 + add.
+        // MBLightmapMod / MBNoShadeMod's 1 + add. light_dir.w −1: drawn
+        // without VU1 (pbBlit psys sprites), so no point lights.
         let base = min(rgb * max(1.0 + params.scale.x, 0.0), vec3(1.0));
-        rgb = min(base + point_lights(pl_data, normalize(in.world_normal), in.world_position.xyz), vec3(255.0 / 128.0));
+        var lights = vec3(0.0);
+        if params.light_dir.w > -0.5 {
+            lights = point_lights(pl, normalize(in.world_normal), in.world_position.xyz);
+        }
+        rgb = min(base + lights, vec3(255.0 / 128.0));
     }
     let cf = rgb;
     let af = alpha;
@@ -212,10 +249,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let lod = max(log2(depth) + params.scale.z, 0.0);
 #ifdef BINDLESS
     let t_lod = textureSampleLevel(bindless_textures_2d[material_indices[slot].base_texture], bindless_samplers_filtering[material_indices[slot].base_sampler], uv, lod);
-    let t_auto = textureSampleBias(bindless_textures_2d[material_indices[slot].base_texture], bindless_samplers_filtering[material_indices[slot].base_sampler], uv, pl_data.enhance.w);
+    let t_auto = textureSampleBias(bindless_textures_2d[material_indices[slot].base_texture], bindless_samplers_filtering[material_indices[slot].base_sampler], uv, enhance.w);
 #else
     let t_lod = textureSampleLevel(base_texture, base_sampler, uv, lod);
-    let t_auto = textureSampleBias(base_texture, base_sampler, uv, pl_data.enhance.w);
+    let t_auto = textureSampleBias(base_texture, base_sampler, uv, enhance.w);
 #endif
     // Sharp (NATIVE ENHANCEMENT, texfilter.rs): the GPU's own level of
     // detail at the window's resolution, anisotropic, for every texture.
@@ -251,7 +288,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let lm_bilinear = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r;
     let lm_smooth = bspline_r(lightmap_texture, lightmap_sampler, in.uv_b);
 #endif
-    let lm = select(lm_bilinear, lm_smooth, pl_data.enhance.z > 0.5);
+    let lm = select(lm_bilinear, lm_smooth, enhance.z > 0.5);
     if params.options.y > 0.5 {
         // The base pass's own frame write truncates before the lightmap
         // pass reads it back (opaque texels; translucent ones blend first).

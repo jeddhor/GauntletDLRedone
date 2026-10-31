@@ -59,10 +59,12 @@ enum GRow {
     Sharpen,
     FullColour,
     SmoothLightmaps,
+    MoreLights,
+    TorchLights,
     Back,
 }
 
-const GRAPHICS: [GRow; 6] = [GRow::Preset, GRow::TextureFilter, GRow::Sharpen, GRow::FullColour, GRow::SmoothLightmaps, GRow::Back];
+const GRAPHICS: [GRow; 8] = [GRow::Preset, GRow::TextureFilter, GRow::Sharpen, GRow::FullColour, GRow::SmoothLightmaps, GRow::MoreLights, GRow::TorchLights, GRow::Back];
 const SHARPEN: [u32; 6] = [0, 20, 40, 60, 80, 100];
 
 #[derive(Default, bevy::prelude::Resource)]
@@ -142,6 +144,8 @@ impl Overlay {
                     GRow::Sharpen => format!("Sharpening           {}", if s.sharpen == 0 { "Off".to_string() } else { format!("{} %", s.sharpen) }),
                     GRow::FullColour => format!("Colour precision     {}", if s.full_colour { "Full" } else { "Original 16-bit" }),
                     GRow::SmoothLightmaps => format!("Smooth lightmaps     {}", on(s.smooth_lightmaps)),
+                    GRow::MoreLights => format!("Dynamic lights       {}", if s.more_lights { "Up to 32" } else { "Original 8" }),
+                    GRow::TorchLights => format!("Torch light          {}", on(s.torch_lights)),
                     GRow::Back => "Back".to_string(),
                 };
                 out.push(format!("{}{text}", mark(k)));
@@ -255,6 +259,8 @@ impl Overlay {
                     }
                     GRow::FullColour => s.full_colour = !s.full_colour,
                     GRow::SmoothLightmaps => s.smooth_lightmaps = !s.smooth_lightmaps,
+                    GRow::MoreLights => s.more_lights = !s.more_lights,
+                    GRow::TorchLights => s.torch_lights = !s.torch_lights,
                     GRow::Back => {
                         if i != Input::Accept {
                             return Effect::None;

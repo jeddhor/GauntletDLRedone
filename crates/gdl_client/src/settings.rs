@@ -57,6 +57,12 @@ pub struct Settings {
     pub full_colour: bool,
     /// Lightmaps sampled with a cubic B-spline instead of bilinearly.
     pub smooth_lightmaps: bool,
+    /// Up to 32 point lights, chosen among those reaching the view (the
+    /// original presentation: the 8 nearest the camera).
+    pub more_lights: bool,
+    /// Flickering point lights at the levels' fires (world particle
+    /// emitters with a flame texture).
+    pub torch_lights: bool,
 }
 
 impl Default for Settings {
@@ -80,6 +86,10 @@ impl Default for Settings {
             sharpen: 40,
             full_colour: true,
             smooth_lightmaps: true,
+            // Checkpoint C (lighting): part of Enhanced until the user's
+            // playtest decides.
+            more_lights: true,
+            torch_lights: true,
         }
     }
 }
@@ -131,8 +141,24 @@ impl Settings {
     /// These settings with the graphics fields of a preset (Custom: unchanged).
     pub fn with_graphics(&self, g: Graphics) -> Self {
         match g {
-            Graphics::Original => Self { texture_filter: TextureFilter::Original, sharpen: 0, full_colour: false, smooth_lightmaps: false, ..self.clone() },
-            Graphics::Enhanced => Self { texture_filter: TextureFilter::Sharp, sharpen: 40, full_colour: true, smooth_lightmaps: true, ..self.clone() },
+            Graphics::Original => Self {
+                texture_filter: TextureFilter::Original,
+                sharpen: 0,
+                full_colour: false,
+                smooth_lightmaps: false,
+                more_lights: false,
+                torch_lights: false,
+                ..self.clone()
+            },
+            Graphics::Enhanced => Self {
+                texture_filter: TextureFilter::Sharp,
+                sharpen: 40,
+                full_colour: true,
+                smooth_lightmaps: true,
+                more_lights: true,
+                torch_lights: true,
+                ..self.clone()
+            },
             Graphics::Custom => self.clone(),
         }
     }
@@ -214,12 +240,14 @@ mod tests {
         assert_eq!(serde_json::from_str::<Settings>(r#"{"msaa": 2}"#).unwrap().graphics(), Graphics::Enhanced);
         let e = s.with_graphics(Graphics::Original).with_graphics(Graphics::Enhanced);
         assert_eq!(e.graphics(), Graphics::Enhanced);
-        assert!(e.texture_filter == TextureFilter::Sharp && e.full_colour && e.smooth_lightmaps && 0 < e.sharpen);
+        assert!(e.texture_filter == TextureFilter::Sharp && e.full_colour && e.smooth_lightmaps && 0 < e.sharpen && e.more_lights && e.torch_lights);
         let c = Settings { sharpen: 80, ..e.clone() };
         assert_eq!(c.graphics(), Graphics::Custom);
         // The original presentation turns every graphics enhancement off.
         assert_eq!(c.with_baseline_presentation().graphics(), Graphics::Original);
         assert_eq!(Settings::baseline().graphics(), Graphics::Original);
+        let b = Settings::baseline();
+        assert!(!b.more_lights && !b.torch_lights);
         let mut h: Settings = serde_json::from_str(r#"{"texture_filter": "sharp", "sharpen": 250}"#).unwrap();
         h.sanitise();
         assert_eq!((h.texture_filter, h.sharpen), (TextureFilter::Sharp, 100));

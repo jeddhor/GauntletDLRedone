@@ -960,6 +960,80 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.sync_all()?;
         return Ok(());
     }
+    if args.len() == 3 && args[0] == "world-psys" {
+        // world-psys PLAY_CONFIG.json NEW_REPORT.json: every level's world
+        // psys nodes (as gdl_play's spawn_world_psys finds them) with the
+        // record's texture and blend, and the sprites of 300 psys frames
+        // (own random source, seed 1): count, alpha-weighted mean colour,
+        // mean size and extent above the node. Research tooling for the
+        // NATIVE ENHANCEMENT torch lights.
+        let cfg: serde_json::Value = serde_json::from_slice(&bounded_read(Path::new(&args[1]), 1 << 24)?)?;
+        let elf = bounded_read(Path::new(cfg["elf"].as_str().ok_or("config elf")?), 1 << 26)?;
+        let presets = gdl_formats::elf::Elf::parse(&elf)?.object("preset_list")?.to_vec();
+        let mut levels = Vec::new();
+        for l in cfg["levels"].as_array().ok_or("config levels")? {
+            let path = l["worlds"].as_str().ok_or("level worlds")?;
+            let bytes = bounded_read(Path::new(path), 1 << 28)?;
+            let world = gdl_formats::world::World::parse(&bytes)?;
+            let header = |i: usize| bytes.get(i * 4..i * 4 + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+            let version = header(0x18);
+            let mut nodes = Vec::new();
+            if version & 0xf00bab00 == 0xf00bab00 && 2 <= version & 0xff {
+                let (count, offset) = (header(0x1c) as usize, header(0x1d) as usize);
+                let table = bytes.get(offset..offset + count * gdl_core::psys::RECORD).unwrap_or_default();
+                for p in world.placements()? {
+                    let node = &world.nodes[p.node_index as usize];
+                    if node.flags & 0x800 == 0 || node.flags & 0x1000_0000 != 0 {
+                        continue;
+                    }
+                    let Some(at) = node.label.find("PSYS") else { continue };
+                    let Some(letter) = node.label.as_bytes().get(at + 4).copied() else { continue };
+                    let Some(record) = table.chunks_exact(gdl_core::psys::RECORD).find(|r| r[6] == letter) else { continue };
+                    let dir = (0 < node.collision_count).then(|| world.collisions.get(node.collision_index as usize)).flatten().map(|c| c.normal.map(|v| -v));
+                    let mut psys = match gdl_core::psys::Psys::new_world(0, record, &presets, dir, node.flags & 0x1000 != 0) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            nodes.push(serde_json::json!({"label":node.label,"error":e}));
+                            continue;
+                        }
+                    };
+                    let [x, y, z] = p.summed_position;
+                    let m = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0];
+                    let mut global = gdl_core::psys::PsysGlobal::new(1);
+                    let (mut n, mut w, mut rgb, mut size, mut top) = (0usize, 0.0f64, [0.0f64; 3], 0.0f64, f32::MIN);
+                    let mut sprites = Vec::new();
+                    for _ in 0..300 {
+                        global.start_frame();
+                        sprites.clear();
+                        psys.draw(&mut global, &m, 1.0, true, &mut sprites);
+                        for s in &sprites {
+                            let a = f64::from(s.rgba[3]);
+                            n += 1;
+                            w += a;
+                            for k in 0..3 {
+                                rgb[k] += a * f64::from(s.rgba[k]);
+                            }
+                            size += f64::from(s.size);
+                            top = top.max(s.position[1] - y);
+                        }
+                    }
+                    let mean = rgb.map(|c| if 0.0 < w { (c / w).round() } else { 0.0 });
+                    nodes.push(serde_json::json!({
+                        "label":node.label,"letter":(letter as char).to_string(),"texture":psys.texture,
+                        "blend":format!("{:?}",psys.blend()),"node_flags":format!("{:#x}",psys.node_flags),
+                        "pos":[x,y,z],"sprites":n,"mean_rgb":mean,"mean_alpha":if 0 < n { (w / n as f64).round() } else { 0.0 },
+                        "mean_size":if 0 < n { size / n as f64 } else { 0.0 },"top":if 0 < n { top } else { 0.0 }}));
+                }
+            }
+            levels.push(serde_json::json!({"name":l["name"],"title":l["title"],"worlds_sha256":hash(&bytes),"psys":nodes}));
+        }
+        let report = serde_json::json!({"elf_sha256":hash(&elf),"scope":"world psys nodes per level, 300 psys frames each (own rand seed 1); research for NATIVE ENHANCEMENT torch lights","levels":levels});
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "anim-trees" {
         // anim-trees ANIM.PS2 NEW_REPORT.json: tree labels with the first
         // sequence's frames and timing factor.

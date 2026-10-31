@@ -2079,7 +2079,15 @@ fn present_scene_light(sim: Res<Sim>, settings: Res<gdl_client::settings::Settin
 /// dark-level light), nearest 8 to the camera, on every material
 /// (pbDrawObject runs pbSetupPosLights for each object). HYPOTHESIS: the
 /// life fade of the radius is not applied.
-fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, queue: Res<bevy::render::renderer::RenderQueue>) {
+fn present_point_lights(
+    sim: Res<Sim>,
+    settings: Res<gdl_client::settings::Settings>,
+    mut last: Local<Vec<[f32; 8]>>,
+    mut torches: Local<(usize, Vec<Torch>)>,
+    queue: Res<bevy::render::renderer::RenderQueue>,
+    cams: Query<&bevy::camera::primitives::Frustum, With<FollowCamera>>,
+    emitters: Query<&Emitter>,
+) {
     let g = &sim.game;
     let mut lights: Vec<[f32; 8]> = Vec::new();
     for (i, n) in g.effects.nodes.iter().enumerate() {
@@ -2098,11 +2106,35 @@ fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, queue: Re
         let p = Vec3::from_array(l.position) * MIRROR;
         lights.push([p.x, p.y, p.z, l.radius, l.color[0], l.color[1], l.color[2], l.attenuation]);
     }
-    if let Some(cam) = &g.std_camera {
-        let eye = Vec3::from_array(cam.pb.eye) * MIRROR;
-        lights.sort_by(|a, b| (Vec3::new(a[0], a[1], a[2]) - eye).length_squared().total_cmp(&(Vec3::new(b[0], b[1], b[2]) - eye).length_squared()));
+    // A light without reach adds nothing (and would end the shader's list).
+    lights.retain(|l| 0.0 < l[3]);
+    let eye = g.std_camera.as_ref().map(|cam| Vec3::from_array(cam.pb.eye) * MIRROR);
+    let by_eye = |v: &mut Vec<[f32; 8]>| {
+        if let Some(eye) = eye {
+            v.sort_by(|a, b| (Vec3::new(a[0], a[1], a[2]) - eye).length_squared().total_cmp(&(Vec3::new(b[0], b[1], b[2]) - eye).length_squared()));
+        }
+    };
+    // NATIVE ENHANCEMENT (Settings::more_lights): every light whose reach
+    // meets the view, up to 32; the original presentation passes the 8
+    // nearest the camera.
+    let frustum = cams.iter().next().filter(|_| settings.more_lights);
+    let in_view = |l: &[f32; 8]| frustum.is_none_or(|f| f.intersects_sphere(&bevy::camera::primitives::Sphere { center: Vec3::new(l[0], l[1], l[2]).into(), radius: l[3] }, true));
+    lights.retain(in_view);
+    by_eye(&mut lights);
+    let limit = if settings.more_lights { gdl_client::MAX_POINT_LIGHTS } else { 8 };
+    lights.truncate(limit);
+    // NATIVE ENHANCEMENT (Settings::torch_lights): the level's fires after
+    // the game's lights.
+    if settings.torch_lights {
+        let fires: Vec<(Vec3, Vec3)> = emitters.iter().filter_map(|e| Some((Vec3::new(e.matrix[12], e.matrix[13], e.matrix[14]), e.fire_colour?))).collect();
+        if torches.0 != fires.len() {
+            *torches = (fires.len(), torch_lights(&fires));
+        }
+        let t = sim.updates as f32 / 30.0;
+        let mut lit: Vec<[f32; 8]> = torches.1.iter().map(|k| k.light(t)).filter(in_view).collect();
+        by_eye(&mut lit);
+        lights.extend(lit.into_iter().take(limit - lights.len()));
     }
-    lights.truncate(8);
     // TEST switch: no point lights (renderer comparisons).
     if std::env::var_os("GDL_NO_POINT_LIGHTS").is_some() {
         lights.clear();
@@ -2111,13 +2143,60 @@ fn present_point_lights(sim: Res<Sim>, mut last: Local<Vec<[f32; 8]>>, queue: Re
         return;
     }
     *last = lights.clone();
-    let mut pos = [Vec4::ZERO; 8];
-    let mut col = [Vec4::ZERO; 8];
-    for (k, l) in lights.iter().enumerate() {
-        pos[k] = Vec4::new(l[0], l[1], l[2], l[3]);
-        col[k] = Vec4::new(l[4], l[5], l[6], l[7]);
+    let list: Vec<(Vec4, Vec4)> = lights.iter().map(|l| (Vec4::new(l[0], l[1], l[2], l[3]), Vec4::new(l[4], l[5], l[6], l[7]))).collect();
+    gdl_client::write_point_lights(&queue, &list);
+}
+
+/// NATIVE ENHANCEMENT torch light (research/enhancements.md "Torch
+/// light"): one light per fire, its texture's colour, a gentle flicker.
+/// The lightmaps already hold the fires' light, so it stays faint: reach
+/// TORCH_RADIUS, attenuation TORCH_ATTENUATION (the VU1 formula's gain
+/// ≈ 0.35 at 3 units). Chosen by eye (no original values exist).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Torch {
+    /// Render space.
+    position: Vec3,
+    colour: Vec3,
+    /// Flicker phase from the position (cosmetic: no game random source).
+    phase: f32,
+}
+
+const TORCH_RADIUS: f32 = 16.0;
+const TORCH_ATTENUATION: f32 = 0.3;
+/// Emitters closer than this are one fire (a torch's flame and sparks).
+const TORCH_MERGE: f32 = 2.5;
+
+impl Torch {
+    /// The light at `t` seconds of simulation time (frozen under
+    /// GDL_FREEZE_AT): two slow sines, 80..100 % strength.
+    fn light(&self, t: f32) -> [f32; 8] {
+        let k = 0.9 + 0.06 * (t * 7.3 + self.phase).sin() + 0.04 * (t * 13.1 + 2.7 * self.phase).sin();
+        let c = self.colour * k;
+        [self.position.x, self.position.y, self.position.z, TORCH_RADIUS, c.x, c.y, c.z, TORCH_ATTENUATION]
     }
-    gdl_client::write_point_lights(&queue, &pos, &col);
+}
+
+/// Fires from world emitters (original-space node position, colour): the
+/// emitters within TORCH_MERGE of a fire's first join it; the light sits
+/// one unit above their mean, as ProcessEffects places effect lights.
+fn torch_lights(fires: &[(Vec3, Vec3)]) -> Vec<Torch> {
+    let mut groups: Vec<(Vec3, Vec<(Vec3, Vec3)>)> = Vec::new();
+    for &(p, c) in fires {
+        match groups.iter_mut().find(|g| g.0.distance(p) < TORCH_MERGE) {
+            Some(g) => g.1.push((p, c)),
+            None => groups.push((p, vec![(p, c)])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(_, members)| {
+            let n = members.len() as f32;
+            let p = members.iter().map(|m| m.0).sum::<Vec3>() / n;
+            let c = members.iter().map(|m| m.1).sum::<Vec3>() / n;
+            let phase = (p.x * 12.9898 + p.z * 78.233).sin().abs() * 6.283;
+            Torch { position: (p + Vec3::Y) * MIRROR, colour: c, phase }
+        })
+        .collect()
 }
 
 /// pbTraverseDrawObjects: MB flag 2 skips a node and its subtree, flag 1
@@ -4618,6 +4697,32 @@ struct Emitter {
     /// Level texture by name, resolved against the STATIC package later.
     texture: Option<Handle<Image>>,
     material: Option<Handle<gdl_client::GsMaterial>>,
+    /// NATIVE ENHANCEMENT torch light: a world fire (FIRE_TEXTURES,
+    /// additive) and, once its texture is resolved, that texture's colour.
+    fire: bool,
+    fire_colour: Option<Vec3>,
+}
+
+/// NATIVE ENHANCEMENT (torch light): the world psys textures that are
+/// fires. From every level's world psys nodes (gdl_tools world-psys,
+/// research/enhancements.md "Torch light"): the additive emitters with
+/// these textures are torches, braziers, fire pools and H4's fireballs;
+/// the others are smoke, mist, steam, embers, drops and fireflies.
+const FIRE_TEXTURES: [&str; 7] = ["P_TORCH", "P_TORCH_P", "BLUEP_TORCH", "POOLFIRE", "POOLFIREC", "BLUEPOOLFIRE", "FBALLX2"];
+
+/// A texture's colour for a light: the alpha-weighted mean of its level-0
+/// texels, scaled so the brightest channel is 1.
+fn light_colour(image: &Image) -> Option<Vec3> {
+    let data = image.data.as_ref()?;
+    let (w, h) = (image.width() as usize, image.height() as usize);
+    let (mut sum, mut weight) = (Vec3::ZERO, 0.0f32);
+    for p in data.get(..w * h * 4)?.chunks_exact(4) {
+        let a = f32::from(p[3]);
+        sum += Vec3::new(f32::from(p[0]), f32::from(p[1]), f32::from(p[2])) * a;
+        weight += a;
+    }
+    let c = sum / weight.max(1e-6);
+    (0.0 < c.max_element()).then(|| c / c.max_element())
 }
 
 /// MBPsysStartFrame's frame counter, the psys random source and the
@@ -4659,13 +4764,14 @@ fn spawn_world_psys(commands: &mut Commands, root: Entity, session: &Session, se
             .flatten()
             .map(|c| c.normal.map(|v| -v));
         let Ok(psys) = gdl_core::psys::Psys::new_world(0, record, &presets, dir, node.flags & 0x1000 != 0) else { continue };
+        let fire = psys.blend() == gdl_core::psys::Blend::Additive && psys.texture.as_ref().is_some_and(|t| FIRE_TEXTURES.contains(&t.to_uppercase().as_str()));
         let [x, y, z] = p.summed_position;
         let matrix = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0];
         let texture = psys.texture.as_ref().and_then(|t| set.labels.get(&t.to_uppercase())).cloned();
         let mesh = meshes.add(Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default()));
         let e = commands
             .spawn((
-                Emitter { psys, anchor: None, matrix, sprites: Vec::new(), texture, material: None },
+                Emitter { psys, anchor: None, matrix, sprites: Vec::new(), texture, material: None, fire, fire_colour: None },
                 Mesh3d(mesh),
                 Transform::default(),
                 Visibility::Hidden,
@@ -4688,7 +4794,7 @@ fn spawn_tree_psys(mut commands: Commands, mut pending: ResMut<PendingTreePsys>,
         let mesh = meshes.add(Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default()));
         let e = commands
             .spawn((
-                Emitter { psys, anchor: Some(anchor), matrix: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0], sprites: Vec::new(), texture: None, material: None },
+                Emitter { psys, anchor: Some(anchor), matrix: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0], sprites: Vec::new(), texture: None, material: None, fire: false, fire_colour: None },
                 Mesh3d(mesh),
                 Transform::default(),
                 Visibility::Hidden,
@@ -4736,6 +4842,7 @@ fn present_particles(
     mut emitters: EmitterQuery,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<gdl_client::GsMaterial>>,
+    images: Res<Assets<Image>>,
     mut commands: Commands,
 ) {
     let Some(cam) = &sim.game.std_camera else { return };
@@ -4803,6 +4910,9 @@ fn present_particles(
             if named.is_none() && !libraries.0.contains_key("STATIC") {
                 continue;
             }
+            if em.fire {
+                em.fire_colour = named.as_ref().and_then(|h| images.get(h)).and_then(light_colour);
+            }
             let blend = em.psys.blend();
             let (no_depth_write, depth_always) = em.psys.depth_flags();
             let m = gdl_client::GsMaterial {
@@ -4810,6 +4920,9 @@ fn present_particles(
                     tint: Vec4::ONE,
                     options: Vec4::new(if named.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0),
                     extra: Vec4::new(0.0, 0.0, 0.0, gdl_client::frame_writes()),
+                    // DrawPsysSub's GS sprites (pbBlit) skip the VU1
+                    // programs and their point lights.
+                    light_dir: Vec4::new(0.0, 0.0, 0.0, -1.0),
                     ..default()
                 },
                 lit: false,
@@ -9651,5 +9764,26 @@ fn main() {
         eprintln!("{error}");
         report_fatal(&format!("The game could not start:\n{error}"));
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn torch_lights_merge_one_fires_emitters() {
+        let orange = Vec3::new(1.0, 0.5, 0.0);
+        // A torch's flame and spark emitters 1 unit apart, a second torch 10 away.
+        let fires = [(Vec3::new(0.0, 0.0, 0.0), orange), (Vec3::new(1.0, 0.0, 0.0), orange), (Vec3::new(10.0, 0.0, 0.0), Vec3::Z)];
+        let t = torch_lights(&fires);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].position, Vec3::new(0.5, 1.0, 0.0) * MIRROR);
+        assert_eq!(t[1].colour, Vec3::Z);
+        // Flicker stays within 80..100 % and keeps the reach.
+        for k in 0..300 {
+            let l = t[0].light(k as f32 / 30.0);
+            assert!(0.8 * orange.x <= l[4] && l[4] <= orange.x && l[3] == TORCH_RADIUS && l[7] == TORCH_ATTENUATION);
+        }
     }
 }

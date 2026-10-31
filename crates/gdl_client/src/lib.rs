@@ -150,25 +150,36 @@ impl Plugin for GsMaterialPlugin {
 }
 
 /// Point lights (MBPosLightNew from ProcessEffects) for every GsMaterial:
-/// one storage buffer of eight positions (xyz render space, w radius; w 0:
-/// unused) then eight colours (rgb, a attenuation), bound by every material
-/// (binding 7) and written once per change (write_point_lights). In each
-/// material's uniform they made every material re-prepared whenever an
-/// effect's light moved (the Sorceress's square attack: the frame time
-/// doubled). After them, the NATIVE ENHANCEMENT switches every material
-/// reads (write_enhance; gs.wgsl PointLights.enhance).
+/// one storage buffer of MAX_POINT_LIGHTS positions (xyz render space, w
+/// radius; w 0: unused, and every later slot too) then as many colours
+/// (rgb, a attenuation), bound by every material (binding 7) and written
+/// once per change (write_point_lights). In each material's uniform they
+/// made every material re-prepared whenever an effect's light moved (the
+/// Sorceress's square attack: the frame time doubled). After them, the
+/// NATIVE ENHANCEMENT switches every material reads (write_enhance;
+/// gs.wgsl PointLights.enhance, enhance2). The original presentation fills
+/// at most 8 slots (gdl_play present_point_lights); NATIVE ENHANCEMENT
+/// "more lights" all 32.
 static POINT_LIGHTS: std::sync::OnceLock<Buffer> = std::sync::OnceLock::new();
-pub const POINT_LIGHT_BYTES: u64 = 16 * 16 + 16;
+pub const MAX_POINT_LIGHTS: usize = 32;
+pub const POINT_LIGHT_BYTES: u64 = (MAX_POINT_LIGHTS as u64) * 32 + 32;
 
 /// The shared point-light buffer (GsMaterialPlugin::finish creates it).
 pub fn point_light_buffer() -> Buffer {
     POINT_LIGHTS.get().expect("GsMaterialPlugin creates the point-light buffer before materials").clone()
 }
 
-/// Write the eight point lights.
-pub fn write_point_lights(queue: &RenderQueue, pos: &[Vec4; 8], col: &[Vec4; 8]) {
+/// Write the point lights (position + radius, colour + attenuation; at
+/// most MAX_POINT_LIGHTS, the rest of the slots cleared).
+pub fn write_point_lights(queue: &RenderQueue, lights: &[(Vec4, Vec4)]) {
     let Some(buffer) = POINT_LIGHTS.get() else { return };
-    let mut bytes = Vec::with_capacity(POINT_LIGHT_BYTES as usize);
+    let mut pos = [Vec4::ZERO; MAX_POINT_LIGHTS];
+    let mut col = [Vec4::ZERO; MAX_POINT_LIGHTS];
+    for (k, (p, c)) in lights.iter().take(MAX_POINT_LIGHTS).enumerate() {
+        pos[k] = *p;
+        col[k] = *c;
+    }
+    let mut bytes = Vec::with_capacity(MAX_POINT_LIGHTS * 32);
     for v in pos.iter().chain(col.iter()) {
         for c in v.to_array() {
             bytes.extend_from_slice(&c.to_le_bytes());
@@ -194,7 +205,7 @@ pub fn write_enhance(queue: &RenderQueue, e: Enhance) {
     let Some(buffer) = POINT_LIGHTS.get() else { return };
     let v = [f32::from(u8::from(e.sharp)), f32::from(u8::from(e.full_colour)), f32::from(u8::from(e.smooth_lightmaps)), if e.sharp { e.lod_bias } else { 0.0 }];
     let bytes: Vec<u8> = v.iter().flat_map(|c| c.to_le_bytes()).collect();
-    queue.write_buffer(buffer, 256, &bytes);
+    queue.write_buffer(buffer, MAX_POINT_LIGHTS as u64 * 32, &bytes);
 }
 
 /// The final pass of the last camera: the frame holds GS display values

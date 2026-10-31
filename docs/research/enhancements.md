@@ -229,6 +229,48 @@ the generator tells those two categories apart from data is decided in
 the plan's steps 8–10 (the labels and flags alone do not separate them,
 see unknowns.md).
 
+### Lighting (Phase 4, toward Checkpoint C, 2026-10-31)
+
+The plan's steps 11–14. Each is a Graphics-page setting, part of the
+Enhanced preset (on by default until the user's Checkpoint C playtest
+decides) and off in the original presentation.
+
+- Dynamic lights (Settings::more_lights, "Dynamic lights: Up to 32 /
+  Original 8"). The game's point lights (ProcessEffects' effect lights,
+  do_players' dark-level light; rendering.md "Point lights") reach every
+  material through one shared buffer, now 32 slots (lib.rs
+  MAX_POINT_LIGHTS; gs.wgsl reads it in place and stops at the first
+  unused slot). The original presentation keeps the port's selection, the
+  8 nearest the camera (the original gives each object the lights within
+  its reach, pb_do_poslights; its slot count is unread). Up to 32: every
+  light whose sphere meets the view frustum, nearest the camera first.
+- Torch light (Settings::torch_lights): a faint flickering point light at
+  every world fire. Fires come from data: gdl_tools world-psys lists every
+  level's world psys nodes (61 levels; private/runs/torch/world-psys.json)
+  with texture, blend and 300 simulated psys frames; the additive emitters
+  with P_TORCH, P_TORCH_P, BLUEP_TORCH, POOLFIRE, POOLFIREC, BLUEPOOLFIRE
+  or FBALLX2 are torches, braziers, fire pools and H4's fireballs (the
+  others: SMOKE3, MISTPART*, GREENSMOKE3, EMBER_SPARK2, STEAM, SLIMEDROP,
+  FIREFLY, WATERDROP, ZZZ, BLUEEMBER_SPARK2 — smoke, mist, embers, drops).
+  The sprites themselves are white (vertex colour 127–190), so a light's
+  colour is its texture's alpha-weighted mean, brightest channel 1.
+  Emitters within 2.5 units are one fire (a torch's flame and sparks); the
+  light sits one unit above their mean, as ProcessEffects places effect
+  lights, reach 16, attenuation 0.3 (the VU1 formula's gain about 0.7 at
+  3 units, 0.2 at 8; NATIVE values chosen by eye: the lightmaps already
+  hold the fires' light), strength 80–100 % from two sines of simulation
+  time with a phase from the position (no game random source; constant
+  under GDL_FREEZE_AT). Torches come after the game's lights in the slots.
+  The effect is a warm glow on floors, walls and characters near fires
+  (frozen-p4-lights2 against frozen-p4-a: the Tower's brazier, H4's
+  braziers).
+- Fidelity fix found on the way: psys sprites (DrawPsysSub, drawn by
+  pbBlit as GS sprites, not by the VU1 programs) took the point lights in
+  the port — their meshes carry a +z normal, so a light in front doubled a
+  flame's brightness. Their material now has light_dir.w −1 (no VU1
+  lighting). The frozen original-presentation scenes have no point lights
+  and stay identical to 1.0 (frozen-base-p4b).
+
 ## Settings overlay and keys
 
 F10, or the options lists' NATIVE last entry "Display" (title Options,

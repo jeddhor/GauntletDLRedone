@@ -379,7 +379,11 @@ frame compared (GUI flow menu-flows-m17-v15 streak shows the trail).
   +4]) — ELF 0x220f10..0x220f58, colours (2,2,1.5) (1.5,1.5,2) (2,1.5,1.5)
   (1.5,2,1.5); Game::lighting.pos_lights. The VU1 formula is in "VU1
   microcode". gdl_play passes the nearest 8 to the camera to every
-  material. HYPOTHESIS: no life fade. Every SfxSetLight caller is ported
+  material (NATIVE ENHANCEMENT "Dynamic lights": up to 32 in view,
+  research/enhancements.md "Lighting"). psys sprites are drawn by pbBlit,
+  outside the VU1 programs, and take no point lights (until 2026-10-31
+  the port lit them through their +z normal). HYPOTHESIS: no life fade.
+  Every SfxSetLight caller is ported
   (ghidra-fxlight1): StartMagicFX / StartThrowMagicFX / StartShieldFX (1.5
   × power, light_color[mclr_idx[potion colour]]); StartComboFX (10,
   light_color[pclr_idx[colour b]] = (3, 2, 0, 1): yellow, blue, red, green;
