@@ -330,8 +330,9 @@ pub fn hud_image(objects: &Objects, table: &TextureTable, textures: &[u8], index
     let mut sampler = ImageSamplerDescriptor::linear();
     sampler.set_address_mode(ImageAddressMode::ClampToEdge);
     // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack).
+    let label = objects.bitmap_definitions.iter().find(|d| d.bitmap_index as usize == index).map_or("", |d| d.label.as_str());
     if texture_pack::active()
-        && let Some((w, h, new)) = texture_pack::replace(b.width, b.height, &rgba)
+        && let Some((w, h, new)) = texture_pack::replace(b.width, b.height, &rgba, label, b.flags)
     {
         return Some(raw_image(w as u16, h as u16, new, TextureFormat::Rgba8Unorm, ImageSampler::Descriptor(sampler)));
     }
@@ -796,7 +797,7 @@ pub fn materials_for(
         // one level, so the GS LOD selection does not apply to it).
         let (mut width, mut height) = (bitmap.width, bitmap.height);
         if texture_pack::active()
-            && let Some((w, h, new)) = texture_pack::replace(width, height, &levels[0])
+            && let Some((w, h, new)) = texture_pack::replace(width, height, &levels[0], &candidates[0].label, bitmap.flags)
         {
             (width, height, levels) = (w as u16, h as u16, vec![new]);
         }

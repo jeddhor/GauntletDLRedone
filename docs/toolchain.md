@@ -69,6 +69,19 @@ Pillow is used only for independent local image inspection. Record its version
 alongside any future publication-quality image comparisons. No mutable latest
 dependency is part of the build.
 
+## Upscaler research tools (2026-10-30, Checkpoint B)
+
+Research only, nothing ships: private/upstream/upscalers holds
+Real-ESRGAN v0.3.0 (source tarball SHA-256 4fbaa9470fc2e2bffa2f6b0e9b7304b3102d7b4d0c4b9dc3a7ff3d237499fed1,
+BSD-3-Clause), its v0.2.5.0 release weights realesr-animevideov3.pth
+(b8a8376811077954d82ca3fcf476f1ac3da3e8a68a4f4d71363008000a18b75d), realesr-general-x4v3.pth
+(8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292) and realesr-general-wdn-x4v3.pth
+(1641f8c4464b9f097c9fdda5589273713f67cf59f3d909e0bd688f0cee269dca), realesrgan-ncnn-vulkan-20220424-ubuntu.zip
+(e5aa6eb131234b87c0c51f82b89390f5e3e642b7b70f2b9bbe95b6a285a40c96; binary 22c2296a39b40cc43ac92615c827ab6d4b60b7142e8cee59f718e3f8e2cdbda9) and xBRZ 1.9
+(xBRZ_1.9.zip b2dff73b3abd24a18a7cde78d5ff5ed8f0922296dce6ed734dce2264cd0a0fc9, GPL-3.0; built by
+tools/python/upscale_compare.py with the system g++ 15.2.0 -O2). numpy
+2.3.5 and Pillow 12.1.1 are the system packages.
+
 ## Audio output dependency (2026-10-16)
 
 `gdl_client` adds `alsa = "=0.9.1"` (with `alsa-sys 0.3.1`; its other

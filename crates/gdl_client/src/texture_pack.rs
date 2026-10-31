@@ -3,7 +3,9 @@
 //! over its width and height (u16 little-endian) and its decoded level-0
 //! RGBA as the client holds it (GS alpha: 0x80 opaque). GDL_TEXTURE_DUMP=DIR
 //! writes each texture the client decodes as DIR/<name>.png (alpha doubled
-//! to 0..255); a texture pack (Settings::texture_pack) replaces a texture
+//! to 0..255) and a line `<name>\t<label>\t<width>x<height>\t<flags>` in
+//! DIR/index.tsv (the TEXDEF label and the record's flags, 0x4/0x8 clamp
+//! U/V: research tooling); a texture pack (Settings::texture_pack) replaces a texture
 //! with PACK/<name>.png of any size (alpha halved back, one mip level).
 //! Lightmaps are not replaced. Without either, nothing is hashed.
 use sha2::{Digest, Sha256};
@@ -42,8 +44,9 @@ pub fn name(width: u16, height: u16, rgba: &[u8]) -> String {
 }
 
 /// The replacement (width, height, RGBA with GS alpha) for a decoded
-/// texture, after writing it to the dump directory when one is set.
-pub fn replace(width: u16, height: u16, rgba: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+/// texture, after writing it (with its TEXDEF `label` and record `flags`)
+/// to the dump directory when one is set.
+pub fn replace(width: u16, height: u16, rgba: &[u8], label: &str, flags: u16) -> Option<(u32, u32, Vec<u8>)> {
     let cfg = CONFIG.get()?;
     if cfg.pack.is_none() && cfg.dump.is_none() {
         return None;
@@ -51,8 +54,10 @@ pub fn replace(width: u16, height: u16, rgba: &[u8]) -> Option<(u32, u32, Vec<u8
     let stem = name(width, height, rgba);
     if let Some(dir) = &cfg.dump {
         let path = dir.join(format!("{stem}.png"));
-        if !path.exists() {
-            let _ = write_png(&path, width.into(), height.into(), rgba);
+        if !path.exists() && write_png(&path, width.into(), height.into(), rgba).is_ok() {
+            use std::io::Write;
+            let index = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("index.tsv"));
+            let _ = index.and_then(|mut f| writeln!(f, "{stem}\t{label}\t{width}x{height}\t{flags:#x}"));
         }
     }
     read_png(&cfg.pack.as_ref()?.join(format!("{stem}.png")))

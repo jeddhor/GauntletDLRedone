@@ -675,6 +675,14 @@ original (PCSX2 reference on Xvfb :191, private captures):
    166 stuck enemies in G1/G2 → 0, simulation unchanged).
    Details: research/playtest.md "Playtest after 1.0", rendering.md
    "Sequence texture modifiers".
+   2026-10-30 (user: proceed with Checkpoint B): every texture of the
+   Tower, G1, C2 and J5 (3,626) upscaled 4× by Catmull-Rom, xBRZ 1.9 and
+   Real-ESRGAN (animevideov3; general-x4v3 at denoise 0.5 and 1) and loaded
+   as texture packs in frozen frames on the RX 580 (research/enhancements.md
+   "Upscaler comparison"; local viewer private/runs/upscale/index.html).
+   The numpy port of the network matches upstream ncnn within 0.18/255
+   mean. Waiting for the user's pick per category; then lighting
+   (Checkpoint C).
 
 ---
 

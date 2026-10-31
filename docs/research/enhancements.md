@@ -149,6 +149,80 @@ code changed). The Windows build (x86_64-pc-windows-gnu, gdl_play-cpA.exe)
 under Wine on the RX 580 with Enhanced settings: the same 600 G1 update
 hashes as Linux (private/runs/gfx-wine-cpA).
 
+### Upscaler comparison (Checkpoint B, 2026-10-30)
+
+The plan's step 7, a bounded experiment for choosing how HD textures are
+generated. Nothing from it ships; its outputs (upscaled retail textures)
+stay in private/runs/upscale.
+
+Input: `GDL_TEXTURE_DUMP` runs of the Tower, G1, C2 and J5 (frozen_frames,
+own HOME and saves) — 3,626 distinct textures, 8.4 M texels; most are
+small (1,224 at 32×32, 756 at 16×16, 506 at 64×64, 11 at 256×256). The dump
+now also writes DIR/index.tsv (texture name, TEXDEF label, size, record
+flags) so samples can be chosen and padded by kind.
+
+Methods (tools/python/upscale_compare.py; each 4×, every texture, written
+as a texture pack):
+
+| Method | Identity |
+| --- | --- |
+| Catmull-Rom | Pillow 12.1.1 BICUBIC (Keys cubic, a = −0.5), per channel in float |
+| xBRZ | 1.9 (2026-01-24), GPL-3.0; xBRZ_1.9.zip SHA-256 b2dff73b…a0fc9; scale 4, default ScalerCfg, ARGB |
+| Real-ESRGAN animevideov3 | Real-ESRGAN v0.3.0, BSD-3-Clause (LICENSE in the tagged source, 4fbaa947…fed1); realesr-animevideov3.pth b8a83768…0c96 |
+| Real-ESRGAN general-x4v3, denoise 0.5 | inference_realesrgan.py's default: realesr-general-x4v3.pth (8dc7edb9…6292) and realesr-general-wdn-x4v3.pth (1641f8c4…6dca) mixed 0.5 / 0.5 (utils.py dni) |
+| Real-ESRGAN general-x4v3, denoise 1 | realesr-general-x4v3.pth alone |
+
+The Real-ESRGAN network (SRVGGNetCompact: 3×3 convolutions with PReLU, 16
+or 32 body layers, PixelShuffle 4 plus the nearest-upsampled input) runs
+in float32 numpy from the upstream weights (a restricted unpickler, no
+torch). Against the upstream program realesrgan-ncnn-vulkan 20220424
+(binary 22c2296a…cdbda9, fp16, animevideov3-x4) on five opaque C2
+textures: mean difference 0.08–0.18 / 255, max 2 / 255, once our input is
+padded the way ncnn pads its tiles (10 mirrored texels; with zero padding
+the borders differed by up to 62).
+
+Our handling, the same for every method: each axis is padded before and
+cropped after scaling, wrapped where the record repeats and replicated
+where it clamps (flags 0x4 / 0x8); fully transparent texels first take the
+colour of the nearest kept texels (no dark fringes); opaque textures stay
+opaque, cut-outs' alpha is thresholded at half (the material's alpha class
+is unchanged), blended alpha is upscaled with the colour (Real-ESRGAN: as
+grey through the network, upstream's default).
+
+Results (RX 580, 1920×1080, Enhanced settings, frozen frames; local
+viewer private/runs/upscale/index.html with every scene switchable between
+methods at native size, sheets sheet-1..6.png of 48 samples by category):
+
+| Method | CPU s (32 threads, this tool) | RX 580 s (upstream ncnn) | Pack MB (PNG) |
+| --- | --- | --- | --- |
+| Catmull-Rom | 4 | – | 162 |
+| xBRZ | 48 | – | 116 |
+| Real-ESRGAN animevideov3 | 182 | 13.9 measured | 238 |
+| Real-ESRGAN general, denoise 0.5 | 360 | ≈ 26 ESTIMATE (34 / 18 layers) | 229 |
+| Real-ESRGAN general, denoise 1 | 334 | ≈ 26 ESTIMATE | 192 |
+
+The ncnn run (all 3,626 textures, PNG load and save included) peaked at
++140 MiB of video memory. In the game every 4× pack costs about the same:
++340–400 MiB peak video memory at the busiest of the four levels (whole-GPU
+samples, so ±30 MiB) and 3–4 s longer level starts (window to first frame:
+PNG decoding and generated mip chains; the nearest-neighbour control pack
++2.8 s), so the cost comes from the texel count, not the method.
+
+What the frames show: Catmull-Rom adds no detail (barely different from no
+pack under 16× anisotropic filtering); xBRZ keeps hard edges but
+posterises the painted, photographic textures into flat blobs; animevideov3
+is clean and painterly but smooths away grain (grass, dirt, bark);
+general-x4v3 gives the most convincing detail on surfaces, characters and
+items (stone cracks, wood grain, faces), denoise 1 a little smoother than
+0.5. Failure modes: both Real-ESRGAN models turn the PS2 dither in C2's
+sky (SANDBACK, opaque and repeating like any wall) into zebra stripes, and
+amplify the faint streaks of soft glows (the Tower's CENTERSTONEGLOW*
+transporter beams) into spikes; general more than animevideov3. Fonts and
+HUD art upscale cleanly with every method. Found by bisecting hybrid packs
+(private/runs/upscale/texbisect.py).
+
+Waiting for the user's choice per category (Checkpoint B).
+
 ## Settings overlay and keys
 
 F10, or the options lists' NATIVE last entry "Display" (title Options,
@@ -315,7 +389,8 @@ gdl_client::texture_pack: a texture's name is the first 16 hex digits of
 SHA-256 over its width, height (u16 LE) and decoded level-0 RGBA with GS
 alpha (0x80 opaque). `GDL_TEXTURE_DUMP=DIR` writes each decoded texture
 once as DIR/<name>.png with the alpha doubled (G1 session: 2062 textures,
-11 MB); a pack's PACK/<name>.png (any size, 8-bit RGB/RGBA/grey) replaces
+11 MB) and a line in DIR/index.tsv (name, TEXDEF label, size, record
+flags; research tooling, 2026-10-30); a pack's PACK/<name>.png (any size, 8-bit RGB/RGBA/grey) replaces
 it with the alpha halved back, one mip level. Lossless for alpha up to
 0x80; the few textures with alpha above 0x80 (additive glows) clamp there.
 World, model, item, effect, particle and HUD textures are covered;
