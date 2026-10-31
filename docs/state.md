@@ -681,8 +681,10 @@ original (PCSX2 reference on Xvfb :191, private captures):
    as texture packs in frozen frames on the RX 580 (research/enhancements.md
    "Upscaler comparison"; local viewer private/runs/upscale/index.html).
    The numpy port of the network matches upstream ncnn within 0.18/255
-   mean. Waiting for the user's pick per category; then lighting
-   (Checkpoint C).
+   mean. The user's pick (2026-10-31): general-x4v3 at denoise 0.5 for
+   everything except glows / fire / magic effects and skies / backdrops,
+   which stay original. Next: lighting (Checkpoint C), then the HD
+   texture generator.
 
 ---
 

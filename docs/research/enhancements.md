@@ -221,7 +221,13 @@ transporter beams) into spikes; general more than animevideov3. Fonts and
 HUD art upscale cleanly with every method. Found by bisecting hybrid packs
 (private/runs/upscale/texbisect.py).
 
-Waiting for the user's choice per category (Checkpoint B).
+The user's choice (Checkpoint B, 2026-10-31): Real-ESRGAN general-x4v3 at
+denoise 0.5 for every category — world surfaces, characters, enemies,
+items, foliage and grates, HUD and fonts — except glows, fire and magic
+effects and skies and backdrops, which keep their original textures. How
+the generator tells those two categories apart from data is decided in
+the plan's steps 8–10 (the labels and flags alone do not separate them,
+see unknowns.md).
 
 ## Settings overlay and keys
 
