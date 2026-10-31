@@ -32,6 +32,17 @@ research/enhancements.md "Graphics"): bevy_anti_alias 0.18.1 was already in
 Cargo.lock and the registry cache, so the lockfile is unchanged. Its
 plugin group is not used (TAA needs bevy_post_process, not built); FXAA and
 CAS are added singly.
+Since 2026-10-31 (lighting, research/enhancements.md "Lighting") also the
+Bevy features `bevy_post_process` (bloom), `smaa_luts`, `ktx2` and
+`zstd_rust` (SMAA's lookup textures are KTX2 with zstd supercompression;
+the pure-Rust decoder keeps the Windows cross-build free of C code). New
+crates in Cargo.lock, fetched from crates.io: bevy_post_process 0.18.1
+(MIT OR Apache-2.0, the pinned Bevy release), ktx2 0.4.0 (Apache-2.0),
+ruzstd 0.8.3 (MIT), twox-hash 2.1.3 (MIT). gdl_play disables the
+post-processing plugin group and adds BloomPlugin and SmaaPlugin singly
+(the group's MSAA writeback duplicates gdl_client::writeback); the
+texture laboratory and gdl_scene disable it. THIRD_PARTY_LICENSES.txt
+(tools/python/third_party_licenses.py) picks the crates up at release.
 No audio/physics/gameplay system is being represented by the texture laboratory.
 Native window rendering worked locally. GPU log notes a missing optional
 VK_EXT_physical_device_drm extension; it did not prevent the viewer from rendering.

@@ -204,8 +204,10 @@ fn main() {
             }),
             ..default()
         })
-        // The group's TAA needs bevy_post_process, which is not built.
-        .disable::<bevy::anti_alias::AntiAliasPlugin>())
+        // Neither the anti-aliasing nor the post-processing group (research
+        // tool; gdl_play adds single plugins).
+        .disable::<bevy::anti_alias::AntiAliasPlugin>()
+        .disable::<bevy::post_process::PostProcessPlugin>())
         .add_systems(Startup, setup)
         .add_systems(Update, browse)
         .run();

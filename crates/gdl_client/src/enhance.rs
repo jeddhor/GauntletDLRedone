@@ -62,10 +62,24 @@ enum GRow {
     MoreLights,
     TorchLights,
     Shadows,
+    AmbientOcclusion,
+    Bloom,
     Back,
 }
 
-const GRAPHICS: [GRow; 9] = [GRow::Preset, GRow::TextureFilter, GRow::Sharpen, GRow::FullColour, GRow::SmoothLightmaps, GRow::MoreLights, GRow::TorchLights, GRow::Shadows, GRow::Back];
+const GRAPHICS: [GRow; 11] = [
+    GRow::Preset,
+    GRow::TextureFilter,
+    GRow::Sharpen,
+    GRow::FullColour,
+    GRow::SmoothLightmaps,
+    GRow::MoreLights,
+    GRow::TorchLights,
+    GRow::Shadows,
+    GRow::AmbientOcclusion,
+    GRow::Bloom,
+    GRow::Back,
+];
 const SHARPEN: [u32; 6] = [0, 20, 40, 60, 80, 100];
 
 #[derive(Default, bevy::prelude::Resource)]
@@ -148,6 +162,8 @@ impl Overlay {
                     GRow::MoreLights => format!("Dynamic lights       {}", if s.more_lights { "Up to 32" } else { "Original 8" }),
                     GRow::TorchLights => format!("Torch light          {}", on(s.torch_lights)),
                     GRow::Shadows => format!("Character shadows    {}", if s.shadows { "Shadow maps" } else { "Original" }),
+                    GRow::AmbientOcclusion => format!("Ambient occlusion    {}", on(s.ambient_occlusion)),
+                    GRow::Bloom => format!("Bloom                {}", on(s.bloom)),
                     GRow::Back => "Back".to_string(),
                 };
                 out.push(format!("{}{text}", mark(k)));
@@ -175,7 +191,18 @@ impl Overlay {
                     }
                 ),
                 Row::Fullscreen => format!("Fullscreen (F11)     {}", on(s.fullscreen)),
-                Row::Msaa => format!("Anti-aliasing        {}", if s.msaa <= 1 { "Off".to_string() } else { format!("{}x MSAA", s.msaa) }),
+                Row::Msaa => format!(
+                    "Anti-aliasing        {}",
+                    if s.smaa {
+                        "SMAA".to_string()
+                    } else if s.msaa <= 1 {
+                        "Off".to_string()
+                    } else if s.ambient_occlusion {
+                        format!("SMAA (for {}x MSAA: ambient occlusion)", s.msaa)
+                    } else {
+                        format!("{}x MSAA", s.msaa)
+                    }
+                ),
                 Row::ReduceFlashes => format!("Reduce flashes       {}", on(s.reduce_flashes)),
                 Row::ShowFps => format!("Frame rate (F3)      {}", on(s.show_fps)),
                 Row::Prompts => format!(
@@ -264,6 +291,8 @@ impl Overlay {
                     GRow::MoreLights => s.more_lights = !s.more_lights,
                     GRow::TorchLights => s.torch_lights = !s.torch_lights,
                     GRow::Shadows => s.shadows = !s.shadows,
+                    GRow::AmbientOcclusion => s.ambient_occlusion = !s.ambient_occlusion,
+                    GRow::Bloom => s.bloom = !s.bloom,
                     GRow::Back => {
                         if i != Input::Accept {
                             return Effect::None;
@@ -323,9 +352,10 @@ impl Overlay {
                         s.frame_queue = if back { (s.frame_queue + 1) % 3 + 1 } else { s.frame_queue % 3 + 1 };
                     }
                     Row::Msaa => {
-                        let order = [1, 2, 4];
-                        let at = order.iter().position(|&m| m == s.msaa).unwrap_or(0);
-                        s.msaa = order[if back { (at + 2) % 3 } else { (at + 1) % 3 }];
+                        // Off, 2x, 4x MSAA, SMAA.
+                        let order = [(1, false), (2, false), (4, false), (1, true)];
+                        let at = order.iter().position(|&m| m == (s.msaa, s.smaa)).unwrap_or(0);
+                        (s.msaa, s.smaa) = order[if back { (at + 3) % 4 } else { (at + 1) % 4 }];
                     }
                     Row::Graphics => {
                         if i != Input::Accept {

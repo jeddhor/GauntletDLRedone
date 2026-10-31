@@ -495,8 +495,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }),
                 ..default()
             })
-            // The group's TAA needs bevy_post_process, which is not built.
-            .disable::<bevy::anti_alias::AntiAliasPlugin>(),
+            // Neither the anti-aliasing nor the post-processing group
+            // (gdl_play adds single plugins).
+            .disable::<bevy::anti_alias::AntiAliasPlugin>()
+            .disable::<bevy::post_process::PostProcessPlugin>(),
         )
         .add_plugins(gdl_client::GsMaterialPlugin)
         .add_systems(Startup, setup)

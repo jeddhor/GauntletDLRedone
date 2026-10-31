@@ -66,6 +66,14 @@ pub struct Settings {
     /// Shadow-mapped character shadows along the level's light (players,
     /// enemies, items and critters cast; the blob shadows are hidden).
     pub shadows: bool,
+    /// Screen-space ambient occlusion on the opaque parts. It needs the
+    /// 3D view without MSAA: anti-aliasing is then SMAA (`msaa_in_use`).
+    pub ambient_occlusion: bool,
+    /// Bloom around glows brighter than full white (stacked additive
+    /// layers).
+    pub bloom: bool,
+    /// Anti-aliasing by SMAA (a post-process) instead of MSAA.
+    pub smaa: bool,
 }
 
 impl Default for Settings {
@@ -94,6 +102,9 @@ impl Default for Settings {
             more_lights: true,
             torch_lights: true,
             shadows: true,
+            ambient_occlusion: true,
+            bloom: true,
+            smaa: false,
         }
     }
 }
@@ -139,7 +150,19 @@ impl Settings {
     /// These settings with the original presentation (see `baseline`);
     /// window, sync, controls and the button prompts are kept.
     pub fn with_baseline_presentation(&self) -> Self {
-        Self { interpolate: false, widescreen: false, msaa: 1, reduce_flashes: false, texture_pack: None, ..self.with_graphics(Graphics::Original) }
+        Self { interpolate: false, widescreen: false, msaa: 1, smaa: false, reduce_flashes: false, texture_pack: None, ..self.with_graphics(Graphics::Original) }
+    }
+
+    /// The MSAA sample count the window cameras use: 1 with SMAA or with
+    /// ambient occlusion (Bevy's SSAO reads a single-sampled prepass).
+    pub fn msaa_in_use(&self) -> u32 {
+        if self.smaa || self.ambient_occlusion { 1 } else { self.msaa }
+    }
+
+    /// Whether the 3D view is anti-aliased by SMAA: chosen, or standing in
+    /// for MSAA under ambient occlusion.
+    pub fn smaa_in_use(&self) -> bool {
+        self.smaa || (self.ambient_occlusion && 1 < self.msaa)
     }
 
     /// These settings with the graphics fields of a preset (Custom: unchanged).
@@ -153,6 +176,8 @@ impl Settings {
                 more_lights: false,
                 torch_lights: false,
                 shadows: false,
+                ambient_occlusion: false,
+                bloom: false,
                 ..self.clone()
             },
             Graphics::Enhanced => Self {
@@ -163,6 +188,8 @@ impl Settings {
                 more_lights: true,
                 torch_lights: true,
                 shadows: true,
+                ambient_occlusion: true,
+                bloom: true,
                 ..self.clone()
             },
             Graphics::Custom => self.clone(),
@@ -246,17 +273,31 @@ mod tests {
         assert_eq!(serde_json::from_str::<Settings>(r#"{"msaa": 2}"#).unwrap().graphics(), Graphics::Enhanced);
         let e = s.with_graphics(Graphics::Original).with_graphics(Graphics::Enhanced);
         assert_eq!(e.graphics(), Graphics::Enhanced);
-        assert!(e.texture_filter == TextureFilter::Sharp && e.full_colour && e.smooth_lightmaps && 0 < e.sharpen && e.more_lights && e.torch_lights && e.shadows);
+        assert!(e.texture_filter == TextureFilter::Sharp && e.full_colour && e.smooth_lightmaps && 0 < e.sharpen && e.more_lights && e.torch_lights && e.shadows && e.ambient_occlusion && e.bloom);
         let c = Settings { sharpen: 80, ..e.clone() };
         assert_eq!(c.graphics(), Graphics::Custom);
         // The original presentation turns every graphics enhancement off.
         assert_eq!(c.with_baseline_presentation().graphics(), Graphics::Original);
         assert_eq!(Settings::baseline().graphics(), Graphics::Original);
         let b = Settings::baseline();
-        assert!(!b.more_lights && !b.torch_lights && !b.shadows);
+        assert!(!b.more_lights && !b.torch_lights && !b.shadows && !b.ambient_occlusion && !b.bloom && !b.smaa);
         let mut h: Settings = serde_json::from_str(r#"{"texture_filter": "sharp", "sharpen": 250}"#).unwrap();
         h.sanitise();
         assert_eq!((h.texture_filter, h.sharpen), (TextureFilter::Sharp, 100));
+    }
+
+    #[test]
+    fn ambient_occlusion_swaps_msaa_for_smaa() {
+        let s = Settings { msaa: 4, ambient_occlusion: false, smaa: false, ..Settings::default() };
+        assert_eq!((s.msaa_in_use(), s.smaa_in_use()), (4, false));
+        let ao = Settings { ambient_occlusion: true, ..s.clone() };
+        assert_eq!((ao.msaa_in_use(), ao.smaa_in_use()), (1, true));
+        // No anti-aliasing chosen: none under ambient occlusion either.
+        let off = Settings { msaa: 1, ..ao.clone() };
+        assert_eq!((off.msaa_in_use(), off.smaa_in_use()), (1, false));
+        let smaa = Settings { smaa: true, ..s };
+        assert_eq!((smaa.msaa_in_use(), smaa.smaa_in_use()), (1, true));
+        assert_eq!((Settings::baseline().msaa_in_use(), Settings::baseline().smaa_in_use()), (1, false));
     }
 
     #[test]

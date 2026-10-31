@@ -287,6 +287,52 @@ decides) and off in the original presentation.
   ring, which takes the blob's place in water, stays. Frozen frames
   frozen-p4-shadows3 against frozen-p4-lights-ni (all five scenes, no
   motion blending: each pair of shots identical).
+- Ambient occlusion (Settings::ambient_occlusion). Bevy's SSAO (GTAO
+  with a visibility bitmask, effect radius fixed at 0.73 view units,
+  quality High) from a depth and normal prepass of the 3D camera, applied
+  to opaque draws (gs.wgsl GS_OPAQUE: the final colour × the occlusion).
+  The prepass holds only opaque parts that write depth and culls as the
+  main pass: a cut-out's alpha test there samples another level of detail
+  than the main pass, and a texel it kept but the main pass rejected would
+  hide what lies behind (gs_prepass.wgsl, GsMaterial::specialize). SSAO
+  needs a single-sampled view, so with it the window cameras use no MSAA
+  and the 3D view takes SMAA where MSAA was chosen
+  (Settings::msaa_in_use / smaa_in_use). Result: contact shading around
+  feet, items and barrels and in wall–floor creases; open floor about
+  0.98; mean brightness 4–5 % lower (C2 96.2 → 91.8, G1 20.0 → 19.2 red;
+  frozen-p4-ao1; GDL_DEBUG_AO shows the term alone, frozen-p4-aodebug).
+- SMAA (Settings::smaa; "Anti-aliasing: Off / 2x / 4x MSAA / SMAA"): Bevy's
+  SMAA on the 3D view. Polygon edges as smooth as 4× MSAA in G1; cut-out
+  edges (the spearmen's tridents) slightly more stepped.
+- Bloom (Settings::bloom): Bevy's bloom on the 3D view, additive,
+  intensity 0.25, prefilter threshold 1.0 (softness 0.3; NATIVE values by
+  eye). The frame holds GS display values that only DisplayToLinear clamps,
+  so stacked additive layers exceed 1 and only they bloom: the Tower's
+  crystals and brazier gain halos; C2 and G1's means are unchanged
+  (frozen-p4-bloom1). The plan's soft shoulder in DisplayToLinear is not
+  added: below 1 it would change every bright surface.
+- The original presentation against the 1.0 build (frozen frames, all
+  enhancements off): Tower, J5 and C2 identical; G1 3,491 pixels (mean
+  0.083 / 255) and H4 31,981 (0.417 / 255) differ once the SMAA and bloom
+  plugins are in (frozen-base-p4d). Bisected: either plugin alone changes
+  G1; both together with the material prepass change H4 too; neither
+  plugin, or 40 extra startup entities, or three extra component types:
+  identical; two empty systems added to the render sub-app (one in
+  ExtractSchedule, one in Render's Prepare set), with neither plugin:
+  exactly the same two differences (private/runs/frozen-bis-*). So the
+  render schedule's composition alone moves them. G1 is the tie order of
+  the spearmen's coplanar cut-out faces (the Checkpoint A spear edges):
+  the scene dumps of both variants are identical (every drawn mesh,
+  texture and material parameter). H4 is the brazier flames' particles:
+  the dumps differ only in the psys sprite meshes, and the scene dump
+  diagnostic itself flips H4 as well — the frozen-frame harness steps
+  particles per update, but which emitters are stepped during a catch-up
+  follows the frame in which the updates land, a real-time effect.
+  Neither is a change in what the original presentation draws; the
+  1.0-identity gate is sensitive to Bevy's render schedule. The user
+  decides at Checkpoint C between a new gate (scene dumps and the
+  remaining scenes) and hand-written SMAA and bloom passes without render
+  systems.
 - Fidelity fix found on the way: psys sprites (DrawPsysSub, drawn by
   pbBlit as GS sprites, not by the VU1 programs) took the point lights in
   the port — their meshes carry a +z normal, so a light in front doubled a

@@ -339,7 +339,7 @@ fn apply_settings(settings: Res<gdl_client::settings::Settings>, mut windows: Qu
             w.desired_maximum_frame_latency = queue;
         }
     }
-    let msaa = Msaa::from_samples(settings.msaa);
+    let msaa = Msaa::from_samples(settings.msaa_in_use());
     for (mut m, target) in &mut cams {
         if !matches!(target, Some(bevy::camera::RenderTarget::Image(_))) && *m != msaa {
             *m = msaa;
@@ -364,6 +364,7 @@ fn apply_graphics(
     mut cas: Query<&mut bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening, With<FollowCamera>>,
     mut finals: Query<&mut gdl_client::DisplayToLinear>,
     mut after: Query<&mut Camera, With<AfterWorldCamera>>,
+    (mut commands, view3d): (Commands, Query<Entity, With<FollowCamera>>),
 ) {
     // A material keeps the texture views and samplers it was prepared with
     // (its bindless slab slots; Bevy 0.18.1 orders no material preparation
@@ -404,9 +405,32 @@ fn apply_graphics(
             c.sharpening_strength = strength;
         }
     }
+    // NATIVE ENHANCEMENTS on the 3D camera: SSAO (with its depth and
+    // normal prepasses, removed with it), SMAA, bloom (research/enhancements.md
+    // "Lighting"). Bloom spreads what exceeds full white — stacked additive
+    // glows (the frame holds GS display values, unclamped until
+    // DisplayToLinear).
+    for e in &view3d {
+        let mut c = commands.entity(e);
+        if s.ambient_occlusion {
+            c.insert(bevy::pbr::ScreenSpaceAmbientOcclusion::default());
+        } else {
+            c.remove::<(bevy::pbr::ScreenSpaceAmbientOcclusion, bevy::core_pipeline::prepass::DepthPrepass, bevy::core_pipeline::prepass::NormalPrepass)>();
+        }
+        if s.smaa_in_use() {
+            c.insert(bevy::anti_alias::smaa::Smaa::default());
+        } else {
+            c.remove::<bevy::anti_alias::smaa::Smaa>();
+        }
+        if s.bloom {
+            c.insert(bloom());
+        } else {
+            c.remove::<bevy::post_process::bloom::Bloom>();
+        }
+    }
     // The 3D view's post-processing survives the next camera's MSAA
     // resolve only through a writeback.
-    let writeback = if 0 < s.sharpen { bevy::camera::MsaaWriteback::Always } else { bevy::camera::MsaaWriteback::Auto };
+    let writeback = if 0 < s.sharpen || s.bloom { bevy::camera::MsaaWriteback::Always } else { bevy::camera::MsaaWriteback::Auto };
     for mut c in &mut after {
         if c.msaa_writeback != writeback {
             c.msaa_writeback = writeback;
@@ -425,6 +449,20 @@ fn apply_graphics(
     }
     *last = Some(now);
 }
+
+/// NATIVE ENHANCEMENT bloom (Settings::bloom): additive, only above full
+/// white (BLOOM_THRESHOLD; NATIVE values chosen by eye).
+fn bloom() -> bevy::post_process::bloom::Bloom {
+    bevy::post_process::bloom::Bloom {
+        intensity: BLOOM_INTENSITY,
+        prefilter: bevy::post_process::bloom::BloomPrefilter { threshold: BLOOM_THRESHOLD, threshold_softness: 0.3 },
+        composite_mode: bevy::post_process::bloom::BloomCompositeMode::Additive,
+        ..bevy::post_process::bloom::Bloom::NATURAL
+    }
+}
+
+const BLOOM_INTENSITY: f32 = 0.25;
+const BLOOM_THRESHOLD: f32 = 1.0;
 
 /// The settings overlay and the frame-rate counter, placed in the PS2
 /// frame's rectangle (window pixels).
@@ -9418,16 +9456,25 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }),
                 ..default()
             });
-            // Of the anti-aliasing plugins only sharpening (Settings::sharpen):
-            // the group's TAA orders itself after bevy_post_process's motion
-            // blur, which this build does not include.
-            let plugins = plugins.disable::<bevy::anti_alias::AntiAliasPlugin>();
+            // Of the anti-aliasing plugins only FXAA (inactive), sharpening
+            // and SMAA, of the post-processing ones only bloom (NATIVE
+            // ENHANCEMENTS; research/enhancements.md "Lighting": their
+            // render systems alone change tied draws of the original
+            // presentation). The group's MSAA writeback is
+            // gdl_client::writeback's.
+            let plugins = plugins.disable::<bevy::anti_alias::AntiAliasPlugin>().disable::<bevy::post_process::PostProcessPlugin>();
             // GDL_NO_GAMEPADS: automated runs (client_driver.py) ignore the
             // machine's physical controllers.
             if std::env::var_os("GDL_NO_GAMEPADS").is_some() { plugins.disable::<bevy::gilrs::GilrsPlugin>() } else { plugins }
         })
         // CAS orders its node after FXAA's (inactive without its component).
-        .add_plugins((bevy::anti_alias::fxaa::FxaaPlugin, bevy::anti_alias::contrast_adaptive_sharpening::CasPlugin, gdl_client::writeback::MsaaWritebackPlugin))
+        .add_plugins((
+            bevy::anti_alias::fxaa::FxaaPlugin,
+            bevy::anti_alias::contrast_adaptive_sharpening::CasPlugin,
+            bevy::anti_alias::smaa::SmaaPlugin,
+            bevy::post_process::bloom::BloomPlugin,
+            gdl_client::writeback::MsaaWritebackPlugin,
+        ))
         .add_plugins(gdl_client::GsMaterialPlugin)
         .init_resource::<Ui>()
         .init_resource::<HudSets>()

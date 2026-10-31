@@ -18,7 +18,7 @@ use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     mesh::{Indices, MeshVertexBufferLayoutRef},
-    pbr::{MaterialPipeline, MaterialPipelineKey},
+    pbr::{MaterialPipeline, MaterialPipelineKey, MeshPipelineKey},
     prelude::*,
     render::render_resource::{
         AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer, BufferDescriptor, BufferUsages,
@@ -206,7 +206,9 @@ pub struct Enhance {
 pub fn write_enhance(queue: &RenderQueue, e: Enhance) {
     let Some(buffer) = POINT_LIGHTS.get() else { return };
     let b = |v: bool| f32::from(u8::from(v));
-    let v = [b(e.sharp), b(e.full_colour), b(e.smooth_lightmaps), if e.sharp { e.lod_bias } else { 0.0 }, b(e.shadows), 0.0, 0.0, 0.0];
+    // DEBUG GDL_DEBUG_AO: gs.wgsl shows the ambient occlusion term alone.
+    let debug_ao = b(std::env::var_os("GDL_DEBUG_AO").is_some());
+    let v = [b(e.sharp), b(e.full_colour), b(e.smooth_lightmaps), if e.sharp { e.lod_bias } else { 0.0 }, b(e.shadows), 0.0, 0.0, debug_ao];
     let bytes: Vec<u8> = v.iter().flat_map(|c| c.to_le_bytes()).collect();
     queue.write_buffer(buffer, MAX_POINT_LIGHTS as u64 * 32, &bytes);
 }
@@ -588,8 +590,10 @@ impl Material for GsMaterial {
         self.alpha_mode
     }
 
+    /// NATIVE ENHANCEMENT ambient occlusion: the 3D camera's depth and
+    /// normal prepass (only while it is on).
     fn enable_prepass() -> bool {
-        false
+        true
     }
 
     /// NATIVE ENHANCEMENT character shadows: casters are chosen per entity
@@ -611,11 +615,37 @@ impl Material for GsMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         let draw = key.bind_group_data;
-        // Prepass and shadow pipelines (NATIVE ENHANCEMENT): depth of both
-        // faces, none of the GS blend and depth states below.
+        // Prepass and shadow pipelines (NATIVE ENHANCEMENT), none of the GS
+        // blend and depth states below. The directional shadow map takes
+        // both faces. The 3D camera's prepass (ambient occlusion) culls as
+        // the main pass and holds only the opaque parts that write depth:
+        // its texture sampling differs from the main pass's level of detail,
+        // so a cut-out's alpha test could keep a texel the main pass rejects
+        // and its depth would hide what lies behind.
         if descriptor.vertex.shader_defs.iter().any(|d| matches!(d, bevy::shader::ShaderDefVal::Bool(n, true) if n == "PREPASS_PIPELINE")) {
-            descriptor.primitive.cull_mode = None;
+            if key.mesh_key.contains(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO) {
+                descriptor.primitive.cull_mode = None;
+                return Ok(());
+            }
+            descriptor.primitive.cull_mode = if draw.cull { cull_face() } else { None };
+            if key.mesh_key.contains(MeshPipelineKey::MAY_DISCARD) || draw.depth_only || draw.lightmap_pass || draw.no_depth_write || draw.depth_always {
+                if let Some(depth) = descriptor.depth_stencil.as_mut() {
+                    depth.depth_write_enabled = false;
+                }
+                if let Some(f) = descriptor.fragment.as_mut() {
+                    for t in f.targets.iter_mut().flatten() {
+                        t.write_mask = ColorWrites::empty();
+                    }
+                }
+            }
             return Ok(());
+        }
+        // Opaque draws (ambient occlusion applies to them only).
+        if key.mesh_key.intersection(MeshPipelineKey::BLEND_RESERVED_BITS) == MeshPipelineKey::BLEND_OPAQUE
+            && !key.mesh_key.contains(MeshPipelineKey::MAY_DISCARD)
+            && let Some(f) = descriptor.fragment.as_mut()
+        {
+            f.shader_defs.push("GS_OPAQUE".into());
         }
         // Object parts keep the VU's front faces; the render root mirrors x,
         // which reverses screen winding (GDL_CULL_FACE=front|back|none

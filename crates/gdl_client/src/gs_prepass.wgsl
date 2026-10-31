@@ -85,7 +85,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 #endif
     var out: FragmentOutput;
 #ifdef NORMAL_PREPASS
-    out.normal = vec4(normalize(in.world_normal) * 0.5 + vec3(0.5), 1.0);
+    // Parts without normals (zero) write the up axis.
+    let n = select(vec3(0.0, 1.0, 0.0), normalize(in.world_normal), 1e-12 < dot(in.world_normal, in.world_normal));
+    out.normal = vec4(n * 0.5 + vec3(0.5), 1.0);
 #endif
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;

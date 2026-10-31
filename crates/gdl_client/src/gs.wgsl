@@ -137,6 +137,8 @@ fn shadow_term(pl: u32, world_position: vec4<f32>, normal: vec3<f32>) -> f32 {
 // What a shadow leaves of an unlit surface's colour (its light is baked
 // in vertex colours and lightmaps; NATIVE value chosen by eye).
 const SHADOW_SHADE: f32 = 0.55;
+// How much of SSAO's occlusion reaches the colour (NATIVE, by eye).
+const AO_STRENGTH: f32 = 1.0;
 
 fn point_lights(pl: u32, n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
     var sum = vec3(0.0);
@@ -352,6 +354,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 #endif
     rgb = rgb * mix(SHADOW_SHADE, 1.0, shadow);
+#ifdef SCREEN_SPACE_AMBIENT_OCCLUSION
+#ifdef GS_OPAQUE
+    // NATIVE ENHANCEMENT ambient occlusion: Bevy's SSAO of the 3D camera's
+    // prepass (opaque parts) shades the opaque draws, light baked or not.
+    let ao = textureLoad(view_bindings::screen_space_ambient_occlusion_texture, vec2<i32>(in.position.xy), 0i).r;
+    rgb = rgb * mix(1.0, ao, AO_STRENGTH);
+    // DEBUG (GDL_DEBUG_AO, enhance2.w 1): the occlusion term alone.
+    if pl_enhance2(pl).w > 0.5 {
+        rgb = vec3(ao);
+    }
+#endif
+#endif
     // Av (0..255) must exceed AREF 1.
     if floor(alpha * 128.0) <= 1.0 {
         discard;
