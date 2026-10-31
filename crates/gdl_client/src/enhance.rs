@@ -483,6 +483,30 @@ mod tests {
     }
 
     #[test]
+    fn anti_aliasing_cycles_through_smaa() {
+        let (mut o, mut s, mut b) = open();
+        s.msaa = 1;
+        s.ambient_occlusion = false;
+        while o.lines(&s, &b).iter().all(|l| !l.starts_with("> Anti-aliasing")) {
+            o.input(Input::Down, &mut s, &mut b);
+        }
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            o.input(Input::Right, &mut s, &mut b);
+            seen.push((s.msaa, s.smaa));
+        }
+        assert_eq!(seen, [(2, false), (4, false), (1, true), (1, false)]);
+        o.input(Input::Left, &mut s, &mut b);
+        assert_eq!((s.msaa, s.smaa), (1, true));
+        assert!(o.lines(&s, &b).iter().any(|l| l == "> Anti-aliasing        SMAA"));
+        // Ambient occlusion shows the SMAA that stands in for MSAA.
+        s.smaa = false;
+        s.msaa = 4;
+        s.ambient_occlusion = true;
+        assert!(o.lines(&s, &b).iter().any(|l| l.ends_with("SMAA (for 4x MSAA: ambient occlusion)")));
+    }
+
+    #[test]
     fn original_presentation_keeps_window_and_keys() {
         let (mut o, mut s, mut b) = open();
         s.widescreen = true;

@@ -40,10 +40,11 @@ A) is real-time filtering and the colour pipeline, no new art. Every
 setting is presentation only and off in the original presentation; the
 overlay's "Graphics..." page (F10 → Graphics...) shows them with a preset
 row: Original (all off), Enhanced (sharp, sharpening 40 %, full colour,
-smooth lightmaps), or Custom. Enhanced is the default (the user's
-choice after the Checkpoint A playtest, 2026-10-30, sharpening 40 %
-included); settings files without the graphics fields, such as 1.0's,
-take it too.
+smooth lightmaps; since 2026-10-31 also the lighting effects of
+"Lighting" below, until the Checkpoint C playtest decides), or Custom.
+Enhanced is the default (the user's choice after the Checkpoint A
+playtest, 2026-10-30, sharpening 40 % included); settings files without
+the graphics fields, such as 1.0's, take it too.
 
 - Sharp texture filtering (gdl_client::texfilter). The GS samples a
   record's level 0 bilinearly, or for records with mips the level
@@ -268,8 +269,10 @@ decides) and off in the original presentation.
   Original"). One shadow-casting Bevy DirectionalLight along the level's
   light (LEVL +0xf0, as present_scene_light: every level's record holds
   (−1, −6, 2), 70° above the horizon, except B6's 45°; gdl_tools
-  levl-list prints it), only while a level plays; two cascades to 60 and
-  200 units (NATIVE values). Casters: the opaque and cut-out meshes under
+  levl-list prints it), only while a level plays; one cascade to 120
+  units (NATIVE value; a second cascade cost about 0.5 ms of render-thread
+  time a frame and looked the same, frozen-p4-opt1 against frozen-p4-all2).
+  Casters: the opaque and cut-out meshes under
   a player's body, an enemy or item slot or a critter (G1: about 2,600 of
   5,000 meshes, mostly the barrels' parts); every other mesh is marked
   NotShadowCaster (only while shadows are on: the marker changes entity
@@ -305,7 +308,8 @@ decides) and off in the original presentation.
   SMAA on the 3D view. Polygon edges as smooth as 4× MSAA in G1; cut-out
   edges (the spearmen's tridents) slightly more stepped.
 - Bloom (Settings::bloom): Bevy's bloom on the 3D view, additive,
-  intensity 0.25, prefilter threshold 1.0 (softness 0.3; NATIVE values by
+  intensity 0.25, prefilter threshold 1.0 (softness 0.3), mip chain from
+  256 (Bevy's default 512: the same look, fewer passes; NATIVE values by
   eye). The frame holds GS display values that only DisplayToLinear clamps,
   so stacked additive layers exceed 1 and only they bloom: the Tower's
   crystals and brazier gain halos; C2 and G1's means are unchanged
@@ -339,6 +343,49 @@ decides) and off in the original presentation.
   flame's brightness. Their material now has light_dir.w −1 (no VU1
   lighting). The frozen original-presentation scenes have no point lights
   and stay identical to 1.0 (frozen-base-p4b).
+
+Checks (RX 580, 2026-10-31; binary private/runs/gfx-ref/gdl_play-p4d,
+SHA-256 in the perf reports). Frame times, mean / p99 ms, 1920×1080
+fullscreen widescreen, uncapped, motion blending on, 900 updates
+(perf_bench.py gfx-p4d-*; each row adds one effect to Checkpoint A):
+
+| Settings | Tower | G1 walk | C2 | J5 | H4 |
+| --- | --- | --- | --- | --- | --- |
+| Checkpoint A | 10.51 / 15.35 | 8.93 / 12.51 | 10.08 / 14.93 | 8.60 / 14.16 | 8.23 / 12.49 |
+| + dynamic lights, torch light | 10.46 / 15.31 | 8.90 / 12.45 | 9.97 / 13.89 | 8.56 / 14.17 | 8.49 / 12.70 |
+| + character shadows | 10.96 / 16.01 | 9.62 / 13.41 | 10.96 / 18.14 | 9.02 / 15.11 | 8.82 / 13.34 |
+| + ambient occlusion (SMAA) | 11.05 / 16.79 | 9.29 / 13.44 | 10.65 / 17.96 | 9.39 / 15.14 | 9.35 / 13.72 |
+| + bloom | 10.65 / 15.81 | 9.14 / 13.25 | 10.33 / 15.33 | 9.11 / 14.91 | 8.98 / 13.55 |
+| everything (the new Enhanced) | 11.70 / 17.73 | 10.05 / 14.24 | 11.85 / 20.13 | 10.00 / 15.98 | 9.88 / 14.39 |
+
+The plan's target (p99 ≤ 16.7 ms with everything on) holds in G1, J5 and
+H4, not in the Tower (2.8 % of frames over 16.7 ms) and C2 (8 %). The cost
+is render-thread CPU, not the GPU: 1280×720 takes the same time
+(gfx-p4x-a720 / all720). A Chrome trace of C2 (profile feature,
+private/runs/prof-p4) puts it in Bevy's per-view work: shadow caster
+visibility 0.64 ms a frame, encoding the shadow cascades 1.1 ms (two
+cascades, since cut to one), the depth/normal prepass 0.6 ms, bloom 0.6
+ms (mip chain since halved), the shadow and prepass queue and
+specialisation systems about 0.7 ms; frames that carry a simulation update
+pay most (C2: 12.3 → 16.0 ms mean). SSAO's quality level made no
+difference. Run-to-run spread of p99 is large (the Tower's everything-on
+p99 25.3 ms and 18.9 ms in two runs of the same build).
+
+Simulation: 600 G1 updates with every enhancement on have the same
+per-update hashes as Checkpoint A and the 1.0 build
+(private/runs/gfx-simhash-p4d); the Windows build (x86_64-pc-windows-gnu,
+pinned 1.93.1) under Wine on the RX 580 gives the same 600 hashes
+(private/runs/gfx-wine-p4d). The 146 reference-trace replays
+(tools/regress.sh r91) equal r90. Unit tests: settings (presets, MSAA/SMAA
+under ambient occlusion), overlay (rows, the anti-aliasing cycle), torch
+clustering and flicker range. GUI: title_start_check gfx-p4e 6/6 and,
+with everything on through the attract sequence to the overlay,
+gfx-p4e-enh-overlay 2/2 (the overlay shows "SMAA (for 4x MSAA: ambient
+occlusion)"); the first run (gfx-p4d) caught a startup panic —
+present_shadow_light took Res<Sim>, absent before the title's Start —
+fixed by gdl_play-p4e, which differs from p4d only there. Menu flows
+(software renderer, default = Enhanced settings) menu-flows-gfx-p4e:
+23/23 pass.
 
 ## Settings overlay and keys
 
@@ -430,7 +477,10 @@ since 2026-10-28 (rendering.md).
 Bevy gives every camera 4× MSAA by default; every native render before
 2026-10-28 used it. It is now the `msaa` setting (all window cameras),
 default 4; the baseline renders without (the GS has none): in G1's frozen
-frame 0.8 % of the pixels — edges — differ between 1× and 4×.
+frame 0.8 % of the pixels — edges — differ between 1× and 4×. Since
+2026-10-31 the row also offers SMAA (`smaa`), and ambient occlusion
+replaces a chosen MSAA by SMAA (Settings::msaa_in_use / smaa_in_use;
+"Lighting").
 
 The overlay's camera (order 3, after the HUD camera's DisplayToLinear)
 clears the target's textures to transparent and is composited onto the
@@ -550,6 +600,11 @@ trace). See performance.md.
 | Graphics: every enhancement on, 600 G1 updates | simulation hashes equal to the original presentation and 1.0 | gfx-simhash-p1j |
 | Graphics: frame time, 1920×1080, MSAA 4 | Enhanced within run-to-run spread of the current settings | perf-bench-gfx-p1j-cur / -enh |
 | Graphics: reference-trace replays (146) | all equal to r88 | tools/regress.sh r89 |
+| Lighting (2026-10-31): original presentation | identical to 1.0 in the Tower, J5, C2; G1 (spear tie order) and H4 (flame particles) differ once Bevy's SMAA and bloom plugins are built in, reproduced by two empty render systems ("Lighting") | frozen-base-p4d, frozen-bis-* |
+| Lighting: every effect on, 600 G1 updates | simulation hashes equal to Checkpoint A and 1.0; Windows build under Wine the same | gfx-simhash-p4d, gfx-wine-p4d |
+| Lighting: frame time, 1920×1080 | everything on: mean 9.9–11.9 ms, p99 14.2–20.1 ms (Tower, C2 over 16.7) | perf-bench-gfx-p4d-* |
+| Lighting: reference-trace replays (146) | all equal to r90 | tools/regress.sh r91 |
+| Lighting: GUI | title_start_check 6/6, with everything on to the overlay 2/2; menu flows 23/23 | title-start-gfx-p4e*, menu-flows-gfx-p4e |
 
 Not provided: a render scale (the 3D renders at the window's own
 resolution — 1920×1080, 2560×1440 or 4K are native high resolutions),

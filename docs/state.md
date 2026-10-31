@@ -685,6 +685,23 @@ original (PCSX2 reference on Xvfb :191, private captures):
    everything except glows / fire / magic effects and skies / backdrops,
    which stay original. Next: lighting (Checkpoint C), then the HD
    texture generator.
+   2026-10-31 (lighting, plan steps 11–14; research/enhancements.md
+   "Lighting"): up to 32 dynamic lights in view; torch light at every
+   world fire (fires listed from data by gdl_tools world-psys); shadow-
+   mapped character shadows on the world (blob shadows hidden);
+   screen-space ambient occlusion on opaque draws (SMAA replaces MSAA
+   under it; SMAA also a choice); bloom above full white. All part of
+   Enhanced until the user's Checkpoint C playtest. Fidelity fix: psys
+   sprites no longer take point lights (pbBlit, not VU1). Checks on the
+   RX 580: simulation hashes unchanged with everything on (Linux and the
+   Windows build under Wine), 146 replays equal, title_start_check 6/6 and
+   2/2 with everything on (it caught a startup panic: a new system needed
+   the game's Sim resource at the title — fixed before handover).
+   Frame time with everything on: p99 within 16.7 ms in G1, J5, H4, not in
+   the Tower (17.7) and C2 (20.1) — render-thread CPU. The original
+   presentation stays identical to 1.0 in three of five frozen scenes; the
+   other two change with any added render-world system (open question for
+   the user). Viewer: private/runs/checkpoint-c/index.html (local only).
 
 ---
 

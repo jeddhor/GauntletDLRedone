@@ -457,6 +457,8 @@ fn bloom() -> bevy::post_process::bloom::Bloom {
         intensity: BLOOM_INTENSITY,
         prefilter: bevy::post_process::bloom::BloomPrefilter { threshold: BLOOM_THRESHOLD, threshold_softness: 0.3 },
         composite_mode: bevy::post_process::bloom::BloomCompositeMode::Additive,
+        // Half Bevy's default chain (512): the same look, fewer passes.
+        max_mip_dimension: 256,
         ..bevy::post_process::bloom::Bloom::NATURAL
     }
 }
@@ -2251,16 +2253,16 @@ fn present_shadow_light(
     mut commands: Commands,
     settings: Res<gdl_client::settings::Settings>,
     screen: Res<Screen>,
-    sim: Res<Sim>,
+    sim: Option<Res<Sim>>,
     mut lights: Query<(Entity, &mut Transform), With<ShadowLight>>,
 ) {
-    let g = &sim.game;
-    if !settings.shadows || *screen != Screen::Playing || g.level.len() < 0x10c {
+    // No game before the title's Start (the Sim resource comes with it).
+    let Some(g) = sim.as_ref().map(|s| &s.game).filter(|g| settings.shadows && *screen == Screen::Playing && 0x10c <= g.level.len()) else {
         for (e, _) in &lights {
             commands.entity(e).despawn();
         }
         return;
-    }
+    };
     let dir = Vec3::new(g.level_f32(0xf0), g.level_f32(0xf4), g.level_f32(0xf8));
     let towards = if dir.length() > 0.0 { -dir.normalize() * MIRROR } else { Vec3::Y };
     let tf = Transform::IDENTITY.looking_to(-towards, if towards.y.abs() < 0.99 { Vec3::Y } else { Vec3::Z });
@@ -2270,15 +2272,15 @@ fn present_shadow_light(
         }
         return;
     }
-    // Cascades over the view (NATIVE values: the camera follows the
-    // players a few dozen units away; the second cascade covers the far
-    // part of the playfield).
-    let cascades = bevy::light::CascadeShadowConfigBuilder { num_cascades: 2, minimum_distance: 1.0, first_cascade_far_bound: SHADOW_NEAR_CASCADE, maximum_distance: SHADOW_DISTANCE, overlap_proportion: 0.2 }.build();
+    // One cascade over the view to SHADOW_DISTANCE (NATIVE values: the
+    // camera follows the players a few dozen units away; a second cascade
+    // cost about 0.5 ms of render-thread time a frame on the RX 580's
+    // machine and looked the same, perf-bench gfx-p4x-opt1/2).
+    let cascades = bevy::light::CascadeShadowConfigBuilder { num_cascades: 1, minimum_distance: 1.0, maximum_distance: SHADOW_DISTANCE, ..default() }.build();
     commands.spawn((DirectionalLight { shadows_enabled: true, ..default() }, tf, cascades, ShadowLight, LevelEntity));
 }
 
-const SHADOW_NEAR_CASCADE: f32 = 60.0;
-const SHADOW_DISTANCE: f32 = 200.0;
+const SHADOW_DISTANCE: f32 = 120.0;
 
 /// Character shadows' casters: the opaque and cut-out meshes under a
 /// player's body, an enemy or item slot or a critter; every other mesh is
