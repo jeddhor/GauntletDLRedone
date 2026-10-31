@@ -367,10 +367,26 @@ decides) and off in the original presentation.
   follows the frame in which the updates land, a real-time effect (a
   later run, frozen-base-aofix2, has H4 identical to 1.0 again with the
   same render schedule). Neither is a change in what the original presentation draws; the
-  1.0-identity gate is sensitive to Bevy's render schedule. The user
-  decides at Checkpoint C between a new gate (scene dumps and the
-  remaining scenes) and hand-written SMAA and bloom passes without render
-  systems.
+  1.0-identity gate is sensitive to Bevy's render schedule. The user's
+  decision (2026-10-31): keep Bevy's SMAA and bloom and change the gate
+  (no hand-written passes). tools/python/baseline_gate.py captures the
+  original presentation's frozen frames with scene dumps at the shots and
+  judges each level against the 1.0 build: identical pixels; or "draw
+  order" — pixels differ but the scene dump equals 1.0's (every drawn
+  mesh, transform, texture and material parameter), G1's tie; or
+  "particles" — only particle sprites differ, the level is captured again
+  (up to twice) and must then be identical or draw order; anything else
+  fails. Reference: frozen-base-ref's frames and frozen-dump-ref's dumps
+  from the 1.0 binary (gdl_play-d100e5f; its H4 taken from a run whose
+  frames equal frozen-base-ref: the 1.0 binary itself landed in the other
+  particle state in one of two runs, 31,981 pixels, kept as
+  H4-otherstate). Dumps compare after mapping the current format to 1.0's
+  (the image fields added later — mip level count, sampler — dropped;
+  psys sprites' light_dir.w −1 read as 0, the fix below). The gate on the
+  current build (gdl_play-aofix3): the Tower, J5, C2, H4 identical, G1
+  draw order (baseline-gate-gate-aofix3); its particle and failure
+  verdicts checked on a synthetic current-format dump in the other H4
+  state (particles) and with one altered material line (different).
 - Fidelity fix found on the way: psys sprites (DrawPsysSub, drawn by
   pbBlit as GS sprites, not by the VU1 programs) took the point lights in
   the port — their meshes carry a +z normal, so a light in front doubled a
@@ -636,6 +652,7 @@ trace). See performance.md.
 | Graphics: reference-trace replays (146) | all equal to r88 | tools/regress.sh r89 |
 | Lighting (2026-10-31): original presentation | identical to 1.0 in the Tower, J5, C2; G1 (spear tie order) and H4 (flame particles) differ once Bevy's SMAA and bloom plugins are built in, reproduced by two empty render systems ("Lighting") | frozen-base-p4d, frozen-bis-* |
 | Lighting: every effect on, 600 G1 updates | simulation hashes equal to Checkpoint A and 1.0; Windows build under Wine the same | gfx-simhash-p4d, gfx-wine-p4d |
+| Original presentation gate (2026-10-31, user's decision): frames and scene dumps against 1.0 | the Tower, J5, C2, H4 identical; G1 draw order (dump equal) | tools/python/baseline_gate.py, baseline-gate-gate-aofix3 |
 | Lighting: frame time, 1920×1080 | everything on: mean 9.9–11.9 ms, p99 14.2–20.1 ms (Tower, C2 over 16.7) | perf-bench-gfx-p4d-* |
 | Lighting: reference-trace replays (146) | all equal to r90 | tools/regress.sh r91 |
 | Lighting: GUI | title_start_check 6/6, with everything on to the overlay 2/2; menu flows 23/23 | title-start-gfx-p4e*, menu-flows-gfx-p4e |

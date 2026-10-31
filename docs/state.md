@@ -711,7 +711,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    applied to the light-baked world only (research/enhancements.md
    "Lighting"); the shadow maps ground the objects. Reproduced and
    checked at the level circle (GDL_DEBUG_TELEPORT; GDL_DEBUG_AO debug
-   views 1–5).
+   views 1–5). The user's call on the 1.0 gate: keep Bevy's SMAA and bloom;
+   the original presentation is now gated by tools/python/baseline_gate.py
+   (pixels against 1.0, else an equal scene dump — G1's spear tie — with
+   particle-only differences re-captured: the 1.0 binary itself flips H4).
+   Current build: pass. Next: the HD texture generator (plan steps 8–10).
 
 ---
 
