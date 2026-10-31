@@ -7,6 +7,9 @@
 // computed in GS (display) space and converted for the sRGB target.
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
+#import bevy_pbr::mesh_view_bindings as view_bindings
+#import bevy_pbr::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT
+#import bevy_pbr::shadows::fetch_directional_shadow
 #ifdef BINDLESS
 #import bevy_pbr::mesh_bindings::mesh
 #import bevy_render::bindless::{bindless_samplers_filtering, bindless_textures_2d}
@@ -40,7 +43,8 @@ struct GsParams {
 // them), then the NATIVE ENHANCEMENT switches (lib.rs write_enhance; all 0
 // is the original presentation): x sharp texture filtering (texfilter.rs),
 // y full colour precision, z smooth lightmaps, w the sharp filter's
-// level-of-detail bias; enhance2 reserved (0).
+// level-of-detail bias; enhance2: x character shadows (gdl_play's
+// shadow-casting directional light, the first).
 struct PointLights {
     pos: array<vec4<f32>, 32>,
     col: array<vec4<f32>, 32>,
@@ -107,6 +111,32 @@ fn pl_enhance(pl: u32) -> vec4<f32> {
     return plights.enhance;
 #endif
 }
+
+fn pl_enhance2(pl: u32) -> vec4<f32> {
+#ifdef BINDLESS
+    return plights_array[pl].enhance2;
+#else
+    return plights.enhance2;
+#endif
+}
+
+// NATIVE ENHANCEMENT character shadows: 1 lit, 0 in the shadow of a
+// caster (players, enemies, items, critters) from Bevy's cascaded map of
+// gdl_play's directional light along the level's light direction.
+fn shadow_term(pl: u32, world_position: vec4<f32>, normal: vec3<f32>) -> f32 {
+    if pl_enhance2(pl).x < 0.5 || view_bindings::lights.n_directional_lights == 0u {
+        return 1.0;
+    }
+    if (view_bindings::lights.directional_lights[0].flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u {
+        return 1.0;
+    }
+    let view_z = dot(vec4(view.view_from_world[0].z, view.view_from_world[1].z, view.view_from_world[2].z, view.view_from_world[3].z), world_position);
+    return fetch_directional_shadow(0u, world_position, normal, view_z);
+}
+
+// What a shadow leaves of an unlit surface's colour (its light is baked
+// in vertex colours and lightmaps; NATIVE value chosen by eye).
+const SHADOW_SHADE: f32 = 0.55;
 
 fn point_lights(pl: u32, n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
     var sum = vec3(0.0);
@@ -203,6 +233,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef VERTEX_COLORS
     rgb = rgb * in.color.rgb;
     alpha = alpha * in.color.a;
+#endif
+    // Character shadows fall on the unlit parts — the world, whose light is
+    // baked — shaded at the end (not psys sprites, additive draws or the
+    // lightmap pass on its own). Lit parts (characters, items) keep their
+    // VU1 lighting: under the levels' steep light their own heads and arms
+    // darkened them (frozen-p4-shadows2).
+    var shadow = 1.0;
+#ifndef ADDITIVE
+    if abs(params.light_dir.w) < 0.5 {
+        shadow = shadow_term(pl, in.world_position, normalize(in.world_normal));
+    }
 #endif
     if params.light_dir.w > 0.5 {
         let n = normalize(in.world_normal);
@@ -310,6 +351,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 #endif
+    rgb = rgb * mix(SHADOW_SHADE, 1.0, shadow);
     // Av (0..255) must exceed AREF 1.
     if floor(alpha * 128.0) <= 1.0 {
         discard;

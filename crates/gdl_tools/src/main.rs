@@ -1113,7 +1113,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             // +0x9c: the level's target player level (DamageItem's and
             // the enemy damage's level scaling).
             let target = l.raw.get(0x9c..0xa0).map(|b| f32::from_le_bytes(b.try_into().unwrap_or([0; 4])));
-            println!("{k} {} movie {:?} flags00 {:#x} flags04 {:#x} cams {} attract_cam {:?} boss {:#x} target {:?}", l.code, m, l.flags_00, l.word_04, l.camera_index, cam, l.boss_type, target);
+            // +0xf0 the light direction, +0xfc colour, +0x108 intensity
+            // (DoLighting; gdl_play present_scene_light).
+            let f = |o: usize| l.raw.get(o..o + 4).map_or(f32::NAN, |b| f32::from_le_bytes(b.try_into().unwrap()));
+            let light = [f(0xf0), f(0xf4), f(0xf8), f(0xfc), f(0x100), f(0x104), f(0x108)];
+            println!("{k} {} movie {:?} flags00 {:#x} flags04 {:#x} cams {} attract_cam {:?} boss {:#x} target {:?} light {light:?}", l.code, m, l.flags_00, l.word_04, l.camera_index, cam, l.boss_type, target);
         }
         return Ok(());
     }

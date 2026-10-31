@@ -386,7 +386,7 @@ fn apply_graphics(
     let sharp = s.texture_filter == gdl_client::settings::TextureFilter::Sharp;
     // TEST switch GDL_SHARP_BIAS: the sharp filter's LOD bias (experiments).
     let lod_bias = std::env::var("GDL_SHARP_BIAS").ok().and_then(|v| v.parse().ok()).unwrap_or(gdl_client::texfilter::LOD_BIAS);
-    let enhance = gdl_client::Enhance { sharp, full_colour: s.full_colour, smooth_lightmaps: s.smooth_lightmaps, lod_bias };
+    let enhance = gdl_client::Enhance { sharp, full_colour: s.full_colour, smooth_lightmaps: s.smooth_lightmaps, lod_bias, shadows: s.shadows };
     let now = (sharp, s.sharpen, enhance);
     // Before the first change everything is the original presentation.
     let was = last.unwrap_or((false, 0, gdl_client::Enhance::default()));
@@ -1340,15 +1340,18 @@ fn present_critter_shadows(
     libs: Res<Libraries>,
     root: Query<Entity, With<MirrorRoot>>,
     mut shadows: Query<(Entity, &CritterShadow, &mut Transform, &mut Visibility)>,
+    settings: Res<gdl_client::settings::Settings>,
 ) {
     let g = &sim.game;
     let mut have = std::collections::HashSet::new();
+    // NATIVE ENHANCEMENT character shadows replace the blob shadows.
+    let shown = if settings.shadows { Visibility::Hidden } else { Visibility::Inherited };
     for (e, cs, mut tf, mut vis) in &mut shadows {
         match g.critters.get(cs.0).and_then(Option::as_ref).and_then(|c| c.shadow) {
             Some((_, at)) => {
                 tf.translation = Vec3::from_array(at);
-                if *vis != Visibility::Inherited {
-                    *vis = Visibility::Inherited;
+                if *vis != shown {
+                    *vis = shown;
                 }
                 have.insert(cs.0);
             }
@@ -1367,7 +1370,7 @@ fn present_critter_shadows(
         let lib_name = session.levels.get(session.current).and_then(|l| l.critters.get(c.ty.0)).and_then(|x| x.2.clone()).unwrap_or(prefix);
         let label = format!("SHADOW{n}L1");
         let Some(parts) = libs.0.get(&lib_name).and_then(|l| l.by_label.get(&label)) else { continue };
-        let e = commands.spawn((CritterShadow(i), Transform::from_translation(Vec3::from_array(at)), Visibility::Inherited, LevelEntity)).id();
+        let e = commands.spawn((CritterShadow(i), Transform::from_translation(Vec3::from_array(at)), shown, LevelEntity)).id();
         commands.entity(r).add_child(e);
         for (mesh, material) in parts {
             let ch = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
@@ -2197,6 +2200,90 @@ fn torch_lights(fires: &[(Vec3, Vec3)]) -> Vec<Torch> {
             Torch { position: (p + Vec3::Y) * MIRROR, colour: c, phase }
         })
         .collect()
+}
+
+/// NATIVE ENHANCEMENT character shadows (Settings::shadows;
+/// research/enhancements.md "Lighting"): Bevy's cascaded shadow map of one
+/// directional light along the level's light (LEVL +0xf0, as
+/// present_scene_light), sampled by gs.wgsl. Only while a level plays.
+#[derive(Component)]
+struct ShadowLight;
+
+fn present_shadow_light(
+    mut commands: Commands,
+    settings: Res<gdl_client::settings::Settings>,
+    screen: Res<Screen>,
+    sim: Res<Sim>,
+    mut lights: Query<(Entity, &mut Transform), With<ShadowLight>>,
+) {
+    let g = &sim.game;
+    if !settings.shadows || *screen != Screen::Playing || g.level.len() < 0x10c {
+        for (e, _) in &lights {
+            commands.entity(e).despawn();
+        }
+        return;
+    }
+    let dir = Vec3::new(g.level_f32(0xf0), g.level_f32(0xf4), g.level_f32(0xf8));
+    let towards = if dir.length() > 0.0 { -dir.normalize() * MIRROR } else { Vec3::Y };
+    let tf = Transform::IDENTITY.looking_to(-towards, if towards.y.abs() < 0.99 { Vec3::Y } else { Vec3::Z });
+    if let Some((_, mut t)) = lights.iter_mut().next() {
+        if *t != tf {
+            *t = tf;
+        }
+        return;
+    }
+    // Cascades over the view (NATIVE values: the camera follows the
+    // players a few dozen units away; the second cascade covers the far
+    // part of the playfield).
+    let cascades = bevy::light::CascadeShadowConfigBuilder { num_cascades: 2, minimum_distance: 1.0, first_cascade_far_bound: SHADOW_NEAR_CASCADE, maximum_distance: SHADOW_DISTANCE, overlap_proportion: 0.2 }.build();
+    commands.spawn((DirectionalLight { shadows_enabled: true, ..default() }, tf, cascades, ShadowLight, LevelEntity));
+}
+
+const SHADOW_NEAR_CASCADE: f32 = 60.0;
+const SHADOW_DISTANCE: f32 = 200.0;
+
+/// Character shadows' casters: the opaque and cut-out meshes under a
+/// player's body, an enemy or item slot or a critter; every other mesh is
+/// NotShadowCaster. Runs only with shadows on (the marker changes entity
+/// archetypes, and with them the order of tied draws): all meshes once,
+/// then those whose material changed.
+fn mark_shadow_casters(
+    mut commands: Commands,
+    settings: Res<gdl_client::settings::Settings>,
+    mut scanned: Local<bool>,
+    changed: Query<(Entity, &MeshMaterial3d<gdl_client::GsMaterial>, Has<bevy::light::NotShadowCaster>), Changed<MeshMaterial3d<gdl_client::GsMaterial>>>,
+    all: Query<(Entity, &MeshMaterial3d<gdl_client::GsMaterial>, Has<bevy::light::NotShadowCaster>)>,
+    parents: Query<&ChildOf>,
+    roots: Query<(Has<CharacterRoot>, Has<CritterSlot>, Option<&Slot>)>,
+    materials: Res<Assets<gdl_client::GsMaterial>>,
+) {
+    if !settings.shadows {
+        *scanned = false;
+        return;
+    }
+    let mut mark = |(e, m, not): (Entity, &MeshMaterial3d<gdl_client::GsMaterial>, bool)| {
+        let solid = materials.get(&m.0).is_some_and(|m| {
+            matches!(m.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_)) && !m.draw.additive && !m.draw.lightmap_pass && !m.draw.depth_only && -0.5 < m.params.light_dir.w
+        });
+        let caster = solid
+            && parents.iter_ancestors(e).any(|a| roots.get(a).is_ok_and(|(body, critter, slot)| body || critter || slot.is_some_and(|s| s.kind != SlotKind::Effect)));
+        if caster && not {
+            commands.entity(e).remove::<bevy::light::NotShadowCaster>();
+        } else if !caster && !not {
+            commands.entity(e).insert(bevy::light::NotShadowCaster);
+        }
+    };
+    if *scanned {
+        changed.iter().for_each(&mut mark);
+    } else {
+        all.iter().for_each(&mut mark);
+        *scanned = true;
+    }
+    // DEBUG GDL_DEBUG_SHADOWS: the caster count after changes.
+    if std::env::var_os("GDL_DEBUG_SHADOWS").is_some() && !changed.is_empty() {
+        let casters = all.iter().filter(|x| !x.2).count();
+        eprintln!("shadow casters: {} changed, {casters} of {} without NotShadowCaster (before this run's commands)", changed.iter().count(), all.iter().count());
+    }
 }
 
 /// pbTraverseDrawObjects: MB flag 2 skips a node and its subtree, flag 1
@@ -4152,12 +4239,21 @@ fn test_players(
 /// higher of floor (+0x88c) and water (+0x8a4) heights + 0.1; above water
 /// MBTreeSetAltTex(−2, TextureSplash = POWERUPS "SPLASH", InitEffects)
 /// replaces its texture.
-fn present_player_shadow(sim: Res<Sim>, libs: Res<Libraries>, mut req: ResMut<MatRequests>, mut q: Query<(&PlayerShadow, &mut Transform, &mut Visibility, &Children)>) {
+fn present_player_shadow(
+    sim: Res<Sim>,
+    libs: Res<Libraries>,
+    settings: Res<gdl_client::settings::Settings>,
+    mut req: ResMut<MatRequests>,
+    mut q: Query<(&PlayerShadow, &mut Transform, &mut Visibility, &Children)>,
+) {
     let active: [bool; 4] = std::array::from_fn(|k| k == 0 || (1 << k) & sim.game.globals.active_players != 0);
     let splash = libs.0.get("POWERUPS").and_then(|l| l.textures.get("SPLASH")).cloned();
     for (s, mut tf, mut vis, kids) in &mut q {
         let r = &sim.game.players[s.0];
-        if !active[s.0] || matches!(r.i32_(0xfc), 0 | 5 | 0xb) {
+        let in_water = r.f32_(0x88c) < r.f32_(0x8a4);
+        // NATIVE ENHANCEMENT character shadows replace the blob shadow (not
+        // the water splash ring that takes its place in water).
+        if !active[s.0] || matches!(r.i32_(0xfc), 0 | 5 | 0xb) || (settings.shadows && !in_water) {
             *vis = Visibility::Hidden;
             continue;
         }
@@ -9340,7 +9436,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(Startup, (setup_static, setup_menu_icon, setup_overlay).chain())
         .insert_resource(TestHarness::from_env())
         .add_systems(Last, (frame_limiter, ui_trace, frame_log, diagnostic_shots, diagnostic_scene_dump))
-        .add_systems(PostUpdate, interpolate_transforms.before(bevy::transform::TransformSystems::Propagate))
+        .add_systems(PostUpdate, (interpolate_transforms.before(bevy::transform::TransformSystems::Propagate), mark_shadow_casters, present_shadow_light))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
             Update,

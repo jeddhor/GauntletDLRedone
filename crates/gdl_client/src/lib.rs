@@ -128,6 +128,7 @@ pub struct GsMaterialPlugin;
 impl Plugin for GsMaterialPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "gs.wgsl");
+        bevy::asset::embedded_asset!(app, "gs_prepass.wgsl");
         bevy::asset::embedded_asset!(app, "blit.wgsl");
         bevy::asset::embedded_asset!(app, "display_to_linear.wgsl");
         app.add_plugins(bevy::core_pipeline::fullscreen_material::FullscreenMaterialPlugin::<DisplayToLinear>::default());
@@ -188,9 +189,9 @@ pub fn write_point_lights(queue: &RenderQueue, lights: &[(Vec4, Vec4)]) {
     queue.write_buffer(buffer, 0, &bytes);
 }
 
-/// The shader's enhancement switches (gs.wgsl PointLights.enhance; 0 off):
-/// sharp texture filtering, full colour precision, smooth lightmaps, the
-/// sharp filter's level-of-detail bias.
+/// The shader's enhancement switches (gs.wgsl PointLights.enhance and
+/// enhance2; 0 off): sharp texture filtering, full colour precision, smooth
+/// lightmaps, the sharp filter's level-of-detail bias; character shadows.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Enhance {
     pub sharp: bool,
@@ -198,12 +199,14 @@ pub struct Enhance {
     pub smooth_lightmaps: bool,
     /// The sharp filter's level-of-detail bias (0 otherwise).
     pub lod_bias: f32,
+    pub shadows: bool,
 }
 
 /// Write the enhancement switches after the point lights.
 pub fn write_enhance(queue: &RenderQueue, e: Enhance) {
     let Some(buffer) = POINT_LIGHTS.get() else { return };
-    let v = [f32::from(u8::from(e.sharp)), f32::from(u8::from(e.full_colour)), f32::from(u8::from(e.smooth_lightmaps)), if e.sharp { e.lod_bias } else { 0.0 }];
+    let b = |v: bool| f32::from(u8::from(v));
+    let v = [b(e.sharp), b(e.full_colour), b(e.smooth_lightmaps), if e.sharp { e.lod_bias } else { 0.0 }, b(e.shadows), 0.0, 0.0, 0.0];
     let bytes: Vec<u8> = v.iter().flat_map(|c| c.to_le_bytes()).collect();
     queue.write_buffer(buffer, MAX_POINT_LIGHTS as u64 * 32, &bytes);
 }
@@ -589,8 +592,16 @@ impl Material for GsMaterial {
         false
     }
 
+    /// NATIVE ENHANCEMENT character shadows: casters are chosen per entity
+    /// (gdl_play marks the rest NotShadowCaster); without a shadow-casting
+    /// light no shadow pass runs.
     fn enable_shadows() -> bool {
-        false
+        true
+    }
+
+    /// Depth with the GS alpha test, and normals (gs_prepass.wgsl).
+    fn prepass_fragment_shader() -> ShaderRef {
+        "embedded://gdl_client/gs_prepass.wgsl".into()
     }
 
     fn specialize(
@@ -600,6 +611,12 @@ impl Material for GsMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         let draw = key.bind_group_data;
+        // Prepass and shadow pipelines (NATIVE ENHANCEMENT): depth of both
+        // faces, none of the GS blend and depth states below.
+        if descriptor.vertex.shader_defs.iter().any(|d| matches!(d, bevy::shader::ShaderDefVal::Bool(n, true) if n == "PREPASS_PIPELINE")) {
+            descriptor.primitive.cull_mode = None;
+            return Ok(());
+        }
         // Object parts keep the VU's front faces; the render root mirrors x,
         // which reverses screen winding (GDL_CULL_FACE=front|back|none
         // overrides for comparisons).

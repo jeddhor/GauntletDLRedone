@@ -264,6 +264,29 @@ decides) and off in the original presentation.
   The effect is a warm glow on floors, walls and characters near fires
   (frozen-p4-lights2 against frozen-p4-a: the Tower's brazier, H4's
   braziers).
+- Character shadows (Settings::shadows, "Character shadows: Shadow maps /
+  Original"). One shadow-casting Bevy DirectionalLight along the level's
+  light (LEVL +0xf0, as present_scene_light: every level's record holds
+  (−1, −6, 2), 70° above the horizon, except B6's 45°; gdl_tools
+  levl-list prints it), only while a level plays; two cascades to 60 and
+  200 units (NATIVE values). Casters: the opaque and cut-out meshes under
+  a player's body, an enemy or item slot or a critter (G1: about 2,600 of
+  5,000 meshes, mostly the barrels' parts); every other mesh is marked
+  NotShadowCaster (only while shadows are on: the marker changes entity
+  archetypes and with them the order of tied draws). GsMaterial now takes
+  part in Bevy's shadow (and prepass) pipelines with gs_prepass.wgsl,
+  which applies the GS alpha test; its pipeline specialisation leaves
+  prepass pipelines alone except for culling (both faces). The shadow
+  falls on unlit parts — the world, whose light is baked into vertex
+  colours and lightmaps — as a shade to 55 % (NATIVE value chosen by eye;
+  not on psys sprites, additive draws or the separate lightmap pass).
+  Lit parts (characters, items) keep their VU1 lighting: receiving shadows
+  there darkened the enemies under their own heads and arms in the steep
+  light (frozen-p4-shadows2). The blob shadows (player SHADOWL1, critter
+  SHADOW<n>L1) are hidden while shadows are on; the player's water splash
+  ring, which takes the blob's place in water, stays. Frozen frames
+  frozen-p4-shadows3 against frozen-p4-lights-ni (all five scenes, no
+  motion blending: each pair of shots identical).
 - Fidelity fix found on the way: psys sprites (DrawPsysSub, drawn by
   pbBlit as GS sprites, not by the VU1 programs) took the point lights in
   the port — their meshes carry a +z normal, so a light in front doubled a

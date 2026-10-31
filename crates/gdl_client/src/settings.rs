@@ -63,6 +63,9 @@ pub struct Settings {
     /// Flickering point lights at the levels' fires (world particle
     /// emitters with a flame texture).
     pub torch_lights: bool,
+    /// Shadow-mapped character shadows along the level's light (players,
+    /// enemies, items and critters cast; the blob shadows are hidden).
+    pub shadows: bool,
 }
 
 impl Default for Settings {
@@ -90,6 +93,7 @@ impl Default for Settings {
             // playtest decides.
             more_lights: true,
             torch_lights: true,
+            shadows: true,
         }
     }
 }
@@ -148,6 +152,7 @@ impl Settings {
                 smooth_lightmaps: false,
                 more_lights: false,
                 torch_lights: false,
+                shadows: false,
                 ..self.clone()
             },
             Graphics::Enhanced => Self {
@@ -157,6 +162,7 @@ impl Settings {
                 smooth_lightmaps: true,
                 more_lights: true,
                 torch_lights: true,
+                shadows: true,
                 ..self.clone()
             },
             Graphics::Custom => self.clone(),
@@ -240,14 +246,14 @@ mod tests {
         assert_eq!(serde_json::from_str::<Settings>(r#"{"msaa": 2}"#).unwrap().graphics(), Graphics::Enhanced);
         let e = s.with_graphics(Graphics::Original).with_graphics(Graphics::Enhanced);
         assert_eq!(e.graphics(), Graphics::Enhanced);
-        assert!(e.texture_filter == TextureFilter::Sharp && e.full_colour && e.smooth_lightmaps && 0 < e.sharpen && e.more_lights && e.torch_lights);
+        assert!(e.texture_filter == TextureFilter::Sharp && e.full_colour && e.smooth_lightmaps && 0 < e.sharpen && e.more_lights && e.torch_lights && e.shadows);
         let c = Settings { sharpen: 80, ..e.clone() };
         assert_eq!(c.graphics(), Graphics::Custom);
         // The original presentation turns every graphics enhancement off.
         assert_eq!(c.with_baseline_presentation().graphics(), Graphics::Original);
         assert_eq!(Settings::baseline().graphics(), Graphics::Original);
         let b = Settings::baseline();
-        assert!(!b.more_lights && !b.torch_lights);
+        assert!(!b.more_lights && !b.torch_lights && !b.shadows);
         let mut h: Settings = serde_json::from_str(r#"{"texture_filter": "sharp", "sharpen": 250}"#).unwrap();
         h.sanitise();
         assert_eq!((h.texture_filter, h.sharpen), (TextureFilter::Sharp, 100));
