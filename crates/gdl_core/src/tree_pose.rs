@@ -58,34 +58,35 @@ pub fn local_pose_where(anim: &Animations, bytes: &[u8], tree: usize, sequence: 
 /// turn (immediate parent first), then by `root` (the owner's matrix), with an
 /// optional local offset added to the leaf translation first.
 pub fn node_world(tree_parents: &[i32], locals: &[Mat], root: Mat, i: usize, offset: Option<[f32; 3]>) -> Result<Mat, PoseError> {
-    let mut parents = Vec::new();
-    let mut k = usize::try_from(tree_parents[i]).ok();
-    while let Some(p) = k {
-        if 128 < parents.len() {
-            return Err(PoseError("parent chain".into()));
-        }
-        parents.push(MatrixBox { matrix: locals[p], flags: 0 });
-        k = usize::try_from(tree_parents[p]).ok();
-    }
+    let (local, mut parents) = node_chain(tree_parents, locals, i)?;
     parents.push(MatrixBox { matrix: root, flags: 0 });
-    Ok(compose(MatrixBox { matrix: locals[i], flags: 0 }, &mut parents, offset)?.matrix)
+    Ok(compose(local, &mut parents, offset)?.matrix)
 }
 
 /// [`node_world`] with an explicit chain after the tree's ancestors
 /// (immediate first; flag 4 boxes add their translation), for trees whose
 /// root hangs under further MB nodes.
 pub fn node_world_chain(tree_parents: &[i32], locals: &[Mat], roots: &[MatrixBox], i: usize, offset: Option<[f32; 3]>) -> Result<Mat, PoseError> {
+    let (local, mut parents) = node_chain(tree_parents, locals, i)?;
+    parents.extend_from_slice(roots);
+    Ok(compose(local, &mut parents, offset)?.matrix)
+}
+
+/// Node `i`'s local matrix and its ancestors' (immediate parent first); a
+/// node outside the tree is an error, not a panic.
+fn node_chain(tree_parents: &[i32], locals: &[Mat], i: usize) -> Result<(MatrixBox, Vec<MatrixBox>), PoseError> {
+    let node = |k: usize| locals.get(k).copied().zip(tree_parents.get(k).copied()).ok_or_else(|| PoseError(format!("node {k} of {}", tree_parents.len())));
+    let (local, mut parent) = node(i)?;
     let mut parents = Vec::new();
-    let mut k = usize::try_from(tree_parents[i]).ok();
-    while let Some(p) = k {
+    while let Ok(p) = usize::try_from(parent) {
         if 128 < parents.len() {
             return Err(PoseError("parent chain".into()));
         }
-        parents.push(MatrixBox { matrix: locals[p], flags: 0 });
-        k = usize::try_from(tree_parents[p]).ok();
+        let (matrix, next) = node(p)?;
+        parents.push(MatrixBox { matrix, flags: 0 });
+        parent = next;
     }
-    parents.extend_from_slice(roots);
-    Ok(compose(MatrixBox { matrix: locals[i], flags: 0 }, &mut parents, offset)?.matrix)
+    Ok((MatrixBox { matrix: local, flags: 0 }, parents))
 }
 
 #[cfg(test)]
@@ -106,5 +107,15 @@ mod tests {
         assert_eq!(&w[12..15], &[10.0, 1.0, 2.0]);
         let w = node_world(&[-1, 0], &[a, b], root, 1, Some([0.5, 0.0, 0.0])).unwrap();
         assert_eq!(w[12], 10.5);
+    }
+
+    #[test]
+    fn node_outside_the_tree_is_an_error() {
+        // Synthetic: a node, or a parent, past the tree's end (the disc check
+        // is tools/python/critter_slot_check.py).
+        assert!(node_world(&[-1], &[IDENTITY], IDENTITY, 1, None).is_err());
+        assert!(node_world(&[1], &[IDENTITY], IDENTITY, 0, None).is_err());
+        assert!(node_world_chain(&[-1], &[IDENTITY], &[], 1, None).is_err());
+        assert!(node_world_chain(&[1], &[IDENTITY], &[], 0, None).is_err());
     }
 }

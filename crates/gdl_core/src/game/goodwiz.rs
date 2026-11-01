@@ -72,6 +72,16 @@ impl Game {
         self.critter_damage(1.0e6, b, 0, 0, None, None, 0)
     }
 
+    /// DEBUG (headless checks, not a game feature): CritterDamage(1e6) on
+    /// critter instance `i` from player 0 (slot reuse checks). Returns
+    /// CritterDamage's result, -1 for an empty instance.
+    pub fn debug_damage_critter(&mut self, i: usize) -> R<i32> {
+        if !self.critters.get(i).is_some_and(|c| c.is_some()) {
+            return Ok(-1);
+        }
+        self.critter_damage(1.0e6, i, 0, 0, None, None, 0)
+    }
+
     /// StartGoodWizard.
     pub(crate) fn start_good_wizard(&mut self) {
         self.globals.good_wizard = 1;

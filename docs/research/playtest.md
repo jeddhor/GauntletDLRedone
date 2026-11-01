@@ -1849,3 +1849,38 @@ Second report (user, 2026-10-30, after playing Checkpoint A):
   start can come before the freeze), while the simulation is equal (the
   sw9 run, 300 updates, lavapipe: equal per-update state hashes with
   everything on twice and with shadows off).
+
+## Playtest 2026-11-01 (user): crash on meeting a new enemy in G2
+
+The user, in "the second level of the Forsaken Grounds, the Town" (taken as
+G2): the game stopped on meeting an enemy they had not seen, with
+`tree_pose.rs:62:33: index out of bounds: the len is 55 but the index is 56`.
+
+- Cause, in the client only: present_critters despawns a slot's parts through
+  deferred commands when the slot's critter type changes, then posed the same
+  frame's `children`, still the old parts, against the new critter's tree. A
+  critter taking the slot of one with a larger tree indexed past its end.
+  critter_empty_inst reuses the lowest free instance, so killing a statue
+  creature and waking a smaller one does this.
+- The numbers fit G1–G3's critters: GOLEM1 59 nodes, GAR1 and GAR_STATUE 55,
+  GENERAL1 40. Only the golem has a node 56, and its node 55 (JOINT, flag 1)
+  has no part, so LWRJAW (56) is the first golem part past a gargoyle's end.
+- G2's statues (game_run.py --itemdump, +0xf0): gargoyle item 74; golem items
+  91 and 75 (75 has +0xe0 2 and does not wake for one player); generals 77,
+  78, 81, 102. Which creature the user met is inferred from the numbers, not
+  reported.
+- Present since 1aba169 (2026-10-17), so in the 1.0.0 packages. A smaller tree
+  following a larger one crashes in any level with several critter types; golem
+  to gargoyle is the path checked, golem or gargoyle to general are the same code.
+- Fix: a slot respawning its parts skips posing that frame (the new parts were
+  first posed on the next frame already). tree_pose::node_world and
+  node_world_chain report a node outside the tree as an error instead of
+  panicking (unit test; 146 replays r93 equal r92).
+- Reproducer, an actual disc check on the real GPU: tools/python/
+  critter_slot_check.py wakes golem 91, kills it (DEBUG critter_kill), waits
+  for slot 0 to empty and wakes gargoyle 74. Before the fix
+  (critter-slot-nofix2): the user's panic, exit status 101, the golem's 59 nodes
+  in slot 0 before it. After (critter-slot-fix, -fix2): runs to the end, the
+  gargoyle's 55 nodes in slot 0, both creatures drawn whole in the frames. Not
+  compared with reference frames (no original behaviour changes). Its first try
+  used golem 75, which never woke (critter-slot-nofix).

@@ -736,6 +736,13 @@ original (PCSX2 reference on Xvfb :191, private captures):
    the menus' and scrolls' fire burn left a checkered copy of the menu —
    its z masks had taken the upscaled frames, whose holes are not exactly
    transparent; masks now keep the disc's texels (enhancements.md).
+   2026-11-01, user's playtest in G2: a crash on meeting a new enemy (index
+   56 of 55 in tree_pose). A critter taking the slot of one with a larger
+   tree was posed with the old parts for a frame; in the game since
+   2026-10-17, so in 1.0.0. Fixed and reproduced on the disc
+   (critter_slot_check.py, playtest.md "Playtest 2026-11-01"); replays r93
+   equal r92, original presentation gate pass (baseline-gate-gate-slotfix),
+   title_start_check 6/6.
 
 ---
 

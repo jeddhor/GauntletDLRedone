@@ -1210,7 +1210,8 @@ fn present_critters(
             continue;
         };
         let t = &model.0.trees[tree];
-        if slot.shown != Some(cr.ty) || slot.damaged != cr.damaged_nodes.len() {
+        let respawn = slot.shown != Some(cr.ty) || slot.damaged != cr.damaged_nodes.len();
+        if respawn {
             commands.entity(entity).despawn_related::<Children>();
             // The configured model package (golems, gargoyles, generals),
             // else a package named after the tree prefix (bosses).
@@ -1258,6 +1259,12 @@ fn present_critters(
             slot.damaged = cr.damaged_nodes.len();
         }
         *vis = Visibility::Visible;
+        // The despawned parts stay in `children` until the commands apply and
+        // may be another tree's nodes (a gargoyle in a dead golem's slot,
+        // critter_slot_check.py); the new parts are posed from the next frame.
+        if respawn {
+            continue;
+        }
         let r = &cr.rec;
         let mut root = gdl_core::tree_pose::IDENTITY;
         for row in 0..3 {
@@ -3025,7 +3032,8 @@ struct TestHarness {
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
     /// {"at": u, "health": h[, "player": k]} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
-    /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "damage_item": [slot, damage(, flags)]} (DEBUG) |
+    /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "critter_kill": instance} (DEBUG) |
+    /// {"at": u, "damage_item": [slot, damage(, flags)]} (DEBUG) |
     /// {"at": u, "spawn": [type, level, ai(, dx, dz)]} (DEBUG) |
     /// {"at": u, "save": card file} for player 1 |
     /// {"at": u, "settings": {...}}: fields merged into the M19 settings
@@ -5664,6 +5672,13 @@ fn simulate(
             {
                 sim.error = Some(format!("TEST boss_kill: {}", e.0));
             }
+            // {"critter_kill": instance}: DEBUG lethal CritterDamage on any
+            // critter (critter_slot_check.py).
+            if let Some(i) = a["critter_kill"].as_u64()
+                && let Err(e) = sim.game.debug_damage_critter(i as usize)
+            {
+                sim.error = Some(format!("TEST critter_kill: {}", e.0));
+            }
             // {"damage_item": [slot, damage(, flags)]}: DEBUG DamageItem(damage,
             // slot, flags (default 0), player 0), as a hit by player 1
             // (breakable checks; 0x421 is a barrel blast's).
@@ -5724,6 +5739,8 @@ fn simulate(
                     "name": String::from_utf8_lossy(&r.0[0x99c..0x9a4]).trim_end_matches('\0').to_string(),
                     "file": r.i32_(0x2af4), "port": sim.game.controls.joy_remap[k] }) }).collect::<Vec<_>>());
                 d["joy_remap"] = serde_json::json!(sim.game.controls.joy_remap);
+                d["critters"] = serde_json::json!(sim.game.critters.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| serde_json::json!({
+                    "slot": k, "ty": [c.ty.0, c.ty.1], "nodes": c.parents.len() }))).collect::<Vec<_>>());
                 // The client's status line (e.g. "save recovered from …").
                 d["last_event"] = serde_json::Value::from(sim.last_event.clone());
                 let path = out.with_extension(format!("{label}.json"));
