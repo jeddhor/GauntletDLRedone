@@ -357,7 +357,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     rgb = rgb * mix(SHADOW_SHADE, 1.0, shadow);
 #ifdef SCREEN_SPACE_AMBIENT_OCCLUSION
 #ifdef GS_OPAQUE
-    let ao = textureLoad(view_bindings::screen_space_ambient_occlusion_texture, vec2<i32>(in.position.xy), 0i).r;
+    // The occlusion texture covers the viewport (the frame's are the window's
+    // coordinates: the 3D view sits beside black bars in 4:3).
+    let ao = textureLoad(view_bindings::screen_space_ambient_occlusion_texture, vec2<i32>(in.position.xy - view.viewport.xy), 0i).r;
     // NATIVE ENHANCEMENT ambient occlusion: Bevy's SSAO of the 3D camera's
     // prepass shades the light-baked world (opaque parts whose lightmap is
     // folded in), the prepass holding those alone (gs_prepass.wgsl).

@@ -1829,19 +1829,23 @@ Second report (user, 2026-10-30, after playing Checkpoint A):
   checkerboard pattern": the fire burn's z-mask frames were replaced by
   their upscaled versions, whose holes are not exactly transparent; masks
   now keep the disc's texels (enhancements.md "HD textures").
-- Open: the "wireframe echo" by a crate (the user's screenshot: a dark
-  crate, a thin dark outline offset from it on the green-lit floor, a step
-  in the floor's brightness across it). Not reproduced: G1's world crates
-  lie under the upper deck; its shootwall crates in the barn (#06, #09) and
-  the AO term beside #06 show no echo (frozen-sw6-all, -sw9-all,
-  -sw6-aoterm). Smooth lightmaps darken some polygon seams slightly
-  (frozen-echo-all against -echo-nosmooth, C2: 4,548 pixels darker by more
-  than 30 of 765) but nothing like the screenshot's step. Captures with an
-  effect off can differ in their enemies too (sw9 without shadows: HUD
-  health 4987 against 4991), so whole-frame diffs mix both. The simulation
-  is not the cause: the same G1 run (the sw9 teleport and health actions,
-  300 updates, lavapipe) gives equal per-update state hashes with
-  everything on twice and with shadows off. The frame number counts from
-  the process start, and loading takes more or fewer frames by setting,
-  so HYPOTHESIS: these shots were taken before the freeze at update 260. Waiting on the user: where it was, and which Graphics row (ambient
-  occlusion, character shadows, smooth lightmaps, more lights) removes it.
+- The "wireframe echo" (first screenshot: a dark crate with a thin dark
+  outline offset above it on the floor, the floor's brightness stepping
+  across it; second, G1 by a fenced porch: "a wireframe ghost version of
+  the fence" on the floor to its right, and a straight line across the
+  whole view at row ≈ 794 of 1080 below which the floor is 6–10 of 255
+  darker, fading towards the HUD). Ambient occlusion: Bevy 0.18.1's SSAO
+  read the window-sized prepass textures as if they were the 3D
+  viewport's (the rows above the HUD strip), so the occlusion came from a
+  stretched scene — objects' crease shading drawn above them, a band
+  below row 794 (enhancements.md "Lighting", viewport fix). Fixed with
+  corrected copies of its two shaders; the earlier captures by the
+  barn's crates showed it too (frozen-sw6-aoterm: the band and offset
+  halos) but were read as seams. Before that, not reproduced in G1's
+  barn (#06, #09) with each effect off: smooth lightmaps darken some
+  polygon seams slightly (frozen-echo-all against -echo-nosmooth, C2:
+  4,548 pixels darker by more than 30 of 765), and captures with an
+  effect off differ in their enemies too (shots counted from the process
+  start can come before the freeze), while the simulation is equal (the
+  sw9 run, 300 updates, lavapipe: equal per-update state hashes with
+  everything on twice and with shadows off).

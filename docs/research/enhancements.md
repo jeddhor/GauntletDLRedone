@@ -324,6 +324,34 @@ decides) and off in the original presentation.
   frozen-dbg-centre-a). Left: the floor's T-junction cracks (single
   pixels along some polygon edges, where the background shows through in
   the original too) are faint dotted lines in the occlusion.
+  Viewport fix (playtest 2026-10-31, the "wireframe echo"): Bevy 0.18.1's
+  SSAO reads the depth and normal prepasses — textures of the render
+  target's size (bevy_core_pipeline prepare_prepass_textures,
+  physical_target_size) — with coordinates divided by the camera
+  viewport's size from the target's corner (preprocess_depth.wgsl,
+  ssao.wgsl's load_normal_view_space). The 3D view is the window's rows
+  above the HUD strip (926 of 1080 at 1920×1080 widescreen; in 4:3 also
+  188 columns in), so the occlusion came from a scene stretched by
+  1080/926: every crease's shading drawn up the screen from it — a
+  crate's or fence's outline on the floor above it — and below row
+  926 × 926/1080 ≈ 794 the occlusion of what lies under the HUD strip, an
+  even band (term 210/255 against 248, frozen-sw6-aoterm) whose top edge
+  was the screenshot's straight line. gdl_client::GsMaterialPlugin
+  registers corrected copies of the two shaders under Bevy's embedded
+  paths (ssao_preprocess_depth.wgsl, ssao_gtao.wgsl; one change each,
+  marked GDL CHANGE: the viewport's origin added and the prepass texture's
+  own size divided by), after DefaultPlugins and before the SSAO pipelines
+  load them in its finish; gs.wgsl reads the occlusion texture (the
+  viewport's size) at the fragment's position less the viewport's origin.
+  Bloom (its uniforms carry the viewport), SMAA and sharpening (the whole
+  target) were checked and are unaffected. Frozen frames at the barn's
+  shootwall #06 on the RX 580: the term's band gone (248 to the HUD) and
+  its shading at the blocks' feet instead of beside them, in widescreen
+  and 4:3 (frozen-sw6-aoterm-fix, -sw6-aoterm-43); with everything on the
+  mean step across row 794 (rows 770–791 less 800–821) drops from
+  4.5–9.4 to −0.3–6.3 of 255 in five 200-column blocks (the rest is the
+  floor's own texture; the sixth, with the enemies, 20.9 → 17.0;
+  frozen-sw6-all against -sw6-all-fix).
   Result: contact shading in the world's own creases (wall–floor
   junctions, steps, plinths, corners), objects untouched; frame means
   (red, whole frame) without → with it: Tower 28.4 → 27.5, G1 19.6 →
@@ -375,8 +403,11 @@ decides) and off in the original presentation.
   order" — pixels differ but the scene dump equals 1.0's (every drawn
   mesh, transform, texture and material parameter), G1's tie; or
   "particles" — only particle sprites differ, the level is captured again
-  (up to twice) and must then be identical or draw order; anything else
-  fails. Reference: frozen-base-ref's frames and frozen-dump-ref's dumps
+  (up to twice) and must then be identical or draw order; or "fixed" —
+  as draw order but for draws of 1.0 that a fidelity fix since removed
+  (REMOVED_SINCE_1_0, each named by mesh and texture content and reason:
+  the kind-2 items' NULL1 quad, dd03c26); anything else fails
+  (--judge-only re-judges an existing capture). Reference: frozen-base-ref's frames and frozen-dump-ref's dumps
   from the 1.0 binary (gdl_play-d100e5f; its H4 taken from a run whose
   frames equal frozen-base-ref: the 1.0 binary itself landed in the other
   particle state in one of two runs, 31,981 pixels, kept as
@@ -765,6 +796,7 @@ trace). See performance.md.
 | Lighting: frame time, 1920×1080 | everything on: mean 9.9–11.9 ms, p99 14.2–20.1 ms (Tower, C2 over 16.7) | perf-bench-gfx-p4d-* |
 | Lighting: reference-trace replays (146) | all equal to r90 | tools/regress.sh r91 |
 | Lighting: GUI | title_start_check 6/6, with everything on to the overlay 2/2; menu flows 23/23 | title-start-gfx-p4e*, menu-flows-gfx-p4e |
+| Lighting: ambient occlusion on the 3D viewport (playtest 2026-10-31, "wireframe echo") | occlusion term without the bottom band and aligned with the creases, widescreen and 4:3; original presentation gate: Tower, J5, C2, H4 identical, G1 fixed (only the 8 NULL1 quads removed, spear tie pixels); client tests 37 + 1, clippy clean; title_start_check 6/6 with everything on and HD | frozen-sw6-aoterm-fix, frozen-sw6-aoterm-43, frozen-sw6-all-fix, baseline-gate-gate-aofix, title-start-fix-aoviewport |
 | Lighting: ambient occlusion on the light-baked world only (playtest 2026-10-31) | the level circle's swirl pool as without occlusion, no halo around the player; original presentation unchanged; frame time within run-to-run spread of p4e (A/B pair: Tower 11.66 → 11.62, G1 10.04 → 9.91, H4 10.33 → 10.08 ms mean); title_start_check 6/6 and 2/2 to the overlay with no validation errors (final binary gdl_play-aofix3) | frozen-fix2-*, frozen-base-aofix2, perf-bench-gfx-ab1-*, title-start-gfx-aofix3* |
 
 Not provided: a render scale (the 3D renders at the window's own

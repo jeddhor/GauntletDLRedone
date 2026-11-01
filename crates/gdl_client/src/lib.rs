@@ -132,6 +132,21 @@ impl Plugin for GsMaterialPlugin {
         bevy::asset::embedded_asset!(app, "gs_prepass.wgsl");
         bevy::asset::embedded_asset!(app, "blit.wgsl");
         bevy::asset::embedded_asset!(app, "display_to_linear.wgsl");
+        // NATIVE ENHANCEMENT ambient occlusion: Bevy 0.18.1's SSAO reads the
+        // depth and normal prepasses, which have the render target's size,
+        // as if they had the camera viewport's; gdl_play's 3D view is the
+        // window's rows above the HUD strip, so the occlusion came from a
+        // scene stretched by their ratio — outlines of the objects nearer
+        // the bottom drawn on the floor above them (a crate's or fence's
+        // "echo") and an even band along the view's bottom (playtest
+        // 2026-10-31). Corrected copies replace two of its shaders: this
+        // plugin follows DefaultPlugins, whose PbrPlugin registered them,
+        // and their pipelines load them in its finish.
+        if app.is_plugin_added::<bevy::pbr::ScreenSpaceAmbientOcclusionPlugin>() {
+            let embedded = app.world().resource::<bevy::asset::io::embedded::EmbeddedAssetRegistry>();
+            embedded.insert_asset(Default::default(), std::path::Path::new("bevy_pbr/ssao/preprocess_depth.wgsl"), include_bytes!("ssao_preprocess_depth.wgsl"));
+            embedded.insert_asset(Default::default(), std::path::Path::new("bevy_pbr/ssao/ssao.wgsl"), include_bytes!("ssao_gtao.wgsl"));
+        }
         app.add_plugins(bevy::core_pipeline::fullscreen_material::FullscreenMaterialPlugin::<DisplayToLinear>::default());
         app.add_plugins(MaterialPlugin::<GsMaterial>::default());
         app.add_plugins(bevy::sprite_render::Material2dPlugin::<BlitMaterial>::default());

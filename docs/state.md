@@ -722,9 +722,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    were missing) — fixed, replays r92 equal r91 (playtest.md "Playtest after
    Checkpoint C"). From the user's screenshots: the "big piece of paper"
    in an opened chest was the chest's NULL1 quad, which SetItem hides —
-   now hidden (player.md); the "wireframe echo" by a crate (a secret-wall
-   box) is not reproduced yet and waits on where it was and which Graphics
-   row removes it (playtest.md).
+   now hidden (player.md); the "wireframe echo" by a crate and a fence was
+   ambient occlusion computed from a stretched scene (Bevy 0.18.1's SSAO
+   read the window-sized prepasses as the 3D viewport's) — corrected copies
+   of its two shaders (enhancements.md "Lighting"); the baseline gate
+   learned "fixed" for the chest quads 1.0 drew (baseline-gate-gate-aofix).
    HD textures built (plan steps 8–10, enhancements.md "HD textures"): the
    census, the effect / sky classification, the Real-ESRGAN network as wgpu
    compute (exact against the Checkpoint B pack), the resumable pack writer,

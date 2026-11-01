@@ -21,6 +21,10 @@ dumps (private/runs/frozen-dump-ref, binary gdl_play-d100e5f):
                in either state (H4). The level is captured again up to
                --retries times and passes if a retry is identical or
                draw-order;
+  fixed        as draw order, but for draws 1.0 made that a fidelity fix since
+               removed (REMOVED_SINCE_1_0: each named by its mesh and texture
+               content and its reason); the pixels may also differ where
+               those draws showed;
   different    anything else: the gate fails.
 
 Dumps are compared as line multisets after mapping the current format to
@@ -28,6 +32,7 @@ Dumps are compared as line multisets after mapping the current format to
 dropped, and particle sprites' light_dir.w −1 (Phase 4: psys sprites take
 no VU1 lighting, enhancements.md "Lighting") reads as 1.0's 0.
 
+--judge-only judges an existing capture of TAG again (no retries).
 Report private/reports/baseline-gate-TAG.json; exit status 1 when a level
 fails. Research tooling: frames and dumps stay in private/runs.
 """
@@ -47,6 +52,12 @@ LEVELS = ['TOWER', 'G1', 'J5', 'C2', 'H4']
 SHOTS = {lv: ([800, 1000] if lv == 'TOWER' else [500, 700]) for lv in LEVELS}
 IMAGE = re.compile(r'Some\(\((\d+), (\d+), (Some\(\d+\)|None), \d+, (?:Some\(\([^()]*\)\)|None)\)\)')
 PSYS = 'light_dir: Vec4(0.0, 0.0, 0.0, -1.0)'
+# Draws of 1.0 that later fidelity fixes removed: (text in a 1.0 dump line —
+# mesh and base texture by content —, the fix). Only 1.0's lines may match.
+REMOVED_SINCE_1_0 = [
+    ('mesh Some((4, 1865697815464219562)) base Some((8, 8, Some(11174574554518817798)))',
+     "kind-2 items' NULL1 node, the chests' content anchor quad, hidden by SetItem (MBTreeSetFlags 1; dd03c26, research/player.md)"),
+]
 
 
 def norm(line):
@@ -78,7 +89,12 @@ def judge(run, level, frame, ref_frames, ref_dumps):
     a = collections.Counter(ref_dump.read_text().splitlines())
     b = collections.Counter(norm(line) for line in cur)
     only_ref, only_now = a - b, b - a
+    removed = collections.Counter({line: n for line, n in only_ref.items() if any(m in line for m, _ in REMOVED_SINCE_1_0)})
+    only_ref -= removed
     if not only_ref and not only_now:
+        if removed:
+            return 'fixed', {'pixels': px, 'removed': sum(removed.values()),
+                             'fixes': sorted({why for line in removed for m, why in REMOVED_SINCE_1_0 if m in line})}
         return 'draw order', {'pixels': px}
     psys_now = collections.Counter(norm(line) for line in cur if PSYS in line)
     if sum(only_ref.values()) == sum(only_now.values()) and not (only_now - psys_now):
@@ -102,12 +118,15 @@ def main():
     ap.add_argument('--retries', type=int, default=2)
     ap.add_argument('--ref-frames', default=str(RUNS / 'frozen-base-ref'))
     ap.add_argument('--ref-dumps', default=str(RUNS / 'frozen-dump-ref'))
+    ap.add_argument('--judge-only', action='store_true')
     args = ap.parse_args()
     if not args.tag.replace('-', '').isalnum():
         raise SystemExit('tag must be alphanumeric')
     binary = str(pathlib.Path(args.binary).resolve())
     ref_frames, ref_dumps = pathlib.Path(args.ref_frames), pathlib.Path(args.ref_dumps)
-    run = capture(args.tag, binary, args.levels)
+    run = RUNS / f'frozen-{args.tag}' if args.judge_only else capture(args.tag, binary, args.levels)
+    if args.judge_only:
+        binary = json.loads((run / 'frames.json').read_text())['binary']
     report = {'scope': 'original presentation (GDL_BASELINE) frozen frames and scene dumps against the 1.0 build, real GPU',
               'binary': binary, 'binary_sha256': json.loads((run / 'frames.json').read_text())['binary_sha256'],
               'ref_frames': str(ref_frames), 'ref_dumps': str(ref_dumps), 'levels': {}}
@@ -116,12 +135,12 @@ def main():
         runs = [run]
         verdicts = [(f, *judge(run, level, f, ref_frames, ref_dumps)) for f in SHOTS[level]]
         attempt = 0
-        while any(v == 'particles' for _, v, _ in verdicts) and attempt < args.retries:
+        while not args.judge_only and any(v == 'particles' for _, v, _ in verdicts) and attempt < args.retries:
             attempt += 1
             retry = capture(f'{args.tag}-r{attempt}', binary, [level])
             runs.append(retry)
             verdicts = [(f, *judge(retry, level, f, ref_frames, ref_dumps)) for f in SHOTS[level]]
-        passed = all(v in ('identical', 'draw order') for _, v, _ in verdicts)
+        passed = all(v in ('identical', 'draw order', 'fixed') for _, v, _ in verdicts)
         ok &= passed
         report['levels'][level] = {'pass': passed, 'attempts': len(runs), 'runs': [str(r) for r in runs],
                                    'frames': {str(f): {'verdict': v, **d} for f, v, d in verdicts}}
