@@ -459,6 +459,15 @@ game; the title menu's third entry and the Network pages) and documents. Not
 checked: the game on a Windows desktop, network play between two computers
 or over the internet, a physical disc.
 
+Published 2026-11-02 as the GitHub release v1.2.0 of the private repository
+(tag v1.2.0 at 07c61b2; release notes private/runs/github-release-1.2.0/
+notes.md, written for players): the two packages, GauntletDarkLegacy-1.2.0-
+source-07c61b2.tar.gz (334 files, every tracked file of the tag; SHA-256
+12deeece2f29637d…), the five library-source files and SHA256SUMS. GitHub's
+SHA-256 of every asset equals SHA256SUMS. Audits before the push:
+release-audit-v120b (the folder with the tag's source archive) and
+history-audit-v120 (502 commits, 3,049 blobs), both without findings.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
