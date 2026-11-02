@@ -79,12 +79,15 @@ once to the final value (DisplayToLinear, see "GS output stage"), not per
 draw; nested CameraFace nodes use the nearest one; VU1 lighting is
 evaluated per fragment (the VU lights vertices).
 
-NATIVE ENHANCEMENTS (post-1.0; enhancements.md "Graphics"): sharp texture
-filtering (texfilter.rs), full colour precision, smooth lightmaps and
-sharpening change this path only when set; the original presentation is
-unchanged. Their shader switches ride in the shared point-light buffer
-(gs.wgsl PointLights.enhance, lib.rs write_enhance), so turning one on
-re-prepares no material.
+NATIVE ENHANCEMENTS (post-1.0; enhancements.md "Graphics", "Lighting", "HD
+textures"): sharp texture filtering (texfilter.rs), full colour precision,
+smooth lightmaps and sharpening, then up to 32 point lights, torch lights,
+shadow-mapped character shadows, ambient occlusion, bloom and the generated
+HD pack (hd/, texture_pack.rs) change this path only when set; the original
+presentation is gated against 1.0 (tools/python/baseline_gate.py). Their
+shader switches ride in the shared point-light buffer (gs.wgsl
+PointLights.enhance, lib.rs write_enhance), so turning one on re-prepares no
+material.
 
 ## Verification
 

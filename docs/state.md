@@ -747,6 +747,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    state's values, which replays cannot see (they start from captures). Fixed
    in setup.rs against the level captures (25 coins; secret_level_check.py,
    playtest.md); replays r94 equal r93, gate pass, title_start_check 6/6.
+   2026-11-01 (user: do Phase 5, publish when done): release 1.1.0. Player's
+   guide and known issues cover the Graphics page and HD textures, notices
+   regenerated (295 crates, Real-ESRGAN's license, missing until now), the
+   native "COMPLETE - entering" banner removed. Candidate 350186e7: replays
+   r95 equal r94, gate pass, hashes equal across original / everything / HD,
+   GUI checks, menu flows 23/23, soak, frame times (performance.md "Release
+   1.1.0"; measured around another workload on the machine). New open item:
+   player 1's record differing between identical test runs (unknowns.md);
+   7 of 61 runs in one three-minute window, also on the 1.0.0 binary; bytes
+   not captured. Packages and publication: research/release.md "Release 1.1.0".
 
 ---
 

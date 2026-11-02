@@ -101,8 +101,8 @@ impl Default for Settings {
             sharpen: 40,
             full_colour: true,
             smooth_lightmaps: true,
-            // Checkpoint C (lighting): part of Enhanced until the user's
-            // playtest decides.
+            // Checkpoint C (lighting): all on, the user's choice after the
+            // playtest (2026-10-31).
             more_lights: true,
             torch_lights: true,
             shadows: true,

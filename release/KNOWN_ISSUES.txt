@@ -13,7 +13,9 @@ Platforms
     2020 on: Ubuntu 20.04, Debian 11, Fedora 32, RHEL 9 and newer).
   - Windows: tested on Windows 11 — installing from the disc in a drive,
     from an image file and from an image mounted as a disc drive, and
-    playing. Older Windows versions are untested.
+    playing, with release 1.0.0. Release 1.1.0 has not yet been played on a
+    Windows desktop, so its graphics options, generating HD textures included,
+    are untested there by a person. Older Windows versions are untested.
   - A graphics card with Vulkan (or DirectX 12 on Windows) is required.
 
 Movies
@@ -34,8 +36,14 @@ What is not yet the original's own
     only the map's voice lines and sounds use the destination.
 
 Performance
-  On the tested machine (Radeon RX 580) the game holds 60 frames per second;
-  a rare single late frame (about one in 50,000) can still occur.
+  On the tested machine (Radeon RX 580, Ryzen Threadripper 1950X) with every
+  graphics option on at 1920x1080, the game holds 60 frames per second in five
+  benchmark levels, with no frame over 33 ms when nothing else is using the
+  machine. The options leave less headroom than 1.0 had: the slowest 1 % of
+  frames take up to 25 ms. A 15-minute four-player session ran without a
+  crash and its memory stayed steady, with about three frames per thousand
+  over 33 ms while another program also used the machine. If frames are late,
+  turn off Character shadows and Ambient occlusion first (README.txt, Settings).
 
 Enhancements (not in the original)
   - With the widescreen view, enemies in the widened margins are outside the
@@ -43,6 +51,12 @@ Enhancements (not in the original)
     have off the edge of a TV picture.
   - No HUD scaling and no controller button remapping (keyboard keys can be
     rebound).
+  - Ambient occlusion needs the 3D view without MSAA, so anti-aliasing is then
+    SMAA, which is softer on fine detail. The settings page says so.
+  - HD textures: some world fire and a few glow overlays that the generator
+    does not recognise as effects are upscaled like ordinary surfaces, and a
+    few animated items keep their original textures. Turning the row off
+    restores the originals from the next level.
   - Xbox button prompts: the Options → Controls picture still shows a
     PlayStation 2 controller (its labels sit on the same positions of an
     Xbox controller). Nintendo-layout controllers get the Xbox letters by

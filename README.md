@@ -4,13 +4,17 @@ A native Linux and Windows port of the PlayStation 2 game Gauntlet: Dark
 Legacy (USA release SLUS-20047), reconstructed from the original program and
 data in Rust and Bevy; the implementation follows
 [the master plan](Gauntlet_Dark_Legacy_PS2_Rust_Bevy_Master_Plan.md).
-Release 1.0.0 is the complete port
-([acceptance report](docs/research/m21-acceptance.md)). The native game runs
+Release 1.0.0 was the complete port
+([acceptance report](docs/research/m21-acceptance.md)); release 1.1.0 adds the
+graphics options below and playtest fixes
+([research/release.md](docs/research/release.md) "Release 1.1.0"). The native game runs
 the original rules from the player's own disc: the Tower, all realms and
 bosses, one to four players, the original HUD, menus, audio and movies, and
 saves; a character has been played from a new game to the ending
 (docs/coverage.md M15). Native enhancements (widescreen, motion blending at
-the display's rate, key bindings, Xbox button prompts, texture packs;
+the display's rate, key bindings, Xbox button prompts, texture packs, and
+since 1.1.0 sharp filtering, full colour, more lights, character shadows,
+ambient occlusion, bloom and HD textures generated on the player's machine;
 docs/research/enhancements.md) are optional, and the performance and
 platform checks are in docs/research/performance.md. Import tooling,
 inspectors and comparison harnesses sit beside it in crates/gdl_tools and

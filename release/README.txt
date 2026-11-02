@@ -17,7 +17,7 @@ What you need
     installer use X11 (Wayland desktops run them through XWayland) and the
     game uses ALSA for sound.
   - A graphics card with Vulkan (Windows: Vulkan or DirectX 12).
-  - About 1 GB of disk space.
+  - About 1 GB of disk space (about 3 GB with the optional HD textures).
 Nothing else has to be installed first: the libraries the installer needs
 (Qt) come with it in this package.
 
@@ -88,9 +88,43 @@ Settings
 F10 (or Options → Display on the title, or Settings → Display in the pause
 menu) opens the settings: widescreen view, motion smoothing, VSync, frame
 cap, fullscreen, anti-aliasing, reduced flashes, the frame-rate counter,
-button prompts, "Original presentation" and player 1's keys. F11 toggles fullscreen and F3
-the frame-rate counter. Options → Screen moves the picture, as the
-original's Screen Adjust did for TVs.
+button prompts, "Graphics...", "Original presentation" and player 1's keys.
+F11 toggles fullscreen and F3 the frame-rate counter. Options → Screen moves
+the picture, as the original's Screen Adjust did for TVs.
+
+"Graphics..." holds the modern picture options. They are not in the original
+game and change only how it looks, never how it plays. All are on by default
+except HD textures:
+    Preset ............... Enhanced (the recommended values) or Original
+                           (every option below off); Custom when you have
+                           changed one
+    Texture filtering .... Sharp: textures stay crisp at your screen's
+                           resolution and in the distance
+    Sharpening ........... Off, 20 % to 100 % (default 40 %)
+    Colour precision ..... Full: smooth gradients without the PS2's 16-bit
+                           dither pattern
+    Smooth lightmaps ..... Soft edges on the levels' painted-in shadows
+    Dynamic lights ....... Up to 32 lights from spells and explosions
+                           instead of 8
+    Torch light .......... Gentle flickering light from torches and fires
+    Character shadows .... Real shadows for players, enemies and items
+                           instead of round blobs
+    Ambient occlusion .... Soft shading in corners and creases of the levels
+                           (anti-aliasing then uses SMAA in place of MSAA)
+    Bloom ................ A glow around bright fire and magic
+    HD textures .......... Four-times sharper textures (see below)
+
+HD textures are made once, on your computer, from your own disc: turn the
+row on and the game generates them in the background (about 2 GB; six and a
+half minutes on a Radeon RX 580), showing the progress on the row. They
+appear from the next level on; the front end takes them after a restart.
+Fire, glows, magic effects and skies keep their original textures. Turning
+the row off stops the generator; turning it on again continues where it
+stopped.
+
+If the frame rate drops on your computer, turn off Character shadows and
+Ambient occlusion first; they cost the most. "Original presentation" on the
+main settings page returns the whole picture to the original game's.
 
 
 Saves
@@ -120,7 +154,8 @@ Delete the install folder, and the shortcuts:
               the desktop's gauntlet-dark-legacy.desktop
     Windows:  "Gauntlet Dark Legacy" in the Start menu's Programs folder and
               on the desktop
-Your saves stay (see Saves) unless you delete them too.
+Your saves stay (see Saves) unless you delete them too. Generated HD textures
+stay as well, in the hd-textures folder beside saves.
 
 
 If something goes wrong

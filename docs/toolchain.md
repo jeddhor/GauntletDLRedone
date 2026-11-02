@@ -42,7 +42,8 @@ ruzstd 0.8.3 (MIT), twox-hash 2.1.3 (MIT). gdl_play disables the
 post-processing plugin group and adds BloomPlugin and SmaaPlugin singly
 (the group's MSAA writeback duplicates gdl_client::writeback); the
 texture laboratory and gdl_scene disable it. THIRD_PARTY_LICENSES.txt
-(tools/python/third_party_licenses.py) picks the crates up at release.
+(tools/python/third_party_licenses.py) lists them since release 1.1.0, with
+bevy_anti_alias and Real-ESRGAN's notice (295 crates, 290 before).
 Since 2026-10-31 (HD textures, research/enhancements.md) gdl_client names
 wgpu =27.0.1 directly, without default features — the version and the
 features Bevy 0.18.1 already builds (Cargo.lock gains only the dependency

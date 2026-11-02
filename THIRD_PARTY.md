@@ -29,8 +29,9 @@ Direct Cargo dependencies: flate2 (MIT OR Apache-2.0), serde/serde_json (MIT OR
 Apache-2.0), sha2 (MIT OR Apache-2.0), png (MIT OR Apache-2.0), Bevy (MIT OR
 Apache-2.0), alsa 0.9.1 on Linux (Apache-2.0 OR MIT), cpal 0.15.3 on Windows
 (Apache-2.0). Cargo.lock records exact transitive versions. Transitive audit
-(M21, 2026-10-28; tools/python/third_party_licenses.py → release/
-THIRD_PARTY_LICENSES.txt, shipped with the programs): the 290 crates compiled
+(M21, 2026-10-28, regenerated for release 1.1.0, 2026-11-01; tools/python/
+third_party_licenses.py → release/THIRD_PARTY_LICENSES.txt, shipped with the
+programs): the 295 crates compiled
 into gdl_play and gdl_import for Linux and Windows are under MIT, Apache-2.0,
 Zlib, BSD-2/3-Clause, ISC, Unlicense, MIT-0, 0BSD, CC0-1.0 or Unicode-3.0
 terms (one "Apache-2.0 OR GPL-2.0-only" taken under Apache-2.0), all

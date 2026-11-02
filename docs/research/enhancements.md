@@ -31,6 +31,13 @@ into place). `GDL_SETTINGS=FILE` reads another file and, like
 | sharpen | 40 | 0 | contrast-adaptive sharpening of the 3D view, percent (0, 20 … 100) |
 | full_colour | true | false | no 16-bit frame, dither or integer truncation, at the original's mean level |
 | smooth_lightmaps | true | false | lightmaps sampled with a cubic B-spline |
+| more_lights | true | false | up to 32 point lights among those reaching the view (off: the 8 nearest the camera) |
+| torch_lights | true | false | flickering point lights at the levels' fires |
+| shadows | true | false | shadow-mapped character shadows along the level's light; the blob shadows hidden |
+| ambient_occlusion | true | false | screen-space ambient occlusion on the light-baked world; the 3D view then has no MSAA, SMAA stands in |
+| bloom | true | false | bloom around glows brighter than full white |
+| smaa | false | false | anti-aliasing by SMAA instead of MSAA (the main page's anti-aliasing row) |
+| hd_textures | false | false | the generated 4× texture pack; turning it on generates the pack once; outside the presets, Original turns it off |
 
 ## Graphics (post-1.0, 2026-10-30)
 
@@ -40,8 +47,9 @@ A) is real-time filtering and the colour pipeline, no new art. Every
 setting is presentation only and off in the original presentation; the
 overlay's "Graphics..." page (F10 → Graphics...) shows them with a preset
 row: Original (all off), Enhanced (sharp, sharpening 40 %, full colour,
-smooth lightmaps; since 2026-10-31 also the lighting effects of
-"Lighting" below, until the Checkpoint C playtest decides), or Custom.
+smooth lightmaps and the lighting effects of "Lighting" below, all approved
+in the Checkpoint C playtest, 2026-10-31), or Custom. HD textures stand
+outside the presets: their own row, off by default.
 Enhanced is the default (the user's choice after the Checkpoint A
 playtest, 2026-10-30, sharpening 40 % included); settings files without
 the graphics fields, such as 1.0's, take it too.
@@ -233,8 +241,8 @@ see unknowns.md).
 ### Lighting (Phase 4, toward Checkpoint C, 2026-10-31)
 
 The plan's steps 11–14. Each is a Graphics-page setting, part of the
-Enhanced preset (on by default until the user's Checkpoint C playtest
-decides) and off in the original presentation.
+Enhanced preset (on by default, the user's choice in the Checkpoint C
+playtest, 2026-10-31) and off in the original presentation.
 
 - Dynamic lights (Settings::more_lights, "Dynamic lights: Up to 32 /
   Original 8"). The game's point lights (ProcessEffects' effect lights,
@@ -798,6 +806,11 @@ trace). See performance.md.
 | Lighting: GUI | title_start_check 6/6, with everything on to the overlay 2/2; menu flows 23/23 | title-start-gfx-p4e*, menu-flows-gfx-p4e |
 | Lighting: ambient occlusion on the 3D viewport (playtest 2026-10-31, "wireframe echo") | occlusion term without the bottom band and aligned with the creases, widescreen and 4:3; original presentation gate: Tower, J5, C2, H4 identical, G1 fixed (only the 8 NULL1 quads removed, spear tie pixels); client tests 37 + 1, clippy clean; title_start_check 6/6 with everything on and HD | frozen-sw6-aoterm-fix, frozen-sw6-aoterm-43, frozen-sw6-all-fix, baseline-gate-gate-aofix, title-start-fix-aoviewport |
 | Lighting: ambient occlusion on the light-baked world only (playtest 2026-10-31) | the level circle's swirl pool as without occlusion, no halo around the player; original presentation unchanged; frame time within run-to-run spread of p4e (A/B pair: Tower 11.66 → 11.62, G1 10.04 → 9.91, H4 10.33 → 10.08 ms mean); title_start_check 6/6 and 2/2 to the overlay with no validation errors (final binary gdl_play-aofix3) | frozen-fix2-*, frozen-base-aofix2, perf-bench-gfx-ab1-*, title-start-gfx-aofix3* |
+| Release 1.1.0 candidate (2026-11-01, gdl_play 350186e7): original presentation gate | the Tower, J5, C2, H4 identical; G1 fixed (only the chest quads removed) | baseline-gate-gate-r1p1 |
+| Release 1.1.0 candidate: original presentation, everything on, everything plus HD, 600 G1 updates | every per-update hash equal across the three | gfx-simhash-r1p1b |
+| Release 1.1.0 candidate: reference-trace replays (146) | all equal to r94 | tools/regress.sh r95 |
+| Release 1.1.0 candidate: GUI | title_start_check 6/6 with everything on and HD, 2/2 to the overlay; menu flows 23/23; critter_slot_check pass; secret_level_check both runs pass | title-start-r1p1, title-start-r1p1-overlay, menu-flows-r1p1, critter-slot-r1p1, secret-level-r1p1banner |
+| Release 1.1.0 candidate: frame time, four-player soak | performance.md "Release 1.1.0" | perf-quiet-r1p1, soak-r1p1-coop4-15min |
 
 Not provided: a render scale (the 3D renders at the window's own
 resolution — 1920×1080, 2560×1440 or 4K are native high resolutions),

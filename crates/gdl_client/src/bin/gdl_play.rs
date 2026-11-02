@@ -10150,8 +10150,7 @@ fn advance_level(
                 // init_mapscreen(0x78, skip) towards next_world's wave.
             } else if let Some(k) = session.levels.iter().position(|l| l.index == level && l.world == world) {
                 session.next = Some(k);
-                let to = if session.levels[k].world == session.world_number { session.levels[k].name.clone() } else { format!("{} {}", session.levels[k].title, session.levels[k].name) };
-                session.banner = Some((3.0, format!("{name} COMPLETE - entering {to}")));
+                session.banner = Some((0.0, String::new()));
             } else {
                 session.finished = Some(format!(
                     "{name} COMPLETE. The exit leads to wave {wave:#x}, which is not in this build's level list. Thanks for testing! (Esc to quit)"

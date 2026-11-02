@@ -1925,5 +1925,7 @@ coin gave credit and unlocked the secret character.
   (baseline-gate-gate-secretfix); title_start_check 6/6.
 - The user's save keeps the bit it got this way (0x40, save0001.json); saves are
   not changed by fixes.
-- Seen, not changed: entering a treasure room shows "G2 COMPLETE - entering
-  Treasure room S8" for 3 s, a native banner from 1df7291, not text from the disc.
+- Removed for release 1.1.0: entering a treasure room showed "G2 COMPLETE -
+  entering Treasure room S8" for 3 s, a native banner from 1df7291, not text from
+  the disc. That exit now loads at once, as the other level changes do
+  (secret-level-r1p1banner: both runs pass).

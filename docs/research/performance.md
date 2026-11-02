@@ -210,3 +210,38 @@ Then (the overlay camera composited instead of loading the MSAA texture):
 gdl_play 59cd59dfcb7bc876…; menu flows title-display at MSAA 4/1,
 pause-display-realm, options-all; title_start_check --attract --xbox
 --overlay --wayland under the player's settings (rx580-wl-copy, -msaa1).
+
+## Release 1.1.0 (2026-11-01)
+
+gdl_play 350186e7, RX 580 and Threadripper 1950X, 1920×1080 fullscreen
+widescreen, motion blending on, every graphics enhancement on, 900 updates
+(perf_bench.py through private/runs/r1p1-bins/perf_quiet.py). Another
+workload (Wine programs, in bursts) shared the machine that evening: a first
+pass gave a p99 up to 75 ms and is not used (perf-bench-r1p1b-*). perf_quiet
+waits for 8 quiet seconds before each scene, samples outside activity each
+second and retries a disturbed scene up to four times; a try counts as clean
+with no wineserver and under 150 % of one core of other processes in every
+sample. Mean / p99 / frames over 33.4 ms, report perf-quiet-r1p1:
+
+| Settings | Tower | G1 walk | C2 | J5 | H4 |
+| --- | --- | --- | --- | --- | --- |
+| Uncapped | 12.10 / 18.73 / 0 | 10.56 / 15.72 / 0 | 12.62 / 22.04 / 0 | 10.51 / 17.65 / 0 | 10.57 / 15.67 / 0 |
+| Vsync (the default) | 16.66 / 22.33 / 0 | 16.67 / 22.65 / 0 | 16.67 / 23.45 / 0 | 16.67 / 24.60 / 0 | 16.67 / 21.05 / 0 |
+| Uncapped, HD textures | 12.31 / 19.48 / 1 | 11.03 / 17.53 / 0 (no clean try of 4) | 12.88 / 22.29 / 0 | 9.69 / 15.25 / 0 | 10.77 / 16.11 / 1 |
+
+Against the budget at the top of this page: criterion 1 (vsync: p99 ≤ 25 ms,
+no frame over 33.4 ms) holds in all five scenes. The plan's target for the
+enhancements (uncapped p99 ≤ 16.7 ms) holds in G1 and H4, not in the Tower,
+C2 and J5: as on 2026-10-31 (enhancements.md "Lighting") the cost is
+render-thread CPU. HD textures: level start 2.3–3.4 s (0.55–0.81 s without),
+peak resident memory 0.85–1.13 GB (0.52–0.62 GB), frame time within
+run-to-run spread; both frames over 33.4 ms with HD fall in clean runs, one
+in the Tower (69 ms) and one in H4 (49 ms).
+
+Four-player soak (soak-r1p1-coop4-15min, 15 minutes, G1, four virtual pads,
+vsync, 1920×1080, everything on): alive at the end, 26,940 updates, resident
+memory 595 MB at 10 s, 614 at 5 minutes, 617 at 15. Frames over 33.4 ms 160 of
+53,218 (p99 28.2–28.8 ms). This run overlapped the other workload and has no
+clean-machine counterpart here; M20's 30-minute soak (14 of 107,827, before the
+enhancements) is the earlier figure, so the change between them is not
+separated from that load. 15 minutes, not M20's 30.
