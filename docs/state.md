@@ -753,10 +753,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    native "COMPLETE - entering" banner removed. Candidate 350186e7: replays
    r95 equal r94, gate pass, hashes equal across original / everything / HD,
    GUI checks, menu flows 23/23, soak, frame times (performance.md "Release
-   1.1.0"; measured around another workload on the machine). New open item:
-   player 1's record differing between identical test runs (unknowns.md);
-   7 of 61 runs in one three-minute window, also on the 1.0.0 binary; bytes
-   not captured. Packages and publication: research/release.md "Release 1.1.0".
+   1.1.0"; measured around another workload on the machine). A first set of
+   hash runs differed in player 1's record only: they shared a saves folder,
+   so each TEST character owned the next card file (+0x2af4), not a game
+   fault (enhancements.md matrix). Packages and publication: research/
+   release.md "Release 1.1.0".
 
 ---
 

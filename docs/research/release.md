@@ -360,6 +360,48 @@ archive). A clone needs no
 private/source-control.git: tools/git-local.sh falls back to the clone's
 .git (checked on a fresh clone: same tree as the local HEAD).
 
+## Release 1.1.0 (2026-11-01)
+
+The owner approved the graphics plan's Phase 5 and asked for the result to
+be published on GitHub when done (2026-11-01). Release 1.1.0 = 1.0.0 with
+the post-1.0 graphics enhancements (research/enhancements.md "Graphics",
+"Lighting", "HD textures") and the playtest fixes since 1.0.0
+(research/playtest.md from "Playtest after 1.0"). The version is 1.1.0 in
+Cargo.toml's workspace and installer/CMakeLists.txt. Programs built by
+tools/package.sh at commit 395749c:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.1.0-linux-x86_64.tar.gz (47 MB; 119 MiB unpacked, 41 files) | a11c0b32b21de8d5… |
+| GauntletDarkLegacy-1.1.0-windows-x86_64.zip (51 MB; 122 MiB unpacked, 22 files) | c058e4469ec7d969… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | dc805b11bef4a221… / 8492842a1237348a… / f80a0c425c6df840… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | d0ea11cabaf51cfc… / 949afdf9daeba1a5… / 990055bdd96eacc8… |
+| library-source/ | unchanged from 1.0.0 (docs/toolchain.md) |
+
+gdl_play grew by about 5 MB (the embedded Real-ESRGAN weights, 4.85 MB).
+The source archive is cut from the commit tagged v1.1.0, which adds this
+record to 395749c (the programs' sources unchanged).
+
+Checks of the 1.1.0 packages (2026-11-01), all passing:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive | pass, no findings | release-audit-v110a (source archive of 395749c; the tagged commit's: see below) |
+| Ubuntu 20.04: libraries, install, verify, wizard, game, hashes vs this host | pass | old-distro-v110 |
+| Update over release 1.0.0 (Linux): saves, settings, programs, verify, the 1.0.0 save loaded | pass | update-v110 |
+| Update over release 1.0.0 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, verify none of 2953 differing, no leftovers | pass, 26 s + 21 s | private/runs/windows-update-v110 |
+| HD generator of the installed Windows game, 40 textures, on the owner's GTX 1080 in session 0 (compute only): Direct3D 12 (WGPU_BACKEND=dx12) and Vulkan, then the default | both exit 0 (70 s and 14 s; the default picks Vulkan); every texture within 1 / 255 of this machine's pack (mean 0.0000), Direct3D 12 equal to Vulkan | private/runs/windows-update-v110 |
+| Linux 2026 host, system Qt masked: `--batch` | pass, 3.5 s | qt-bundle-v110 |
+| Linux wizard with the ISO attached as a drive, system Qt masked, game started | pass, 7.1 s | installer-gui-qt-v110 |
+| 600 G1 updates: Linux and Windows-under-Wine installations, each imported by its own gdl_import | all equal | r1p1-bins/checks2.log |
+| Title → select on the RX 580 with the packaged gdl_play, everything on and HD | 6/6 | title-start-v110-pkg |
+
+The game itself (candidate gdl_play 350186e7 of the same source,
+target/release): research/enhancements.md's matrix ("Release 1.1.0
+candidate") and performance.md "Release 1.1.0". Not checked for 1.1.0: the
+game on a Windows desktop (session 0 renders no frames; the owner tests
+Windows) and a physical disc.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
