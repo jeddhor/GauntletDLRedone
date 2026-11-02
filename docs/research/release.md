@@ -402,6 +402,16 @@ candidate") and performance.md "Release 1.1.0". Not checked for 1.1.0: the
 game on a Windows desktop (session 0 renders no frames; the owner tests
 Windows) and a physical disc.
 
+Published 2026-11-01 as the GitHub release v1.1.0 of the private repository
+(tag v1.1.0 at 1aa0fe8; release notes private/runs/github-release-1.1.0/
+notes.md, written for players): the two packages, GauntletDarkLegacy-1.1.0-
+source-1aa0fe8.tar.gz (329 files, every tracked file of the tag; SHA-256
+d42586eadd342508…), the five library-source files and SHA256SUMS. GitHub's
+SHA-256 of every asset equals SHA256SUMS, and the packages downloaded again
+verify. Audits before the push: release-audit-v110b (the folder with the
+tag's source archive) and history-audit-v110 (498 commits, 3,023 blobs),
+both without findings.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
