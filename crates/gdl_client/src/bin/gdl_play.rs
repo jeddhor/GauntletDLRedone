@@ -3441,9 +3441,10 @@ struct CharacterRoot(usize);
 struct RigNode(usize, usize);
 
 /// A mesh of the player's HEAD node: PlayerProcessPowerups at level ≥ 99
-/// sets its MB flag 8 and node scale (+0x40..+0x48) to 1.5. HYPOTHESIS: the
-/// scale reaches only the node's own object (GetWorldMat ignores +0x40, so
-/// the hair, braids and anything hung on the head keep their size).
+/// sets its MB flag 8 and node scale (+0x40..+0x48) to 1.5. Only the node's
+/// own meshes are scaled. KNOWN DEVIATION: PushMatrix pushes the scaled
+/// matrix, so the original also scales nodes drawn under HEAD (player.md;
+/// GetWorldMat's attachment points ignore the scale).
 #[derive(Component)]
 struct HeadMesh;
 
@@ -5757,6 +5758,17 @@ fn simulate(
                 d["secret"] = serde_json::json!({ "coins": sim.game.players[0].i32_(0x908), "unlocks": sim.game.players[0].u16_(0x9a8),
                     "max_level_coins": sim.game.globals.max_level_coins, "secret_world": sim.game.globals.secret_world,
                     "wave_timer": sim.game.globals.wave_timer, "wave_complete": sim.game.globals.wave_complete });
+                // Chests holding a content (+0xfc): state, the lid's clip,
+                // frame and frame count, and the content's drawn scale.
+                d["chests"] = serde_json::json!(sim.game.items.records.iter().enumerate().filter(|(_, r)| r.active() && sim.game.items.definitions[r.definition()].kind() == 2 && r.u32_(0xfc) != 0).map(|(k, r)| {
+                    let a = sim.game.item_anims.get(k).and_then(Option::as_ref);
+                    let c = r.u32_(0xfc) as usize - 1;
+                    let ca = sim.game.item_anims.get(c).and_then(Option::as_ref);
+                    serde_json::json!({ "slot": k, "state": r.i8_(0xdc), "frames": r.i16_(0x94), "clip": a.map(|a| a.current),
+                        "frame": a.map(|a| a.clock.frame), "scale": chest_content_scale(&sim.game, k),
+                        "content": { "slot": c, "clip": ca.map(|a| a.current), "frame": ca.map(|a| a.clock.frame),
+                            "matrix": sim.game.items.records.get(c).map(|cr| cr.matrix()) } })
+                }).collect::<Vec<_>>());
                 // The client's status line (e.g. "save recovered from …").
                 d["last_event"] = serde_json::Value::from(sim.last_event.clone());
                 let path = out.with_extension(format!("{label}.json"));
@@ -6501,15 +6513,15 @@ fn present_world(
                 let m = r.matrix();
                 let mut tf = record_transform([Vec3::from_array(m[0]), Vec3::from_array(m[1]), Vec3::from_array(m[2])], Vec3::from_array(r.position()));
                 // A chest's content (OpenChest's node branch): drawn at the
-                // chest's NULL1 node with the node's 0.2 scale, rising with
-                // the lid (presentation).
+                // chest's NULL1 node, rising with the lid, at the node's
+                // scale (presentation).
                 if let Some(c) = (kind == 1).then(|| r.u32_(0xfc).checked_sub(1)).flatten().map(|c| c as usize)
                     && let Some(cr) = g.items.records.get(c).filter(|cr| cr.active() && cr.u32_(0xf8) != 0 && cr.u32_(0xfc) == slot.index as u32 + 1)
                 {
                     let cm = cr.matrix();
                     let chest = record_transform([Vec3::from_array(cm[0]), Vec3::from_array(cm[1]), Vec3::from_array(cm[2])], Vec3::from_array(cr.position()));
                     let node = chest_nodes.0.get(&c).copied().unwrap_or(Mat4::IDENTITY);
-                    tf = Transform::from_matrix(chest.to_matrix() * node * Mat4::from_scale(Vec3::splat(0.2)));
+                    tf = Transform::from_matrix(chest.to_matrix() * node * Mat4::from_scale(Vec3::splat(chest_content_scale(g, c))));
                 }
                 if kind == 3 {
                     let level = r.u8_(0xf6);
@@ -7048,6 +7060,24 @@ fn show_oframe(f: &OFrame, seq: u16, index: i32, v: &mut Visibility) {
     let want = if on { Visibility::Inherited } else { Visibility::Hidden };
     if *v != want {
         *v = want;
+    }
+}
+
+/// The scale of chest `c`'s content node. OpenChest sets it to 0.2 (flag 8);
+/// ProcessItems 0x155bb4–0x155c94 then rescales it every update from the
+/// chest's state (+0xdc): 0.2 while 0, growing with the lid's AnimInfo while
+/// opening ((+0x9c frame + 1) / +0x94 frames × 0.8 + 0.2; 1.0 below two
+/// frames) and flag 8 cleared (full size) from 2. A chest without a clock
+/// keeps the 0.2.
+fn chest_content_scale(g: &Game, c: usize) -> f32 {
+    let Some(cr) = g.items.records.get(c) else { return 0.2 };
+    match (cr.i8_(0xdc), g.item_anims.get(c).and_then(Option::as_ref)) {
+        (state, Some(_)) if 2 <= state => 1.0,
+        (0, Some(_)) | (_, None) => 0.2,
+        (_, Some(a)) => match cr.i16_(0x94) {
+            n if n < 2 => 1.0,
+            n => (a.clock.frame + 1.0) / n as f32 * 0.8 + 0.2,
+        },
     }
 }
 

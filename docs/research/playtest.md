@@ -1929,3 +1929,46 @@ coin gave credit and unlocked the secret character.
   entering Treasure room S8" for 3 s, a native banner from 1df7291, not text from
   the disc. That exit now loads at once, as the other level changes do
   (secret-level-r1p1banner: both runs pass).
+
+## Playtest 2026-11-02 (user): chest contents far too small
+
+The user, comparing with the original: the item shown in an opened chest is
+much smaller in the port, so food cannot be told from poisoned food before it
+is taken. The 2026-10-31 answer (OpenChest's 0.2 scale, "small in the
+original too") was wrong.
+
+- Cause: OpenChest's 0.2 at the content node (flag 8) is only the start.
+  ProcessItems 0x155bb4–0x155c94 rewrites it every update from the chest's
+  state: (frame + 1) / 50 × 0.8 + 0.2 as the lid opens, then flag 8 cleared
+  (full size) once open. The client kept 0.2, a fifth of the size, since
+  the content was first drawn (703a0f8, 2026-10-28), so in 1.0.0 and 1.1.0
+  (player.md "Chests and explosions").
+- Reference, an actual disc check: G1 chest 43 in poison-fields-original
+  with player 0 written beside it and a key poked (labelled guest writes;
+  reports chest43-open-ref-a-v1 / -b-v1 with screenshots), walked into with
+  Right; PINE reads of the chest, its content and the node chain. At 30
+  vblanks after opening: state 1, frame 34 of 50, content node scale 0.76,
+  NULL1 (0, 1.628, 0). Open: content node flags 0, NULL1 (0, 1.455, 0), no
+  expiry flag on the chest. In the screenshots the potion is about 0.6 of
+  the chest's width while opening; in frozen-chestfix (the port) about 0.1
+  (estimated by eye).
+- Fix: gdl_play chest_content_scale. Check: tools/python/chest_content_check.py
+  (G1, key and chest 43 by GDL_TEST_ACTIONS teleports, the player beside the
+  chest from update 212, dumps every update; the dump's new "chests" field).
+  chest-content-v10: opened at update 207, 0.2 → 0.216 … 0.76 at frame 34 …
+  0.984, full size at 232 and still there at 290. The client's NULL1 and the
+  potion tree's root (0, 0.43, 0) equal the reference's. By eye the port's
+  potion still looks somewhat smaller beside the chest than the reference's;
+  the cameras differ (the port's is widescreen and steeper), so this was not
+  measured further.
+- Not changed: an expiring item (+0xd8 0x100) is hidden at once. Standing on
+  the chest's centre when it opens takes the content at once and expires the
+  chest; the trace (trace-G1-chest31-v3) deletes both 8 updates later, and
+  what the original draws meanwhile was not captured.
+- Related: the level-99 head's scale reach was a HYPOTHESIS of the same kind,
+  now contradicted (player.md).
+- Incident: during these checks, a virtual kwin session on the RX 580
+  (kwin_session.py) hit a GPU VM fault at 02:44; the desktop compositor then
+  looped on "ring gfx timeout, but soft recovered" and the display manager
+  crashed (the user restarted it). chest_content_check.py runs on the private
+  Xvfb with lavapipe instead (chest-content-v9 / -v10).

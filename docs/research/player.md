@@ -280,11 +280,25 @@ it takes the world origin (HYPOTHESIS, gameplay.md "Statues").
   now hides that node for kind-2 items (SetItem; not for the X-ray view's
   icon tree, which do_see_thru's AtreeInit makes). OpenChest's content
   scale is 0x3e4ccccd (0.2) at node +0x40/+0x44/+0x48 with
-  MBTreeSetFlags(content, 8, 0) (0x158ae8–0x158b1c); the client scales the
-  whole content tree by 0.2 (HYPOTHESIS: flag 8's reach, as for the
-  level-99 head below; no reference frame of an opened chest). Frozen
-  frame: frozen-chestfix (G1 chest 43 opened with a key, a potion inside,
-  no quad).
+  MBTreeSetFlags(content, 8, 0) (0x158ae8–0x158b1c). Flag 8 reaches the
+  whole subtree: PushMatrix 0x1c06b8 pushes MulMat4Scale(parent, node,
+  scale) = S·N·P (0x1d5628: each local row times the parent, then times
+  the scale's x/y/z) and the children multiply onto that entry. The 0.2 is
+  only the start: ProcessItems 0x155bb4–0x155c94, for a chest with a
+  content (+0xfc), a tree (+0x80) and subtype ≠ 0x2c, rewrites the scale
+  every update from the chest's state +0xdc — 0.2 while 0; while 1,
+  (AnimInfo +0x9c frame + 1) / +0x94 frames × 0.8 + 0.2 (1.0 below two
+  frames); from 2, MBTreeClearFlags(content, 8) (full size). Until
+  2026-11-02 the client kept 0.2 throughout (the content a fifth of its
+  size; playtest 2026-11-02); gdl_play's chest_content_scale now follows
+  the rule. Reference (G1 chest 43, poison-fields-original with player 0
+  written beside it and a key poked, labelled guest writes; PINE reads):
+  30 vblanks after opening, state 1, frame 34 of 50, node scale 0.76 =
+  (34 + 1) / 50 × 0.8 + 0.2, NULL1 local (0, 1.628, 0); open, node flags
+  0 and NULL1 (0, 1.455, 0); the content's tree root at (0, 0.43, 0); all
+  rows unit length. The client's posed values are the same
+  (chest_content_check.py). Frozen frames: frozen-chestfix (the 0.2),
+  frozen-chestgrow2-224 / -260 (frame 34, open).
 - DamageItem 0x15a620 on chests: a potion blast (flag 0x200) on a chest
   holding Death writes the chest DEFINITION's subtype to 1 (shared data),
   swaps the content to APPLE, plays AudioDeathDies and sets +0xf2 =
@@ -615,9 +629,13 @@ After the familiar (the whole part needs the player node +0x80):
   MBTreeSetFlags 2) and shows it again without (AudioUnpojo on the change,
   already in the core). gdl_play hides the rig meshes (present_player).
 - Level ≥ 99: MBTreeSetFlags(HEAD node, 8) and its +0x40..+0x48 scale
-  1.5. HYPOTHESIS: the scale reaches only the node's own object (GetWorldMat
-  ignores +0x40), so hair, braids and the breath tree keep their size
-  (gdl_play HeadMesh).
+  1.5. gdl_play scales the HEAD node's own meshes only (HeadMesh), after an
+  earlier HYPOTHESIS that the scale reaches only the node's object
+  (GetWorldMat ignores +0x40). CONTRADICTED 2026-11-02 for drawing:
+  PushMatrix pushes S·N·P for a flag-8 node and its children multiply onto
+  it (chests above), so nodes drawn under HEAD grow with it; GetWorldMat's
+  attachment points (the breath tree) still ignore the scale. Not changed
+  (unknowns.md).
 
 Seen in G1: the pojo alone without the player (run client-pw3-400), the
 level-99 head (client-lv99). Not compared with the reference.

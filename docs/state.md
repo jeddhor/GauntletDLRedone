@@ -758,6 +758,15 @@ original (PCSX2 reference on Xvfb :191, private captures):
    so each TEST character owned the next card file (+0x2af4), not a game
    fault (enhancements.md matrix). Packages and publication: research/
    release.md "Release 1.1.0".
+   2026-11-02, user: an opened chest's item is far smaller than in the
+   original (food and poison could not be told apart). OpenChest's 0.2 is
+   only the start; ProcessItems grows the content with the lid and draws it
+   at full size once open. The client kept 0.2 since 703a0f8 (in 1.0.0 and
+   1.1.0). Fixed (gdl_play chest_content_scale) against PINE reads of the
+   reference (G1 chest 43: scale 0.76 at frame 34 of 50, full size open);
+   chest_content_check.py on Xvfb/lavapipe (playtest.md "Playtest
+   2026-11-02"). A virtual kwin run on the RX 580 during these checks faulted
+   the GPU and crashed the display manager; such checks now run in software.
 
 ---
 
