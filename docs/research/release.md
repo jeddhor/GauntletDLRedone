@@ -412,6 +412,53 @@ verify. Audits before the push: release-audit-v110b (the folder with the
 tag's source archive) and history-audit-v110 (498 commits, 3,023 blobs),
 both without findings.
 
+## Release 1.2.0 (2026-11-02)
+
+The owner asked (2026-11-02) for the chest contents' size to be fixed and for
+network play — a Network entry on the title between Start and Options,
+hosting or joining by address and port, then the couch co-op select screen —
+documented and published. Release 1.2.0 = 1.1.0 with the chest fix
+(playtest.md "Playtest 2026-11-02") and network play (decisions/
+0006-network-play.md, research/network.md). Version 1.2.0 in Cargo.toml's
+workspace and installer/CMakeLists.txt. Programs built by tools/package.sh
+at commit 5160c2c:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.2.0-linux-x86_64.tar.gz (46 MB; 119 MiB unpacked, 41 files) | 7c075c26fbf95229… |
+| GauntletDarkLegacy-1.2.0-windows-x86_64.zip (49 MB; 122 MiB unpacked, 22 files) | c856dd99c046f008… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | f672b1eed2978f31… / 2303b71d803b6d65… / 31b84cb51be03291… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | 977011ff9efb8840… / 810de0c0dc0532fa… / 31f774e44de50734… |
+| library-source/ | unchanged from 1.1.0 |
+
+The third-party notices are unchanged (295 crates; network play uses std
+only). The source archive is cut from the commit tagged v1.2.0, which adds
+this record to 5160c2c (the programs' sources unchanged).
+
+After the GPU fault of 2026-11-02 (a kwin session on the RX 580 took the
+desktop down; playtest.md), every check that would start a kwin session on
+the real GPU was left out; the rest ran in software or without a display.
+Checks of 1.2.0, all passing:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive (of 5160c2c) | pass, no findings | release-audit-v120a |
+| Network play with the shipped games: the Linux package's gdl_play hosting, the Windows package's gdl_play.exe joining under Wine (Vulkan to lavapipe, a Wine virtual desktop), G1, 900 updates, a shared pause | all 900 state hashes equal, both players moving; the 900 hashes byte-identical to the candidate's run | net-check-r120-pkg |
+| The candidate (target/release a134ada8…, Windows 5874ec61…): network play Linux–Linux and Linux–Wine, the chest content, 24 menu flows (network-pages new) | all pass | private/runs/r120/checks.log |
+| Ubuntu 20.04 container without GPU or display: libraries of all 29 ELF files, `--batch` install from the ISO (read-only), verify | none missing; exit 0; 2953 checked, none differing | old-distro-v120-libs |
+| Linux 2026 host, system Qt masked: `--batch` | pass (2953 verified) | qt-bundle-v120 |
+| Linux wizard on the private Xvfb with the ISO attached as a drive, system Qt masked, game started | pass, 7.1 s | installer-gui-v120 |
+| Update over release 1.1.0 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, README and KNOWN_ISSUES carry Network play, verify none of 2953 differing, no leftovers, test folder removed | pass, 19 s + 16 s | private/runs/windows-update-v120 |
+
+Not run for 1.2.0 (they start kwin sessions on the RX 580): old_distro_check's
+wizard and game in the container, update_check.py on Linux,
+title_start_check.py, the original-presentation gate (baseline_gate.py) and
+the frame-time benchmarks. The changes since 1.1.0 are confined to gdl_play's
+client (the chest content's scale; network code that runs only in a network
+game; the title menu's third entry and the Network pages) and documents. Not
+checked: the game on a Windows desktop, network play between two computers
+or over the internet, a physical disc.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
