@@ -742,7 +742,11 @@ original (PCSX2 reference on Xvfb :191, private captures):
    2026-10-17, so in 1.0.0. Fixed and reproduced on the disc
    (critter_slot_check.py, playtest.md "Playtest 2026-11-01"); replays r93
    equal r92, original presentation gate pass (baseline-gate-gate-slotfix),
-   title_start_check 6/6.
+   title_start_check 6/6. Same day, G2's secret level ended on its first coin
+   and unlocked its character: MaxLevelCoins and SecretWorld kept the boot
+   state's values, which replays cannot see (they start from captures). Fixed
+   in setup.rs against the level captures (25 coins; secret_level_check.py,
+   playtest.md); replays r94 equal r93, gate pass, title_start_check 6/6.
 
 ---
 

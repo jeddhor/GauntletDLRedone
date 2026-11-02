@@ -524,6 +524,10 @@ impl Game {
         // GauntWorldInit 0x162e90: WldBtm = world min y − 4.5.
         globals.world_bottom = crate::numeric::sub_guarded_rz(inp.world.min[1], 4.5)?;
         globals.boss_type = level.boss_type;
+        // LoadWorldData 0x161e30: SecretWorld = CurWorld == 0xc; both this and
+        // MaxLevelCoins (AddItemInstList) follow the level, not the start state.
+        globals.secret_world = i32::from(globals.cur_world == 0xc);
+        globals.max_level_coins = loaded.max_level_coins;
         let (mut item_lib, mut item_nodes) = (inp.item_anims.clone(), inp.item_anim_nodes.clone());
         add_statue_trees(&mut item_lib, &mut item_nodes, &inp.enemy_anims, &inp.critters);
         add_generator_trees(&mut item_lib, &mut item_nodes, &inp.enemy_anims);

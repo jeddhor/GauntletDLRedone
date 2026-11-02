@@ -3034,7 +3034,7 @@ struct TestHarness {
     /// {"at": u, "health": h[, "player": k]} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
     /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "critter_kill": instance} (DEBUG) |
     /// {"at": u, "damage_item": [slot, damage(, flags)]} (DEBUG) |
-    /// {"at": u, "spawn": [type, level, ai(, dx, dz)]} (DEBUG) |
+    /// {"at": u, "spawn": [type, level, ai(, dx, dz)]} (DEBUG) | {"at": u, "next_coin": coins} (DEBUG) |
     /// {"at": u, "save": card file} for player 1 |
     /// {"at": u, "settings": {...}}: fields merged into the M19 settings
     /// and stored, as the settings overlay does (M20 platform checks)].
@@ -5679,6 +5679,19 @@ fn simulate(
             {
                 sim.error = Some(format!("TEST critter_kill: {}", e.0));
             }
+            // {"next_coin": coins}: DEBUG in a treasure room, with fewer than
+            // that many counted, player 1 onto the next gold item on show
+            // (secret_level_check.py).
+            if let Some(n) = a["next_coin"].as_i64()
+                && sim.game.globals.cur_world == 0xc
+                && i64::from(sim.game.players[0].i32_(0x908)) < n
+                && let Some(at) = sim.game.debug_next_coin()
+            {
+                let yaw = sim.game.players[0].f32_(0x86c);
+                if let Err(e) = sim.game.place_player(0, at, yaw) {
+                    sim.error = Some(format!("TEST next_coin: {}", e.0));
+                }
+            }
             // {"damage_item": [slot, damage(, flags)]}: DEBUG DamageItem(damage,
             // slot, flags (default 0), player 0), as a hit by player 1
             // (breakable checks; 0x421 is a barrel blast's).
@@ -5741,6 +5754,9 @@ fn simulate(
                 d["joy_remap"] = serde_json::json!(sim.game.controls.joy_remap);
                 d["critters"] = serde_json::json!(sim.game.critters.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| serde_json::json!({
                     "slot": k, "ty": [c.ty.0, c.ty.1], "nodes": c.parents.len() }))).collect::<Vec<_>>());
+                d["secret"] = serde_json::json!({ "coins": sim.game.players[0].i32_(0x908), "unlocks": sim.game.players[0].u16_(0x9a8),
+                    "max_level_coins": sim.game.globals.max_level_coins, "secret_world": sim.game.globals.secret_world,
+                    "wave_timer": sim.game.globals.wave_timer, "wave_complete": sim.game.globals.wave_complete });
                 // The client's status line (e.g. "save recovered from …").
                 d["last_event"] = serde_json::Value::from(sim.last_event.clone());
                 let path = out.with_extension(format!("{label}.json"));

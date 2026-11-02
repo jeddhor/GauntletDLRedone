@@ -1884,3 +1884,46 @@ G2): the game stopped on meeting an enemy they had not seen, with
   gargoyle's 55 nodes in slot 0, both creatures drawn whole in the frames. Not
   compared with reference frames (no original behaviour changes). Its first try
   used golem 75, which never woke (critter-slot-nofix).
+
+## Playtest 2026-11-01 (user): a secret level ended on its first coin
+
+The user, through G2's trap door: the level "didn't actually time" and one
+coin gave credit and unlocked the secret character.
+
+- Cause: two globals kept the start state's values instead of following the
+  level. MaxLevelCoins (0x23ccac, AddItemInstList): load_items counted it but
+  nothing stored it, so it stayed boot_state.json's 1, and on the first coin
+  PlayersGiveSecretCoin (checked against its instructions) unlocked the
+  character, showed the AllCoins scroll and set WaveTimer to 1. SecretWorld
+  (0x23e228; LoadWorldData 0x161e30: CurWorld == 0xc) stayed 0, so PlayerMotion
+  ran the normal gold pickup action 0xe on every coin. Both now set in
+  setup.rs. In the game since the treasure rooms (e5f9ba5, 2026-10-21), so in
+  1.0.0.
+- Why the checks missed it: replays and game_run start from level captures,
+  which hold the right values; only the client starts from the boot state. The
+  earlier client check let the sandglass expire and took no coin.
+- Reference (lvl-S1..S9-start-v1): MaxLevelCoins 25, SecretWorld 1, WaveTimer
+  70.99, 40.99, 45.99, 50.99, 130.99, 100.99, 55.99, 70.99, 60.99. SecretWorld
+  is 0 on the 24 other captures. The native count equals RAM's on all 33.
+- G2's secret exit (item 478) leads to S8, "Crops" (cur_level 7, secret_char
+  14, unlock bit 0x40, 70 s). S8 has 100 gold items, 25 for each +0xe0 from 1
+  to 4, so show_item's count gives 25 for one player and 100 for four.
+  UNVERIFIED with more than one player: no reference capture.
+- Audit for the same flaw (private/runs/secret-level-audit, research scripts):
+  store sites in the ELF of the globals export_game_state.py lists against
+  the port's writes. Besides these two: MaxKeys and MaxPotions are LoadWorldData's
+  constant 9, as the boot state; max_enemy_radius, max_item_radius, the anim
+  time scale and the option words do not vary across the captures. Globals
+  outside that list were not audited.
+- Reproducer, an actual disc check on the real GPU:
+  tools/python/secret_level_check.py walks G2's secret exit to S8 in two runs
+  (DEBUG next_coin). Before (secret-level-nofix): the first coin unlocks, the
+  timer drops to 0.9, HUD 1/1. After (secret-level-fix): 3 coins run the whole
+  70 s, HUD 3/25, no unlock, back in G2 with the count reset; 25 coins unlock,
+  WaveComplete, back in G2. The other eight rooms share the code but were not
+  played. Replays r94 equal r93; original presentation gate pass
+  (baseline-gate-gate-secretfix); title_start_check 6/6.
+- The user's save keeps the bit it got this way (0x40, save0001.json); saves are
+  not changed by fixes.
+- Seen, not changed: entering a treasure room shows "G2 COMPLETE - entering
+  Treasure room S8" for 3 s, a native banner from 1df7291, not text from the disc.

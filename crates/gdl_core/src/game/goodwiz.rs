@@ -82,6 +82,17 @@ impl Game {
         self.critter_damage(1.0e6, i, 0, 0, None, None, 0)
     }
 
+    /// DEBUG (headless checks, not a game feature): where the next gold item
+    /// on show lies (secret_level_check.py).
+    pub fn debug_next_coin(&self) -> Option<[f32; 3]> {
+        self.items.records.iter().find(|r| {
+            r.active() && {
+                let d = &self.items.definitions[r.definition()];
+                d.kind() == 1 && d.subtype() == 1 && self.items.show_item(r)
+            }
+        }).map(|r| r.v3(0x40))
+    }
+
     /// StartGoodWizard.
     pub(crate) fn start_good_wizard(&mut self) {
         self.globals.good_wizard = 1;

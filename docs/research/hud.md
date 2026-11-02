@@ -502,7 +502,8 @@ extent| × 0.7), f = 1 − (1 − f)², column height round((1 − f) × 73) +
 0x1b at y 0x66 − that, crop v0 (101 − h)/128; AudioRuneGetCloser below
 0.25 and AudioRuneIsNear below 0.025, once each. Verified natively in G1
 (GDL_DEBUG_ANY_LEVEL=1 GDL_DEBUG_OLD_SHARDS=3fe). init_wave_timer /
-do_wave_timer need LEVL flag 4, which no shipped level sets.
+do_wave_timer need LEVL flag 4, set on the secret levels S1..S9 (player.md
+"Treasure rooms").
 
 ## The realm map between levels (game mode 0x400f)
 

@@ -453,7 +453,7 @@ impl ItemWorld {
     }
 
     /// show_item 0x151620.
-    fn show_item(&self, record: &ItemRecord) -> bool {
+    pub(crate) fn show_item(&self, record: &ItemRecord) -> bool {
         let mut need = i32::from(record.i8_(0xe0));
         let mut players = if self.session.game_mode & 0x8000 != 0 { 2 } else { self.session.num_virtual_players };
         let exact = 10 < need;
