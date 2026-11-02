@@ -333,10 +333,31 @@ fn setup_overlay(mut commands: Commands) {
         Anchor::TOP_RIGHT,
         Transform::from_xyz(0.0, 0.0, 1.0),
         Visibility::Hidden,
-        layer,
+        layer.clone(),
         FpsText,
     ));
+    // NATIVE (network play): the Network pages over the title screen, whose
+    // full-screen blits the HUD camera draws over FrontText.
+    commands.spawn((Sprite { color: Color::srgba(0.0, 0.0, 0.0, 0.8), custom_size: Some(Vec2::ONE), ..default() }, Transform::default(), Visibility::Hidden, layer.clone(), NetPageBackdrop));
+    commands.spawn((
+        Text2d::new(String::new()),
+        TextFont { font_size: 22.0, ..default() },
+        TextColor(Color::srgb(1.0, 0.95, 0.7)),
+        // (Lines are broken by wrap_text; Bevy's own breaking wrapped centred
+        // text at about 30 characters.)
+        TextLayout::new(bevy::text::Justify::Center, bevy::text::LineBreak::NoWrap),
+        Anchor::CENTER,
+        Transform::from_xyz(0.0, 0.0, 1.0),
+        Visibility::Hidden,
+        layer,
+        NetPageText,
+    ));
 }
+
+#[derive(Component)]
+struct NetPageText;
+#[derive(Component)]
+struct NetPageBackdrop;
 
 /// NATIVE ENHANCEMENT keys: F10 the settings overlay (its keys while
 /// open; also opened by the options lists' "Display" entry), F11
@@ -618,8 +639,15 @@ fn present_overlay(
     mut backdrop: Query<(&mut Sprite, &mut Transform, &mut Visibility), (With<OverlayBackdrop>, Without<OverlayText>, Without<FpsText>)>,
     mut text: Query<(&mut Text2d, &mut TextFont, &mut Transform, &mut Visibility), (With<OverlayText>, Without<FpsText>)>,
     mut fps: Query<(&mut Text2d, &mut TextFont, &mut Transform, &mut Visibility), (With<FpsText>, Without<OverlayText>)>,
+    net: Res<Net>,
+    (front, screen): (Res<Front>, Res<Screen>),
+    mut net_page: Query<(&mut Text2d, &mut TextFont, &mut Transform, &mut Visibility), (With<NetPageText>, Without<OverlayText>, Without<FpsText>, Without<OverlayBackdrop>)>,
+    mut net_backdrop: Query<(&mut Sprite, &mut Transform, &mut Visibility), (With<NetPageBackdrop>, Without<OverlayBackdrop>, Without<NetPageText>, Without<OverlayText>, Without<FpsText>)>,
 ) {
     frames.push_back(time.delta_secs());
+    // NATIVE (network play): another machine's input is late (the game
+    // waits), shown where the frame rate is.
+    let waiting = net.waiting.is_some_and(|t| 0.5 < t.elapsed().as_secs_f32());
     while 60 < frames.len() {
         frames.pop_front();
     }
@@ -627,7 +655,8 @@ fn present_overlay(
     let (_, _, fw, fh) = frame_rect(w.physical_width(), w.physical_height());
     let scale = w.scale_factor().max(0.1);
     let (fw, fh) = (fw as f32 / scale, fh as f32 / scale);
-    let active = overlay.open || settings.show_fps;
+    let page = *screen == Screen::Front && front.attract_run.is_none() && is_net_page(&front.menu.page);
+    let active = overlay.open || settings.show_fps || waiting || page;
     for mut c in &mut cam {
         if c.is_active != active {
             c.is_active = active;
@@ -662,12 +691,42 @@ fn present_overlay(
             show(&mut bv, false);
         }
     }
+    // The Network pages: their text on a dark panel in the frame's lower half
+    // (the title logo above).
+    if let (Ok((mut t, mut font, mut tf, mut v)), Ok((mut sprite, mut btf, mut bv))) = (net_page.single_mut(), net_backdrop.single_mut()) {
+        show(&mut v, page);
+        show(&mut bv, page);
+        if page {
+            let text = wrap_text(&front.menu.text(), 56);
+            let size = (fh / 40.0).clamp(10.0, 30.0);
+            let lines = text.lines().count() as f32;
+            let width = text.lines().map(|l| l.chars().count()).max().unwrap_or(0) as f32 * size * 0.55;
+            let (bw, bh) = ((width + size * 2.0).min(fw * 0.94), (lines + 1.5) * size * 1.25);
+            let y = (-fh * 0.5 + bh * 0.5 + fh * 0.04).min(-fh * 0.1);
+            if t.0 != text {
+                t.0 = text;
+            }
+            if font.font_size != size {
+                font.font_size = size;
+            }
+            tf.translation = Vec3::new(0.0, y, 1.0);
+            sprite.custom_size = Some(Vec2::new(bw, bh));
+            btf.translation = Vec3::new(0.0, y, 0.5);
+        }
+    }
     if let Ok((mut t, mut font, mut tf, mut v)) = fps.single_mut() {
-        show(&mut v, settings.show_fps);
-        if settings.show_fps && !frames.is_empty() {
+        show(&mut v, settings.show_fps || waiting);
+        if (settings.show_fps || waiting) && !frames.is_empty() {
             let mean = frames.iter().sum::<f32>() / frames.len() as f32;
             let worst = frames.iter().copied().fold(0.0, f32::max);
-            let line = format!("{:.0} fps  {:.1} ms  (worst {:.1})", 1.0 / mean.max(1e-6), mean * 1000.0, worst * 1000.0);
+            let mut line = if settings.show_fps {
+                format!("{:.0} fps  {:.1} ms  (worst {:.1})", 1.0 / mean.max(1e-6), mean * 1000.0, worst * 1000.0)
+            } else {
+                String::new()
+            };
+            if waiting {
+                line = format!("Waiting for the other machines…  {line}");
+            }
             if t.0 != line {
                 t.0 = line;
             }
@@ -2717,9 +2776,11 @@ fn present_movie(
 /// gamepad (port k is the k-th gamepad, as player_input reads them; the
 /// keyboard ports have no actuator). A new game (ResetModels'
 /// vibrators_off at a level change) stops every motor.
-fn apply_rumble(sim: Option<ResMut<Sim>>, gamepads: Query<Entity, With<Gamepad>>, mut out: MessageWriter<bevy::input::gamepad::GamepadRumbleRequest>) {
+fn apply_rumble(sim: Option<ResMut<Sim>>, gamepads: Query<Entity, With<Gamepad>>, mut out: MessageWriter<bevy::input::gamepad::GamepadRumbleRequest>, net: Res<Net>) {
     use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
     let Some(mut sim) = sim else { return };
+    // In a network game this machine's controllers are its own ports.
+    let mine = net.game.as_ref().map(|g| gdl_client::net::ports_of(g.you, g.machines));
     let mut pads: Vec<Entity> = gamepads.iter().collect();
     pads.sort();
     if sim.is_added() {
@@ -2728,7 +2789,11 @@ fn apply_rumble(sim: Option<ResMut<Sim>>, gamepads: Query<Entity, With<Gamepad>>
         }
     }
     for (port, intensity) in std::mem::take(&mut sim.game.rumble) {
-        let Some(&gamepad) = usize::try_from(port).ok().and_then(|k| pads.get(k)) else { continue };
+        let local = usize::try_from(port).ok().and_then(|p| match mine.as_ref() {
+            Some(v) => v.iter().position(|&q| q == p),
+            None => Some(p),
+        });
+        let Some(&gamepad) = local.and_then(|k| pads.get(k)) else { continue };
         out.write(GamepadRumbleRequest::Stop { gamepad });
         if let Some(i) = intensity {
             // The motor runs until joyEndShake; the duration only bounds it.
@@ -3065,6 +3130,26 @@ impl TestHarness {
 /// SHA-256 of the simulation records (players, enemies, items, effects,
 /// rand state, Time).
 fn sim_state_hash(g: &Game) -> String {
+    let b = sim_state_bytes(g);
+    // DIAGNOSTIC: GDL_STATE_PARTS=1 adds each part's short hash (players,
+    // enemies, items, effects, rng, time) to the line.
+    if std::env::var_os("GDL_STATE_PARTS").is_some() {
+        let short = |v: &[u8]| gdl_core::save::sha256(v)[..8].to_string();
+        let cat = |rs: &mut dyn Iterator<Item = &[u8]>| rs.flat_map(|r| r.iter().copied()).collect::<Vec<u8>>();
+        let mut parts: Vec<String> = g.players.iter().enumerate().map(|(k, r)| format!("p{k}:{}", short(&r.0))).collect();
+        parts.push(format!("enemies:{}", short(&cat(&mut g.enemies.iter().map(|r| r.0.as_slice())))));
+        parts.push(format!("items:{}", short(&cat(&mut g.items.records.iter().map(|r| r.0.as_slice())))));
+        parts.push(format!("effects:{}", short(&cat(&mut g.effects.slots.iter().map(|r| r.0.as_slice())))));
+        parts.push(format!("rng:{:08x}", g.rng.state));
+        parts.push(format!("time:{}", g.globals.time));
+        return format!("{},{}", gdl_core::save::sha256(&b), parts.join(","));
+    }
+    gdl_core::save::sha256(&b)
+}
+
+/// The hashed simulation records (players, enemies, items, effects, rand
+/// state, Time).
+fn sim_state_bytes(g: &Game) -> Vec<u8> {
     let mut b = Vec::new();
     for r in &g.players {
         b.extend_from_slice(&r.0);
@@ -3080,20 +3165,7 @@ fn sim_state_hash(g: &Game) -> String {
     }
     b.extend_from_slice(&g.rng.state.to_le_bytes());
     b.extend_from_slice(&g.globals.time.to_bits().to_le_bytes());
-    // DIAGNOSTIC: GDL_STATE_PARTS=1 adds each part's short hash (players,
-    // enemies, items, effects, rng, time) to the line.
-    if std::env::var_os("GDL_STATE_PARTS").is_some() {
-        let short = |v: &[u8]| gdl_core::save::sha256(v)[..8].to_string();
-        let cat = |rs: &mut dyn Iterator<Item = &[u8]>| rs.flat_map(|r| r.iter().copied()).collect::<Vec<u8>>();
-        let mut parts: Vec<String> = g.players.iter().enumerate().map(|(k, r)| format!("p{k}:{}", short(&r.0))).collect();
-        parts.push(format!("enemies:{}", short(&cat(&mut g.enemies.iter().map(|r| r.0.as_slice())))));
-        parts.push(format!("items:{}", short(&cat(&mut g.items.records.iter().map(|r| r.0.as_slice())))));
-        parts.push(format!("effects:{}", short(&cat(&mut g.effects.slots.iter().map(|r| r.0.as_slice())))));
-        parts.push(format!("rng:{:08x}", g.rng.state));
-        parts.push(format!("time:{}", g.globals.time));
-        return format!("{},{}", gdl_core::save::sha256(&b), parts.join(","));
-    }
-    gdl_core::save::sha256(&b)
+    b
 }
 
 /// Player 1's progression words and save region hash (TEST dumps).
@@ -5496,6 +5568,142 @@ impl gdl_core::game::pselect::SaveCard for NativeCard<'_> {
     }
 }
 
+/// NATIVE (network play, gdl_client::net; research/network.md): the link to
+/// the other machines and, once the game starts, the lockstep state.
+#[derive(Resource, Default)]
+struct Net {
+    link: Option<gdl_client::net::Link>,
+    game: Option<NetGame>,
+    /// A step was applied this rendered frame. At most one per frame, so
+    /// front_system and advance_level, which run after the fixed steps, act
+    /// between the same two steps on every machine.
+    stepped: bool,
+    /// This machine's menu events since its last input.
+    pending: Vec<u8>,
+    /// Every machine's menu events of the step applied this frame (taken
+    /// by front_system).
+    due: Vec<Vec<u8>>,
+    /// Since when the next step's frame has been missing.
+    waiting: Option<std::time::Instant>,
+    /// The TEST switches (GDL_NET_HOST / GDL_NET_JOIN) have acted.
+    auto: bool,
+}
+
+struct NetGame {
+    you: usize,
+    machines: usize,
+    delay: u32,
+    /// The next step to apply.
+    next: u32,
+    /// The host's memory card (the select screen's files 1..8).
+    card: [Option<Vec<u8>>; 8],
+    /// This machine's GamePrefs before the host's replaced them.
+    prefs: [i32; 8],
+    /// The host: the music part and the movie it last reported ended.
+    stream_part: Option<i32>,
+    movie_done: bool,
+    /// TEST: GDL_NET_SCRIPT, this machine's first port by step.
+    script: Option<Vec<(u64, u64, Vec<usize>)>>,
+}
+
+impl Net {
+    fn playing(&self) -> bool {
+        self.game.is_some()
+    }
+}
+
+/// Menu events in a network input: 1..=9 these keys, [`NET_TOGGLE`] the
+/// pause toggle, 0x80 | letter a typed letter (the select screen's names).
+const NET_KEYS: [Key; 9] = [Key::Up, Key::Down, Key::Left, Key::Right, Key::Accept, Key::Back, Key::Center, Key::Start, Key::Erase];
+const NET_TOGGLE: u8 = 0x10;
+
+/// The menu keys and pause toggle in every machine's events, in machine
+/// order.
+fn net_menu_input(events: &[Vec<u8>]) -> (Vec<Key>, bool) {
+    let mut keys = Vec::new();
+    let mut toggle = false;
+    for &e in events.iter().flatten() {
+        match e {
+            NET_TOGGLE => toggle = true,
+            1..=9 => keys.push(NET_KEYS[e as usize - 1]),
+            _ => {}
+        }
+    }
+    (keys, toggle)
+}
+
+/// The select screen's typed letters by player: machine m's last letter
+/// goes to the player on its first port (the keyboard's).
+fn net_typed(events: &[Vec<u8>], g: &Game, machines: usize) -> [Option<char>; 4] {
+    let mut typed = [None; 4];
+    for (m, ev) in events.iter().enumerate() {
+        let first = gdl_client::net::ports_of(m, machines).first().map_or(-2, |&p| p as i32);
+        if let Some(&c) = ev.iter().rev().find(|&&e| e & 0x80 != 0)
+            && let Some(k) = (0..4).find(|&k| g.controls.joy_remap[k] == first)
+        {
+            typed[k] = Some(char::from(c & 0x7f));
+        }
+    }
+    typed
+}
+
+/// The game state's digest (the network machines compare it every second).
+fn sim_state_digest(g: &Game) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(sim_state_bytes(g)).into()
+}
+
+/// The disc data a network game needs equal on every machine: the
+/// executable's digest.
+fn net_data_id(front: &Front) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(&front.elf_bytes).into()
+}
+
+/// The network card: the host's eight files, written on the host's store
+/// too (every machine writes its copy, so all stay equal; the joining
+/// machines' own saves are not used).
+struct NetCard<'a> {
+    files: &'a mut [Option<Vec<u8>>; 8],
+    store: Option<&'a gdl_core::save::SaveStore>,
+}
+
+impl gdl_core::game::pselect::SaveCard for NetCard<'_> {
+    fn directory(&self) -> [Option<gdl_core::game::pselect::CardFile>; 8] {
+        std::array::from_fn(|k| {
+            let region = self.files[k].as_ref()?;
+            let name = String::from_utf8_lossy(&region[..region.iter().take(8).position(|&c| c == 0).unwrap_or(8)]).into_owned();
+            let w = |o: usize| i32::from(i16::from_le_bytes([region[o], region[o + 1]]));
+            Some(gdl_core::game::pselect::CardFile { name, levels: w(0xe), class: w(8) })
+        })
+    }
+    fn load(&mut self, k: usize) -> Option<Vec<u8>> {
+        self.files.get(k).cloned().flatten()
+    }
+    fn save(&mut self, k: usize, region: &[u8]) -> bool {
+        let Some(f) = self.files.get_mut(k) else { return false };
+        *f = Some(region.to_vec());
+        // A failed write on the host's disk keeps the game going on every
+        // machine (the store reports it; the copy in memory is written).
+        if let Some(store) = self.store {
+            let _ = store.store(k as u32 + 1, "network", region);
+        }
+        true
+    }
+}
+
+/// This machine's pads for its `n` ports: local players 0.. as single play
+/// fills ports 0..3 (the keyboard serves the first two).
+fn net_local_pads(n: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bindings: &gdl_client::controls::Bindings, keyboard: bool) -> Vec<gdl_core::game::pad::PadStatus> {
+    (0..n)
+        .map(|k| {
+            let mut p = player_input(k, keys, pads, bindings, keyboard);
+            p.connected = k < 2 || pads.get(k).is_some();
+            p
+        })
+        .collect()
+}
+
 /// TEST switch GDL_GAMEPAD_ONLY=TEXT: only gamepads whose name contains
 /// TEXT are used (M20 device tests with a virtual pad while a physical
 /// controller is plugged in). Unset: every gamepad.
@@ -5617,6 +5825,7 @@ fn simulate(
     time: Res<Time>,
     (mut harness, mut exit): (ResMut<TestHarness>, MessageWriter<AppExit>),
     (bindings, overlay): (Res<gdl_client::controls::Bindings>, Res<gdl_client::enhance::Overlay>),
+    mut net: ResMut<Net>,
 ) {
     // DIAGNOSTIC (M20): GDL_SLOW_STEP prints an update of this system over
     // 8 ms with its sections' times (SLOWSIM) and a step over 8 ms with
@@ -5639,17 +5848,73 @@ fn simulate(
     pads.sort_by_key(|(e, _)| *e);
     let pads: Vec<&Gamepad> = pads.into_iter().map(|(_, g)| g).collect();
     let mut ports = [PadStatus::default(); 8];
-    for (k, port) in ports.iter_mut().take(4).enumerate() {
-        *port = player_input(k, &keys, &pads, &bindings, !overlay.open && !overlay.held);
-        // Only ports with a device are connected (keyboard: ports 0 and 1).
-        port.connected = k < 2 || pads.get(k).is_some();
+    // NATIVE (network play): the step's pads are the host's merged frame;
+    // this machine sends its own for step next + delay. At most one step
+    // per rendered frame, none while the frame is missing (every machine
+    // waits for the slowest).
+    let mut frame = None;
+    let Net { link, game: net_game, pending, due, stepped, waiting, .. } = &mut *net;
+    if let Some(ng) = net_game.as_mut() {
+        let Some(link) = link.as_mut() else { return };
+        if *stepped {
+            return;
+        }
+        let Some(f) = link.frame(ng.next) else {
+            waiting.get_or_insert_with(std::time::Instant::now);
+            return;
+        };
+        *waiting = None;
+        *stepped = true;
+        // The state before this step, compared across the machines.
+        if ng.next.is_multiple_of(gdl_client::net::HASH_EVERY) && 0 < ng.next {
+            link.report_hash(ng.next, sim_state_digest(&sim.game));
+        }
+        let tick = ng.next + ng.delay;
+        let n = gdl_client::net::ports_of(ng.you, ng.machines).len();
+        let mut mine = net_local_pads(n, &keys, &pads, &bindings, !overlay.open && !overlay.held);
+        let mut events = std::mem::take(pending);
+        // TEST: GDL_NET_SCRIPT entries below 0x16 press this machine's first
+        // port, 0x100 + code sends a menu event (NET_KEYS, NET_TOGGLE).
+        if let (Some(script), Some(p)) = (ng.script.as_ref(), mine.first_mut()) {
+            for (first, last, entries) in script {
+                if (*first..=*last).contains(&u64::from(tick)) {
+                    for &i in entries {
+                        match i {
+                            0..0x16 => p.press(i),
+                            0x100..0x200 => events.push((i - 0x100) as u8),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        link.submit(gdl_client::net::Input { tick, pads: mine, events });
+        ng.next += 1;
+        ports = f.pads;
+        due.clone_from(&f.events);
+        frame = Some(f);
+    } else {
+        for (k, port) in ports.iter_mut().take(4).enumerate() {
+            *port = player_input(k, &keys, &pads, &bindings, !overlay.open && !overlay.held);
+            // Only ports with a device are connected (keyboard: ports 0 and 1).
+            port.connected = k < 2 || pads.get(k).is_some();
+        }
     }
+    let networked = frame.is_some();
     // Only while the level plays: the select screen, shop, map and movies
     // keep the keyboard (they read the same PlayerControl ports).
     let in_play = sim.select.is_none() && sim.shop.is_none() && sim.map.is_none() && sim.movie.is_none() && sim.message_box.is_none();
     if in_play && !harness.actions.is_empty() {
         let now = sim.updates;
-        let due: Vec<serde_json::Value> = harness.actions.iter().filter(|a| a["at"].as_u64() == Some(now)).cloned().collect();
+        // In a network game only the dumps: the other actions would change
+        // this machine's game alone.
+        let due: Vec<serde_json::Value> = harness
+            .actions
+            .iter()
+            .filter(|a| a["at"].as_u64() == Some(now))
+            .filter(|a| !networked || a.as_object().is_some_and(|o| o.keys().all(|k| k == "at" || k == "dump")))
+            .cloned()
+            .collect();
         for a in due {
             if let Some(v) = a["teleport"].as_array() {
                 let v: Vec<f32> = v.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect();
@@ -5747,9 +6012,9 @@ fn simulate(
                 let mut d = progress_dump(&sim.game, label, now);
                 d["controller_lost"] = serde_json::Value::from(sim.game.controls.controller_lost);
                 // Every player: state +0xfc, health, name (+0x99c), class, the
-                // card file it owns (+0x2af4) and its port.
+                // card file it owns (+0x2af4), its port and position (+0x50).
                 d["players"] = serde_json::json!((0..4).map(|k| { let r = &sim.game.players[k]; serde_json::json!({
-                    "state": r.i32_(0xfc), "health": r.f32_(0x1a10), "class": r.u32_(0xc),
+                    "state": r.i32_(0xfc), "health": r.f32_(0x1a10), "class": r.u32_(0xc), "pos": r.v3(0x50),
                     "name": String::from_utf8_lossy(&r.0[0x99c..0x9a4]).trim_end_matches('\0').to_string(),
                     "file": r.i32_(0x2af4), "port": sim.game.controls.joy_remap[k] }) }).collect::<Vec<_>>());
                 d["joy_remap"] = serde_json::json!(sim.game.controls.joy_remap);
@@ -5771,12 +6036,14 @@ fn simulate(
                 }).collect::<Vec<_>>());
                 // The client's status line (e.g. "save recovered from …").
                 d["last_event"] = serde_json::Value::from(sim.last_event.clone());
+                // In a network game the next network step.
+                d["net_step"] = serde_json::json!(net_game.as_ref().map(|g| g.next));
                 let path = out.with_extension(format!("{label}.json"));
                 let _ = std::fs::write(path, serde_json::to_vec_pretty(&d).unwrap_or_default());
             }
         }
     }
-    if !in_play && let Some(script) = harness.menu_script.as_ref() {
+    if !in_play && !networked && let Some(script) = harness.menu_script.as_ref() {
         let n = harness.menu_ticks;
         let mut p = PadStatus { connected: true, ..Default::default() };
         for (first, last, entries) in script {
@@ -5789,7 +6056,7 @@ fn simulate(
         ports[0] = p;
         harness.menu_ticks += 1;
     }
-    if let Some(script) = harness.script.as_ref().filter(|_| in_play) {
+    if let Some(script) = harness.script.as_ref().filter(|_| in_play && !networked) {
         let n = sim.updates;
         let mut p = PadStatus { connected: true, ..Default::default() };
         for (first, last, entries) in script {
@@ -5802,7 +6069,7 @@ fn simulate(
         ports[0] = p;
     }
     // TEST: a port without its device, then back with START held.
-    if let Some((port, after)) = harness.disconnect
+    if !networked && let Some((port, after)) = harness.disconnect
         && let Some(pd) = ports.get_mut(port)
     {
         // Ticks count while the message is up, then until START is released.
@@ -5849,8 +6116,9 @@ fn simulate(
     }
     // NATIVE recovery notice (M18): a slot loaded from its backup or a
     // leftover .tmp is reported once in a message box (the original has no
-    // such message; its card code never sees a damaged native file).
-    if sim.message_box.is_none() {
+    // such message; its card code never sees a damaged native file). Not
+    // in a network game: the box would open on this machine alone.
+    if sim.message_box.is_none() && !networked {
         let notes = front.store.take_recoveries();
         if !notes.is_empty()
             && let Some(e) = front.scrolls.entries.first()
@@ -5896,7 +6164,10 @@ fn simulate(
             Err(e) => sim.error = Some(format!("screen saver: {}", e.0)),
         }
     }
-    if ui.paused || closing || sim.message_box.is_some() || overlay.open {
+    // In a network game the settings overlay is this machine's own: the
+    // game goes on under it.
+    let overlay_open = overlay.open && !networked;
+    if ui.paused || closing || sim.message_box.is_some() || overlay_open {
         // main keeps running AudioQueUpdate / AudioPoll (DoOptions,
         // ScrollMessageBox): queued lines go on while the game waits (also
         // under the native settings overlay).
@@ -5916,7 +6187,7 @@ fn simulate(
             sim.game.bg_music_update();
         }
         sim.game.main_audio(vb);
-        if overlay.open {
+        if overlay_open {
             // The native settings overlay: the game waits.
         } else if !ui.paused && !closing {
             step_message_box(&mut sim, &ports, time.delta_secs());
@@ -5932,9 +6203,32 @@ fn simulate(
         play_audio(&mut audio, &new);
         return;
     }
-    // PlayStreamComplete: a stage music part played once has ended.
-    if sim.game.bg_music.stream_playing && audio.as_ref().is_some_and(|a| !a.stream_playing()) {
+    // PlayStreamComplete: a stage music part played once has ended (in a
+    // network game when the host's has: FLAG_STREAM_DONE).
+    let stream_done = match frame.as_ref() {
+        Some(f) => f.flags & gdl_client::net::FLAG_STREAM_DONE != 0,
+        None => audio.as_ref().is_some_and(|a| !a.stream_playing()),
+    };
+    if sim.game.bg_music.stream_playing && stream_done {
         sim.game.bg_stream_complete();
+    }
+    // The host reports its own part's end once (and its movie's below).
+    if let (Some(ng), Some(link)) = (net_game.as_mut(), link.as_mut())
+        && link.is_host()
+    {
+        let part = sim.game.bg_music.part;
+        if sim.game.bg_music.stream_playing && audio.as_ref().is_some_and(|a| !a.stream_playing()) && ng.stream_part != Some(part) {
+            link.raise(gdl_client::net::FLAG_STREAM_DONE);
+            ng.stream_part = Some(part);
+        }
+        match sim.movie.as_ref() {
+            Some(run) if !ng.movie_done && run.tried && !run.player.as_ref().is_some_and(|p| p.playing()) => {
+                link.raise(gdl_client::net::FLAG_MOVIE_DONE);
+                ng.movie_done = true;
+            }
+            None => ng.movie_done = false,
+            _ => {}
+        }
     }
     // game mode 0x8008: the attract flyby (game_main's flyby case, do_camera).
     if let Some(mut f) = sim.flyby.take() {
@@ -5959,7 +6253,10 @@ fn simulate(
         }
         // game_main: SetPlayerVars in every mode, before the dispatch.
         sim.game.set_player_vars();
-        let serving = !run.tried || run.player.as_ref().is_some_and(|p| p.playing());
+        let serving = match frame.as_ref() {
+            Some(f) => f.flags & gdl_client::net::FLAG_MOVIE_DONE == 0,
+            None => !run.tried || run.player.as_ref().is_some_and(|p| p.playing()),
+        };
         match sim.game.do_gamemovie(&mut run.game, serving) {
             Some(_) => sim.movie_done = Some(run.then),
             None => sim.movie = Some(run),
@@ -6005,17 +6302,25 @@ fn simulate(
     }
     // game mode 0x400b: the player-select screen (do_player_select).
     if let Some(mut ps) = sim.select.take() {
-        let typed = typed_letter(&keys);
+        let typed = match (frame.as_ref(), net_game.as_ref()) {
+            (Some(f), Some(ng)) => net_typed(&f.events, &sim.game, ng.machines),
+            _ => [typed_letter(&keys), None, None, None],
+        };
         let g = &mut sim.game;
         g.hud.begin_frame();
         g.main_audio(g.globals.vb_elapsed);
-        let mut card = NativeCard { store: &front.store };
+        let mut native = NativeCard { store: &front.store };
+        let mut network = net_game.as_mut().map(|ng| NetCard { files: &mut ng.card, store: link.as_ref().is_some_and(|l| l.is_host()).then_some(&front.store) });
+        let card: &mut dyn gdl_core::game::pselect::SaveCard = match network.as_mut() {
+            Some(c) => c,
+            None => &mut native,
+        };
         // game_main (0x400b): SetPlayerVars, do_players unless paused, then
         // do_player_select (its WritePlayerInfo gate, 0x20f974 bit 0, is
         // unnamed; do_players writes the panels in this mode).
         g.set_player_vars();
         let r = g.update_controls(&ports).and_then(|_| if g.globals.paused == 0 { g.do_players().map(|_| ()) } else { Ok(()) }).and_then(|_| {
-            let mut cx = gdl_core::game::pselect::SelectCtx { pdats: &session.pdats, card: &mut card, typed: [typed, None, None, None] };
+            let mut cx = gdl_core::game::pselect::SelectCtx { pdats: &session.pdats, card, typed };
             g.do_player_select(&mut ps, &front.sel, &mut cx)
         });
         let blits = sim.game.select_blits(&ps, &front.sel);
@@ -7869,7 +8174,7 @@ fn present_hud(
     mut meshes: ResMut<Assets<Mesh>>,
     mut pool: HudSpriteQuery,
     mut quad: Local<Option<Handle<Mesh>>>,
-    (mut icon, layout, prompts): (ResMut<MenuIcon>, Res<FrameLayout>, Res<PromptStyle>),
+    (mut icon, layout, prompts, net): (ResMut<MenuIcon>, Res<FrameLayout>, Res<PromptStyle>, Res<Net>),
 ) {
     let playing = *screen == Screen::Playing;
     let xbox = prompts.0 == gdl_client::glyphs::Style::Xbox;
@@ -8013,7 +8318,9 @@ fn present_hud(
             let exit = if closing {
                 let c = front.inventory_close.get_or_insert(0.0);
                 let e = *c as i32 * rate;
-                *c += time.delta_secs() * 59.94;
+                // In a network game by steps (the page change below is in
+                // every machine's shared menu).
+                *c += if net.playing() { if net.stepped { 2.0 } else { 0.0 } } else { time.delta_secs() * 59.94 };
                 Some(e)
             } else {
                 front.inventory_close = None;
@@ -8471,6 +8778,194 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// `text` with lines longer than `width` characters broken at spaces.
+fn wrap_text(text: &str, width: usize) -> String {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut cur = String::new();
+        for word in line.split(' ') {
+            if !cur.is_empty() && width < cur.chars().count() + 1 + word.chars().count() {
+                out.push(std::mem::take(&mut cur));
+            }
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(word);
+        }
+        out.push(cur);
+    }
+    out.join("\n")
+}
+
+/// The Network pages (present_overlay draws them).
+fn is_net_page(page: &gdl_client::menu::Page) -> bool {
+    use gdl_client::menu::Page;
+    matches!(page, Page::Network { .. } | Page::NetHost { .. } | Page::NetJoin { .. } | Page::NetLobby { .. })
+}
+
+/// NATIVE (network play): the steps between a machine sampling its input
+/// and every machine using it (133 ms; GDL_NET_DELAY for tests).
+const NET_DELAY: u8 = 4;
+
+/// "host" or "host:port" (IPv6 in brackets) with the default port added.
+fn net_target(address: &str) -> String {
+    let colons = address.matches(':').count();
+    if address.starts_with('[') && address.contains("]:") || colons == 1 {
+        address.to_string()
+    } else if 1 < colons && !address.starts_with('[') {
+        format!("[{address}]:{}", gdl_client::net::DEFAULT_PORT)
+    } else {
+        format!("{address}:{}", gdl_client::net::DEFAULT_PORT)
+    }
+}
+
+/// The host begins the network game with every machine in its lobby.
+fn net_start_host(world: &mut EcsWorld) -> Result<(), Box<dyn Error>> {
+    let (prefs, card) = {
+        let front = world.resource::<Front>();
+        let card = (1..=8).map(|slot| front.store.load(slot).ok().and_then(|l| l.save.region().ok())).collect();
+        (front.menu.prefs, card)
+    };
+    let delay = std::env::var("GDL_NET_DELAY").ok().and_then(|v| v.parse().ok()).unwrap_or(NET_DELAY);
+    let start = world.resource_mut::<Net>().link.as_mut().and_then(|l| l.start(delay, prefs, card)).ok_or("not hosting")?;
+    start_net_game(world, start)
+}
+
+/// A network game begins on this machine: the host's preferences and
+/// memory card, this machine's first `delay` inputs (nothing pressed), then
+/// the select screen as the title's Start opens it — player 1 choosing on
+/// the host's first port; the others join with Start on their own.
+fn start_net_game(world: &mut EcsWorld, start: gdl_client::net::Start) -> Result<(), Box<dyn Error>> {
+    let prefs = {
+        let mut front = world.resource_mut::<Front>();
+        let mine = front.menu.prefs;
+        front.menu.prefs = start.prefs;
+        front.menu.net_game = true;
+        front.menu.net_status.clear();
+        front.menu.status.clear();
+        mine
+    };
+    let script = std::env::var("GDL_NET_SCRIPT").ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok());
+    let ng = NetGame {
+        you: start.you as usize,
+        machines: start.machines as usize,
+        delay: u32::from(start.delay),
+        next: 0,
+        card: std::array::from_fn(|k| start.card.get(k).cloned().flatten()),
+        prefs,
+        stream_part: None,
+        movie_done: false,
+        script,
+    };
+    let n = gdl_client::net::ports_of(ng.you, ng.machines).len();
+    let mut net = world.resource_mut::<Net>();
+    if let Some(link) = net.link.as_mut() {
+        for tick in 0..ng.delay {
+            let pads = (0..n).map(|k| PadStatus { connected: k < 2, ..Default::default() }).collect();
+            link.submit(gdl_client::net::Input { tick, pads, events: Vec::new() });
+        }
+    }
+    net.game = Some(ng);
+    net.pending.clear();
+    net.due.clear();
+    net.stepped = false;
+    net.waiting = None;
+    eprintln!("network game: machine {} of {}, delay {} steps", start.you + 1, start.machines, start.delay);
+    // do_titlescreen's start: HintMenu(-1) (hints_inited = 0).
+    world.resource_mut::<Front>().hints = Default::default();
+    start_select(world)
+}
+
+/// NATIVE (network play): the link's news, every frame before the steps;
+/// and the TEST switches GDL_NET_HOST=port / GDL_NET_JOIN=address (at the
+/// title) and GDL_NET_MACHINES=n (the host begins once n machines are in).
+fn net_poll(world: &mut EcsWorld) {
+    use gdl_client::net::Event;
+    if *world.resource::<Screen>() == Screen::Front && !world.resource::<Net>().auto && world.resource::<Net>().link.is_none() {
+        world.resource_mut::<Net>().auto = true;
+        if let Some(port) = std::env::var("GDL_NET_HOST").ok().and_then(|v| v.parse().ok()) {
+            act(world, Action::NetHost { port });
+        } else if let Ok(address) = std::env::var("GDL_NET_JOIN") {
+            act(world, Action::NetJoin { address });
+        }
+    }
+    let Some(mut link) = world.resource_mut::<Net>().link.take() else { return };
+    let events = link.poll();
+    let (host, place) = (link.is_host(), link.describe());
+    world.resource_mut::<Net>().link = Some(link);
+    let playing = world.resource::<Net>().playing();
+    for e in events {
+        match e {
+            Event::Lobby { machines } => {
+                let mut front = world.resource_mut::<Front>();
+                front.menu.net_status = if host {
+                    format!("Hosting on {place}.\n{machines} machine{} in the game (this one too).", if machines == 1 { "" } else { "s" })
+                } else {
+                    format!("Joined the game at {place}.\n{machines} machines in the game.")
+                };
+                if host && std::env::var("GDL_NET_MACHINES").ok().and_then(|v| v.parse::<u8>().ok()) == Some(machines) {
+                    act(world, Action::NetStart);
+                }
+            }
+            Event::Started(start) if !playing => {
+                if let Err(e) = start_net_game(world, start) {
+                    world.resource_mut::<Front>().menu.status = format!("network game: {e}");
+                }
+            }
+            Event::Started(_) => {}
+            Event::Left { machine } => {
+                eprintln!("network game: machine {} left", machine + 1);
+                if let Some(mut sim) = world.get_resource_mut::<Sim>() {
+                    sim.last_event = format!("machine {} left the network game", machine + 1);
+                }
+            }
+            Event::Ended(why) => {
+                eprintln!("network game: {why}");
+                if world.resource::<Net>().playing() {
+                    if *world.resource::<Screen>() == Screen::Playing {
+                        end_game(world);
+                    } else {
+                        end_net_game(world);
+                    }
+                    let mut front = world.resource_mut::<Front>();
+                    front.menu.status = format!("The network game ended: {why}.");
+                } else {
+                    world.resource_mut::<Net>().link = None;
+                    let mut front = world.resource_mut::<Front>();
+                    front.menu.status = why;
+                    front.menu.net_status.clear();
+                    front.menu.page = gdl_client::menu::Page::Network { at: usize::from(!host) };
+                }
+            }
+        }
+    }
+}
+
+/// The network game is over on this machine: the link closes and this
+/// machine's own preferences return.
+fn end_net_game(world: &mut EcsWorld) {
+    let ng = {
+        let mut net = world.resource_mut::<Net>();
+        if let Some(mut l) = net.link.take() {
+            l.close("the game is over");
+        }
+        net.pending.clear();
+        net.due.clear();
+        net.waiting = None;
+        net.game.take()
+    };
+    if let Some(ng) = ng {
+        let mut front = world.resource_mut::<Front>();
+        front.menu.prefs = ng.prefs;
+        front.menu.net_game = false;
+    }
+}
+
+/// A new frame: no step applied yet (network play's one step per frame).
+fn net_frame_start(mut net: ResMut<Net>) {
+    net.stepped = false;
+}
+
 /// init_attract_mode's flyby entry (init_flyby): the attract level `idx`
 /// with no player in play (player 1's record cleared and inactive; the
 /// game's HUD gets textures and fonts only) under the old camera.
@@ -8526,6 +9021,7 @@ fn end_flyby(world: &mut EcsWorld) {
 
 /// Quit Game (init_over: every player inactivated) → the title.
 fn end_game(world: &mut EcsWorld) {
+    end_net_game(world);
     let roots: Vec<Entity> = world.query_filtered::<Entity, With<MirrorRoot>>().iter(world).collect();
     for r in roots {
         world.despawn(r);
@@ -8576,11 +9072,16 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
             (KeyCode::KeyO, 'O'), (KeyCode::KeyP, 'P'), (KeyCode::KeyQ, 'Q'), (KeyCode::KeyR, 'R'), (KeyCode::KeyS, 'S'), (KeyCode::KeyT, 'T'), (KeyCode::KeyU, 'U'),
             (KeyCode::KeyV, 'V'), (KeyCode::KeyW, 'W'), (KeyCode::KeyX, 'X'), (KeyCode::KeyY, 'Y'), (KeyCode::KeyZ, 'Z'), (KeyCode::Digit0, '0'), (KeyCode::Digit1, '1'),
             (KeyCode::Digit2, '2'), (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'), (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'),
-            (KeyCode::Digit8, '8'), (KeyCode::Digit9, '9'),
+            (KeyCode::Digit8, '8'), (KeyCode::Digit9, '9'), (KeyCode::Period, '.'), (KeyCode::NumpadDecimal, '.'), (KeyCode::Minus, '-'),
+            (KeyCode::BracketLeft, '['), (KeyCode::BracketRight, ']'),
         ] {
             if pressed(k) {
                 out.push(Key::Char(c));
             }
+        }
+        // ':' (an address's port): Shift + the semicolon key.
+        if pressed(KeyCode::Semicolon) && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)) {
+            out.push(Key::Char(':'));
         }
         if pressed(KeyCode::Backspace) {
             out.push(Key::Erase);
@@ -8921,6 +9422,40 @@ fn act(world: &mut EcsWorld, action: Action) {
             Action::Exit => {
                 world.write_message(AppExit::Success);
             }
+            // NATIVE (network play, research/network.md).
+            Action::NetHost { port } => {
+                let data = net_data_id(world.resource::<Front>());
+                match gdl_client::net::Link::host(port, env!("CARGO_PKG_VERSION"), data) {
+                    Ok(link) => {
+                        let mut front = world.resource_mut::<Front>();
+                        front.menu.net_status = format!("Hosting on port {port}.\nWaiting for other players to join.");
+                        front.menu.status.clear();
+                        front.menu.page = gdl_client::menu::Page::NetLobby { host: true };
+                        world.resource_mut::<Net>().link = Some(link);
+                    }
+                    Err(e) => world.resource_mut::<Front>().menu.status = format!("Could not host on port {port}: {e}"),
+                }
+            }
+            Action::NetJoin { address } => {
+                let target = net_target(&address);
+                let data = net_data_id(world.resource::<Front>());
+                let link = gdl_client::net::Link::join(&target, env!("CARGO_PKG_VERSION"), data);
+                let mut front = world.resource_mut::<Front>();
+                front.menu.net_status = format!("Connecting to {target}…");
+                front.menu.status.clear();
+                front.menu.page = gdl_client::menu::Page::NetLobby { host: false };
+                world.resource_mut::<Net>().link = Some(link);
+            }
+            Action::NetStart => net_start_host(world)?,
+            Action::NetLeave => {
+                let host = world.resource_mut::<Net>().link.take().map(|mut l| {
+                    l.close("the host left");
+                    l.is_host()
+                });
+                let mut front = world.resource_mut::<Front>();
+                front.menu.net_status.clear();
+                front.menu.page = gdl_client::menu::Page::Network { at: usize::from(host == Some(false)) };
+            }
             // NATIVE: an options list's "Display" entry.
             Action::Display => {
                 let mut overlay = world.resource_mut::<gdl_client::enhance::Overlay>();
@@ -8941,11 +9476,16 @@ fn act(world: &mut EcsWorld, action: Action) {
                     _ => None,
                 };
                 if let Some(w) = pref {
+                    // In a network game the host's preferences apply and
+                    // this machine's stored options stay as they were.
+                    let networked = world.resource::<Net>().playing();
                     let mut front = world.resource_mut::<Front>();
                     front.menu.prefs[w] = idx as i32;
-                    front.game_opts[4 * w..4 * w + 4].copy_from_slice(&(idx as i32).to_le_bytes());
-                    let opts = front.game_opts.clone();
-                    front.store.store_options(&opts)?;
+                    if !networked {
+                        front.game_opts[4 * w..4 * w + 4].copy_from_slice(&(idx as i32).to_le_bytes());
+                        let opts = front.game_opts.clone();
+                        front.store.store_options(&opts)?;
+                    }
                     let prefs = front.menu.prefs;
                     if let Some(mut session) = world.get_resource_mut::<Session>() {
                         session.prefs = prefs;
@@ -9051,11 +9591,38 @@ fn front_system(world: &mut EcsWorld) {
         }
         return;
     }
-    // DoOptions: finish_optmenu / ServeFireScroll each frame.
-    let vb = world.resource::<Time>().delta_secs() * 59.94;
+    // DoOptions: finish_optmenu / ServeFireScroll each frame. In a network
+    // game every machine shares the menus: they move by steps (two vblanks
+    // each) and take the keys every machine sent for the step applied this
+    // frame; this machine's own go out with its next input.
+    let networked = world.resource::<Net>().playing() && screen == Screen::Playing;
+    let vb = if networked {
+        if world.resource::<Net>().stepped { 2.0 } else { 0.0 }
+    } else {
+        world.resource::<Time>().delta_secs() * 59.94
+    };
     serve_menu_ending(&mut world.resource_mut::<Front>(), vb);
-    let naming = matches!(world.resource::<Front>().menu.page, gdl_client::menu::Page::Name { .. });
-    let (keys, mut toggle) = menu_keys(world, naming);
+    let naming = matches!(
+        world.resource::<Front>().menu.page,
+        gdl_client::menu::Page::Name { .. } | gdl_client::menu::Page::NetHost { .. } | gdl_client::menu::Page::NetJoin { .. }
+    );
+    let (keys, mut toggle) = if networked {
+        let (local, local_toggle) = menu_keys(world, false);
+        let typed = typed_letter(world.resource::<ButtonInput<KeyCode>>());
+        let mut net = world.resource_mut::<Net>();
+        let codes: Vec<u8> = local.iter().filter_map(|k| NET_KEYS.iter().position(|x| x == k)).map(|i| i as u8 + 1).collect();
+        net.pending.extend(codes);
+        if local_toggle {
+            net.pending.push(NET_TOGGLE);
+        }
+        if let Some(c) = typed.filter(char::is_ascii) {
+            net.pending.push(0x80 | c as u8);
+        }
+        let due = std::mem::take(&mut net.due);
+        net_menu_input(&due)
+    } else {
+        menu_keys(world, naming)
+    };
     // optmenu_active stays 1 while the last menu finishes (no OptionsStart).
     if !world.resource::<Front>().ending.finishing.is_empty() && !world.resource::<Ui>().paused {
         toggle = false;
@@ -9361,7 +9928,12 @@ fn front_text(
     let Ok((mut t, mut tf)) = text.single_mut() else { return };
     // On the title the menu sits in the lower part, below the logo.
     tf.translation.y = if *screen == Screen::Front { -300.0 } else { 0.0 };
-    let show = (*screen == Screen::Front || ui.paused) && !attract && menu_view(&front, *screen, &ui).is_none() && select_columns(&front, *screen).is_none() && !inventory_view(&front, *screen, &ui);
+    let show = (*screen == Screen::Front || ui.paused)
+        && !attract
+        && menu_view(&front, *screen, &ui).is_none()
+        && select_columns(&front, *screen).is_none()
+        && !inventory_view(&front, *screen, &ui)
+        && !is_net_page(&front.menu.page);
     let want = if show { front.menu.text() } else { String::new() };
     if t.0 != want {
         t.0 = want;
@@ -9763,6 +10335,18 @@ fn run() -> Result<(), Box<dyn Error>> {
             menus.insert(n, m);
         }
     }
+    // NATIVE: the title menu's middle entry, "Network" (network play), drawn
+    // like Start. Action 0 is no DoOptions case. The list grows down from
+    // its y: one entry higher keeps Options in the frame.
+    if let Some(m) = menus.get_mut("title_menu")
+        && let Some(first) = m.entries.first().cloned()
+    {
+        let fh = opt_style.as_ref().map_or(0, |st| ui_hud.font_height(st.font, m.scale));
+        if 0 <= m.y {
+            m.y = (m.y - fh - first.gap).max(0);
+        }
+        m.entries.insert(1, gdl_core::game::optmenu::MenuEntry { label: gdl_client::menu::NETWORK.into(), action: 0, value: None, ..first });
+    }
     // NATIVE: the options lists end with "Display" (the settings overlay;
     // gdl_client::menu::DISPLAY), drawn like the entry before it. Action 0
     // is no DoOptions case.
@@ -9907,6 +10491,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<MatRequests>()
         .init_resource::<PendingTreePsys>()
         .init_resource::<ChestNodes>()
+        .init_resource::<Net>()
         .init_resource::<MovieScreen>()
         .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
         .init_resource::<EnemyFrames>()
@@ -9952,6 +10537,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(TestHarness::from_env())
         .add_systems(Last, (frame_limiter, ui_trace, frame_log, diagnostic_shots, diagnostic_scene_dump))
         .add_systems(Update, hd_textures_job)
+        .add_systems(First, net_frame_start)
+        .add_systems(PreUpdate, net_poll)
         .add_systems(PostUpdate, (interpolate_transforms.before(bevy::transform::TransformSystems::Propagate), mark_shadow_casters, present_shadow_light))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
@@ -10036,7 +10623,7 @@ fn advance_level(
     mut sources: ResMut<Sources>,
     mut libraries: ResMut<Libraries>,
     mut frames: ResMut<EnemyFrames>,
-    (front, ui, mut hud_sets): (Res<Front>, Res<Ui>, ResMut<HudSets>),
+    (front, ui, mut hud_sets, net): (Res<Front>, Res<Ui>, ResMut<HudSets>, Res<Net>),
 ) {
     // do_players state 8 plays the dying action (0x7e, +0x8f8) and calls
     // kill_player; in the Tower PlayerRestoreState puts the player back.
@@ -10101,7 +10688,7 @@ fn advance_level(
         session.next = tower;
         session.banner = Some((0.0, String::new()));
     }
-    if !ui.paused && keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
+    if !ui.paused && !net.playing() && keys.just_pressed(KeyCode::F9) && session.banner.is_none() && sim.game.level_done.is_none() {
         // DEBUG: act as if the exit portal (destination: next level; with
         // Shift: the Tower) was used.
         let next = if keys.pressed(KeyCode::ShiftLeft) {

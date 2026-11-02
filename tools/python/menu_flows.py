@@ -33,17 +33,17 @@ def k(key, n=1, hold=0.15, gap=0.5):
 FLOWS = {
     # Press Start → the title menu → Options → Audio and back out again.
     'title-options': dict(
-        steps=[["wait", 8]] + k('Return') + [["wait", 1], ["shot", "title"]] + k('Down') + k('Return') + [["shot", "options"]]
+        steps=[["wait", 8]] + k('Return') + [["wait", 1], ["shot", "title"]] + k('Down', 2) + k('Return') + [["shot", "options"]]
         + k('Return') + [["shot", "options-first"]] + k('BackSpace') + k('BackSpace') + [["shot", "back"], ["wait", 1]],
-        expect=[r'front .*PressStart', r'front .*Title \{ at: 0 \}', r'front .*Title \{ at: 1 \}', r'front .*Options \{ at: 0',
-                r'front .*Title \{ at: 1 \}']),
+        expect=[r'front .*PressStart', r'front .*Title \{ at: 0 \}', r'front .*Title \{ at: 2 \}', r'front .*Options \{ at: 0',
+                r'front .*Title \{ at: 2 \}']),
     # Title → Options → Back: title_options fades out (finish_optmenu) and
     # its background burns (StartFireScroll: title_menu has none).
     'menu-burn': dict(
-        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Down') + k('Return') + [["wait", 1], ["shot", "options"]]
+        steps=[["wait", 8]] + k('Return') + [["wait", 1]] + k('Down', 2) + k('Return') + [["wait", 1], ["shot", "options"]]
         + [["key", "BackSpace", 0.1], ["wait", 0.1], ["shot", "burn1"], ["wait", 0.15], ["shot", "burn2"], ["wait", 0.15], ["shot", "burn3"],
            ["wait", 1.5], ["shot", "after"]],
-        expect=[r'front .*Options \{ at: 0', r'front .*Title \{ at: 1 \}.*ending finish 1 burn', r'front .*Title \{ at: 1 \} \| $']),
+        expect=[r'front .*Options \{ at: 0', r'front .*Title \{ at: 2 \}.*ending finish 1 burn', r'front .*Title \{ at: 2 \} \| $']),
     # In the Tower: pause → Back: tower_menu fades and burns while the game
     # stays paused; it resumes after the burn.
     'pause-burn': dict(
@@ -109,7 +109,7 @@ FLOWS = {
         expect=[r'front .*PressStart', r'front .*Title', r'playing .*\| select world 13', r'playing .*\| (message_box )?world 13|playing .*\| message_box world 13']),
     # Every Options entry opened and closed in turn (the trace names each page).
     'options-all': dict(
-        steps=[["wait", 8]] + k('Return') + k('Down') + k('Return')
+        steps=[["wait", 8]] + k('Return') + k('Down', 2) + k('Return')
         + sum(([*k('Down', i), *k('Return'), ["wait", 1], ["shot", f"opt{i}"], *k('BackSpace'), *k('Up', i)] for i in range(5)), [])
         + [["wait", 1]],
         expect=[r'Options \{ at: 0', r'Audio', r'Options \{ at: 1', r'Options \{ at: 2', r'Options \{ at: 3']),
@@ -145,10 +145,21 @@ FLOWS = {
     # NATIVE "Display" (the options lists' last entry): the settings
     # overlay over the list; Escape closes it, the list stays.
     'title-display': dict(
-        steps=[["wait", 8]] + k('Return') + k('Down') + k('Return') + k('Down', 5) + k('Return') + [["wait", 1], ["shot", "overlay"]]
+        steps=[["wait", 8]] + k('Return') + k('Down', 2) + k('Return') + k('Down', 5) + k('Return') + [["wait", 1], ["shot", "overlay"]]
         + k('Escape') + [["wait", 1], ["shot", "closed"]] + k('BackSpace') + [["wait", 1]],
-        expect=[r'front .*Options \{ at: 5, back: Title \{ at: 1 \} \} \| .*\| overlay$', r'front .*Options \{ at: 5, back: Title \{ at: 1 \} \} \| $',
-                r'front .*Title \{ at: 1 \}']),
+        expect=[r'front .*Options \{ at: 5, back: Title \{ at: 2 \} \} \| .*\| overlay$', r'front .*Options \{ at: 5, back: Title \{ at: 2 \} \} \| $',
+                r'front .*Title \{ at: 2 \}']),
+    # The title's Network entry (network play): host on the default port
+    # (the lobby), leave; join 127.0.0.1, where nobody hosts any more: the
+    # refusal returns to the Network page. On the Host and Join pages Enter
+    # accepts, Escape goes back.
+    'network-pages': dict(
+        steps=[["wait", 8]] + k('Return') + k('Down') + k('Return') + [["wait", 1], ["shot", "network"]] + k('Return') + [["shot", "host"]]
+        + k('Return') + [["wait", 2], ["shot", "lobby"]] + k('Escape') + [["wait", 1]] + k('Down') + k('Return')
+        + sum((k(c) for c in ['1', '2', '7', 'period', '0', 'period', '0', 'period', '1']), []) + [["shot", "join"]] + k('Return')
+        + [["wait", 10], ["shot", "refused"]] + k('Escape') + [["wait", 1]],
+        expect=[r'front .*Network \{ at: 0 \}', r'front .*NetHost \{ port: "28780" \}', r'front .*NetLobby \{ host: true \}', r'front .*Network \{ at: 0 \}',
+                r'front .*NetJoin \{ address: "127\.0\.0\.1" \}', r'front .*NetLobby \{ host: false \}', r'front .*Network \{ at: 1 \}', r'front .*Title \{ at: 1 \}']),
     'pause-display-realm': dict(
         env=dict(GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1'),
         steps=[["wait", 15]] + k('Escape') + [["wait", 1]] + k('Return') + [["wait", 1]] + k('Down', 3) + k('Return')

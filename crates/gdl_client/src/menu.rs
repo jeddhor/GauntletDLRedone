@@ -9,7 +9,8 @@
 //! Screen}. Text from TEXT/ENGLISH.ROM: class and colour names, "SELECT A
 //! CHARACTER", "TO BUILD A CHARACTER", "ENTER INITIALS".
 //!
-//! NATIVE (labelled): the player-select layout (the original SELECT scene,
+//! NATIVE (labelled): the title's Network entry and its pages (network
+//! play, research/network.md), the player-select layout (the original SELECT scene,
 //! carousel and file browser are not ported), the save list, the import
 //! entry, "Save Character" inside Manage Character (the original goes to
 //! the player-select screen, whose state 0xe writes the file), the quit
@@ -74,6 +75,14 @@ pub enum Action {
     /// NATIVE: an options list's "Display" entry — the host opens the
     /// settings overlay over the menu, which stays on the list.
     Display,
+    /// NATIVE (network play): host a game on `port`.
+    NetHost { port: u16 },
+    /// NATIVE (network play): join the game at `address`.
+    NetJoin { address: String },
+    /// NATIVE (network play): the host begins the game with everyone in.
+    NetStart,
+    /// NATIVE (network play): leave the lobby.
+    NetLeave,
 }
 
 /// The option menus' sound cues (do_optmenu 0x10c4f8 and DoOptions
@@ -106,10 +115,17 @@ fn cues(page: &Page, key: Key) -> &'static [Cue] {
     use Cue::*;
     let vertical = matches!(key, Key::Up | Key::Down);
     match page {
-        // title_menu (flags 0): Options plays AudioCursorSelect itself.
+        // title_menu (flags 0): Options plays AudioCursorSelect itself (as
+        // does the native Network entry).
         Page::Title { at } => match key {
             _ if vertical => &[CursorV],
-            Key::Accept if *at == 1 => &[Select],
+            Key::Accept if *at != 0 => &[Select],
+            _ => &[],
+        },
+        Page::Network { .. } => match key {
+            _ if vertical => &[CursorV],
+            Key::Accept => &[Select],
+            Key::Back => &[Exit],
             _ => &[],
         },
         // Flag 0x400 menus: select on Accept, the pop's exit on Back.
@@ -202,6 +218,15 @@ pub enum Page {
     /// picture (dx ±4 to ±0x80, dy ±1 to ±0x28), Center resets, Accept
     /// keeps, Back restores `saved`.
     Screen { saved: (i32, i32), back: Box<Page> },
+    /// NATIVE (network play): Host Game / Join Game.
+    Network { at: usize },
+    /// The port to host on.
+    NetHost { port: String },
+    /// The host's address (name or IP, ":port" when not the default).
+    NetJoin { address: String },
+    /// Hosting or joined, until the host begins; [`Menu::net_status`] says
+    /// who is in.
+    NetLobby { host: bool },
 }
 
 /// The entries of the submenus and choice menus (ELF records).
@@ -220,7 +245,10 @@ fn submenu_entries(key: &str) -> &'static [&'static str] {
 
 pub const CLASS_NAMES: [&str; 8] = ["WARRIOR", "VALKYRIE", "WIZARD", "ARCHER", "DWARF", "KNIGHT", "SORCERESS", "JESTER"];
 pub const COLOUR_NAMES: [&str; 4] = ["YELLOW", "BLUE", "RED", "GREEN"];
-const TITLE_MENU: [&str; 2] = ["Start", "Options"];
+/// NATIVE: the title menu's middle entry (network play).
+pub const NETWORK: &str = "Network";
+const TITLE_MENU: [&str; 3] = ["Start", NETWORK, "Options"];
+const NETWORK_MENU: [&str; 2] = ["Host Game", "Join Game"];
 /// The original options lists plus a NATIVE last entry, "Display" (the
 /// settings overlay: fullscreen, widescreen, VSync, …; gdl_play adds it to
 /// the drawn menu records too).
@@ -240,6 +268,12 @@ fn option_names(back: &Page) -> &'static [&'static str] {
         Page::Paused { tower: false, .. } => &GAME_OPTIONS,
         _ => &TOWER_OPTIONS,
     }
+}
+
+/// The options entries that are each machine's own (disabled in a network
+/// game, whose menus every machine shares).
+fn net_local_entry(name: &str) -> bool {
+    matches!(name, "Audio" | "Screen" | DISPLAY)
 }
 
 /// The original menu record a page is drawn with (title_menu, …), its
@@ -336,6 +370,15 @@ pub struct Menu {
     /// sound) and AudioVolSfx's idx.285.
     pub sfx_sound_count: i32,
     pub sfx_sample: usize,
+    /// NATIVE (network play): the address and port last typed, the lobby's
+    /// status line, and whether a network game runs (the options lists'
+    /// Audio, Screen and Display entries are then disabled: the menus are
+    /// shared by every machine, those settings are each machine's own and
+    /// the settings overlay, F10, stays local).
+    pub net_address: String,
+    pub net_port: String,
+    pub net_status: String,
+    pub net_game: bool,
 }
 
 fn wrap(at: usize, n: usize, up: bool) -> usize {
@@ -378,6 +421,10 @@ impl Menu {
             cues: Vec::new(),
             sfx_sound_count: 0,
             sfx_sample: 0,
+            net_address: String::new(),
+            net_port: crate::net::DEFAULT_PORT.to_string(),
+            net_status: String::new(),
+            net_game: false,
         }
     }
 
@@ -440,13 +487,19 @@ impl Menu {
         }
         self.cues.extend_from_slice(cues(&self.page, key));
         let action = self.input_page(key);
-        // do_optmenu's cursor skips disabled entries (+0x20 < 0).
-        if matches!(key, Key::Up | Key::Down) {
+        // do_optmenu's cursor skips disabled entries (+0x20 < 0); an options
+        // list opened on one (a network game's Audio) starts at the next.
+        let skip = match key {
+            Key::Up | Key::Down => Some(key),
+            _ if matches!(self.page, Page::Options { .. }) => Some(Key::Down),
+            _ => None,
+        };
+        if let Some(step) = skip {
             for _ in 0..8 {
                 if !self.disabled_entry(&self.page) {
                     break;
                 }
-                self.input_page(key);
+                self.input_page(step);
             }
         }
         action
@@ -491,7 +544,11 @@ impl Menu {
 
     /// The selected entry of `page` is disabled (+0x20 < 0).
     fn disabled_entry(&self, page: &Page) -> bool {
-        matches!(page, Page::Paused { tower: false, at: 1 }) && self.quit_level_disabled
+        match page {
+            Page::Paused { tower: false, at: 1 } => self.quit_level_disabled,
+            Page::Options { at, back } => self.net_game && net_local_entry(option_names(back).get(*at).copied().unwrap_or("")),
+            _ => false,
+        }
     }
 
     fn input_page(&mut self, key: Key) -> Option<Action> {
@@ -510,7 +567,11 @@ impl Menu {
             },
             Page::Title { at } => match key {
                 Key::Up | Key::Down => {
-                    self.page = Page::Title { at: wrap(at, 2, key == Key::Up) };
+                    self.page = Page::Title { at: wrap(at, TITLE_MENU.len(), key == Key::Up) };
+                    None
+                }
+                Key::Accept if TITLE_MENU[at] == NETWORK => {
+                    self.page = Page::Network { at: 0 };
                     None
                 }
                 // do_titlescreen → init_player_select(0); DEBUG: with
@@ -740,6 +801,69 @@ impl Menu {
                 }
                 _ => None,
             },
+            Page::Network { at } => {
+                match key {
+                    Key::Up | Key::Down => self.page = Page::Network { at: wrap(at, NETWORK_MENU.len(), key == Key::Up) },
+                    Key::Accept if at == 0 => self.page = Page::NetHost { port: self.net_port.clone() },
+                    Key::Accept => self.page = Page::NetJoin { address: self.net_address.clone() },
+                    Key::Back => self.page = Page::Title { at: 1 },
+                    _ => {}
+                }
+                None
+            }
+            Page::NetHost { mut port } => match key {
+                Key::Char(c) if c.is_ascii_digit() && port.len() < 5 => {
+                    port.push(c);
+                    self.page = Page::NetHost { port };
+                    None
+                }
+                Key::Erase => {
+                    port.pop();
+                    self.page = Page::NetHost { port };
+                    None
+                }
+                Key::Accept => match port.parse::<u16>() {
+                    Ok(n) if n != 0 => {
+                        self.net_port = port;
+                        Some(Action::NetHost { port: n })
+                    }
+                    _ => {
+                        self.status = "The port is a number from 1 to 65535.".into();
+                        None
+                    }
+                },
+                Key::Back => {
+                    self.page = Page::Network { at: 0 };
+                    None
+                }
+                _ => None,
+            },
+            Page::NetJoin { mut address } => match key {
+                Key::Char(c) if (c.is_ascii_alphanumeric() || ".-:[]".contains(c)) && address.len() < 64 => {
+                    address.push(c.to_ascii_lowercase());
+                    self.page = Page::NetJoin { address };
+                    None
+                }
+                Key::Erase => {
+                    address.pop();
+                    self.page = Page::NetJoin { address };
+                    None
+                }
+                Key::Accept if !address.is_empty() => {
+                    self.net_address = address.clone();
+                    Some(Action::NetJoin { address })
+                }
+                Key::Back => {
+                    self.page = Page::Network { at: 1 };
+                    None
+                }
+                _ => None,
+            },
+            Page::NetLobby { host } => match key {
+                Key::Accept | Key::Start if host => Some(Action::NetStart),
+                Key::Back => Some(Action::NetLeave),
+                _ => None,
+            },
             Page::Paused { tower, at } => {
                 let names: &[&str] = if tower { &TOWER_MENU } else { &GAME_MENU };
                 match key {
@@ -863,6 +987,22 @@ impl Menu {
             }
             Page::Inventory | Page::InventoryClose => format!("INVENTORY\n\n{}\n\n(Enter / Esc to go back)", self.inventory),
             Page::ConfirmQuit { at, tower } => list(if *tower { "QUIT GAME?\nprogress since your last save is lost" } else { "ABORT LEVEL?" }, &s(&["No", "Yes"]), *at),
+            Page::Network { at } => format!(
+                "{}\nEvery player needs this game, imported from\nthe same disc. Joining players use the host's\ncharacters; they are saved on the host's machine.",
+                list("NETWORK GAME", &s(&NETWORK_MENU), *at)
+            ),
+            Page::NetHost { port } => format!(
+                "HOST A NETWORK GAME\n\nPort: {port}_\n\nOther players join with this machine's address\nand this port (allow it through a firewall).\n\n(digits, Backspace erases, Enter hosts, Esc goes back)"
+            ),
+            Page::NetJoin { address } => format!(
+                "JOIN A NETWORK GAME\n\nAddress: {address}_\n\nThe host's name or IP address, with :port\nif it is not {}.\n\n(Backspace erases, Enter joins, Esc goes back)",
+                crate::net::DEFAULT_PORT
+            ),
+            Page::NetLobby { host } => format!(
+                "NETWORK GAME\n\n{}\n\n{}",
+                self.net_status,
+                if *host { "Enter / Start: begin    Esc: cancel" } else { "Waiting for the host to begin    Esc: leave" }
+            ),
         };
         if self.status.is_empty() { body } else { format!("{body}\n\n{}", self.status) }
     }
@@ -975,13 +1115,66 @@ mod tests {
         assert_eq!(m.page, Page::PressStart);
         assert_eq!(m.input(Key::Back), Some(Action::Exit));
         // The title's Options → Display: the overlay, the list stays.
-        m.page = Page::Title { at: 1 };
+        m.page = Page::Title { at: 2 };
         m.input(Key::Accept);
         for _ in 0..5 {
             m.input(Key::Down);
         }
         assert_eq!(m.input(Key::Accept), Some(Action::Display));
         assert!(matches!(m.page, Page::Options { at: 5, .. }));
+    }
+
+    #[test]
+    fn network_pages() {
+        let mut m = Menu::new(128, 128);
+        m.page = Page::Title { at: 0 };
+        m.input(Key::Down);
+        assert_eq!(m.page, Page::Title { at: 1 });
+        m.input(Key::Accept);
+        assert_eq!(m.page, Page::Network { at: 0 });
+        // Host: the default port, edited.
+        m.input(Key::Accept);
+        assert_eq!(m.page, Page::NetHost { port: crate::net::DEFAULT_PORT.to_string() });
+        for _ in 0..5 {
+            m.input(Key::Erase);
+        }
+        assert_eq!(m.input(Key::Accept), None);
+        for c in "7000".chars() {
+            m.input(Key::Char(c));
+        }
+        assert_eq!(m.input(Key::Accept), Some(Action::NetHost { port: 7000 }));
+        // Join: letters, digits, dots and a port; Back returns.
+        m.page = Page::Network { at: 1 };
+        m.input(Key::Accept);
+        for c in "Host.lan:7000".chars() {
+            m.input(Key::Char(c));
+        }
+        assert_eq!(m.input(Key::Accept), Some(Action::NetJoin { address: "host.lan:7000".into() }));
+        assert_eq!(m.net_address, "host.lan:7000");
+        m.page = Page::NetLobby { host: false };
+        assert_eq!(m.input(Key::Start), None);
+        assert_eq!(m.input(Key::Back), Some(Action::NetLeave));
+        m.page = Page::NetLobby { host: true };
+        assert_eq!(m.input(Key::Start), Some(Action::NetStart));
+        // In a network game the local settings are disabled in the shared
+        // menus: the cursor skips them, Accept buzzes.
+        m.net_game = true;
+        m.page = Page::Options { at: 1, back: Box::new(Page::Paused { tower: false, at: 0 }) };
+        assert_eq!(GAME_OPTIONS[1], "Controls");
+        m.input(Key::Down);
+        assert_eq!(m.page, Page::Options { at: 1, back: Box::new(Page::Paused { tower: false, at: 0 }) });
+        m.page = Page::Options { at: 0, back: Box::new(Page::Paused { tower: false, at: 0 }) };
+        assert_eq!(m.input(Key::Accept), None);
+        assert_eq!(m.cues.last(), Some(&Cue::Buzzer));
+        // Settings from the pause menu opens on Controls, not Audio.
+        m.page = Page::Paused { tower: false, at: 0 };
+        m.input(Key::Accept);
+        assert_eq!(m.page, Page::Options { at: 1, back: Box::new(Page::Paused { tower: false, at: 0 }) });
+        // Without a network game Audio is first, as before.
+        m.net_game = false;
+        m.page = Page::Paused { tower: false, at: 0 };
+        m.input(Key::Accept);
+        assert_eq!(m.page, Page::Options { at: 0, back: Box::new(Page::Paused { tower: false, at: 0 }) });
     }
 
     #[test]

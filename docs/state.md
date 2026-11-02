@@ -767,6 +767,17 @@ original (PCSX2 reference on Xvfb :191, private captures):
    chest_content_check.py on Xvfb/lavapipe (playtest.md "Playtest
    2026-11-02"). A virtual kwin run on the RX 580 during these checks faulted
    the GPU and crashed the display manager; such checks now run in software.
+   2026-11-02 (user: add network play, update the docs, publish): network
+   play for up to four computers (decisions/0006-network-play.md,
+   research/network.md) — the title's Network entry between Start and
+   Options, Host / Join / lobby pages, deterministic lockstep over TCP
+   (gdl_client::net, no new crates), at most one step per rendered frame so
+   the front end acts between the same steps everywhere, shared menus, the
+   host's memory card and options, ports 0..3 dealt to the machines (ports
+   4..7 cannot join: ReadControls), state hashes compared every second.
+   Checked with two copies of the game on this machine in software
+   (net_check.py, menu_flows.py network-pages); not yet between two
+   computers. Released as 1.2.0 with the chest fix (research/release.md).
 
 ---
 

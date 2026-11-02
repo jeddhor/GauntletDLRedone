@@ -2,7 +2,7 @@
 # Qt 6 Widgets; the same sources build on Linux and (cross-compiled with
 # MinGW-w64) Windows. tools/package.sh builds and packages it.
 cmake_minimum_required(VERSION 3.21)
-project(gdl_installer VERSION 1.1.0 LANGUAGES CXX)
+project(gdl_installer VERSION 1.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

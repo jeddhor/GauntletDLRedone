@@ -139,6 +139,40 @@ settings.json in the same folder holds the settings. Every save keeps a
 backup (.bak) of the one before.
 
 
+Network play
+------------
+Up to four computers can play one game together over a network (not in the
+original game; added to this port). Every computer needs this port, the same
+version, installed from the same disc.
+
+  - To host: on the title choose Network, then Host Game. The port is 28780
+    unless you type another; let it through your firewall (Windows asks the
+    first time). Tell the others this computer's address and the port. When
+    everyone has joined, press Enter or Start.
+  - To join: choose Network, then Join Game, type the host's name or IP
+    address (with :port if the host chose another, for example
+    192.168.1.20:28780) and press Enter. Typing needs the keyboard.
+  - Everyone then sees the select screen, as on the couch: the host's player
+    1 is in; everyone else presses Start on their own controller to join.
+    Four players in all: with two computers two on each (the keyboard's
+    two layouts or controllers), with three two on the host and one on each
+    of the others, with four one each.
+
+Everyone shares one game: the characters come from the host's saves and are
+saved on the host's computer (the others' own saves are not used), and the
+host's game options (difficulty, multiplayer mode) apply. Any player can
+pause the game and use the menu, for everyone. Audio, Screen and Display are
+each computer's own: change them before the game, or use F10 (the settings
+overlay) during it; the game goes on under the overlay.
+
+Every computer runs the whole game and only the players' buttons travel, so
+the game waits for the slowest connection ("Waiting for the other
+machines…"): a local network or a fast connection works best. If a player's
+computer leaves, the game asks for that player's controller, as when one is
+unplugged; Start on a free controller takes the player over. If the host
+leaves, the game ends for everyone.
+
+
 Movies
 ------
 The game's movies (intro, realm and ending movies) need FFmpeg. On Linux

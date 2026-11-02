@@ -5,9 +5,11 @@ Legacy (USA release SLUS-20047), reconstructed from the original program and
 data in Rust and Bevy; the implementation follows
 [the master plan](Gauntlet_Dark_Legacy_PS2_Rust_Bevy_Master_Plan.md).
 Release 1.0.0 was the complete port
-([acceptance report](docs/research/m21-acceptance.md)); release 1.1.0 adds the
-graphics options below and playtest fixes
-([research/release.md](docs/research/release.md) "Release 1.1.0"). The native game runs
+([acceptance report](docs/research/m21-acceptance.md)); release 1.1.0 added the
+graphics options below and playtest fixes; release 1.2.0 adds network play
+for up to four computers (a native addition, lockstep over TCP:
+[research/network.md](docs/research/network.md)) and fixes the size of an
+opened chest's item ([research/release.md](docs/research/release.md)). The native game runs
 the original rules from the player's own disc: the Tower, all realms and
 bosses, one to four players, the original HUD, menus, audio and movies, and
 saves; a character has been played from a new game to the ending

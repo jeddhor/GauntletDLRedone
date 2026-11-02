@@ -10,6 +10,7 @@ pub mod glyphs;
 pub mod hd;
 pub mod menu;
 pub mod movie;
+pub mod net;
 pub mod settings;
 pub mod texfilter;
 pub mod texture_pack;

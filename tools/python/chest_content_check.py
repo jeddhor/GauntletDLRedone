@@ -73,7 +73,9 @@ def run_client(args, d):
     env = dict(environment(), HOME=str(d / 'home'), GDL_NO_AUDIO='1',
                GDL_NO_ATTRACT='1', GDL_NO_GAMEPADS='1', GDL_TEST_AUTOSTART='1', GDL_DEBUG_LEVEL='G1',
                GDL_TEST_ACTIONS=str(d / 'actions.json'), GDL_EXIT_AFTER=str(LAST + 5),
-               GDL_STATE_OUT=str(d / 'state.txt'), GDL_RENDER_FPS='60', RUST_BACKTRACE='1')
+               GDL_STATE_OUT=str(d / 'state.txt'), GDL_RENDER_FPS='60', RUST_BACKTRACE='1',
+               # llvmpipe's rasteriser threads (it takes every core by default).
+               LP_NUM_THREADS='4')
     for k in ('WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'GDL_SETTINGS', 'GDL_BASELINE'):
         env.pop(k, None)
     with open(d / 'client.log', 'w') as log:

@@ -13,9 +13,10 @@ Platforms
     2020 on: Ubuntu 20.04, Debian 11, Fedora 32, RHEL 9 and newer).
   - Windows: tested on Windows 11 — installing from the disc in a drive,
     from an image file and from an image mounted as a disc drive, and
-    playing, with release 1.0.0. Release 1.1.0 has not yet been played on a
-    Windows desktop, so its graphics options, generating HD textures included,
-    are untested there by a person. Older Windows versions are untested.
+    playing, with release 1.0.0. Releases 1.1.0 and 1.2.0 have not yet been
+    played on a Windows desktop, so the graphics options (generating HD
+    textures included) and network play are untested there by a person.
+    Older Windows versions are untested.
   - A graphics card with Vulkan (or DirectX 12 on Windows) is required.
 
 Movies
@@ -30,8 +31,6 @@ What is not yet the original's own
     was measured rather than reconstructed.
   - Versus play and team moves are built from the original's code but have not
     been compared against the original running.
-  - An item rising out of an opened chest sits at a slightly different height
-    than in the original while it rises (looks only; collecting is the same).
   - While the realm map is shown, the game keeps the finished level loaded;
     only the map's voice lines and sounds use the destination.
 
@@ -44,6 +43,19 @@ Performance
   crash and its memory stayed steady, with about three frames per thousand
   over 33 ms while another program also used the machine. If frames are late,
   turn off Character shadows and Ambient occlusion first (README.txt, Settings).
+
+Network play (new in 1.2.0, not in the original)
+  - Tested with two copies of the game on one Linux computer (also a Linux
+    host with the Windows build joining it under Wine), not yet between two
+    computers on a real network or over the internet.
+  - Players join before the host begins; a game in progress cannot be
+    joined.
+  - Every computer waits for the slowest connection; there is no prediction,
+    so a slow or distant connection makes the game pause now and then.
+  - The host listens on IPv4 only (joining an IPv6 address works, in
+    brackets).
+  - The Tower menu's Shop, Inventory and Manage Character act for player 1,
+    as they do on one computer in this port.
 
 Enhancements (not in the original)
   - With the widescreen view, enemies in the widened margins are outside the
