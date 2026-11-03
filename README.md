@@ -6,10 +6,12 @@ data in Rust and Bevy; the implementation follows
 [the master plan](Gauntlet_Dark_Legacy_PS2_Rust_Bevy_Master_Plan.md).
 Release 1.0.0 was the complete port
 ([acceptance report](docs/research/m21-acceptance.md)); release 1.1.0 added the
-graphics options below and playtest fixes; release 1.2.0 adds network play
+graphics options below and playtest fixes; release 1.2.0 added network play
 for up to four computers (a native addition, lockstep over TCP:
-[research/network.md](docs/research/network.md)) and fixes the size of an
-opened chest's item ([research/release.md](docs/research/release.md)). The native game runs
+[research/network.md](docs/research/network.md)) and fixed the size of an
+opened chest's item; release 1.3.0 makes network play hold up over the
+internet (each computer draws the game ahead of the others' inputs and
+keeps its own clock; [research/release.md](docs/research/release.md)). The native game runs
 the original rules from the player's own disc: the Tower, all realms and
 bosses, one to four players, the original HUD, menus, audio and movies, and
 saves; a character has been played from a new game to the ending

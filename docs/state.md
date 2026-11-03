@@ -778,6 +778,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    Checked with two copies of the game on this machine in software
    (net_check.py, menu_flows.py network-pages); not yet between two
    computers. Released as 1.2.0 with the chest fix (research/release.md).
+   2026-11-02 (user: lag prediction / compensation so that connections not
+   on the same network are stable): network protocol 2 for release 1.3.0 — a
+   real-time local clock per machine (inputs no longer wait for frames),
+   time sync from the host's arrival times, confirmed steps catching up at a
+   60 Hz fixed clock and several quiet steps per frame, and prediction drawn
+   only (the confirmed game run ahead to the machine's own latest input,
+   rebuilt on a misprediction; its sound effects at once). With simulated
+   round trips of 229 and 315 ms the play kept about 29 steps a second with
+   under 1.5 % waiting, every hash equal (research/network.md). The
+   confirmed game is unchanged by all of it.
 
 ---
 

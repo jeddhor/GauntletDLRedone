@@ -1,4 +1,4 @@
-# Network play (NATIVE, 2026-11-02)
+# Network play (NATIVE, 2026-11-02; prediction and time sync for release 1.3.0)
 
 The original has no network play; the master plan (§5.2) left online
 multiplayer out of the initial delivery. The user asked for it after release
@@ -19,11 +19,42 @@ builds are equal (release.md "Release 1.1.0": the Windows build under Wine,
 - Steps: for each 30 Hz step every machine sends the host its local
   controllers' pad states and its menu events (an [`Input`]); the host merges
   every machine's input for that step into one Frame and sends it to all,
-  itself included. A machine sends its input for step N + delay when it
-  applies step N; the first `delay` inputs (nothing pressed) go out at the
-  start. Default delay 4 steps (133 ms); no machine runs more than that ahead
-  of the slowest, and all wait when a frame is late ("Waiting for the other
-  machines…" where the frame rate is shown).
+  itself included, and every machine applies the frames in order. Release
+  1.2.0 sent a machine's input for step N + delay when it applied step N
+  (delay 4, 133 ms), so every late frame held everyone and a round trip above
+  the delay slowed the game; from release 1.3.0 (protocol 2, the user's
+  request for internet play, 2026-11-02) the parts below take over.
+- Local clock (net_local_tick): each machine samples its ports and menu
+  events at 30 Hz of real time and sends them as its input for the next step
+  (`input_next`), whether or not the other machines' inputs have come; the
+  first `delay` inputs (nothing pressed; delay 2, 67 ms) go out at the start.
+  The clock waits ("Waiting for the other machines…" where the frame rate is
+  shown) only when it is 30 steps (one second) ahead of the confirmed steps.
+- Time sync: the host notes when each machine's input for a step arrives and
+  reports every 10 frames how long before the step's last input each
+  machine's came (Sync, a moving average). A machine more than 50 ms (1.5
+  steps) early samples at 27 Hz until it is not, so the machines' inputs meet
+  at the host and none waits on another's clock. Clients ping the host every
+  0.5 s (Ping / Pong; RFC 6298's smoothed round trip, reported in NETSTATS).
+- Confirmed steps: simulate applies a frame when it is there; the network
+  game's fixed clock runs at 60 Hz, so a machine that fell behind catches up.
+- Prediction (presentation only): the confirmed game is run ahead to this
+  machine's latest input — its own pads as sampled, the other machines'
+  assumed to keep their last confirmed pads — and that copy is drawn
+  (net_predict, after the front end each frame, swaps it into Sim::game;
+  net_frame_start swaps the confirmed game back before the next step). A
+  player sees their own presses at once; other players move on their last
+  input until theirs arrives. When a confirmed step differs from what the
+  copy assumed (another machine's pads, menu events, a step off the plain
+  play path, or the state's digest), the copy is rebuilt from the confirmed
+  game; it extends at most 3 steps a frame (C2: about 2 ms a step, 1.9 ms a
+  copy, 0.24 MB of records). It runs only in plain play (no screen, box,
+  menu, pause, level change or saver) and stops at a step that leaves it
+  (predict_step: CheckSoftReset, the saver's check, the Tower's join check,
+  the step, clear_player — simulate's plain path). Its sound effects play at
+  once; the confirmed step does not play them again (without_played).
+  Everything else — menus, transitions, saves, music, hashes — follows the
+  confirmed game. GDL_NET_PREDICT=0 (TEST) draws the confirmed game.
 - Ports: the game reads controller ports 0..3. ReadControls 0x104b60 makes
   Start edges only on the ports of players 0..3 (an unassigned player k reads
   port k), so a player on ports 4..7 could never join (the first two-machine
@@ -40,9 +71,14 @@ builds are equal (release.md "Release 1.1.0": the Windows build under Wine,
   fixed steps each frame and decide things from the game state (the pause
   menu, the game-over check, level, shop, map and select transitions,
   character models). With at most one step per frame they act between the
-  same two steps on every machine. The shared step counter advances only on
-  applied steps; the waits that depend on each machine's own timing (the
-  level-change banner and loading) apply none.
+  same two steps on every machine. More steps run in one frame only while
+  each leaves the game quiet (net_quiet: plain play, no reset request,
+  someone in play, not the every-player-dead shop, no menu events in the
+  frame) — then the front end would act on none of them, whenever it runs —
+  so a machine rendering below 30 Hz keeps the game's pace (net-check-p3:
+  15 fps per window, the play no longer waits). The shared step counter
+  advances only on applied steps; the waits that depend on each machine's own
+  timing (the level-change banner and loading) apply none.
 - Menus are shared, as on the couch: every machine's menu keys and pause
   toggle travel in its input, and every machine applies all of them after the
   step that carries them. The menus' timed parts move by steps (two vblanks
@@ -72,13 +108,15 @@ builds are equal (release.md "Release 1.1.0": the Windows build under Wine,
 - Refused: another version or protocol, other game data (the executable's
   SHA-256 differs), a full game (four machines), or a game already started.
 
-## Protocol (version 1)
+## Protocol (version 2)
 
 Messages are a u32 little-endian length and a type byte: Hello ("GDLNET",
 protocol, version string, data id), Welcome, Refuse (reason), Lobby (machine
 count), Start (machines, your number, delay, GamePrefs, the eight card
 files), Input (step, pads, events), Frame (step, eight pads, every machine's
-events, host flags, gone machines), Hash (step, SHA-256), End (reason). A pad
+events, host flags, gone machines), Hash (step, SHA-256), End (reason), and
+from version 2 Ping / Pong (id) and Sync (per machine, ms early). Version 1
+(release 1.2.0) is refused. A pad
 is a flags byte (connected, analog, stick) and the 22 two-byte entries of
 PadStatus. Menu events: 1..9 Up, Down, Left, Right, Accept, Back, Center,
 Start, Erase; 0x10 the pause toggle; 0x80 | letter a typed letter (the
@@ -91,7 +129,10 @@ listens on TCP 28780 (NATIVE default) on IPv4.
   ones.
 - The Tower menu's Shop, Inventory and Manage Character act for player 1, as
   in single play in this port.
-- No rollback or prediction: a slow connection makes every machine wait.
+- The prediction is drawn only: another player's change of direction shows
+  late by the round trip and their character may jump back a little when it
+  arrives (worse on long routes); a predicted sound can play for an action
+  that the confirmed step does not have. No rollback of the game itself.
 - IPv6 hosting (the host binds 0.0.0.0); joining by an IPv6 address works in
   brackets.
 - Windows: the firewall asks to allow the host's port on the first host.
@@ -131,5 +172,35 @@ listens on TCP 28780 (NATIVE default) on IPv4.
     virtual desktop — on the bare Xvfb winit's monitor modes assert,
     v6-wine-monitor): 900/900 equal, and the Windows build's 900 hashes are
     byte-identical to net-check-v5's Linux host.
+- Release 1.3.0 (local clock, time sync, prediction, quiet steps; protocol
+  2), the same scenario (G1, 900 updates, a shared pause) on the private
+  Xvfb in 640×448 windows (GDL_WINDOW; two software renderers reach about
+  15 fps each, not 30), GDL_NET_LAG_MS / GDL_NET_JITTER_MS simulating a
+  distant network on every message each machine sends:
+  - Costs measured in the client (GDL_NET_BENCH scratch, 2026-11-02, two
+    players at update 300): a copy of the game 1.6 / 1.9 / 1.4 ms and a step
+    0.63 / 2.19 / 0.50 ms in G1 / C2 / J5; the hashed records 0.22 / 0.24 /
+    0.08 MB.
+  - net-check-p2 (no lag, one step per frame): equal, but at 15 fps the
+    confirmed steps came at 15 a second and the clocks waited 41–46 of 87 s;
+    net-check-p3 with quiet steps: 59 s, the waits (9–13 s) all outside play.
+  - net-check-p4-lag was invalid: the simulator delayed each message from
+    when the writer took it, so the queue grew (a 2.8 s round trip); fixed
+    to delay from when it was queued.
+  - net-check-p5-lag, 60 ms one way + up to 30 ms (round trip measured
+    229 ms, frame granularity included): during play the host sampled 888
+    steps in 30.4 s (29.2 a second) and waited 0.17 s; the joining machine
+    856 in 29.3 s (29.3) and waited 0.41 s; its prediction ran 5.8 steps
+    ahead on average (at most 11). All 900 hashes equal, the prediction's
+    digest equal to the confirmed state's at every checked step (0
+    mismatches).
+  - net-check-p6-lag100, 100 ms + up to 50 ms (round trip 315 ms): 29.0 and
+    29.4 steps a second during play, 0.34 s of waiting on each machine,
+    prediction 7.9 steps ahead on average (at most 14); all equal, 0
+    mismatches.
+  - net-check-p7-wine-lag, as p5 with the Windows build joining under Wine:
+    all 900 equal, and the Windows build's 900 hashes byte-identical to
+    net-check-p5-lag's Linux host; the host waited 1.0 s in 31.9 s of play
+    (Wine's client renders slower).
 - Unit and menu tests do not reach a real network: every run above is one
   machine over loopback.

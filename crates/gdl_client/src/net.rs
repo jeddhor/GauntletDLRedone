@@ -23,8 +23,9 @@ use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-/// The wire format's version; machines with another one are refused.
-pub const PROTOCOL: u16 = 1;
+/// The wire format's version; machines with another one are refused (2:
+/// round-trip pings and the host's arrival times, release 1.3.0).
+pub const PROTOCOL: u16 = 2;
 /// NATIVE: the port a host listens on unless the player picks another.
 pub const DEFAULT_PORT: u16 = 28780;
 /// Machines in one game, the host included.
@@ -43,6 +44,10 @@ const MAX_MESSAGE: usize = 1 << 20;
 /// A machine silent this long while the others wait is dropped.
 const SILENCE: Duration = Duration::from_secs(15);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+/// A client pings the host this often.
+const PING_EVERY: Duration = Duration::from_millis(500);
+/// The host reports arrival times every this many frames.
+const SYNC_EVERY: u32 = 10;
 
 /// The controller ports machine `m` of `n` owns, in its local players'
 /// order: ports 0..3 dealt in turn (two machines: 0 and 2, 1 and 3), so each
@@ -115,6 +120,21 @@ enum Msg {
     Frame(Box<Frame>),
     Hash { tick: u32, hash: [u8; 32] },
     End(String),
+    Ping { id: u32 },
+    Pong { id: u32 },
+    /// Per machine, how long before the last input of a frame its input
+    /// arrives at the host (ms, a moving average).
+    Sync { early_ms: Vec<u16> },
+}
+
+/// This machine's view of the connection's timing.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Timing {
+    /// The round trip to the host (a client; smoothed, ms).
+    pub rtt_ms: Option<f32>,
+    /// How much earlier than the last machine's this machine's input
+    /// arrives at the host (ms): above a tick it is running ahead.
+    pub early_ms: Option<f32>,
 }
 
 // ---- encoding ----------------------------------------------------------
@@ -250,6 +270,21 @@ fn encode(m: &Msg) -> Vec<u8> {
             w.u8(9);
             w.bytes(why.as_bytes());
         }
+        Msg::Ping { id } => {
+            w.u8(10);
+            w.u32(*id);
+        }
+        Msg::Pong { id } => {
+            w.u8(11);
+            w.u32(*id);
+        }
+        Msg::Sync { early_ms } => {
+            w.u8(12);
+            w.u8(early_ms.len() as u8);
+            for &e in early_ms {
+                w.u16(e);
+            }
+        }
     }
     w.0
 }
@@ -297,6 +332,12 @@ fn decode(b: &[u8]) -> Result<Msg, String> {
         }
         8 => Msg::Hash { tick: r.u32()?, hash: r.take(32)?.try_into().unwrap() },
         9 => Msg::End(r.text()?),
+        10 => Msg::Ping { id: r.u32()? },
+        11 => Msg::Pong { id: r.u32()? },
+        12 => {
+            let n = r.u8()?;
+            Msg::Sync { early_ms: (0..n).map(|_| r.u16()).collect::<Result<_, _>>()? }
+        }
         t => return Err(format!("unknown message type {t}")),
     };
     Ok(m)
@@ -309,7 +350,8 @@ fn decode(b: &[u8]) -> Result<Msg, String> {
 /// Closing ends the writer's queue: it sends what is queued, then shuts the
 /// socket.
 struct Conn {
-    tx: Option<Sender<Vec<u8>>>,
+    /// Each message with the time it was queued (the lag simulator's start).
+    tx: Option<Sender<(Instant, Vec<u8>)>>,
 }
 
 impl Conn {
@@ -335,9 +377,13 @@ impl Conn {
                 }
             }
         });
-        let (tx, rx) = channel::<Vec<u8>>();
+        let (tx, rx) = channel::<(Instant, Vec<u8>)>();
+        let mut lag = Lag::from_env();
         std::thread::spawn(move || {
-            for b in rx {
+            for (queued, b) in rx {
+                if let Some(l) = lag.as_mut() {
+                    l.wait(queued);
+                }
                 let mut out = (b.len() as u32).to_le_bytes().to_vec();
                 out.extend_from_slice(&b);
                 if writer.write_all(&out).is_err() {
@@ -352,12 +398,50 @@ impl Conn {
 
     fn send(&self, m: &Msg) {
         if let Some(tx) = self.tx.as_ref() {
-            let _ = tx.send(encode(m));
+            let _ = tx.send((Instant::now(), encode(m)));
         }
     }
 
     fn close(&mut self) {
         self.tx = None;
+    }
+}
+
+/// TEST: GDL_NET_LAG_MS (one way) and GDL_NET_JITTER_MS delay every message
+/// a connection sends — a distant network on one machine. Each message
+/// leaves `lag` + a uniform 0..`jitter` ms after it was queued, never before
+/// the one queued ahead of it (TCP keeps the order).
+struct Lag {
+    lag: f64,
+    jitter: f64,
+    seed: u64,
+    last: Instant,
+}
+
+impl Lag {
+    fn from_env() -> Option<Lag> {
+        let ms = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).filter(|v| 0.0 < *v);
+        let (lag, jitter) = (ms("GDL_NET_LAG_MS"), ms("GDL_NET_JITTER_MS"));
+        (lag.is_some() || jitter.is_some()).then(|| Lag {
+            lag: lag.unwrap_or(0.0),
+            jitter: jitter.unwrap_or(0.0),
+            seed: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64) | 1,
+            last: Instant::now(),
+        })
+    }
+
+    /// Blocks the writer until the message queued at `queued` may leave.
+    fn wait(&mut self, queued: Instant) {
+        self.seed ^= self.seed << 13;
+        self.seed ^= self.seed >> 7;
+        self.seed ^= self.seed << 17;
+        let u = (self.seed >> 11) as f64 / (1u64 << 53) as f64;
+        let at = (queued + Duration::from_secs_f64((self.lag + u * self.jitter) / 1000.0)).max(self.last);
+        self.last = at;
+        let now = Instant::now();
+        if now < at {
+            std::thread::sleep(at - now);
+        }
     }
 }
 
@@ -376,12 +460,16 @@ struct HostGame {
     machines: u8,
     /// Machine m's peer index (machine 0 is the host itself).
     peers: Vec<usize>,
-    inputs: BTreeMap<u32, Vec<Option<Input>>>,
+    /// Per step, each machine's input and when it arrived.
+    inputs: BTreeMap<u32, Vec<Option<(Input, Instant)>>>,
     next: u32,
     ready: std::collections::VecDeque<Frame>,
     gone: u8,
     hashes: BTreeMap<u32, Vec<Option<[u8; 32]>>>,
     ended: bool,
+    /// Per machine, how long before a frame's last input its own arrives
+    /// (ms, a moving average).
+    early_ms: Vec<f32>,
 }
 
 pub struct Host {
@@ -474,9 +562,10 @@ impl Host {
                         && i.tick < g.next + 1024
                     {
                         let (n, t) = (g.machines as usize, i.tick);
-                        g.inputs.entry(t).or_insert_with(|| vec![None; n])[m] = Some(i);
+                        g.inputs.entry(t).or_insert_with(|| vec![None; n])[m] = Some((i, Instant::now()));
                     }
                 }
+                Ok(Msg::Ping { id }) => self.peers[k].conn.send(&Msg::Pong { id }),
                 Ok(Msg::Hash { tick, hash }) => {
                     if let Some(g) = self.game.as_mut()
                         && let Some(m) = g.peers.iter().position(|&p| p == k)
@@ -553,6 +642,7 @@ impl Host {
             gone: 0,
             hashes: BTreeMap::new(),
             ended: false,
+            early_ms: vec![0.0; machines as usize],
         });
         start(0)
     }
@@ -566,8 +656,14 @@ impl Host {
         {
             let v = g.inputs.remove(&g.next).unwrap();
             let mut f = Frame { tick: g.next, pads: [PadStatus::default(); PORTS], events: vec![Vec::new(); n], flags: self.flags, gone: g.gone };
+            // The machines' arrival times: how early each was before the last.
+            let last = v.iter().flatten().map(|(_, at)| *at).max();
             for (m, i) in v.into_iter().enumerate() {
-                let Some(i) = i.filter(|_| g.gone & 1 << m == 0) else { continue };
+                let Some((i, at)) = i.filter(|_| g.gone & 1 << m == 0) else { continue };
+                if let Some(last) = last {
+                    let early = (last - at).as_secs_f32() * 1000.0;
+                    g.early_ms[m] += (early - g.early_ms[m]) * 0.1;
+                }
                 for (port, pad) in ports_of(m, n).into_iter().zip(i.pads) {
                     f.pads[port] = pad;
                 }
@@ -579,6 +675,12 @@ impl Host {
             g.ready.push_back(f);
             g.next += 1;
             self.flags = 0;
+            if g.next.is_multiple_of(SYNC_EVERY) {
+                let early_ms: Vec<u16> = g.early_ms.iter().map(|&e| e.clamp(0.0, 60000.0) as u16).collect();
+                for &k in g.peers.iter().skip(1) {
+                    self.peers[k].conn.send(&Msg::Sync { early_ms: early_ms.clone() });
+                }
+            }
         }
         // Hashes every machine still in the game has reported.
         let done: Vec<u32> = g.hashes.iter().filter(|(_, h)| (0..n).all(|m| g.gone & 1 << m != 0 || h[m].is_some())).map(|(&t, _)| t).collect();
@@ -613,6 +715,16 @@ pub struct Client {
     welcomed: bool,
     /// Machines the frames so far report gone.
     gone: u8,
+    /// This machine's number once the game started.
+    you: Option<u8>,
+    /// Pings in flight (id → sent) and the smoothed round trip and its
+    /// deviation (RFC 6298's estimator, ms).
+    pings: BTreeMap<u32, Instant>,
+    next_ping: u32,
+    pinged: Instant,
+    srtt: Option<f32>,
+    rttvar: f32,
+    early_ms: Option<f32>,
 }
 
 impl Client {
@@ -634,7 +746,7 @@ impl Client {
             let _ = tx.send(r);
         });
         let (events_tx, events) = channel();
-        Client { address: address.into(), version: version.into(), data, connecting: Some(Mutex::new(rx)), conn: None, events_tx, events: Mutex::new(events), frames: BTreeMap::new(), ended: false, welcomed: false, gone: 0 }
+        Client { address: address.into(), version: version.into(), data, connecting: Some(Mutex::new(rx)), conn: None, events_tx, events: Mutex::new(events), frames: BTreeMap::new(), ended: false, welcomed: false, gone: 0, you: None, pings: BTreeMap::new(), next_ping: 0, pinged: Instant::now(), srtt: None, rttvar: 0.0, early_ms: None }
     }
 
     fn end(&mut self, why: String, out: &mut Vec<Event>) {
@@ -671,11 +783,39 @@ impl Client {
                 }
             }
         }
+        if self.conn.is_some() && self.welcomed && PING_EVERY <= self.pinged.elapsed() {
+            self.pinged = Instant::now();
+            self.pings.insert(self.next_ping, self.pinged);
+            // (Pings lost with a dropped connection are forgotten.)
+            self.pings.retain(|_, at| at.elapsed() < Duration::from_secs(10));
+            let id = self.next_ping;
+            self.next_ping = self.next_ping.wrapping_add(1);
+            self.send(&Msg::Ping { id });
+        }
         while let Ok((_, m)) = self.events.get_mut().unwrap().try_recv() {
             match m {
                 Ok(Msg::Welcome) => self.welcomed = true,
                 Ok(Msg::Lobby { machines }) => out.push(Event::Lobby { machines }),
-                Ok(Msg::Start(s)) => out.push(Event::Started(s)),
+                Ok(Msg::Start(s)) => {
+                    self.you = Some(s.you);
+                    out.push(Event::Started(s));
+                }
+                Ok(Msg::Pong { id }) => {
+                    if let Some(sent) = self.pings.remove(&id) {
+                        let r = sent.elapsed().as_secs_f32() * 1000.0;
+                        match self.srtt {
+                            None => {
+                                self.srtt = Some(r);
+                                self.rttvar = r / 2.0;
+                            }
+                            Some(s) => {
+                                self.rttvar += ((s - r).abs() - self.rttvar) * 0.25;
+                                self.srtt = Some(s + (r - s) * 0.125);
+                            }
+                        }
+                    }
+                }
+                Ok(Msg::Sync { early_ms }) => self.early_ms = self.you.and_then(|m| early_ms.get(m as usize)).map(|&e| f32::from(e)),
                 Ok(Msg::Frame(f)) => {
                     for m in 0..8 {
                         if f.gone & !self.gone & 1 << m != 0 {
@@ -763,7 +903,7 @@ impl Link {
                     && g.next <= input.tick
                 {
                     let (n, t) = (g.machines as usize, input.tick);
-                    g.inputs.entry(t).or_insert_with(|| vec![None; n])[0] = Some(input);
+                    g.inputs.entry(t).or_insert_with(|| vec![None; n])[0] = Some((input, Instant::now()));
                 }
                 h.build();
             }
@@ -796,6 +936,15 @@ impl Link {
                 }
             }
             Link::Client(c) => c.send(&Msg::Hash { tick, hash }),
+        }
+    }
+
+    /// The round trip to the host and how early this machine's input
+    /// arrives there (both None until measured).
+    pub fn timing(&self) -> Timing {
+        match self {
+            Link::Host(h) => Timing { rtt_ms: Some(0.0), early_ms: h.game.as_ref().map(|g| g.early_ms[0]) },
+            Link::Client(c) => Timing { rtt_ms: c.srtt, early_ms: c.early_ms },
         }
     }
 
@@ -846,12 +995,42 @@ mod tests {
             Msg::Frame(Box::new(Frame { tick: 70000, pads: std::array::from_fn(pad), events: vec![vec![], vec![5]], flags: FLAG_MOVIE_DONE, gone: 2 })),
             Msg::Hash { tick: 30, hash: [9; 32] },
             Msg::End("bye".into()),
+            Msg::Ping { id: 7 },
+            Msg::Pong { id: 7 },
+            Msg::Sync { early_ms: vec![0, 33, 65535] },
         ];
         for m in msgs {
             assert_eq!(decode(&encode(&m)).unwrap(), m);
         }
         assert!(decode(&[6, 1, 0]).is_err());
         assert!(decode(&[200]).is_err());
+    }
+
+    /// A joined client measures its round trip (pings) and learns how early
+    /// its inputs arrive (the host's Sync every SYNC_EVERY frames).
+    #[test]
+    fn timing() {
+        let mut host = Link::host(0, "t", [1; 32]).unwrap();
+        let addr = format!("127.0.0.1:{}", host.describe().trim_start_matches("port "));
+        let mut c = Link::join(&addr, "t", [1; 32]);
+        wait(|| {
+            c.poll();
+            host.poll().into_iter().any(|e| e == Event::Lobby { machines: 2 }).then_some(())
+        });
+        host.start(2, [0; 8], Vec::new()).unwrap();
+        wait(|| c.poll().into_iter().any(|e| matches!(e, Event::Started(_))).then_some(()));
+        for t in 0..SYNC_EVERY {
+            host.submit(Input { tick: t, pads: vec![pad(0)], events: vec![] });
+            c.submit(Input { tick: t, pads: vec![pad(1)], events: vec![] });
+        }
+        let t = wait(|| {
+            host.poll();
+            c.poll();
+            let t = c.timing();
+            (t.rtt_ms.is_some() && t.early_ms.is_some()).then_some(t)
+        });
+        assert!(t.rtt_ms.unwrap() < 1000.0);
+        assert!(host.timing().early_ms.is_some());
     }
 
     /// Leaving a lobby frees the port: hosting again on it works.

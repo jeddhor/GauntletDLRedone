@@ -22,8 +22,10 @@ GDL_EXIT_AFTER) and dumps at updates 300 and 880 (players, ports,
 positions). Passes when both reach the last update with equal hashes for
 every update, equal dumps, two players on the two machines' ports, and
 both players moved between the dumps. The host runs --host-extra updates longer, so
-the joining machine reaches its end before the host leaves (fewer than the
-0x3c steps after which the game asks for the departed player's controller). --join-binary runs another build for the
+the joining machine reaches its end before the host leaves (the host's
+confirmed steps may run up to NET_MAX_AHEAD ahead of the joining machine's;
+fewer than the 0x3c steps after which the game asks for the departed
+player's controller). --join-binary runs another build for the
 joining machine (--wine: a Windows build under Wine, prefix in /tmp;
 cross-platform lockstep). Results: private/runs/net-check-TAG/result.json.
 Research only.
@@ -78,9 +80,15 @@ def machine(run, name, binary, env_extra, args, updates):
     (d / 'actions.json').write_text(json.dumps([{'at': u, 'dump': f'u{u}'} for u in DUMPS]))
     if args.level:
         env_extra = dict(env_extra, GDL_DEBUG_LEVEL=args.level)
+    if args.lag:
+        env_extra = dict(env_extra, GDL_NET_LAG_MS=str(args.lag))
+    if args.jitter:
+        env_extra = dict(env_extra, GDL_NET_JITTER_MS=str(args.jitter))
+    if args.no_predict:
+        env_extra = dict(env_extra, GDL_NET_PREDICT='0')
     env = dict(environment(), HOME=str(d / 'home'), GDL_NO_AUDIO='1', GDL_NO_ATTRACT='1', GDL_NO_GAMEPADS='1', GDL_BASELINE='1',
                GDL_EXIT_AFTER=str(updates), GDL_STATE_OUT=str(d / 'state.txt'), GDL_TEST_ACTIONS=str(d / 'actions.json'),
-               GDL_NET_DELAY=str(args.delay), GDL_UI_TRACE=str(d / 'ui.trace'), GDL_RENDER_FPS='60', RUST_BACKTRACE='1',
+               GDL_NET_DELAY=str(args.delay), GDL_WINDOW=args.window, GDL_UI_TRACE=str(d / 'ui.trace'), GDL_RENDER_FPS='60', RUST_BACKTRACE='1',
                # llvmpipe's rasteriser threads (it takes every core by default).
                LP_NUM_THREADS='4', **env_extra)
     for k in ('WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'GDL_SETTINGS'):
@@ -109,11 +117,15 @@ def main():
     ap.add_argument('--binary', default=str(ROOT / 'target/release/gdl_play'))
     ap.add_argument('--join-binary')
     ap.add_argument('--wine', action='store_true')
-    ap.add_argument('--delay', type=int, default=4)
+    ap.add_argument('--delay', type=int, default=2)
     ap.add_argument('--updates', type=int, default=900)
-    ap.add_argument('--host-extra', type=int, default=20, help='updates the host runs on (so the joining machine ends first)')
+    ap.add_argument('--host-extra', type=int, default=45, help='updates the host runs on (so the joining machine ends first; more than gdl_play NET_MAX_AHEAD, fewer than the 0x3c steps before the game asks for a controller)')
+    ap.add_argument('--window', default='640x448', help='GDL_WINDOW: a small window keeps two software renderers near 30 Hz')
     ap.add_argument('--port', type=int, default=28790)
     ap.add_argument('--level', help='GDL_DEBUG_LEVEL on both machines: the level after the select screen instead of the Tower')
+    ap.add_argument('--lag', type=float, help='GDL_NET_LAG_MS on both machines: every message leaves this much later (one way)')
+    ap.add_argument('--jitter', type=float, help='GDL_NET_JITTER_MS on both machines: plus up to this much more')
+    ap.add_argument('--no-predict', action='store_true', help='GDL_NET_PREDICT=0: draw the confirmed game')
     ap.add_argument('--timeout', type=int, default=1500)
     args = ap.parse_args()
     run = ROOT / 'private/runs' / f'net-check-{args.tag}'
@@ -182,11 +194,26 @@ def main():
         trace = (d / 'ui.trace').read_text(errors='replace') if (d / 'ui.trace').exists() else ''
         if 'paused=true Paused' not in trace or 'paused=true Options' not in trace:
             fail.append(f'{d.name}: the shared pause menu and Settings not in its trace')
+    # Each machine's counters (NETSTATS at its end; the Windows build's stderr
+    # under Wine is not captured).
+    stats = {}
+    for d, _, _ in procs:
+        lines = [ln for ln in (d / 'client.log').read_text(errors='replace').splitlines() if ln.startswith('NETSTATS')]
+        if lines:
+            stats[d.name] = lines[0]
+    for name, line in stats.items():
+        for key in ('digest_mismatches',):
+            v = line.split(f'{key}: ')[1].split(',')[0] if f'{key}: ' in line else '0'
+            if v != '0':
+                fail.append(f'{name}: {key} {v}')
     result = dict(passed=not fail, failures=fail, binary=binary, join_binary=join_binary, wine=args.wine, delay=args.delay,
+                  lag=args.lag, jitter=args.jitter, predict=not args.no_predict, netstats=stats,
                   updates=[len(h), len(j)], equal_updates=first_diff if first_diff is not None else min(len(h), len(j)),
                   last_hash=h[-1] if h else None, players=players)
     (run / 'result.json').write_text(json.dumps(result, indent=1))
     print('PASS' if not fail else 'FAIL', fail, players)
+    for name, line in stats.items():
+        print(name, line)
     sys.exit(0 if not fail else 1)
 
 

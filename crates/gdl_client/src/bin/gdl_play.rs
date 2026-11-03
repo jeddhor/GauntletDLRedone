@@ -35,7 +35,11 @@ use gdl_core::{
 use gdl_core::game::exitflow::LevelEnd;
 use gdl_formats::{animation::Animations, objects::Objects, texdef::TextureTable, world::World};
 use serde_json::Value;
-use std::{collections::HashMap, error::Error, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    error::Error,
+    path::Path,
+};
 
 /// Presentation-only handedness mirror (original right × up = forward).
 const MIRROR: Vec3 = Vec3::new(-1.0, 1.0, 1.0);
@@ -5604,12 +5608,235 @@ struct NetGame {
     movie_done: bool,
     /// TEST: GDL_NET_SCRIPT, this machine's first port by step.
     script: Option<Vec<(u64, u64, Vec<usize>)>>,
+    began: std::time::Instant,
+    /// The local clock (net_local_tick): the next step this machine sends
+    /// its input for, and the time towards the next sample.
+    input_next: u32,
+    clock: f32,
+    /// This machine's inputs by step until confirmed: its ports' pads and
+    /// whether it sent menu events (prediction stops after those).
+    local: BTreeMap<u32, (Vec<PadStatus>, bool)>,
+    /// The last applied frame's pads: the other machines' are predicted to
+    /// stay so.
+    last_pads: [PadStatus; 8],
+    /// Steps applied since the last prediction check (simulate logs them).
+    log: Vec<Applied>,
+    predict: Prediction,
+    stats: NetStats,
+}
+
+/// An applied step: its pads, whether any machine sent menu events, and
+/// whether it went through simulate's plain play path (game.step_with).
+struct Applied {
+    tick: u32,
+    pads: [PadStatus; 8],
+    events: bool,
+    plain: bool,
+}
+
+/// Network play's prediction (presentation only): the confirmed game run
+/// ahead to this machine's latest input, the other machines assumed to keep
+/// their last pads. Drawn instead of the confirmed game; the confirmed game
+/// alone decides everything else.
+#[derive(Default)]
+struct Prediction {
+    /// The run-ahead state and the next step it applies. A rebuild starts
+    /// from a copy of the confirmed game and catches up within the per-frame
+    /// step budget.
+    head: Option<(u32, Box<Game>)>,
+    /// Per predicted step: the pads it assumed and a digest of the state
+    /// after it (both checked when the step is confirmed).
+    assumed: BTreeMap<u32, ([PadStatus; 8], u64)>,
+    /// Per step, the sound effects a prediction already played.
+    sounds: BTreeMap<u32, Vec<Event>>,
+    /// The run-ahead stopped at a step leaving plain play.
+    barrier: bool,
+    /// The head is drawn this frame (swapped into Sim::game until First).
+    shown: bool,
+}
+
+/// TEST/DIAGNOSTIC: network play's counters (NETSTATS on stderr at the end).
+#[derive(Default, Debug)]
+struct NetStats {
+    /// Seconds since the game began and the local clock's samples (about
+    /// 30 a second when nothing waits).
+    seconds: f64,
+    local_ticks: u64,
+    /// The same while the game is predicted (plain play): the time, the
+    /// samples and the time the clock waited.
+    play_seconds: f64,
+    play_ticks: u64,
+    play_stall_ms: f64,
+    applied: u64,
+    stalls: u64,
+    stall_ms: f64,
+    predicted_steps: u64,
+    rebuilds: u64,
+    mispredicted: u64,
+    digest_mismatches: u64,
+    depth_sum: u64,
+    depth_frames: u64,
+    depth_max: u32,
+    slow_ticks: u64,
 }
 
 impl Net {
     fn playing(&self) -> bool {
         self.game.is_some()
     }
+}
+
+/// NATIVE (network play): how far this machine's local clock may run ahead
+/// of the confirmed steps (one second) before it waits.
+const NET_MAX_AHEAD: u32 = 30;
+/// Predicted steps per rendered frame (C2: about 2 ms each, 2026-11-02).
+const NET_PREDICT_BUDGET: u32 = 3;
+
+/// The local clock (PreUpdate, after net_poll): at 30 Hz of real time this
+/// machine samples its ports and menu events and sends them as its input for
+/// step `input_next`, whether or not the other machines' inputs have come —
+/// a late frame does not hold the players' own input. A machine whose input
+/// reaches the host more than 1.5 steps before the last one's runs at 27 Hz
+/// until it is no longer ahead (the host's Sync). The clock waits only when
+/// it is NET_MAX_AHEAD steps ahead of the confirmed ones.
+#[allow(clippy::too_many_arguments)]
+fn net_local_tick(
+    time: Res<Time<Real>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<(Entity, &Gamepad, Option<&Name>)>,
+    (bindings, overlay): (Res<gdl_client::controls::Bindings>, Res<gdl_client::enhance::Overlay>),
+    screen: Res<Screen>,
+    mut net: ResMut<Net>,
+) {
+    let Net { link, game, pending, waiting, .. } = &mut *net;
+    let (Some(ng), Some(link)) = (game.as_mut(), link.as_mut()) else { return };
+    if *screen != Screen::Playing {
+        return;
+    }
+    let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().filter(|(_, _, n)| pad_used(*n)).map(|(e, g, _)| (e, g)).collect();
+    pads.sort_by_key(|(e, _)| *e);
+    let pads: Vec<&Gamepad> = pads.into_iter().map(|(_, g)| g).collect();
+    let ahead = link.timing().early_ms.is_some_and(|e| 50.0 < e);
+    let period = if ahead { 1.0 / 27.0 } else { 1.0 / 30.0 };
+    ng.clock = (ng.clock + time.delta_secs()).min(0.25);
+    let play = ng.predict.head.is_some();
+    if play {
+        ng.stats.play_seconds += f64::from(time.delta_secs());
+    }
+    let mut sampled = 0;
+    while period <= ng.clock && sampled < 3 {
+        if NET_MAX_AHEAD <= ng.input_next.saturating_sub(ng.next) {
+            if waiting.is_none() {
+                *waiting = Some(std::time::Instant::now());
+                ng.stats.stalls += 1;
+            }
+            ng.clock = 0.0;
+            return;
+        }
+        if let Some(at) = waiting.take() {
+            let ms = at.elapsed().as_secs_f64() * 1000.0;
+            ng.stats.stall_ms += ms;
+            if play {
+                ng.stats.play_stall_ms += ms;
+            }
+        }
+        ng.clock -= period;
+        sampled += 1;
+        if ahead {
+            ng.stats.slow_ticks += 1;
+        }
+        let tick = ng.input_next;
+        let n = gdl_client::net::ports_of(ng.you, ng.machines).len();
+        let mut mine = net_local_pads(n, &keys, &pads, &bindings, !overlay.open && !overlay.held);
+        let mut events = std::mem::take(pending);
+        // TEST: GDL_NET_SCRIPT entries below 0x16 press this machine's first
+        // port, 0x100 + code sends a menu event (NET_KEYS, NET_TOGGLE).
+        if let (Some(script), Some(p)) = (ng.script.as_ref(), mine.first_mut()) {
+            for (first, last, entries) in script {
+                if (*first..=*last).contains(&u64::from(tick)) {
+                    for &i in entries {
+                        match i {
+                            0..0x16 => p.press(i),
+                            0x100..0x200 => events.push((i - 0x100) as u8),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        ng.local.insert(tick, (mine.clone(), !events.is_empty()));
+        link.submit(gdl_client::net::Input { tick, pads: mine, events });
+        ng.input_next += 1;
+        ng.stats.local_ticks += 1;
+        ng.stats.play_ticks += u64::from(play);
+        ng.stats.seconds = ng.began.elapsed().as_secs_f64();
+    }
+}
+
+/// One step of simulate's plain play path on a copy of the game, for network
+/// play's prediction: the same game mutations (CheckSoftReset, the screen
+/// saver's check, the Tower's join check, the step, its events'
+/// clear_player). Returns the step's events and whether the game leaves
+/// plain play there (a reset, the saver, a join, a scroll box or hint menu,
+/// a level end): the prediction stops after it. Keep in step with simulate.
+fn predict_step(g: &mut Game, ports: &[PadStatus; 8], pdats: &profile::Pdats) -> (Vec<Event>, bool) {
+    if g.globals.game_mode & 0x4000 != 0 {
+        g.check_soft_reset();
+    }
+    if g.restart_req {
+        return (Vec::new(), true);
+    }
+    let vb = g.globals.vb_elapsed;
+    if !matches!(g.screen_saver_check(vb), Ok(false)) {
+        return (Vec::new(), true);
+    }
+    if g.globals.cur_world == 0xd && g.hud.optmenu_active == 0 && g.globals.start_of_stage == 0 && !matches!(g.update_controls(ports).and_then(|_| g.join_check(pdats)), Ok(false)) {
+        return (Vec::new(), true);
+    }
+    g.step_with(None, &mut |g| {
+        g.update_controls(ports)?;
+        g.do_players().map(|_| ())
+    });
+    let events: Vec<Event> = g.events.drain(..).collect();
+    let mut barrier = g.exit_ready || g.level_done.is_some() || g.globals.game_mode != 0x4010;
+    for e in &events {
+        match e {
+            Event::PlayerInactivated { player } => {
+                let demo = g.globals.demo_mode != 0;
+                let _ = profile::clear_player(&mut g.players[*player], true, demo, pdats);
+            }
+            Event::HintMenu { .. } | Event::ScrollMessage { .. } | Event::ScrollNamed { .. } => barrier = true,
+            _ => {}
+        }
+    }
+    g.rumble.clear();
+    (events, barrier)
+}
+
+/// `events` without the sound effects in `played` (each matched once).
+fn without_played(events: &[Event], mut played: Vec<Event>) -> Vec<Event> {
+    events
+        .iter()
+        .filter(|e| {
+            if !matches!(e, Event::Sound { .. }) {
+                return true;
+            }
+            match played.iter().position(|p| p == *e) {
+                Some(k) => {
+                    played.swap_remove(k);
+                    false
+                }
+                None => true,
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+/// A cheap digest of the hashed simulation records (FNV-1a), comparing a
+/// prediction with the confirmed step.
+fn state_digest(g: &Game) -> u64 {
+    sim_state_bytes(g).iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
 
 /// Menu events in a network input: 1..=9 these keys, [`NET_TOGGLE`] the
@@ -5848,47 +6075,28 @@ fn simulate(
     pads.sort_by_key(|(e, _)| *e);
     let pads: Vec<&Gamepad> = pads.into_iter().map(|(_, g)| g).collect();
     let mut ports = [PadStatus::default(); 8];
-    // NATIVE (network play): the step's pads are the host's merged frame;
-    // this machine sends its own for step next + delay. At most one step
-    // per rendered frame, none while the frame is missing (every machine
-    // waits for the slowest).
+    // NATIVE (network play): the step's pads are the host's merged frame
+    // (this machine's own inputs go out from net_local_tick). One step per
+    // rendered frame, more while the steps stay quiet (net_quiet, at the end;
+    // the fixed clock runs at 60 Hz in a network game, so a machine behind
+    // catches up), none while the frame is missing.
     let mut frame = None;
-    let Net { link, game: net_game, pending, due, stepped, waiting, .. } = &mut *net;
+    let Net { link, game: net_game, due, stepped, .. } = &mut *net;
     if let Some(ng) = net_game.as_mut() {
         let Some(link) = link.as_mut() else { return };
         if *stepped {
             return;
         }
-        let Some(f) = link.frame(ng.next) else {
-            waiting.get_or_insert_with(std::time::Instant::now);
-            return;
-        };
-        *waiting = None;
+        let Some(f) = link.frame(ng.next) else { return };
         *stepped = true;
         // The state before this step, compared across the machines.
         if ng.next.is_multiple_of(gdl_client::net::HASH_EVERY) && 0 < ng.next {
             link.report_hash(ng.next, sim_state_digest(&sim.game));
         }
-        let tick = ng.next + ng.delay;
-        let n = gdl_client::net::ports_of(ng.you, ng.machines).len();
-        let mut mine = net_local_pads(n, &keys, &pads, &bindings, !overlay.open && !overlay.held);
-        let mut events = std::mem::take(pending);
-        // TEST: GDL_NET_SCRIPT entries below 0x16 press this machine's first
-        // port, 0x100 + code sends a menu event (NET_KEYS, NET_TOGGLE).
-        if let (Some(script), Some(p)) = (ng.script.as_ref(), mine.first_mut()) {
-            for (first, last, entries) in script {
-                if (*first..=*last).contains(&u64::from(tick)) {
-                    for &i in entries {
-                        match i {
-                            0..0x16 => p.press(i),
-                            0x100..0x200 => events.push((i - 0x100) as u8),
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-        link.submit(gdl_client::net::Input { tick, pads: mine, events });
+        ng.local.remove(&ng.next);
+        ng.last_pads = f.pads;
+        ng.log.push(Applied { tick: f.tick, pads: f.pads, events: f.events.iter().any(|e| !e.is_empty()), plain: false });
+        ng.stats.applied += 1;
         ng.next += 1;
         ports = f.pads;
         due.clone_from(&f.events);
@@ -6190,7 +6398,8 @@ fn simulate(
         if overlay_open {
             // The native settings overlay: the game waits.
         } else if !ui.paused && !closing {
-            step_message_box(&mut sim, &ports, time.delta_secs());
+            // (A network game's fixed clock runs at 60 Hz: its steps are 1/30 s.)
+            step_message_box(&mut sim, &ports, if networked { 1.0 / 30.0 } else { time.delta_secs() });
         } else if let Err(e) = sim.game.update_controls(&ports) {
             // DoOptions reads PlayerControl each frame, so the press that
             // closes a menu is an old level when the game resumes.
@@ -6361,6 +6570,11 @@ fn simulate(
         return;
     }
     guard.1.push(("before_step", guard.0.elapsed().as_secs_f64() * 1000.0));
+    // Network play: this step went through the plain play path (prediction
+    // runs only on such steps).
+    if let Some(a) = net_game.as_mut().and_then(|ng| ng.log.last_mut()) {
+        a.plain = true;
+    }
     let Sim { game, .. } = &mut *sim;
     let before = game.events.len();
     let t0 = std::time::Instant::now();
@@ -6385,6 +6599,9 @@ fn simulate(
         if harness.exit_after == Some(sim.updates) {
             if let Some(out) = harness.state_out.as_ref() {
                 let _ = std::fs::write(out, harness.hashes.join("\n") + "\n");
+            }
+            if let (Some(ng), Some(link)) = (net_game.as_ref(), link.as_ref()) {
+                eprintln!("NETSTATS {:?} machine {} of {} delay {} timing {:?}", ng.stats, ng.you + 1, ng.machines, ng.delay, link.timing());
             }
             // DIAGNOSTIC (M20): the peak resident memory (Linux VmHWM).
             if let Some(line) = std::fs::read_to_string("/proc/self/status").ok().and_then(|s| s.lines().find(|l| l.starts_with("VmHWM")).map(str::to_string)) {
@@ -6517,7 +6734,10 @@ fn simulate(
     // shop and map screens' leftovers included).
     let new: Vec<Event> = sim.game.events.drain(..).collect();
     guard.1.push(("before_audio", guard.0.elapsed().as_secs_f64() * 1000.0));
-    play_audio(&mut audio, &new);
+    // Network play: the sound effects a prediction of this step already
+    // played are not played again.
+    let played = frame.as_ref().zip(net_game.as_mut()).and_then(|(f, ng)| ng.predict.sounds.remove(&f.tick)).unwrap_or_default();
+    play_audio(&mut audio, &without_played(&new, played));
     guard.1.push(("after_audio", guard.0.elapsed().as_secs_f64() * 1000.0));
     for e in new {
         match e {
@@ -6571,6 +6791,26 @@ fn simulate(
         *t -= spf;
         0.0 < *t
     });
+    // Network play: after a quiet step another confirmed step may follow in
+    // the same frame (a machine rendering under 30 Hz keeps the game's pace).
+    if frame.as_ref().is_some_and(|f| f.events.iter().all(Vec::is_empty)) && net_quiet(&sim, &ui, &front, &session) {
+        *stepped = false;
+    }
+}
+
+/// Network play: nothing front_system or advance_level would act on between
+/// two steps — plain play (net_plain), no reset request, someone in play
+/// (the game-over check), and not the every-player-dead shop. Then the next
+/// confirmed step may run in the same frame: each machine's front end acts
+/// at the same steps whether it ran after each step or after several. Keep
+/// in step with front_system and advance_level.
+fn net_quiet(sim: &Sim, ui: &Ui, front: &Front, session: &Session) -> bool {
+    let g = &sim.game;
+    let state = |k: usize| g.players[k].i32_(0xfc);
+    net_plain(sim, ui, front, session)
+        && !g.restart_req
+        && (0..4).any(|k| state(k) != 0)
+        && (state(0) != 0xb || (0..4).any(|k| matches!(state(k), 1 | 4 | 8)))
 }
 
 fn row(r: &gdl_core::game::record::Record, o: usize) -> Vec3 {
@@ -8804,8 +9044,9 @@ fn is_net_page(page: &gdl_client::menu::Page) -> bool {
 }
 
 /// NATIVE (network play): the steps between a machine sampling its input
-/// and every machine using it (133 ms; GDL_NET_DELAY for tests).
-const NET_DELAY: u8 = 4;
+/// and the step that uses it (67 ms; the prediction hides it on the machine
+/// that pressed; GDL_NET_DELAY for tests).
+const NET_DELAY: u8 = 2;
 
 /// "host" or "host:port" (IPv6 in brackets) with the default port added.
 fn net_target(address: &str) -> String {
@@ -8856,15 +9097,30 @@ fn start_net_game(world: &mut EcsWorld, start: gdl_client::net::Start) -> Result
         stream_part: None,
         movie_done: false,
         script,
+        began: std::time::Instant::now(),
+        input_next: 0,
+        clock: 0.0,
+        local: BTreeMap::new(),
+        last_pads: [PadStatus::default(); 8],
+        log: Vec::new(),
+        predict: Prediction::default(),
+        stats: NetStats::default(),
     };
+    let mut ng = ng;
     let n = gdl_client::net::ports_of(ng.you, ng.machines).len();
+    // The network game's fixed clock runs at 60 Hz: simulate applies a
+    // confirmed step whenever one is ready, at most one per rendered frame,
+    // so a machine behind catches up (net_local_tick keeps real time).
+    world.resource_mut::<Time<Fixed>>().set_timestep_hz(60.0);
     let mut net = world.resource_mut::<Net>();
     if let Some(link) = net.link.as_mut() {
         for tick in 0..ng.delay {
-            let pads = (0..n).map(|k| PadStatus { connected: k < 2, ..Default::default() }).collect();
+            let pads: Vec<PadStatus> = (0..n).map(|k| PadStatus { connected: k < 2, ..Default::default() }).collect();
+            ng.local.insert(tick, (pads.clone(), false));
             link.submit(gdl_client::net::Input { tick, pads, events: Vec::new() });
         }
     }
+    ng.input_next = ng.delay;
     net.game = Some(ng);
     net.pending.clear();
     net.due.clear();
@@ -8955,15 +9211,140 @@ fn end_net_game(world: &mut EcsWorld) {
         net.game.take()
     };
     if let Some(ng) = ng {
-        let mut front = world.resource_mut::<Front>();
-        front.menu.prefs = ng.prefs;
-        front.menu.net_game = false;
+        eprintln!("NETSTATS {:?} machine {} of {} delay {}", ng.stats, ng.you + 1, ng.machines, ng.delay);
+        {
+            let mut front = world.resource_mut::<Front>();
+            front.menu.prefs = ng.prefs;
+            front.menu.net_game = false;
+        }
+        world.resource_mut::<Time<Fixed>>().set_timestep_hz(30.0);
     }
 }
 
-/// A new frame: no step applied yet (network play's one step per frame).
-fn net_frame_start(mut net: ResMut<Net>) {
+/// A new frame: no step applied yet (network play's one step per frame),
+/// and the confirmed game back in Sim::game if the prediction was drawn.
+fn net_frame_start(mut net: ResMut<Net>, sim: Option<ResMut<Sim>>) {
     net.stepped = false;
+    if let Some(ng) = net.game.as_mut()
+        && std::mem::take(&mut ng.predict.shown)
+        && let (Some(mut sim), Some((_, head))) = (sim, ng.predict.head.as_mut())
+    {
+        std::mem::swap(&mut sim.game, &mut **head);
+    }
+}
+
+/// Network play can be predicted now: the confirmed game is in plain play
+/// (no screen, box, menu, pause, level change or saver).
+fn net_plain(sim: &Sim, ui: &Ui, front: &Front, session: &Session) -> bool {
+    let g = &sim.game;
+    sim.error.is_none()
+        && sim.select.is_none()
+        && sim.shop.is_none()
+        && sim.map.is_none()
+        && sim.movie.is_none()
+        && sim.over.is_none()
+        && sim.flyby.is_none()
+        && sim.message_box.is_none()
+        && !sim.controller_box
+        && !sim.hint_menu
+        && !ui.paused
+        && !front.ending.active()
+        && session.banner.is_none()
+        && session.finished.is_none()
+        && session.next.is_none()
+        && g.globals.game_mode == 0x4010
+        && !g.saver.active
+        && !g.exit_ready
+        && g.level_done.is_none()
+        && g.controls.controller_lost == 0
+}
+
+/// Network play's prediction (Update: after the front end, the level changes
+/// and the character models, before the presentation). The steps confirmed
+/// since the last frame are checked against what the run-ahead assumed (the
+/// other machines' pads, no menu events, the plain play path, the state's
+/// digest); a difference rebuilds it from a copy of the confirmed game.
+/// Then it is extended towards this machine's latest input within
+/// NET_PREDICT_BUDGET steps, its new sound effects play, and it is swapped
+/// into Sim::game for drawing (net_frame_start swaps the confirmed game back
+/// before the next step). GDL_NET_PREDICT=0 (TEST) draws the confirmed game.
+fn net_predict(
+    mut net: ResMut<Net>,
+    sim: Option<ResMut<Sim>>,
+    session: Option<Res<Session>>,
+    (ui, front): (Res<Ui>, Res<Front>),
+    mut audio: Option<NonSendMut<gdl_client::audio::AudioOut>>,
+) {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let (Some(mut sim), Some(session)) = (sim, session) else { return };
+    let Some(ng) = net.game.as_mut() else { return };
+    let confirmed = ng.next;
+    let p = &mut ng.predict;
+    let mut stale = false;
+    let mut last = None;
+    for a in ng.log.drain(..) {
+        match p.assumed.remove(&a.tick) {
+            Some((pads, digest)) => {
+                if pads != a.pads || a.events || !a.plain {
+                    stale = true;
+                    ng.stats.mispredicted += 1;
+                }
+                last = Some((a.tick, digest));
+            }
+            None => stale = true,
+        }
+    }
+    if !stale
+        && let Some((t, digest)) = last
+        && t + 1 == confirmed
+        && state_digest(&sim.game) != digest
+    {
+        stale = true;
+        ng.stats.digest_mismatches += 1;
+    }
+    p.sounds.retain(|&t, _| t + 90 >= confirmed);
+    if *OFF.get_or_init(|| std::env::var("GDL_NET_PREDICT").is_ok_and(|v| v == "0")) || !net_plain(&sim, &ui, &front, &session) {
+        p.head = None;
+        p.assumed.clear();
+        return;
+    }
+    // (A run-ahead the confirmed steps reached exactly, every one as assumed,
+    // is the confirmed state: it goes on from there.)
+    if stale || p.head.as_ref().is_none_or(|(next, _)| *next < confirmed) {
+        p.head = Some((confirmed, Box::new(sim.game.clone())));
+        p.assumed.clear();
+        p.barrier = false;
+        ng.stats.rebuilds += 1;
+    }
+    let mine = gdl_client::net::ports_of(ng.you, ng.machines);
+    let Some((next, head)) = p.head.as_mut() else { return };
+    let mut budget = NET_PREDICT_BUDGET;
+    while *next < ng.input_next && 0 < budget && !p.barrier {
+        let Some((local, events)) = ng.local.get(next) else { break };
+        let mut pads = ng.last_pads;
+        for (&port, pad) in mine.iter().zip(local) {
+            pads[port] = *pad;
+        }
+        let (stepped, barrier) = predict_step(head, &pads, &session.pdats);
+        p.assumed.insert(*next, (pads, state_digest(head)));
+        // Its sound effects, once per step (a rebuild plays only new ones).
+        let played = p.sounds.entry(*next).or_default();
+        let fresh = without_played(&stepped.into_iter().filter(|e| matches!(e, Event::Sound { .. })).collect::<Vec<_>>(), played.clone());
+        play_audio(&mut audio, &fresh);
+        played.extend(fresh);
+        p.barrier = barrier || *events;
+        *next += 1;
+        budget -= 1;
+        ng.stats.predicted_steps += 1;
+    }
+    if confirmed < *next {
+        let depth = *next - confirmed;
+        ng.stats.depth_sum += u64::from(depth);
+        ng.stats.depth_frames += 1;
+        ng.stats.depth_max = ng.stats.depth_max.max(depth);
+        std::mem::swap(&mut sim.game, &mut **head);
+        p.shown = true;
+    }
 }
 
 /// init_attract_mode's flyby entry (init_flyby): the attract level `idx`
@@ -10501,7 +10882,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             let plugins = DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Gauntlet: Dark Legacy".into(),
-                    resolution: (1280, 896).into(),
+                    // TEST: GDL_WINDOW=WxH (network checks: two clients
+                    // rendering in software need a small window to keep 30 Hz).
+                    resolution: std::env::var("GDL_WINDOW")
+                        .ok()
+                        .and_then(|v| v.split_once('x').and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?))))
+                        .unwrap_or((1280, 896))
+                        .into(),
                     present_mode: if settings.vsync { bevy::window::PresentMode::AutoVsync } else { bevy::window::PresentMode::AutoNoVsync },
                     mode: if settings.fullscreen { bevy::window::WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current) } else { bevy::window::WindowMode::Windowed },
                     desired_maximum_frame_latency: std::num::NonZeroU32::new(settings.frame_queue),
@@ -10538,7 +10925,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(Last, (frame_limiter, ui_trace, frame_log, diagnostic_shots, diagnostic_scene_dump))
         .add_systems(Update, hd_textures_job)
         .add_systems(First, net_frame_start)
-        .add_systems(PreUpdate, net_poll)
+        .add_systems(PreUpdate, (net_poll, net_local_tick).chain())
         .add_systems(PostUpdate, (interpolate_transforms.before(bevy::transform::TransformSystems::Propagate), mark_shadow_casters, present_shadow_light))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
@@ -10552,7 +10939,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                (advance_level, (refresh_characters, test_players).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

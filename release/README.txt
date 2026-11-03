@@ -165,12 +165,15 @@ pause the game and use the menu, for everyone. Audio, Screen and Display are
 each computer's own: change them before the game, or use F10 (the settings
 overlay) during it; the game goes on under the overlay.
 
-Every computer runs the whole game and only the players' buttons travel, so
-the game waits for the slowest connection ("Waiting for the other
-machines…"): a local network or a fast connection works best. If a player's
-computer leaves, the game asks for that player's controller, as when one is
-unplugged; Start on a free controller takes the player over. If the host
-leaves, the game ends for everyone.
+Every computer runs the whole game and only the players' buttons travel.
+Your own presses show at once: each computer draws the game a little ahead,
+guessing that the other players keep doing what they did last, and corrects
+itself when their buttons arrive. Over the internet another player may
+therefore jump back a little when they change direction. If a connection
+stops for more than a second, the game waits for it ("Waiting for the other
+machines…"). If a player's computer leaves, the game asks for that player's
+controller, as when one is unplugged; Start on a free controller takes the
+player over. If the host leaves, the game ends for everyone.
 
 
 Movies
