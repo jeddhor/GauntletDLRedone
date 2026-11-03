@@ -468,6 +468,50 @@ SHA-256 of every asset equals SHA256SUMS. Audits before the push:
 release-audit-v120b (the folder with the tag's source archive) and
 history-audit-v120 (502 commits, 3,049 blobs), both without findings.
 
+## Release 1.3.0 (2026-11-02)
+
+The owner asked (2026-11-02) for lag prediction / compensation so that
+network play is stable over connections that are not on the same network,
+and then to publish without the GPU checks. Release 1.3.0 = 1.2.0 with
+network protocol 2 (research/network.md: a real-time local clock per
+machine, time sync, catch-up and quiet steps, prediction drawn only).
+Version 1.3.0 in Cargo.toml's workspace and installer/CMakeLists.txt.
+Programs built by tools/package.sh at commit 9b81076:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.3.0-linux-x86_64.tar.gz (46 MB; 119 MiB unpacked, 41 files) | 44eeb7fc38f14ca1… |
+| GauntletDarkLegacy-1.3.0-windows-x86_64.zip (49 MB; 122 MiB unpacked, 22 files) | 92934bb492002e74… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | c41d71cf81495609… / 8cd4c1e4f16b32d2… / cc758b722aab526a… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | 2bfd333937639ad5… / 34d76a0698fc56d9… / c27efc3024897f88… |
+| library-source/ | unchanged from 1.2.0 |
+
+The third-party notices are unchanged (no new crates). The source archive is
+cut from the commit tagged v1.3.0, which adds this record to 9b81076.
+
+As for 1.2.0, no check started a kwin session on the RX 580 (the owner:
+"skip the GPU checks"); everything below ran in software or without a
+display. Checks of 1.3.0, all passing:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive (of 9b81076) | pass, no findings | release-audit-v130a |
+| Network play with the shipped games, a simulated distant network (60 ms one way + up to 30 ms): the Linux package's gdl_play hosting, the Windows package's gdl_play.exe joining under Wine, G1, 900 updates, a shared pause | all 900 hashes equal and byte-identical to the candidate's runs; the host waited 0.12 s in 31 s of play | net-check-r130-pkg |
+| The candidate (target/release 4967c468…): network checks with no lag, 60 + 30 ms and 100 + 50 ms (Linux–Linux) and 60 + 30 ms (Linux–Wine); 24 menu flows | all pass (research/network.md) | net-check-p3, -p5-lag, -p6-lag100, -p7-wine-lag, -p8-final; menu-flows-v130 |
+| Ubuntu 20.04 container without GPU or display: libraries of all 29 ELF files, `--batch` install from the ISO (read-only), verify | none missing; exit 0; 2953 checked, none differing | old-distro-v130-libs |
+| Linux 2026 host, system Qt masked: `--batch` | pass | qt-bundle-v130 |
+| Linux wizard on the private Xvfb with the ISO attached as a drive, system Qt masked, game started | pass, 7.1 s | installer-gui-v130 |
+| Update over release 1.2.0 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, verify none of 2953 differing, no leftovers, test folder removed | pass, 74 s + 73 s | private/runs/windows-update-v130 |
+
+Not run (they start kwin sessions on the RX 580): old_distro_check's wizard
+and game in the container, update_check.py on Linux, title_start_check.py,
+the original-presentation gate and the frame-time benchmarks. The changes
+since 1.2.0 are gdl_play's network game (only in a network game), the
+lag simulator and window size test switches, and documents. Not checked:
+the game on a Windows desktop, network play between two computers or over a
+real internet route (packet loss and bandwidth are not simulated), a
+physical disc.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
