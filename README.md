@@ -9,9 +9,11 @@ Release 1.0.0 was the complete port
 graphics options below and playtest fixes; release 1.2.0 added network play
 for up to four computers (a native addition, lockstep over TCP:
 [research/network.md](docs/research/network.md)) and fixed the size of an
-opened chest's item; release 1.3.0 makes network play hold up over the
+opened chest's item; release 1.3.0 made network play hold up over the
 internet (each computer draws the game ahead of the others' inputs and
-keeps its own clock; [research/release.md](docs/research/release.md)). The native game runs
+keeps its own clock); release 1.3.1 plays the movies without FFmpeg (a
+native MPEG-2 decoder: [decisions/0007](docs/decisions/0007-native-movie-video.md);
+[research/release.md](docs/research/release.md)). The native game runs
 the original rules from the player's own disc: the Tower, all realms and
 bosses, one to four players, the original HUD, menus, audio and movies, and
 saves; a character has been played from a new game to the ending
