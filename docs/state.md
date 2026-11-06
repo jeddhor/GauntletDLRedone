@@ -798,7 +798,7 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (within 1 of 255 on average of FFmpeg's). In the client without FFmpeg
    on PATH the attract movies play to their ends on Linux and under Wine;
    1.3.0 skipped them (movie_play_check.py; research/presentation.md
-   "Movies").
+   "Movies"). Released as 1.3.1 (research/release.md).
 
 ---
 

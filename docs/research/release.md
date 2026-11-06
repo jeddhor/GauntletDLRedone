@@ -520,6 +520,63 @@ library-source files and SHA256SUMS. GitHub's SHA-256 of every asset equals
 SHA256SUMS. Audits before the push: release-audit-v130b and
 history-audit-v130 (505 commits, 3,065 blobs), both without findings.
 
+## Release 1.3.1 (2026-11-05)
+
+The owner installed 1.3.0 on Windows (2026-11-05): without FFmpeg the
+movies did not play, and with it each movie opened a console window. The
+fix (0ec99e5, decisions/0007-native-movie-video.md) decodes the movie video
+natively; the owner then asked to publish it without the GPU checks.
+Release 1.3.1 = 1.3.0 with the native movie decoder. Version 1.3.1 in
+Cargo.toml's workspace and installer/CMakeLists.txt (043c8bb; the network
+handshake compares versions, so 1.3.0 and 1.3.1 do not play together).
+Programs built by tools/package.sh at commit 043c8bb:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.3.1-linux-x86_64.tar.gz (46 MB; 119 MiB unpacked, 41 files) | dae2cbb43df6d8e5… |
+| GauntletDarkLegacy-1.3.1-windows-x86_64.zip (49 MB; 122 MiB unpacked, 22 files) | 01ad856a2e1d9c9b… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | cb3c4c563add3df4… / c389399a0c8e2fc8… / 4bd9fe40389f4646… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | 2d9c070c61b4eee8… / 3fde0920719e740c… / ceb6b6047698f703… |
+| library-source/ | unchanged from 1.2.0 |
+
+The packages hold the same files as 1.3.0's. The third-party notices gain
+FFmpeg's simple IDCT (in 0ec99e5) and regenerate unchanged at 043c8bb
+(295 crates). cargo test --workspace --release at 043c8bb: 188 tests pass.
+The source archive is cut from the commit tagged v1.3.1, which adds this
+record to 043c8bb.
+
+As for 1.2.0 and 1.3.0, no check started a kwin session on the RX 580 (the
+owner: "no GPU tests needed"); everything below ran in software or without
+a display. Checks of 1.3.1, all passing:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive (of 043c8bb, 339 files) | pass, no findings | release-audit-v131a |
+| The movies in the shipped games, PATH without FFmpeg, on the private Xvfb (640x448): the Linux package's gdl_play, and the Windows package's gdl_play.exe under Wine | MIDWAY and OPENING start, play for their length (Linux 6.93 s and 44.87 s, Wine 5.93 s and 44.81 s; their pictures take 6.20 s and 44.97 s) and end; the frames shot while they play are not black and change | movie-play-r131-linux-pkg, movie-play-r131-wine-pkg2 |
+| Network play with the shipped games, a simulated distant network (60 ms one way + up to 30 ms): the Linux package's gdl_play hosting, the Windows package's gdl_play.exe joining under Wine, G1, 900 updates, a shared pause | all 900 hashes equal; host and joiner state files byte-identical to the 1.3.0 packages' run (net-check-r130-pkg); the host waited 0.33 s in 31 s of play | net-check-r131-pkg |
+| The development build of 043c8bb (target/release): 24 menu flows on the private Xvfb, among them quit-game-movie (the FAIL movie after Quit Game, decoded natively) | all pass; the movie's frames are drawn | menu-flows-v131 |
+| Ubuntu 20.04 container without GPU or display: libraries of all 29 ELF files, `--batch` install from the ISO (read-only), verify | none missing; exit 0; 2953 checked, none differing | old-distro-v131-libs |
+| Linux 2026 host, system Qt masked: `--batch` | pass | qt-bundle-v131 |
+| Linux wizard on the private Xvfb with the ISO attached as a drive, system Qt masked, game started | pass, 8.1 s | installer-gui-v131 |
+| Update over release 1.3.0 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, the installed README and KNOWN_ISSUES describe the native movies, verify none of 2953 differing, no leftovers, test folder removed | pass, 76 s + 76 s | private/runs/windows-update-v131 |
+
+The first Wine movie run (movie-play-r131-wine-pkg) reached no movie: the
+check was given a relative path to gdl_play.exe, which the Wine desktop
+does not resolve; the run with the absolute path is the evidence above.
+
+The decoder itself was checked before the release (0ec99e5): all 11 956
+pictures equal FFmpeg 8.0.1's, Linux and the Windows build under Wine
+(movie_check.py), and the VLC tables agree with PCSX2's on every 16-bit
+pattern (mpeg2_tables_check.py).
+
+Not run (they start kwin sessions on the RX 580): old_distro_check's wizard
+and game in the container, update_check.py on Linux, title_start_check.py,
+the original-presentation gate and the frame-time benchmarks. The changes
+since 1.3.0 are the movie decoder, gdl_play's GDL_DEBUG_ATTRACT file
+output and documents. Not checked: the game on a Windows desktop (the
+movies included), network play between two computers or over a real
+internet route, a physical disc.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
