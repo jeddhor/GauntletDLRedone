@@ -577,6 +577,14 @@ output and documents. Not checked: the game on a Windows desktop (the
 movies included), network play between two computers or over a real
 internet route, a physical disc.
 
+Published 2026-11-05 as the GitHub release v1.3.1 of the private repository
+(tag v1.3.1 at 11e504f; release notes private/runs/github-release-1.3.1/
+notes.md, written for players): the two packages, GauntletDarkLegacy-1.3.1-
+source-11e504f.tar.gz (339 files; SHA-256 977cec681b4d7798…), the five
+library-source files and SHA256SUMS. GitHub's SHA-256 of every asset equals
+SHA256SUMS. Audits before the push: release-audit-v131b and
+history-audit-v131 (509 commits, 3,094 blobs), both without findings.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
