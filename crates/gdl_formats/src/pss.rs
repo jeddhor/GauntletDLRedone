@@ -3,8 +3,9 @@
 //! private stream 1 (0xbd): each payload starts with a 4-byte substream
 //! header (ff a1 xx xx on this disc) and the concatenated rest is an
 //! SShd/SSbd PS-ADPCM stream (the STREAMS/*.ADS layout). InitMovie's
-//! initAll/readMpeg feed both to the IPU and the audio decoder; the video is
-//! decoded natively by the host (docs/decisions/0003-movies.md).
+//! initAll/readMpeg feed both to the IPU and the audio decoder; here the
+//! video elementary stream goes to crate::mpeg2
+//! (docs/decisions/0007-native-movie-video.md).
 use crate::audio::{Ads, AudioError};
 
 type R<T> = Result<T, AudioError>;
@@ -27,8 +28,19 @@ pub struct PssLayout {
 /// Walk the program stream; returns the private-stream-1 payloads (substream
 /// headers removed) and the layout. Stops at the program end code 0xb9.
 pub fn demux_audio(b: &[u8]) -> R<(Vec<u8>, PssLayout)> {
+    demux(b).map(|(audio, _, layout)| (audio, layout))
+}
+
+/// The video elementary stream: the payloads of the PES packets 0xe0..0xef
+/// in order.
+pub fn demux_video(b: &[u8]) -> R<Vec<u8>> {
+    demux(b).map(|(_, video, _)| video)
+}
+
+fn demux(b: &[u8]) -> R<(Vec<u8>, Vec<u8>, PssLayout)> {
     let mut at = 0usize;
     let mut audio = Vec::new();
+    let mut video = Vec::new();
     let mut layout = PssLayout::default();
     while at + 4 <= b.len() {
         if b[at..at + 3] != [0, 0, 1] {
@@ -57,18 +69,27 @@ pub fn demux_audio(b: &[u8]) -> R<(Vec<u8>, PssLayout)> {
                 if b.len() < end {
                     return err(format!("PSS: packet {id:#x} at {at:#x} past the end"));
                 }
+                // MPEG-2 PES header: flags (2), header length (1).
+                let payload = || -> R<usize> {
+                    let hl = usize::from(*b.get(at + 8).ok_or_else(|| AudioError("PSS: short PES".into()))?);
+                    if end < at + 9 + hl {
+                        return err(format!("PSS: PES header past packet {id:#x} at {at:#x}"));
+                    }
+                    Ok(at + 9 + hl)
+                };
                 match id {
                     0xbd => {
-                        // MPEG-2 PES header: flags (2), header length (1).
-                        let hl = usize::from(*b.get(at + 8).ok_or_else(|| AudioError("PSS: short PES".into()))?);
-                        let start = at + 9 + hl;
+                        let start = payload()?;
                         if end < start + 4 {
                             return err(format!("PSS: private packet at {at:#x} without a substream header"));
                         }
                         audio.extend_from_slice(&b[start + 4..end]);
                         layout.audio_bytes += end - start - 4;
                     }
-                    0xe0..=0xef => layout.video_bytes += len,
+                    0xe0..=0xef => {
+                        video.extend_from_slice(&b[payload()?..end]);
+                        layout.video_bytes += len;
+                    }
                     0xbe => layout.padding_bytes += len,
                     _ => {}
                 }
@@ -76,7 +97,7 @@ pub fn demux_audio(b: &[u8]) -> R<(Vec<u8>, PssLayout)> {
             }
         }
     }
-    Ok((audio, layout))
+    Ok((audio, video, layout))
 }
 
 /// The movie's audio as interleaved PCM (frames × channels) with its rate
@@ -126,6 +147,7 @@ mod tests {
         s.extend([0, 0, 1, 0xb9]);
         let (audio, layout) = demux_audio(&s).unwrap();
         assert_eq!(&audio[..4], b"SShd");
+        assert_eq!(demux_video(&s).unwrap(), [1, 2, 3]);
         assert_eq!(layout.packs, 1);
         assert_eq!(layout.trailing, 4);
         let (pcm, rate, ch) = decode_audio(&s).unwrap().unwrap();

@@ -67,5 +67,49 @@ are timing (animation phase, enemy positions), not content.
   DCS voice allocation, ducking and voiceSetVolPan with the disc's pan
   table. Approximate: the SPU envelope, reverb, the hardware mix and the
   movie soundtrack level.
-- Movies: PSS video through the system ffmpeg, audio decoded natively
-  (decisions/0003-movies.md).
+- Movies: PSS video and audio decoded natively (decisions/0003-movies.md,
+  0007-native-movie-video.md; "Movies" below).
+
+## Movies
+
+Decoder: gdl_formats::mpeg2 (decisions/0007-native-movie-video.md, from
+2026-11-05; FFmpeg as a child process before). Evidence, actual disc:
+
+- Stream survey (every sequence, extension and picture header of the 36
+  MPEG/*.PSS and MPEG2/*.PSS video streams): one sequence each, 640×480,
+  frame_rate_code 5 (30 fps), aspect 4:3, no loaded quantiser matrices;
+  sequence extension profile/level 0x48 (Main@Main), progressive_sequence 1,
+  4:2:0; one GOP header per 11–12 pictures; every picture coding extension
+  intra_dc_precision 0, frame picture, frame_pred_frame_dct 1, no
+  concealment vectors, linear quantiser scale, intra_vlc_format 1, zigzag
+  scan, progressive_frame 1, no repeat_first_field; 11 956 pictures (I, P
+  and B). No quant-matrix extension.
+- movie_check.py all-c: the decoder's pictures (SHA-256 of the Y, Cb and Cr
+  planes, display order) equal FFmpeg 8.0.1's with its C code
+  (`-cpuflags 0 -fps_mode passthrough`, yuv420p) for all 11 956 pictures of
+  the 36 movies; all-simd: equal to FFmpeg's default (SIMD) decoding as
+  well; wine-a: the Windows build of gdl_tools under Wine gives the same.
+  The old client command (`-vf scale=640:480 -pix_fmt rgba`, no fps option)
+  gives the same frame counts (OPENING 1349, FSCROLL 617, MOVIEA1 125), so
+  the pacing is unchanged. Release build speed: 290–330 pictures a second
+  with hashing (OPENING 1349 in 4.3 s).
+- mpeg2_tables_check.py (private/runs/mpeg2-tables): every VLC table agrees
+  with PCSX2's lookup tables (reference source 0f71e668, docs/toolchain.md:
+  IPU/mpeg2_vlc.h with IPU_MultiISA.cpp's indexing) on all 65 536 16-bit patterns; the zigzag and alternate scans
+  and the non-linear quantiser scale are equal. Codes only PCSX2 gives
+  values to: 12 invalid motion codes and B.14's 12/13-bit codes of the ten
+  pairs B.15 shortens; the decoder alone accepts macroblock_stuffing (as
+  FFmpeg does).
+- Colour: PCSX2's IPU CSC model (upstream claim) against the old FFmpeg
+  RGBA, 12 frames each of OPENING, VICTORY and TITLE2: mean 0.74–0.81 of 255
+  per channel, 99.8–100 % of values within 2, at most 19 (a few edge
+  pixels; FFmpeg's chroma placement differs).
+- In the client (movie_play_check.py, Xvfb/lavapipe at 640×448, PATH
+  without FFmpeg): the attract sequence plays MIDWAY (5.96 s; 186 pictures
+  = 6.2 s) and OPENING (44.89 s; 44.97 s) to their ends with changing,
+  non-black frames (linux-e); the Windows build under Wine the same (6.01 s,
+  44.83 s; wine-d). 1.3.0 without FFmpeg, same check: every movie "none"
+  (did not start) — the owner's Windows report reproduced (old130-noffmpeg).
+  At lavapipe's full-size frame rate (about 4 a second) the client's clock,
+  which takes at most 0.25 s a frame, lengthens movies; 1.3.0 with FFmpeg
+  behaves the same there (old130-ffmpeg).

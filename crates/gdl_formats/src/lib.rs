@@ -8,6 +8,7 @@ pub mod elf;
 pub mod fnt;
 pub mod iso;
 pub mod memcard;
+pub mod mpeg2;
 pub mod objects;
 pub mod pdata;
 pub mod pss;

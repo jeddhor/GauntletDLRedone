@@ -12379,6 +12379,23 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+FFMPEG (INVERSE DCT)
+====================
+
+gdl_play's movie decoder (gdl_formats::mpeg2) contains a Rust implementation of
+FFmpeg's 8-bit "simple" integer inverse DCT (libavcodec/simple_idct_template.c,
+FFmpeg n8.0.1), so that its pictures equal FFmpeg's. The file's notice:
+
+    Simple IDCT
+    Copyright (c) 2001 Michael Niedermayer <michaelni@gmx.at>
+    Based upon some commented-out C code from mpeg2dec (idct_mmx.c
+    written by Aaron Holtzman <aholtzma@ess.engr.uvic.ca>).
+
+FFmpeg licenses it under the GNU Lesser General Public License, version 2.1 or
+(at your option) any later version; as section 3 of that license permits, this
+port uses it under the GNU General Public License, version 3 or later (LICENSE).
+
+
 QT
 ==
 

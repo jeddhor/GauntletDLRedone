@@ -24,7 +24,7 @@ game itself has not yet run there.
 | Reference binary | /usr/games/pcsx2-qt; v2.6.3+dfsg-1build1 |
 | Reference binary SHA-256 | aa7a28d83c30afc34e888a4399f50b51ceda05935b3c1b3f9d7421e6de6f7275 |
 | Reference source | 0f71e668b8adc950db7de1b1b15c2f5080c102e9; not rebuilt or modified |
-| FFmpeg (movie video, optional runtime) | 8.0.1-3ubuntu2, /usr/bin/ffmpeg, SHA-256 bdf6aabffdba7411edff8d36c389d695257fcdf823d196020176e117612862f6 (docs/decisions/0003-movies.md) |
+| FFmpeg (research only: the reference of movie_check.py; the runtime decoder until 1.3.0) | 8.0.1-3ubuntu2, /usr/bin/ffmpeg, SHA-256 bdf6aabffdba7411edff8d36c389d695257fcdf823d196020176e117612862f6 (docs/decisions/0003-movies.md, 0007-native-movie-video.md) |
 
 The Bevy build uses desktop image/sprite/text/render plus 3D mesh/PBR features.
 Since 2026-10-30 also `bevy_anti_alias` (contrast-adaptive sharpening,

@@ -1,5 +1,8 @@
 # 0003: Movies — host-decoded video, natively decoded audio
 
+Superseded for the video by 0007-native-movie-video.md (2026-11-05): the
+client decodes the video itself; FFmpeg is no longer used at run time.
+
 The disc's 36 movies (MPEG/*.PSS, MPEG2/*.PSS) are MPEG-2 program streams:
 640×480 MPEG-2 Main-profile video at 30 fps (PES 0xe0) and a private stream
 1 (0xbd) whose payloads, after a 4-byte substream header, form an SShd/SSbd

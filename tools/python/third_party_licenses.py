@@ -8,8 +8,10 @@ The Rust crates compiled into gdl_play and gdl_import for Linux and Windows
 out), each with its license expression and the license/notice files of its
 package in the local Cargo registry (identical texts printed once, with the
 crates that carry them); then the name dictionary the shipped catalog uses
-(MIT), Real-ESRGAN (BSD-3-Clause, the HD texture network's weights) and
-Qt 6 (LGPL-3.0, the installer). Offline; reads only local files.
+(MIT), Real-ESRGAN (BSD-3-Clause, the HD texture network's weights),
+FFmpeg's simple IDCT (the movie decoder's inverse DCT; LGPL-2.1-or-later,
+used under the GPL) and Qt 6 (LGPL-3.0, the installer). Offline; reads only
+local files.
 """
 import pathlib
 import re
@@ -87,6 +89,17 @@ def main():
             'realesr-general-wdn-x4v3 checkpoints (mixed 0.5 / 0.5), and runs an',
             'independently written implementation of its SRVGGNetCompact network.',
             'Real-ESRGAN: https://github.com/xinntao/Real-ESRGAN. Its license:', '', esrgan.read_text().strip()]
+    out += ['', '', 'FFMPEG (INVERSE DCT)', '=' * 20, '',
+            'gdl_play\'s movie decoder (gdl_formats::mpeg2) contains a Rust implementation of',
+            'FFmpeg\'s 8-bit "simple" integer inverse DCT (libavcodec/simple_idct_template.c,',
+            'FFmpeg n8.0.1), so that its pictures equal FFmpeg\'s. The file\'s notice:', '',
+            '    Simple IDCT',
+            '    Copyright (c) 2001 Michael Niedermayer <michaelni@gmx.at>',
+            '    Based upon some commented-out C code from mpeg2dec (idct_mmx.c',
+            '    written by Aaron Holtzman <aholtzma@ess.engr.uvic.ca>).', '',
+            'FFmpeg licenses it under the GNU Lesser General Public License, version 2.1 or',
+            '(at your option) any later version; as section 3 of that license permits, this',
+            'port uses it under the GNU General Public License, version 3 or later (LICENSE).']
     out += ['', '', 'QT', '=' * 2, '',
             'The installer (GauntletDarkLegacy-Installer) uses the Qt 6 libraries (Qt Core,',
             'Qt Gui, Qt Widgets and their platform plugins), (C) The Qt Company Ltd and',

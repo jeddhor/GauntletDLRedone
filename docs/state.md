@@ -788,6 +788,17 @@ original (PCSX2 reference on Xvfb :191, private captures):
    round trips of 229 and 315 ms the play kept about 29 steps a second with
    under 1.5 % waiting, every hash equal (research/network.md). The
    confirmed game is unchanged by all of it.
+   2026-11-05 (user, on Windows with 1.3.0: without FFmpeg the movies do
+   not play; with it each movie opens a console window): the movie video is
+   decoded natively (gdl_formats::mpeg2, decisions/0007-native-movie-video.md)
+   — no FFmpeg, no child process. It covers the profile all 36 movies use and
+   equals FFmpeg's decoding on all 11 956 pictures, Linux and the Windows
+   build under Wine (movie_check.py); its VLC tables agree with PCSX2's on
+   every pattern (mpeg2_tables_check.py). Colour: PCSX2's IPU CSC model
+   (within 1 of 255 on average of FFmpeg's). In the client without FFmpeg
+   on PATH the attract movies play to their ends on Linux and under Wine;
+   1.3.0 skipped them (movie_play_check.py; research/presentation.md
+   "Movies").
 
 ---
 

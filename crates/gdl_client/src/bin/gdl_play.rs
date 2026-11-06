@@ -2682,7 +2682,7 @@ fn show_movie_frame(
     if let Some(mut f) = frame {
         if std::env::var_os("GDL_DEBUG_ATTRACT").is_some() {
             let sum: u64 = f.iter().step_by(4).map(|&v| u64::from(v)).sum();
-            eprintln!("MOVIE frame mean red {}", sum / (f.len() as u64 / 4).max(1));
+            debug_attract(format_args!("MOVIE frame mean red {}", sum / (f.len() as u64 / 4).max(1)));
         }
         for px in f.chunks_exact_mut(4) {
             px[3] = 0x80;
@@ -2983,10 +2983,31 @@ fn run_attract(
             None => "title".into(),
         };
         let b = front.attract_blits.last().map(|b| (b.tex, b.x, b.y, b.w, b.h, b.rgba, b.z, b.crop));
-        eprintln!("ATTRACT {kind} blits {} first {b:?} next {next}", front.attract_blits.len());
+        debug_attract(format_args!("ATTRACT {kind} blits {} first {b:?} next {next}", front.attract_blits.len()));
     }
     if next {
         start_attract(front, -1);
+    }
+}
+
+/// DEBUG: GDL_DEBUG_ATTRACT=1 prints the attract state (and each movie
+/// frame's mean red) every frame to stderr; GDL_DEBUG_ATTRACT=FILE appends
+/// the lines to FILE instead (the Windows build's stderr is not captured
+/// under Wine). Each line starts with the seconds since the first.
+fn debug_attract(line: std::fmt::Arguments) {
+    use std::io::Write;
+    type Sink = (std::time::Instant, Option<std::sync::Mutex<std::fs::File>>);
+    static SINK: std::sync::OnceLock<Sink> = std::sync::OnceLock::new();
+    let (start, file) = SINK.get_or_init(|| {
+        let file = std::env::var_os("GDL_DEBUG_ATTRACT").filter(|v| v != "1").and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok());
+        (std::time::Instant::now(), file.map(std::sync::Mutex::new))
+    });
+    let line = format!("{:.3} {line}", start.elapsed().as_secs_f64());
+    match file.as_ref().map(|f| f.lock()) {
+        Some(Ok(mut f)) => {
+            let _ = writeln!(f, "{line}");
+        }
+        _ => eprintln!("{line}"),
     }
 }
 

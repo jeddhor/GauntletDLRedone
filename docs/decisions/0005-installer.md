@@ -36,7 +36,8 @@ Decision:
   start-state template is built in (`boot_state.json`, the capture's
   measured values without the captured character; see
   research/release.md); fatal errors go to `last-error.txt` and, on Windows,
-  a message box; FFmpeg is looked for beside the executable first.
+  a message box. (Until 1.3.0 FFmpeg was looked for beside the executable
+  first; since 0007-native-movie-video.md the game decodes movies itself.)
 - **Packages** (`tools/package.sh`): a folder and archive per platform with
   the installer and `payload/` (gdl_play, gdl_import, import/, LICENSE,
   THIRD_PARTY.md, THIRD_PARTY_LICENSES.txt, README.txt, KNOWN_ISSUES.txt),

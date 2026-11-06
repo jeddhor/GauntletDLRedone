@@ -178,10 +178,10 @@ player over. If the host leaves, the game ends for everyone.
 
 Movies
 ------
-The game's movies (intro, realm and ending movies) need FFmpeg. On Linux
-install it from your distribution (for example "sudo apt install ffmpeg");
-on Windows put ffmpeg.exe into the install folder. Without FFmpeg each movie
-is skipped and the game goes on.
+The game plays its movies (intro, realm and ending movies) by itself; nothing
+has to be installed for them. (Releases up to 1.3.0 needed FFmpeg for the
+movies; an ffmpeg.exe left in the install folder is no longer used and can be
+deleted.)
 
 
 Uninstalling

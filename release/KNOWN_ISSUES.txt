@@ -13,16 +13,19 @@ Platforms
     2020 on: Ubuntu 20.04, Debian 11, Fedora 32, RHEL 9 and newer).
   - Windows: tested on Windows 11 — installing from the disc in a drive,
     from an image file and from an image mounted as a disc drive, and
-    playing, with release 1.0.0. Releases 1.1.0 to 1.3.0 have not yet been
-    played on a Windows desktop, so the graphics options (generating HD
-    textures included) and network play are untested there by a person.
+    playing, with release 1.0.0. The owner installed 1.3.0 on Windows
+    (2026-11-05) and found that its movies needed FFmpeg and opened a
+    console window each (fixed since: the game decodes them itself). The
+    graphics options (generating HD textures included) and network play
+    are still untested there by a person.
     Older Windows versions are untested.
   - A graphics card with Vulkan (or DirectX 12 on Windows) is required.
 
 Movies
-  Movies are decoded by FFmpeg if it is installed (see README.txt);
-  without it they are skipped. Their colours use FFmpeg's standard
-  conversion, which has not been compared with the PlayStation 2's.
+  The game decodes its movies itself (releases up to 1.3.0 needed FFmpeg).
+  Their pictures are the ones FFmpeg decodes, frame for frame;
+  their colours follow the PCSX2 emulator's model of the PlayStation 2's
+  conversion, which has not been compared with a PlayStation 2 itself.
 
 What is not yet the original's own
   - A new game starts from a recorded copy of the original's session values

@@ -1098,6 +1098,21 @@ fn run() -> Result<(), Box<dyn Error>> {
         file.write_all(b"\n")?;
         return Ok(());
     }
+    if args.len() == 2 && args[0] == "movie-frames" {
+        // movie-frames FILE.PSS: the native MPEG-2 decoder's pictures in
+        // display order, one SHA-256 of the Y, Cb and Cr planes per line
+        // (tools/python/movie_check.py compares them with FFmpeg's).
+        let es = gdl_formats::pss::demux_video(&bounded_read(Path::new(&args[1]), 64 * 1024 * 1024)?)?;
+        let start = std::time::Instant::now();
+        let mut n = 0;
+        for p in gdl_formats::mpeg2::Decoder::new(es) {
+            let p = p?;
+            println!("{n} {}x{} {}", p.width, p.height, hash(&[p.y, p.cb, p.cr].concat()));
+            n += 1;
+        }
+        eprintln!("{n} pictures decoded in {:.3} s", start.elapsed().as_secs_f64());
+        return Ok(());
+    }
     if args.len() == 2 && args[0] == "levl-list" {
         // levl-list WDATA.WAD: each LEVL record's code, +0x34 movie name, +0 flags
         // (bit 3: do_players' dark-level player light), +4 flags
