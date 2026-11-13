@@ -1258,6 +1258,7 @@ fn present_critters(
     mut slots: Query<(Entity, &mut CritterSlot, &mut Visibility, Option<&Children>)>,
     mut parts: Query<(&CritterPart, &mut Transform, Option<&OFrame>, &mut Visibility), Without<CritterSlot>>,
     (mut materials, mut variants): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<NodeVariants>),
+    (mut req, mut texmods, kids): (ResMut<MatRequests>, Local<HashMap<(usize, usize), Vec<NodeTexMod>>>, Query<&Children, Without<CritterSlot>>),
 ) {
     let g = &sim.game;
     for (entity, mut slot, mut vis, children) in &mut slots {
@@ -1360,6 +1361,22 @@ fn present_critters(
         }
         root[12..15].copy_from_slice(&r.v3(0x40));
         let Some(children) = children else { continue };
+        // The tree's texture modifiers every frame (type-3 nodes and
+        // DoAnimateTree's DoSeqTexMods: the DJINN, DRIDER and YETI body
+        // sequences), on each part's meshes as its tree node.
+        let mods = texmods.entry((cr.ty.0, tree)).or_insert_with(|| tree_texmods_in(&model.1, t));
+        let lib_name = session.levels.get(session.current).and_then(|l| l.critters.get(cr.ty.0)).and_then(|c| c.2.clone()).unwrap_or_else(|| t.prefix.clone());
+        if !mods.is_empty()
+            && let Some(lib) = libs.0.get(&lib_name)
+        {
+            let mut meshes = Vec::new();
+            for child in children.iter() {
+                if let (Ok((part, ..)), Ok(c)) = (parts.get(child), kids.get(child)) {
+                    meshes.extend(c.iter().map(|m| (m, part.node)));
+                }
+            }
+            request_tree_texmods(mods, lib, object_frame(cr.clock.frame.max(0.0), None), usize::from(cr.clip), &meshes, &mut req);
+        }
         // Posed once per update: every frame between updates recomputed
         // each holder's whole parent chain and decomposed it (3.4 ms a
         // frame in J5, M20 profile). Each node's transform is computed once
@@ -2342,12 +2359,18 @@ struct NodeTexMod {
 }
 
 fn tree_texmods(p: &Package, tree: &gdl_formats::animation::Tree) -> Vec<NodeTexMod> {
+    tree_texmods_in(&p.anim_bytes, tree)
+}
+
+/// tree_texmods over an ANIM.PS2's bytes (critter models are loaded apart
+/// from the packages).
+fn tree_texmods_in(anim_bytes: &[u8], tree: &gdl_formats::animation::Tree) -> Vec<NodeTexMod> {
     let base = tree.file_offset as usize;
-    let Some(h0) = p.anim_bytes.get(base..base + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) else { return Vec::new() };
+    let Some(h0) = anim_bytes.get(base..base + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) else { return Vec::new() };
     let mut out = Vec::new();
     for node in tree.nodes.iter().filter(|n| n.node_type == 3) {
         let at = base + h0 + node.sequence_info_offset as usize;
-        let Ok(t) = gdl_formats::animation::texmod_at(&p.anim_bytes, at) else { continue };
+        let Ok(t) = gdl_formats::animation::texmod_at(anim_bytes, at) else { continue };
         let subtree = tree
             .nodes
             .iter()
@@ -2367,7 +2390,7 @@ fn tree_texmods(p: &Package, tree: &gdl_formats::animation::Tree) -> Vec<NodeTex
             .collect();
         out.push(NodeTexMod { subtree, target: t.target, frame_base: t.frame_base, count: t.count, start: t.start, divisor: t.divisor, seq: None });
     }
-    let table = gdl_formats::animation::texmods(&p.anim_bytes).unwrap_or_default();
+    let table = gdl_formats::animation::texmods(anim_bytes).unwrap_or_default();
     let all: Vec<usize> = tree.nodes.iter().map(|n| n.index as usize).collect();
     for (s, q) in tree.sequences.iter().enumerate() {
         let field = |o: usize, n: usize| q.raw.get(o..o + n);
@@ -8051,21 +8074,49 @@ fn present_item_trees(
 /// Enemies drawn as object-node trees (present_world's "T<pkg>:<tree>"
 /// key, no OANIM frames): the nodes posed at the enemy's sequence and frame
 /// (DoAnimation through the shared tree pose), with the tree's texture
-/// modifiers.
+/// modifiers. Enemies drawn as OANIM frame objects run their EnemyDesc
+/// tree's modifiers too (DoAnimateTree's DoSeqTexMods: ACI's body
+/// sequences) on the frame object, as the tree's OANIM node.
 #[allow(clippy::type_complexity)]
 fn present_enemy_trees(
     sim: Res<Sim>,
     sources: Res<Sources>,
     slots: Query<(&Slot, &Children, &Visibility)>,
     mut parts: Query<(Entity, &TreeNodeIdx, &mut Transform, Option<&OFrame>, &mut Visibility), Without<Slot>>,
-    (libs, mut req, mut texmods): (Res<Libraries>, ResMut<MatRequests>, Local<HashMap<(String, usize), Vec<NodeTexMod>>>),
+    (libs, mut req, mut texmods, kids): (Res<Libraries>, ResMut<MatRequests>, Local<HashMap<(String, usize), Vec<NodeTexMod>>>, Query<&Children>),
 ) {
     for (slot, children, vis) in &slots {
         if slot.kind != SlotKind::Enemy || *vis == Visibility::Hidden {
             continue;
         }
-        let Some((pkg, label)) = slot.key.as_deref().and_then(|k| k.strip_prefix('T')).and_then(|k| k.split_once(':')) else { continue };
         let Some(Some(anim)) = sim.game.enemy_anims.get(slot.index) else { continue };
+        let Some((pkg, label)) = slot.key.as_deref().and_then(|k| k.strip_prefix('T')).and_then(|k| k.split_once(':')) else {
+            // An OANIM frame object (present_world): its meshes as the tree's
+            // OANIM node.
+            let (t, level) = anim.tree;
+            let Some((pkg, prefix)) = sources.monsters.get(&t) else { continue };
+            let label = setup::enemy_desc(prefix, level);
+            let (Some(p), Some(lib)) = (sources.packages.get(pkg), libs.0.get(pkg)) else { continue };
+            let Some(a) = p.anim.as_ref() else { continue };
+            let Some(tree) = a.trees.iter().position(|t| t.label == label) else { continue };
+            let mods = texmods.entry((pkg.clone(), tree)).or_insert_with(|| a.trees.get(tree).map(|t| tree_texmods(p, t)).unwrap_or_default());
+            if mods.is_empty() {
+                continue;
+            }
+            let node = a.trees[tree].nodes.iter().find(|n| n.node_type == 2).map_or(0, |n| n.index as usize);
+            let mut meshes = Vec::new();
+            let mut stack: Vec<Entity> = children.iter().collect();
+            while let Some(e) = stack.pop() {
+                meshes.push((e, node));
+                if let Ok(c) = kids.get(e) {
+                    stack.extend(c.iter());
+                }
+            }
+            let seq = anim.clock.sequence as usize;
+            let index = object_frame(anim.clock.frame.max(0.0), a.trees[tree].sequences.get(seq));
+            request_tree_texmods(mods, lib, index, seq, &meshes, &mut req);
+            continue;
+        };
         let Some(p) = sources.packages.get(pkg) else { continue };
         let Some(a) = p.anim.as_ref() else { continue };
         let Some(tree) = a.trees.iter().position(|t| t.label == label) else { continue };

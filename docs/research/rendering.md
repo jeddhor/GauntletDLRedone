@@ -1153,8 +1153,24 @@ L_SHLD_ACTIVE, ELECBREATHE, PHOENIX_FBALL, BOSS_BREATHE, LEVELUP_*), POWERUPS
 10 (breath icons), the class SFX packages (VAL/WAR/WIZ powers), item
 packages (IT, TRANS, FORCEF/FORCEF_S, boss-level coins) and monster
 packages (projectiles, bombs, TREEHIT/DIE; ACI, DJINN, DRIDER and YETI
-body sequences — character and critter trees are drawn by other paths
-that do not run them yet: a coverage gap, unknowns.md).
+body sequences). Since 2026-11-13 enemies drawn as OANIM frame objects run
+their EnemyDesc tree's modifiers on the frame object (as the tree's OANIM
+node; present_enemy_trees) and critters their tree's type-3 nodes and
+sequences on each part (present_critters, every frame). A scan of every
+ANIM.PS2 the catalogue names (485 outside MONSTERS/ITEMS/LEVELS, the 107
+level and monster packages) finds body-sequence modifiers only in ACI1/ACI2
+(ABLOB_LOOP → ABLOB_LOOP01.. 15 frames in READY, ABLOB_GEN frames in START
+and the attacks), DJINN (GENIE_BEAM → GENIE_BEAM00; 30 frames in BEAMARC),
+DRIDER (DRI_WHIP → DRI_WHIP00 in ATTACK1..3) and YETI (YETICEBREATH →
+YETICEBREATH00 in every sequence); the player packages carry them in their
+SFX trees only (effect trees). Checks (native, original presentation,
+lavapipe, A/B against the previous build gdl_play-84e756e): K3 at update
+200 (texmod-K3-old/-new), 9141 pixels — the acid blobs beside the start now
+show other ABLOB frames; the reference (lvl-K3-play-v1, shots 4 and 11
+vblanks on, private/runs/texmod-ref) shows the same blobs changing shape
+between the two shots. C5 by the lamp (texmod-boss-C5): one Djinn mesh
+(8 × 32, blended) takes another image, 156 pixels. The Yeti and the Drider
+were not on screen in the frames taken.
 
 Texture modifier alpha: materials_for chose Opaque / cut-out / blended
 from a record's own level-0 texels. A target whose texels are all clear
