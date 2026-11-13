@@ -656,7 +656,8 @@ OPTCTL_DY 2, colour optmenu_rgb_ctls (black), at ctl_label_pos (alignment
 style mod 4; Select (0x21) or Back stores it in +0x2c and
 end_controlsmenu. Native (gdl_core::game::optmenu::ControlsMenu,
 menu::Page::ControlStyle) and seen in gdl_play; the remap itself is
-update_controls' +0x2c set (game/pad.rs).
+update_controls' +0x2c set (game/pad.rs). The styles' behaviour and the right
+stick: player.md "Control styles".
 
 ## Screen Adjust (DoOptions 0x12, options entry "Screen")
 

@@ -28,6 +28,9 @@ KEYS = ['Up', 'Down', 'Left', 'Right', 'K', 'J', 'I', 'L', 'Q', 'E', '1', '3', '
 # up, down, left, right, cross, square, triangle, circle, start, select.
 KEYS += ['5', '6', '7', '8', '9', '0', 'minus', 'equal', 'bracketleft', 'bracketright']
 KEYS += ['Home', 'End', 'Delete', 'Next', 'comma', 'slash', 'backslash', 'Prior', 'semicolon', 'apostrophe']
+# Pad 1's right stick (RUp, RRight, RDown, RLeft: T, H, G, F; the control
+# styles' right-stick aim, research/player.md "Control styles").
+KEYS += ['T', 'H', 'G', 'F']
 # Preserved savestates by PCSX2 slot (reference_slots.py; 3.. are
 # reference_warp.py captures) and the staging slot 9 for other captures.
 from reference_slots import SLOTS, resolve  # noqa: E402

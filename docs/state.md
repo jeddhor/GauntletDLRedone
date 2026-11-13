@@ -815,6 +815,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    only while on (AnimateNode's psys switch for hazards), and type-10 items
    (secret walls, barrels) flash on a hit (ProcessItems' AAAWHITE alternate
    texture, matched to a GS dump replay of the original's flash).
+   2026-11-12 (user: the Robotron control style does not work; check every
+   Controls option): the client never passed the right stick on, so One
+   Handed and Robotron did nothing; it does now (and numpad keys for
+   player 1), checked against a reference trace of Robotron firing; the
+   Controls page now changes the player who opened the menu (research/
+   player.md "Control styles").
 
 ---
 

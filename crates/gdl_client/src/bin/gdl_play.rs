@@ -1113,6 +1113,9 @@ struct Front {
     /// The PS2 capture's player 0 save region and its sha256 (import source).
     capture: Option<(Vec<u8>, String)>,
     game_opts: Vec<u8>,
+    /// OptionsStart's player: whose controller opened the pause menu (its
+    /// Controls page sets that player's PlayerControl).
+    menu_player: usize,
     /// SHPDATA/SHOP.WAD ITEM records.
     shop: Vec<gdl_core::game::powerups::ShopItem>,
     /// TEXT/ENGLISH.ROM (GameText) and TEXT/SCROLL_E.ROM.
@@ -3078,7 +3081,7 @@ enum MovieThen {
 /// triangle, Q/J square, Z L1, X L2, Ctrl R1, V R2, Enter start, Tab
 /// select (K/L/I/J as the reference's PCSX2 bindings); port 1: TFGH, R
 /// cross, Y circle, U start, B L2; gamepads by their face/shoulder
-/// buttons (left stick as analog entries 4–7).
+/// buttons (left stick as analog entries 4–7, right stick 0xe–0x11).
 fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bindings: &gdl_client::controls::Bindings, keyboard: bool) -> PadStatus {
     let mut s = PadStatus { connected: true, ..Default::default() };
     let press = |s: &mut PadStatus, i: usize, on: bool| {
@@ -3093,6 +3096,13 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bin
             // Settings::keys may rebind them (gdl_client::controls).
             for (a, ks) in gdl_client::controls::ACTIONS.iter().zip(&bindings.keys) {
                 press(&mut s, a.entry, ks.iter().any(|&key| k(key)));
+            }
+            // Right-stick keys: an analog pad with its stick (ControlsUpdate
+            // reads the stick entries only then; a pressed entry is full
+            // deflection).
+            if s.entries[0xe..=0x11].iter().any(|e| e[0] != 0) {
+                s.analog = true;
+                s.has_stick = true;
             }
         }
         1 => {
@@ -3125,8 +3135,10 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bin
         press(&mut s, 0x13, b(GamepadButton::RightTrigger2));
         press(&mut s, 0x14, b(GamepadButton::Start));
         press(&mut s, 0x15, b(GamepadButton::Select));
-        // The left stick as pressure-style entries 4–7 (left, right, up, down).
-        let st = if keyboard { g.left_stick() } else { Vec2::ZERO };
+        // The sticks as pressure-style entries, left 4–7 and right 0xe–0x11
+        // (left, right, up, down); a right-stick key pressed above keeps
+        // its entry.
+        let (st, rs) = if keyboard { (g.left_stick(), g.right_stick()) } else { (Vec2::ZERO, Vec2::ZERO) };
         let v = |x: f32| (x.clamp(0.0, 1.0) * 255.0) as u8;
         s.analog = true;
         s.has_stick = true;
@@ -3134,6 +3146,11 @@ fn player_input(slot: usize, keys: &ButtonInput<KeyCode>, pads: &[&Gamepad], bin
         s.entries[5] = [3, v(st.x)];
         s.entries[6] = [3, v(st.y)];
         s.entries[7] = [3, v(-st.y)];
+        for (i, x) in [(0xe, -rs.x), (0xf, rs.x), (0x10, rs.y), (0x11, -rs.y)] {
+            if s.entries[i][0] == 0 {
+                s.entries[i] = [3, v(x)];
+            }
+        }
     }
     s
 }
@@ -6297,10 +6314,16 @@ fn simulate(
                 d["controller_lost"] = serde_json::Value::from(sim.game.controls.controller_lost);
                 // Every player: state +0xfc, health, name (+0x99c), class, the
                 // card file it owns (+0x2af4), its port and position (+0x50).
-                d["players"] = serde_json::json!((0..4).map(|k| { let r = &sim.game.players[k]; serde_json::json!({
+                d["players"] = serde_json::json!((0..4).map(|k| { let r = &sim.game.players[k]; let c = &sim.game.controls.control[k]; serde_json::json!({
                     "state": r.i32_(0xfc), "health": r.f32_(0x1a10), "class": r.u32_(0xc), "pos": r.v3(0x50),
                     "name": String::from_utf8_lossy(&r.0[0x99c..0x9a4]).trim_end_matches('\0').to_string(),
-                    "file": r.i32_(0x2af4), "port": sim.game.controls.joy_remap[k] }) }).collect::<Vec<_>>());
+                    "file": r.i32_(0x2af4), "port": sim.game.controls.joy_remap[k],
+                    // The current action and attack type, and PlayerControl's
+                    // options (+0x2c style, +0x30, +0x38, +0x34) and right
+                    // stick (+0x24 angle, +0x28 magnitude).
+                    "action": r.u32_(0x1e0), "attack": r.u32_(0x8c8), "facing": r.f32_(0x86c),
+                    "controls": [c.u32_(0x2c), c.u32_(0x30), c.u32_(0x38), c.u32_(0x34)],
+                    "right_stick": [c.f32_(0x24), c.f32_(0x28)] }) }).collect::<Vec<_>>());
                 d["joy_remap"] = serde_json::json!(sim.game.controls.joy_remap);
                 d["critters"] = serde_json::json!(sim.game.critters.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| serde_json::json!({
                     "slot": k, "ty": [c.ty.0, c.ty.1], "nodes": c.parents.len() }))).collect::<Vec<_>>());
@@ -9521,10 +9544,11 @@ fn menu_held(world: &mut EcsWorld) -> (bool, bool) {
     (left, right)
 }
 
-/// Menu keys this frame (keyboard and every gamepad), and the pause toggle.
-fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
+/// Menu keys this frame (keyboard and every gamepad), and the pause toggle:
+/// the port whose Start (keyboard Escape/P: port 0) asked for it.
+fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, Option<usize>) {
     let mut out = Vec::new();
-    let mut toggle = false;
+    let mut toggle = None;
     // The settings overlay has the keyboard while open (and until its keys
     // are released); the menus take player 1's bound keys too.
     let blocked = world.get_resource::<gdl_client::enhance::Overlay>().is_some_and(|o| o.open || o.held);
@@ -9576,11 +9600,16 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
                 out.push(key);
             }
         }
-        toggle = pressed(KeyCode::Escape) || pressed(KeyCode::KeyP);
+        if pressed(KeyCode::Escape) || pressed(KeyCode::KeyP) {
+            toggle = Some(0);
+        }
     }
     // The overlay has the controllers too while open (and until released).
-    let mut pads = world.query::<(&Gamepad, Option<&Name>)>();
-    for (g, _) in pads.iter(world).filter(|(_, n)| !blocked && pad_used(*n)) {
+    // Ports are the used controllers in entity order (player_input).
+    let mut pads = world.query::<(Entity, &Gamepad, Option<&Name>)>();
+    let mut pads: Vec<(Entity, &Gamepad)> = pads.iter(world).filter(|(_, _, n)| pad_used(*n)).map(|(e, g, _)| (e, g)).collect();
+    pads.sort_by_key(|(e, _)| *e);
+    for (port, (_, g)) in pads.into_iter().enumerate().filter(|_| !blocked) {
         for (b, key) in [
             (GamepadButton::DPadUp, Key::Up),
             (GamepadButton::DPadDown, Key::Down),
@@ -9596,7 +9625,9 @@ fn menu_keys(world: &mut EcsWorld, naming: bool) -> (Vec<Key>, bool) {
                 out.push(key);
             }
         }
-        toggle |= g.just_pressed(GamepadButton::Start);
+        if toggle.is_none() && g.just_pressed(GamepadButton::Start) {
+            toggle = Some(port);
+        }
     }
     (out, toggle)
 }
@@ -9965,12 +9996,19 @@ fn act(world: &mut EcsWorld, action: Action) {
                     _ => None,
                 };
                 if let Some((i, off, v)) = ctl {
+                    // DoOptions writes the opener's PlayerControl (the title's
+                    // menu, before a game: player 1's); player_store_in_save
+                    // stores it with that player's character.
+                    let player = if *world.resource::<Screen>() == Screen::Playing { world.resource::<Front>().menu_player } else { 0 };
                     world.resource_mut::<Front>().menu.controls[i] = v;
-                    if let Some(mut session) = world.get_resource_mut::<Session>() {
+                    if player == 0
+                        && let Some(mut session) = world.get_resource_mut::<Session>()
+                    {
                         session.controls[i] = v;
                     }
                     if let Some(mut sim) = world.get_resource_mut::<Sim>() {
-                        sim.game.controls.control[0].set_u32(off, v);
+                        sim.game.controls.control[player].set_u32(off, v);
+                        sim.game.control_options[player][i] = v;
                     }
                 }
             }
@@ -10072,23 +10110,26 @@ fn front_system(world: &mut EcsWorld) {
         world.resource::<Front>().menu.page,
         gdl_client::menu::Page::Name { .. } | gdl_client::menu::Page::NetHost { .. } | gdl_client::menu::Page::NetJoin { .. }
     );
-    let (keys, mut toggle) = if networked {
+    let (keys, opener) = if networked {
         let (local, local_toggle) = menu_keys(world, false);
         let typed = typed_letter(world.resource::<ButtonInput<KeyCode>>());
         let mut net = world.resource_mut::<Net>();
         let codes: Vec<u8> = local.iter().filter_map(|k| NET_KEYS.iter().position(|x| x == k)).map(|i| i as u8 + 1).collect();
         net.pending.extend(codes);
-        if local_toggle {
+        if local_toggle.is_some() {
             net.pending.push(NET_TOGGLE);
         }
         if let Some(c) = typed.filter(char::is_ascii) {
             net.pending.push(0x80 | c as u8);
         }
         let due = std::mem::take(&mut net.due);
-        net_menu_input(&due)
+        // Shared menus: they act for player 1, as before.
+        let (keys, toggle) = net_menu_input(&due);
+        (keys, toggle.then_some(0))
     } else {
         menu_keys(world, naming)
     };
+    let mut toggle = opener.is_some();
     // optmenu_active stays 1 while the last menu finishes (no OptionsStart).
     if !world.resource::<Front>().ending.finishing.is_empty() && !world.resource::<Ui>().paused {
         toggle = false;
@@ -10210,9 +10251,19 @@ fn front_system(world: &mut EcsWorld) {
         if !paused {
             if toggle && !blocked {
                 let tower = world.resource::<Session>().world_number == 0xd;
-                let controls = world.resource::<Session>().controls;
+                // OptionsStart(player): the opener's port's player (an
+                // unassigned port: player 1); the Controls page shows its
+                // PlayerControl (+0x2c style, +0x30 vibration, +0x38 auto
+                // attack, +0x34 auto aim).
+                let (player, controls) = {
+                    let g = &world.resource::<Sim>().game;
+                    let player = opener.and_then(|port| g.controls.joy_assigned.get(port).copied()).and_then(|k| usize::try_from(k).ok()).filter(|&k| k < 4).unwrap_or(0);
+                    let c = &g.controls.control[player];
+                    (player, [c.u32_(0x2c), c.u32_(0x30), c.u32_(0x38), c.u32_(0x34)])
+                };
                 let cur_world = world.resource::<Sim>().game.globals.cur_world;
                 let mut front = world.resource_mut::<Front>();
+                front.menu_player = player;
                 front.menu.controls = controls;
                 front.menu.status.clear();
                 front.menu.pause(tower);
@@ -10874,6 +10925,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         heart_rate,
         capture,
         game_opts,
+        menu_player: 0,
         shop,
         english,
         scrolls,

@@ -123,6 +123,54 @@ GeneralMenu with 1, ServeFireScroll with 2 per frame. The pause menu
 (DoOptions) reads PlayerControl edges itself; gdl_play keeps PlayerControls
 running while paused so a closing press is an old level on resume.
 
+## Control styles (2026-11-12)
+
+Options → Controls → Style sets PlayerControl +0x2c (the menu: hud.md
+"Control Style"). Each style is a column of ReadControls' remap table
+0x2112a8 (10 actions × 4 styles × (mask, require); level bit 8+i), dumped
+from the ELF: Default and Arcade differ in bits 0xb/0xf/0x11 (Arcade's R2
+turbo/defend), One Handed (2) maps L1+R1, L2+R2 and the face buttons
+anew, and Robotron (3) maps bit 0xa (slow attack) to R1 or square and
+gives no strafe (bit 0xe). The game's own labels (ENGLISH.ROM CONTROLS1–4,
+the sixteen lines around the pad pictures) name the right stick "N/A",
+"N/A", "MOVEMENT" and "FIRE" in the four styles.
+
+The right stick is read by ControlsUpdate (style 2: it drives instead of
+the left stick), PlayerControls (style 3: +0x24/+0x28 its angle and
+magnitude) and GetPlayerDMotion 0x1448e0: with +0x28 > 0 the motion code is
+0x11–0x14 while moving (by the angle between the sticks) or 0xf standing
+(0x10 with level bit 0x400), an attack whatever the buttons; PlayerMotion
+also turns the player to it (references: private/reports/
+rightstick-refs-v1.tsv, ExportRefs on the right-stick globals and
+PlayerControl +0x24/+0x28 — no other reader). Reference: w7l1-robotron-v1
+(w7l1-newgame-v1 with PlayerControl+0x2c = 3, WARPED), 60 idle vblanks then
+pad 1's right stick up (T) for 60 (trace-stick2, private/runs/robotron-ref):
+the player turns to 3.66 and repeats actions 0x5c, 0x5f, 0x61 with attack
+type 9 and no button level, and finishes the attack on release.
+
+The native simulation had every path (pad.rs, pcontact.rs
+get_player_dmotion), but the client never filled entries 0xe–0x11 from a
+controller, so One Handed and Robotron did nothing (playtest 2026-11-12).
+gdl_play player_input now does, and NATIVE keyboard bindings (numpad 8 4 6 2
+by default, rebindable) press them for player 1, reporting an analog pad
+with a stick while one is pressed. Checks: game_run --replay of trace-stick2:
+the actions equal the reference's update for update except that the first
+attack starts one update earlier (update 76; the +0x8e4 / +0x93c words
+differ from the first update, before any input, as in the start state); a
+few turning updates' matrices differ and converge. In the client (private
+Xvfb, client-robotron1): Settings → Controls → Style → Robotron stores 3 in
+player 1's +0x2c, and numpad 8 turns the player to 3.67 and fires actions
+0x5c/0x61 with attack type 9.
+
+DoOptions writes the PlayerControl of the player who opened the menu
+(OptionsStart(player), the menu record's +0x78). The client now opens the
+pause menu for the player whose controller's Start asked for it (the
+keyboard: player 1) and writes that player's PlayerControl and
+Game::control_options (saved with the character); before, every change went
+to player 1. Network games keep player 1 (their menus are shared). Not
+checked: a second controller opening it (no controller on the private
+display).
+
 ## Numeric domain
 
 EE FPU and VU arithmetic flush subnormal results to signed zero and read

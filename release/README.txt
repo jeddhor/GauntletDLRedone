@@ -66,12 +66,22 @@ Player 1, keyboard:
     R2 ............... V
     Start / pause .... Enter or Escape
     Select ........... Tab
+    Right stick ...... Numpad 8 4 6 2     (for the One Handed and Robotron
+                                          control styles)
 Player 2, keyboard: T F G H move, R attack, Y magic, U start, B team move.
 
 Controllers: the d-pad and left stick move; the face buttons are the PS2's
 (A/cross attack, B/circle magic, Y/triangle turbo, X/square), the shoulder
-buttons L1/L2/R1/R2, Start and Select (Xbox: ≡ Menu and ⧉ View). Up to four
-players can play with controllers; a controller's Start joins in the Tower.
+buttons L1/L2/R1/R2, the right stick, Start and Select (Xbox: ≡ Menu and
+⧉ View). Up to four players can play with controllers; a controller's Start
+joins in the Tower.
+
+Control styles (pause menu → Settings → Controls → Style, as on the PS2):
+Default, Arcade, One Handed (the right stick moves) and Robotron (the right
+stick fires in its direction while the left stick moves; R1 fires slowly).
+Each player sets their own: the Controls page changes the player whose
+Start opened the pause menu (from the keyboard: player 1), and the style is
+saved with that player's character.
 
 Menus: arrows or d-pad choose, Enter or A/cross accepts, Escape/Backspace
 or Y/triangle goes back. On the "Press Start" screen, Back quits the game.

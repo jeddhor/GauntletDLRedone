@@ -19,7 +19,7 @@ pub struct Action {
 
 /// Port 0's actions, in the overlay's order. Labels name the pad button
 /// and what research has measured it doing; square and R2 are named only.
-pub const ACTIONS: [Action; 14] = [
+pub const ACTIONS: [Action; 18] = [
     Action { name: "up", label: "Up", entry: 2, defaults: &[KeyCode::ArrowUp, KeyCode::KeyW] },
     Action { name: "down", label: "Down", entry: 3, defaults: &[KeyCode::ArrowDown, KeyCode::KeyS] },
     Action { name: "left", label: "Left", entry: 0, defaults: &[KeyCode::ArrowLeft, KeyCode::KeyA] },
@@ -34,6 +34,12 @@ pub const ACTIONS: [Action; 14] = [
     Action { name: "r2", label: "R2", entry: 0x13, defaults: &[KeyCode::KeyV] },
     Action { name: "start", label: "Start", entry: 0x14, defaults: &[KeyCode::Enter] },
     Action { name: "select", label: "Select", entry: 0x15, defaults: &[KeyCode::Tab] },
+    // The right stick (entries 0xe–0x11, full deflection): Control Style
+    // One Handed moves and Robotron aims and fires with it.
+    Action { name: "rstick_up", label: "Right stick up", entry: 0x10, defaults: &[KeyCode::Numpad8] },
+    Action { name: "rstick_down", label: "Right stick down", entry: 0x11, defaults: &[KeyCode::Numpad2] },
+    Action { name: "rstick_left", label: "Right stick left", entry: 0xe, defaults: &[KeyCode::Numpad4] },
+    Action { name: "rstick_right", label: "Right stick right", entry: 0xf, defaults: &[KeyCode::Numpad6] },
 ];
 
 /// Keys that can be bound (the client's own function keys and Escape are
