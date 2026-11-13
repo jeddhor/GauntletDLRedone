@@ -415,6 +415,8 @@ impl ReferenceEffects {
             ambient: None,
             follow: None,
             streak: None,
+            // MBTreeSetZMod's node +0x68.
+            zmod: i16::from_le_bytes([n[0x68], n[0x69]]),
         }
     }
 
@@ -456,7 +458,7 @@ impl ReferenceEffects {
 
     /// Differing words of the native effects against these: records (the
     /// AnimInfo clock +0x28..+0x4f is the tree's presentation clock and is
-    /// skipped) and the nodes' rows and translation.
+    /// skipped) and the nodes' rows, translation and Z modifier (+0x68).
     fn compare(&self, game: &gdl_core::game::Game, items_base: u32) -> Vec<serde_json::Value> {
         let mut out = Vec::new();
         if game.effects.num != self.num {
@@ -490,6 +492,10 @@ impl ReferenceEffects {
                         if a.map(f32::to_bits) != b.map(f32::to_bits) {
                             out.push(serde_json::json!({"effect":k,"node":name,"native":a,"reference":b}));
                         }
+                    }
+                    // MBTreeSetZMod's node +0x68.
+                    if nn.zmod != rn.zmod {
+                        out.push(serde_json::json!({"effect":k,"node":"zmod","native":nn.zmod,"reference":rn.zmod,"kind":game.effects.slots[k].u32_(0x60)}));
                     }
                 }
                 (None, None) => {}
@@ -1010,8 +1016,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                             let a = f64::from(s.rgba[3]);
                             n += 1;
                             w += a;
-                            for k in 0..3 {
-                                rgb[k] += a * f64::from(s.rgba[k]);
+                            for (c, &v) in rgb.iter_mut().zip(&s.rgba) {
+                                *c += a * f64::from(v);
                             }
                             size += f64::from(s.size);
                             top = top.max(s.position[1] - y);

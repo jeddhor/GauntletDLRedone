@@ -1075,7 +1075,7 @@ mod tests {
             let ev = host.poll();
             a.poll();
             b.poll();
-            ev.iter().any(|e| *e == Event::Lobby { machines: 3 }).then_some(())
+            ev.contains(&Event::Lobby { machines: 3 }).then_some(())
         });
         let refused = wait(|| {
             host.poll();

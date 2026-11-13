@@ -24,6 +24,7 @@ struct GsParams {
     uv_xform: vec4<f32>,
     chrome_u: vec4<f32>,
     chrome_v: vec4<f32>,
+    depth: vec4<f32>,
 };
 
 #ifdef BINDLESS

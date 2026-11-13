@@ -15,14 +15,17 @@ cannot see that, so this check looks at the SPIR-V itself:
    it (cargo --config patch; target-spirv; Cargo.lock restored afterwards);
 2. that build on the private Xvfb with lavapipe (client_driver.py), every
    graphics option on: the title, Start, the select screen; then a TEST
-   character in G1 (GDL_TEST_AUTOSTART, GDL_DEBUG_LEVEL);
+   character in G1 (GDL_TEST_AUTOSTART, GDL_DEBUG_LEVEL) hitting secret
+   wall 7 (GDL_TEST_ACTIONS damage_item), so the hit spark's Z-modifier
+   variant (gs.wgsl DEPTH_MOD, frag_depth) is compiled too;
 3. spirv-val --target-env vulkan1.3 on every stage written.
 
 Two findings occur in naga's output of shaders every driver tested compiles
 (the GTX 1080 included): explicit layout decorations on Function or
 Workgroup variables (VUID-StandaloneSpirv-None-10684) and atomics with
 relaxed memory semantics (VUID-StandaloneSpirv-MemorySemantics-10871). They
-are counted, not failed; any other finding fails. Results:
+are counted, not failed; any other finding fails. Stages writing FragDepth
+are counted (spirv-dis). Results:
 private/runs/spirv-check-TAG/result.json. Research only.
 """
 import argparse
@@ -136,14 +139,22 @@ def main():
     settings = {'msaa': 4, 'fullscreen': False, 'widescreen': True, 'texture_filter': 'sharp', 'sharpen': 40, 'full_colour': True,
                 'smooth_lightmaps': True, 'more_lights': True, 'torch_lights': True, 'shadows': True, 'ambient_occlusion': True,
                 'bloom': True, 'smaa': False, 'hd_textures': False}
+    # The G1 character beside secret wall 7, which it damages every second
+    # (its hit sparks carry a Z modifier).
+    actions = run / 'g1-actions.json'
+    actions.write_text(json.dumps([{'at': 30, 'health': 50000}, {'at': 40, 'teleport': [4.8, 10.0, -53.9]}]
+                                  + [{'at': 60 + 30 * k, 'damage_item': [7, 1]} for k in range(20)]))
     runs = [
         drive(f'{a.tag}-select', binary, dump, settings,
               [['wait', 10], ['key', 'Return', 0.15], ['wait', 2], ['key', 'Return', 0.15], ['wait', 25], ['quit']], {}),
         drive(f'{a.tag}-g1', binary, dump, settings, [['wait', 60], ['quit']],
-              {'GDL_TEST_AUTOSTART': '1', 'GDL_DEBUG_LEVEL': 'G1', 'GDL_WINDOW': '640x448'}),
+              {'GDL_TEST_AUTOSTART': '1', 'GDL_DEBUG_LEVEL': 'G1', 'GDL_WINDOW': '640x448', 'GDL_TEST_ACTIONS': str(actions)}),
     ]
     stages, findings, known = [], [], {k: 0 for k in KNOWN}
+    frag_depth = 0
     for f in sorted(dump.glob('*.spv')):
+        dis = subprocess.run(['spirv-dis', str(f)], capture_output=True, text=True)
+        frag_depth += 'BuiltIn FragDepth' in dis.stdout
         r = subprocess.run(['spirv-val', '--target-env', 'vulkan1.3', str(f)], capture_output=True, text=True)
         text = (r.stdout + r.stderr).strip()
         stages.append(f.name)
@@ -160,9 +171,10 @@ def main():
     for r in runs:
         fail += [f'{r["run"]}: {x}' for x in r['pipeline_failures'] + r['panics']]
     fail += [f'{f["stage"]}: {f["error"][0]}' for f in findings]
-    result = {'tag': a.tag, 'passed': not fail, 'failures': fail, 'stages': len(stages), 'known_naga_patterns': known, 'findings': findings, 'runs': runs}
+    result = {'tag': a.tag, 'passed': not fail, 'failures': fail, 'stages': len(stages), 'frag_depth_stages': frag_depth, 'known_naga_patterns': known,
+              'findings': findings, 'runs': runs}
     (run / 'result.json').write_text(json.dumps(result, indent=1) + '\n')
-    print(json.dumps({k: result[k] for k in ('passed', 'failures', 'stages', 'known_naga_patterns')}, indent=1))
+    print(json.dumps({k: result[k] for k in ('passed', 'failures', 'stages', 'frag_depth_stages', 'known_naga_patterns')}, indent=1))
     return 0 if result['passed'] else 1
 
 

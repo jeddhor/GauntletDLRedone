@@ -821,6 +821,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    player 1), checked against a reference trace of Robotron firing; the
    Controls page now changes the player who opened the menu (research/
    player.md "Control styles").
+   2026-11-13 (user: the hit sparks hidden inside walls): effect trees carry
+   MBTreeSetZMod's node Z modifier (StartFXSub, ChangeEffect,
+   AddEnemyHitCol, DamageItem's reach × −64) and gdl_play draws it as the
+   original's clip-z add (a depth factor in a DEPTH_MOD pipeline). The GS Z
+   formula reproduces every textured draw of the reference crate-hit dump
+   (offsets −640, −36, −32, the rest 0); the native crate hit starts HITCOL
+   with −640 as there; the replays now compare effect node +0x68 at every
+   effect creation and equal the reference in all 146 (regress r98, every
+   count equal to r96) (research/rendering.md "Effect depth offset"). Open:
+   particles, critter colnodes, world nodes, the header alpha (unknowns.md).
 
 ---
 

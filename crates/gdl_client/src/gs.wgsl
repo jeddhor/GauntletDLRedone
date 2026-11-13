@@ -39,6 +39,10 @@ struct GsParams {
     // uv = (n·u + u.w, n·v + v.w).
     chrome_u: vec4<f32>,
     chrome_v: vec4<f32>,
+    // x: MBTreeSetZMod's depth factor (DEPTH_MOD only): the reverse-Z depth
+    // near / w times 1 + zmod × −2048 / 16777470, the GS ordering of VU1's
+    // clip-z add (lib.rs zmod_depth_factor).
+    depth: vec4<f32>,
 };
 
 // Point lights, shared by every material: position + radius, colour +
@@ -250,8 +254,38 @@ fn bspline_r(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> f32 {
 }
 #endif
 
+#ifdef DEPTH_MOD
+// A node with a Z modifier (MBTreeSetZMod; effect trees): VU1 adds
+// zmod × −2048 to the clip z before the divide (program A pairs 523..533),
+// so its depth tests as if the view depth were w / factor. The reverse-Z
+// depth near / w is linear in screen space like the GS Z, so scaling it per
+// fragment is the same as scaling it per vertex.
+struct GsOut {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+};
+
+@fragment
+fn fragment(in: VertexOutput) -> GsOut {
+#ifdef BINDLESS
+    let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
+    let factor = material_array[material_indices[slot].material].depth.x;
+#else
+    let factor = material.depth.x;
+#endif
+    var out: GsOut;
+    out.color = gs_fragment(in);
+    out.depth = clamp(in.position.z * factor, 0.0, 1.0);
+    return out;
+}
+#else
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    return gs_fragment(in);
+}
+#endif
+
+fn gs_fragment(in: VertexOutput) -> vec4<f32> {
 #ifdef BINDLESS
     let slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
     let params = material_array[material_indices[slot].material];

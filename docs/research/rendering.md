@@ -721,7 +721,9 @@ definition's radius (scaled to keep its screen size), and the chest's parts
 sorted after it — so the chest fails the depth test inside the window.
 HYPOTHESIS: the node Z modifier −800 (MBTreeSetZMod; VU1's use of it is not
 read) is approximated by that offset; the icon tree's MB flag 8 is not
-modelled. Native capture: private/runs/client-xray-g1f (GDL_DEBUG_POWERUP=
+modelled. 2026-11-13: VU1's use is now read ("Effect depth offset": −800
+orders as if 9.8 % nearer; the reference X-ray dumps measure −800); the
+window still uses the radius offset. Native capture: private/runs/client-xray-g1f (GDL_DEBUG_POWERUP=
 9:2:120 with GDL_DEBUG_TELEPORT next to chest 43). The contents differ by
 moment: random contents resolve through RandItemIdx without advancing, so
 they follow the item random state, in both.
@@ -864,8 +866,91 @@ decodes 190/228/190, so the lookup resolves to POWERUPS'; the screenshots
 at vblanks 22..27 all missed the one flash frame). Native: Game::item_white,
 present_skins' replacement with gs.wgsl light_dir.w 2 (flat colour);
 frozen frame g1-wall-hit3 180/220/180 (the same offset as the knockback
-silhouette above). Not modelled: DamageItem's MBTreeSetZMod(HITCOL node,
-radius × −64), the hit sparks' depth offset (unknowns.md).
+silhouette above). DamageItem's MBTreeSetZMod(HITCOL node, reach × −64)
+is ported below ("Effect depth offset").
+
+## Effect depth offset (2026-11-13)
+
+MBTreeSetZMod 0x1cfd08(node, value, mode) stores the value as a short at
+node +0x68 (MBNodeInit clears it); mode 1 also walks the children (mode 2:
+children and their siblings), skipping nodes with flag 0x10. pbSetDORegs
+0x1bfac8 compares it with pb_obj_info +0xb8 and on a change writes +0x38 =
+value × pbg+0x1c +0xa0 — −2048.0, written only by pbResetLights 0x1ae6f0 —
+and re-sends the four header quadwords +0x10..+0x4c (UNPACK to TOPS-relative
+0x103..0x106). VU1 (vu1-tower-disasm-v1) copies that third quadword's z to
+memory 17.z (pair 155: SQ.z vf17, 17), loads memory 17 into vf21 (pair
+208), and program A adds vf21.z to the clip z inside the viewport transform
+before the divide (pairs 523..525: ACC = vf14 × clip, ACC.z += vf21.z,
+vf20 = ACC + vf15 × clip.w; × Q at 533); program B does the same at pairs
+901..903. With the G1 savestate's values (poison-fields-original.p2s: near
+1, far 65536, window Z range 1..16777215, viewport z scale −8388607 and
+offset 8388608 at camera +0x370/+0x380) the GS Z is
+
+  Z = A + (B − 2048 · zmod) / w,  A = −255, B = sz·dc = 16777470,
+
+larger Z nearer, w the view depth (Q = 1/w in the strip's STQ). Check on
+the reference's own frames (24 GS dumps; per textured draw the median of
+(Z − A) / Q over its vertices): 2244 of 2270 G1 crate-frame draws give B
+exactly (zmod 0), the rest whole numbers — −640 (the crate's HITCOL: reach
+10), −32 and −36, the X-ray window's −800 in its dumps, −128 effects in
+others. Every offset draw is a 4-vertex mesh strip. The remaining mismatches
+are near-plane-clipped strips (one or two vertices with a Q).
+
+Callers: StartFXSub 0x17d998 (EffectHeaders zmod, 0x24444c + 0xc × index),
+ChangeEffect 0x17aaf0 (the new header's), AddEnemyHitCol 0x17db28 ((int)
+(EffectHeaders[flags & 0xf] zmod × scale + 0.5) — the damage colour indexes
+the table, s2 = a2 & 0xf at 0x17db50, not the started header), DamageItem
+0x15afb4 ((int)(definition +0xc × −64): the item's reach), CritterInitColnodes
+(colnode data +0x16) and CreateWorldNode (−2 for file flag 0x400).
+EffectHeaders' zmods: EffectInfo +0x20 (−128 for the hit, blood, explosion,
+missile and potion sets, −512 for level-up, combo, block, start and gem
+pickups, 0 for NULLFX, MAGICFX, the breaths and L_SHLD_ACTIVE); InitEffects'
+0x50..0x60 −512 except 0x5a..0x5d (0) and SAFEREXP's 0x1e (0), 0x52/0x53
+copying 0x51's whole entry; InitCustomEffectSub stores its argument
+(PlayerSfxInit: SFXX +0x30, CritterInitSfx: +0x44; the other
+InitCustomEffect calls pass 0).
+
+A clip-z add before the divide orders the node as if its view depth were
+w / (1 + k), k = −2048 · zmod / B: reach 10 pulls a wall's sparks 7.8 % of
+their distance towards the camera, the −128 sets 1.6 %, the −512 ones 6.3 %.
+Bevy's reverse-Z depth is near / w, so gdl_play scales it by 1 + k
+(gdl_client::zmod_depth_factor, gs.wgsl DEPTH_MOD writing frag_depth; only
+those pipelines lose early depth testing) — the same comparison as the GS's
+for every pair of depths (synthetic test zmod_tests). The simulation keeps
+the value on EffectNode::zmod: start_fx_tree gives a Header visual its
+header's modifier (in the original every EffectHeaders tree starts through
+StartFXSub — StartFXTree's only other callers, StartMissile and
+StartFamiliarFireBall, start missile trees), then ChangeEffect,
+AddEnemyHitCol and DamageItem overwrite it. present_effect_trees requests
+it for an effect tree's meshes (DIAGNOSTIC GDL_NO_ZMOD=1 leaves it out).
+
+Checks (2026-11-13):
+- Actual disc, replays: gdl_tools' effect comparison now includes node
+  +0x68 (the traces keep 0x80 bytes of each live effect node; 22,120 traced
+  nodes in 44 of the traces, 6,935 with a modifier: −512, −409, −147, −128,
+  −100, −64, −32). Frame replays re-seed every update, so each effect is
+  checked at the update that creates it. regress r97 (the modifier set in
+  StartFXSub only) left 39 replays with creations at 0 — STARTFX, WORLD_EXP,
+  MP_LIGHT and others started through the port's direct start_fx_tree
+  calls; r98 (start_fx_tree) has none, and all 146 replays equal r96 on
+  every count.
+- Actual disc, GS dumps: the formula above on 24 dumps (the per-draw
+  medians); the crate hit's HITCOL −640 natively too (test dump "effects",
+  private/runs/g1-zmod-hit2), drawn as one 4-vertex mesh with factor
+  1.0781238 (scene dump, g1-zmod-hit3).
+- Native A/B, original presentation, update 103 after hitting G1's hedge
+  block 7 (g1-zmod-abb-on / -off, lavapipe): identical scene dumps apart
+  from the factor; 4 pixels differ. The spark starts at the block's centre
+  (DamageItem's position: item +0x60, 2 up), so at this camera the 7.8 %
+  pull leaves most of it inside the hedge — as the formula has it in the
+  original. The reference crate frame's spark lies under the hint sign:
+  replaying that dump with its offset removed (gs_replay with Z = A + B·Q)
+  changes no pixel there.
+- spirv_check.py (its G1 run hits wall 7): the DEPTH_MOD stage validates
+  (66 stages, two writing FragDepth, no new findings).
+
+Not modelled: particles (MBDrawPsys's use of +0x68 is unread), critter
+colnodes, world nodes, and the header's MBTreeSetAlpha (unknowns.md).
 
 ## Sequence texture modifiers (2026-10-30)
 

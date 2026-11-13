@@ -410,6 +410,23 @@ pub struct GsParams {
     /// axes and of the camera block's +0x50/+0x54 angles is unread.
     pub chrome_u: Vec4,
     pub chrome_v: Vec4,
+    /// x: the depth factor of a node Z modifier ([`zmod_depth_factor`];
+    /// read only by `GsDraw::depth_mod` pipelines).
+    pub depth: Vec4,
+}
+
+/// MBTreeSetZMod's node Z modifier as a factor on the reverse-Z depth
+/// (near / w). pbSetDORegs 0x1bfac8 uploads zmod × pbg+0x1c +0xa0 (−2048.0,
+/// pbResetLights' only write) to object header +0x38 → VU memory 17.z, and
+/// VU1 adds it to the clip z before the divide (pairs 523..525 / 901..903):
+/// Z = sz·d8 + cz + (sz·dc + 2048·(−zmod)) / w, with the viewport z scale
+/// sz = −8388607 and pbProjCalc's dc = −2nf/(f − n) (near 1, far 65536):
+/// sz·dc = 16777470 in single precision. The node then orders as if its
+/// view depth were w / (1 + k), k = −2048·zmod / 16777470 — its native
+/// depth near / w times 1 + k. The reference G1 frames measure exactly
+/// these integers per draw (research/rendering.md "Effect depth offset").
+pub fn zmod_depth_factor(zmod: i16) -> f32 {
+    1.0 + f32::from(zmod) * -2048.0 / 16_777_470.0
 }
 
 /// The observed G1 world material state folded into one pass (gs.wgsl):
@@ -489,6 +506,10 @@ pub struct GsDraw {
     /// word 1.z, pbDebugMode, is 0 in play): only front faces reach the
     /// GS (research/rendering.md "Back-face culling").
     pub cull: bool,
+    /// A node Z modifier (MBTreeSetZMod): the fragment depth is scaled by
+    /// `GsParams::depth.x` (gs.wgsl DEPTH_MOD). Only such draws write
+    /// fragment depth, so the rest keep early depth testing.
+    pub depth_mod: bool,
 }
 
 impl From<&GsMaterial> for GsParams {
@@ -520,6 +541,7 @@ impl GsDraw {
             sort_late: false,
             sort_first: false,
             cull: true,
+            depth_mod: false,
         }
     }
 }
@@ -672,6 +694,13 @@ impl Material for GsMaterial {
             && let Some(f) = descriptor.fragment.as_mut()
         {
             f.shader_defs.push("GS_OPAQUE".into());
+        }
+        // A node Z modifier: every main-pass draw of the node (its lightmap
+        // pass included, which tests against the base's depth).
+        if draw.depth_mod
+            && let Some(f) = descriptor.fragment.as_mut()
+        {
+            f.shader_defs.push("DEPTH_MOD".into());
         }
         // Object parts keep the VU's front faces; the render root mirrors x,
         // which reverses screen winding (GDL_CULL_FACE=front|back|none
@@ -1155,3 +1184,30 @@ pub fn tree_pose(animations: &Animations, tree_index: usize, bytes: &[u8], seque
     Ok(worlds.into_iter().map(Option::unwrap).collect())
 }
 
+
+#[cfg(test)]
+mod zmod_tests {
+    use super::zmod_depth_factor;
+
+    /// Synthetic: the native depth factor orders a Z-modified draw against an
+    /// unmodified one exactly as the GS Z does (Z = A + (sz·dc − 2048·zmod)
+    /// / w, larger nearer; sz·dc = 16777470), for the modifiers seen in the
+    /// reference dumps (−32, −36, −128, −640, −800) and the −512 entries.
+    #[test]
+    fn depth_factor_orders_like_the_gs_z() {
+        const B: f64 = 16_777_470.0;
+        assert_eq!(zmod_depth_factor(0), 1.0);
+        for zmod in [-32i16, -36, -128, -512, -640, -800] {
+            let f = f64::from(zmod_depth_factor(zmod));
+            for we in [2.0f64, 10.0, 37.5, 120.0, 900.0] {
+                for ww in [1.5f64, 9.0, 9.9, 36.0, 37.0, 40.0, 110.0, 1000.0] {
+                    let gs = (B - 2048.0 * f64::from(zmod)) / we > B / ww;
+                    let native = f / we > 1.0 / ww;
+                    assert_eq!(gs, native, "zmod {zmod} effect w {we} other w {ww}");
+                }
+            }
+        }
+        // A reach of 10 (−640): the effect orders as if 7.8 % nearer.
+        assert!((zmod_depth_factor(-640) - 1.078_125).abs() < 1e-4);
+    }
+}

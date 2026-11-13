@@ -123,7 +123,7 @@ impl Game {
                     let (_, frames, timing, repeat) = self.classes[p].sfx_trees[i];
                     super::effects::EffectHeader { source: 0x40 + p as u8, tree: i, frames, timing, repeat }
                 });
-                let h = self.register_custom_effect(own, &name);
+                let h = self.register_custom_effect(own, &name, i32::from(i16::from_le_bytes([e[0x30], e[0x31]])));
                 t[k * 0x50 + 8..k * 0x50 + 0xc].copy_from_slice(&h.to_le_bytes());
             }
             if flags & 0xf00_0000 == 0 && e[0x20] != 0 {

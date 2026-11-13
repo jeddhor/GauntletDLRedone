@@ -1780,6 +1780,9 @@ struct MatReq {
     /// (the reference's flash is the texture's own colour; gs.wgsl
     /// light_dir.w 2).
     flat: bool,
+    /// MBTreeSetZMod's node Z modifier (effect trees): the depth factor of
+    /// gdl_client::zmod_depth_factor in a DEPTH_MOD pipeline.
+    zmod: i16,
 }
 
 impl MatRequests {
@@ -2059,18 +2062,23 @@ fn apply_material_requests(
             None => (None, None, 1.0, 0.0),
         };
         let flat = r.as_ref().is_some_and(|r| r.flat);
-        if image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 && !flat && r.as_ref().is_none_or(|r| r.uv.is_none() && r.color.is_none()) {
+        let zmod = r.as_ref().map_or(0, |r| r.zmod);
+        // Requests that blend an opaque part (a Z modifier alone keeps the
+        // part's own alpha mode).
+        let styled = !(image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 && !flat && r.as_ref().is_none_or(|r| r.uv.is_none() && r.color.is_none()));
+        if !styled && zmod == 0 {
             if ov.is_some() {
                 m.0 = base;
                 commands.entity(e).remove::<MatOverride>();
             }
             continue;
         }
+        let alpha_mode = if styled && (b.alpha_mode == AlphaMode::Opaque || matches!(b.alpha_mode, AlphaMode::Mask(_))) { AlphaMode::Blend } else { b.alpha_mode };
+        let draw = gdl_client::GsDraw { depth_mod: zmod != 0, ..b.draw };
         if ov.is_none() {
             let mut own = b.clone();
-            if own.alpha_mode == AlphaMode::Opaque || matches!(own.alpha_mode, AlphaMode::Mask(_)) {
-                own.alpha_mode = AlphaMode::Blend;
-            }
+            own.alpha_mode = alpha_mode;
+            own.draw = draw;
             m.0 = materials.add(own);
             commands.entity(e).insert(MatOverride { base: base.clone() });
         }
@@ -2100,6 +2108,7 @@ fn apply_material_requests(
                 p.extra.y = 1.0;
             }
             p.tint.w = b.params.tint.w * alpha;
+            p.depth.x = if zmod != 0 { gdl_client::zmod_depth_factor(zmod) } else { 0.0 };
             if let Some(c) = r.as_ref().and_then(|r| r.color) {
                 p.tint = (b.params.tint.truncate() * c).extend(p.tint.w);
             }
@@ -2116,10 +2125,16 @@ fn apply_material_requests(
             } else {
                 (b.lightmap.clone(), b.lit)
             };
-            let params_changed = cur.params.tint != p.tint || cur.params.scale != p.scale || cur.params.light != p.light || cur.params.light_dir != p.light_dir || cur.params.options != p.options || cur.params.extra != p.extra || cur.params.chrome_u != p.chrome_u || cur.params.chrome_v != p.chrome_v || cur.params.uv_xform != p.uv_xform;
-            if (cur.base != img || cur.overlay != overlay || params_changed || cur.lightmap != lightmap || cur.lit != lit)
+            let params_changed = cur.params.tint != p.tint || cur.params.scale != p.scale || cur.params.light != p.light || cur.params.light_dir != p.light_dir || cur.params.options != p.options || cur.params.extra != p.extra || cur.params.chrome_u != p.chrome_u || cur.params.chrome_v != p.chrome_v || cur.params.uv_xform != p.uv_xform || cur.params.depth != p.depth;
+            if (cur.base != img || cur.overlay != overlay || params_changed || cur.lightmap != lightmap || cur.lit != lit || cur.draw != draw || cur.alpha_mode != alpha_mode)
                 && let Some(own) = materials.get_mut(&m.0)
             {
+                if own.draw != draw {
+                    own.draw = draw;
+                }
+                if own.alpha_mode != alpha_mode {
+                    own.alpha_mode = alpha_mode;
+                }
                 if own.base != img {
                     own.base = img;
                 }
@@ -5089,6 +5104,7 @@ fn present_streaks(
                 sort_late: true,
                 sort_first: false,
                 cull: false,
+                depth_mod: false,
             },
         });
         let mesh = meshes.add(Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default()));
@@ -5399,6 +5415,7 @@ fn present_particles(
                     sort_late: false,
                     sort_first: false,
                     cull: false,
+                    depth_mod: false,
                 },
             };
             let handle = materials.add(m);
@@ -6349,6 +6366,11 @@ fn simulate(
                     serde_json::json!({ "slot": k, "name": String::from_utf8_lossy(def.name()), "kind": def.kind(), "subtype": def.subtype(),
                         "pos": r.position(), "clip": a.map(|a| a.current), "frame": a.map(|a| a.clock.frame), "animated": a.map(|a| a.animated), "clips": a.map(|a| a.clips.clone()), "loop_word": r.u16_(0xb8), "flags": r.u16_(0xd8), "next": r.i8_(0xde),
                         "state": r.i8_(0xdc) })
+                }).collect::<Vec<_>>());
+                // Live effect slots: header (+0x60), MBTreeSetZMod, position.
+                d["effects"] = serde_json::json!(sim.game.effects.nodes.iter().enumerate().filter_map(|(k, n)| {
+                    let slot = &sim.game.effects.slots[k];
+                    n.as_ref().filter(|_| 0.0 < slot.f32_(0x68)).map(|n| serde_json::json!({ "slot": k, "kind": slot.u32_(gdl_core::game::effects::fx::KIND), "visual": n.visual, "zmod": n.zmod, "pos": n.position, "scale": n.scale }))
                 }).collect::<Vec<_>>());
                 // The client's status line (e.g. "save recovered from …").
                 d["last_event"] = serde_json::Value::from(sim.last_event.clone());
@@ -7681,6 +7703,12 @@ fn present_effect_trees(
                 if let Some(a) = n.ambient {
                     req.get(e).ambient += a as f32 / 255.0;
                 }
+                // MBTreeSetZMod (mode 1: the node and its subtree; the
+                // emitters' particles are not offset — unknowns.md).
+                // DIAGNOSTIC GDL_NO_ZMOD=1 leaves it out (A/B frames).
+                if n.zmod != 0 && !no_zmod() {
+                    req.get(e).zmod = n.zmod;
+                }
             }
         }
         let mods = texmods.entry((fx.pkg.clone(), fx.tree)).or_insert_with(|| anim.trees.get(fx.tree).map(|t| tree_texmods(pkg, t)).unwrap_or_default());
@@ -7690,6 +7718,13 @@ fn present_effect_trees(
             request_tree_texmods(mods, lib, index, seq, &meshes, &mut req);
         }
     }
+}
+
+/// DIAGNOSTIC: GDL_NO_ZMOD=1 draws effect trees without their node Z
+/// modifier (A/B comparisons of the depth offset). Not a game feature.
+fn no_zmod() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var_os("GDL_NO_ZMOD").is_some_and(|v| v == "1"))
 }
 
 /// AnimateNode / DoAnimateTree's object frame (EE 0x112754, 0x11298c):
