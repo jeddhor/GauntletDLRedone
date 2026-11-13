@@ -845,6 +845,26 @@ original (PCSX2 reference on Xvfb :191, private captures):
    "Other node Z modifiers, effect alpha and enemy shadows". Open: enemy
    tree alpha fades, critter shrink, setPrimAlpha outside effect trees
    (unknowns.md).
+   Same day, for 1.3.2 (user: finish those and the visible gaps; desktop
+   crash hunt and LAN game approved; report before publishing): enemy
+   fades (the warlock's phasing — enemy_mod_alpha's guard was transcribed
+   wrong — and Death's rise) on body and shadow; CritterBossAI's last
+   half-second fade; CritterGolemAI's EnemyShrink (also simulation:
+   node_scale feeds CritterDoSfx); setPrimAlpha's exact value for every tree
+   alpha; texture modifiers on enemy frame objects (ACI's acid blobs) and
+   critter trees (DJINN, DRIDER, YETI); the red and poison barrels' break
+   frames fade out (ProcessItems 0x156f00, matched to the reference GS dump's
+   vertex alpha); the chrome warp (pb_global_attribute +0xa4 = 1, read live);
+   Sumner's ghost drawn additive with its OANIM robe, started for level
+   speeches too, and the level caption in font32 (matched to a reference
+   level speech); translucent ties broken by spawn order. Reference traces
+   with tree states (trace-J3-combat-v2, trace-B6-bosskill-v3,
+   trace-A1-golemkill-v3, trace-A1-golemshrink-v1/-v2 WARPED) replay equal
+   with negative controls; regress r104: all 146 summary lines equal r100;
+   spirv_check chrome132 passed (66 stages). Not reproduced: the
+   uncollectable Tower crystal. Found: I5 frozen frames vary between runs
+   (world texture animation). research/rendering.md "Enemy and critter
+   fades", hud.md "Sumner's speeches and captions".
 
 ---
 
