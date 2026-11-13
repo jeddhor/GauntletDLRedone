@@ -1417,6 +1417,11 @@ struct SumnerPart(u8, usize);
 /// waypoint, and after a boss the good wizard (WIZARD, faded in by
 /// MBTreeSetAlpha), each posed by its animation clock (presentation of
 /// game::tower::SumnerState / GhostState and game::goodwiz::GoodWiz).
+/// The two WIZARD trees draw with their AtreeInit node flags —
+/// SumnerGhostStart 0xc00880, DoGoodWizard 0x881880: additive (0x800000),
+/// no depth write (0x80) — and their OANIM node's frame objects (the
+/// trailing robe). Before 2026-11-13 both were opaque and robeless; the
+/// reference's level speech shows a translucent glowing ghost.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_sumner(
     mut commands: Commands,
@@ -1426,8 +1431,9 @@ fn present_sumner(
     libs: Res<Libraries>,
     root: Query<Entity, With<MirrorRoot>>,
     mut body: Query<(&SumnerRoot, &mut Transform, &mut Visibility), Without<SumnerPart>>,
-    mut parts: Query<(Entity, &SumnerPart, &mut Transform), Without<SumnerRoot>>,
+    mut parts: Query<(Entity, &SumnerPart, &mut Transform, Option<&OFrame>, &mut Visibility), Without<SumnerRoot>>,
     (children, mut req): (Query<&Children>, ResMut<MatRequests>),
+    (mut materials, mut variants): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<NodeVariants>),
 ) {
     let t = &sim.game.tower;
     let w = &sim.game.good_wiz;
@@ -1462,15 +1468,39 @@ fn present_sumner(
             let (Ok(root), Some(lib)) = (root.single(), libs.0.get(&pkg_name)) else { continue };
             let b = commands.spawn((SumnerRoot(which), tf, Visibility::default(), LevelEntity)).id();
             commands.entity(root).add_child(b);
+            let flags = match which {
+                1 => 0xc0_0880,
+                2 => 0x88_1880,
+                _ => 0,
+            };
+            let mut add = |commands: &mut Commands, node: usize, list: &Parts, frame: Option<OFrame>| {
+                let holder = commands.spawn((SumnerPart(which, node), Transform::default(), Visibility::default())).id();
+                if let Some(f) = frame {
+                    commands.entity(holder).insert(f);
+                }
+                for (mesh, material) in list {
+                    let m = node_variant(&mut materials, &mut variants, material, flags, 0);
+                    let c = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(m), Transform::default())).id();
+                    commands.entity(holder).add_child(c);
+                }
+                commands.entity(b).add_child(holder);
+            };
             for node in &tree.nodes {
+                if node.node_type == 2 {
+                    for (seq, e) in node.oanim.iter().enumerate() {
+                        let Some(&base) = lib.index_of.get(&e.name.to_uppercase()) else { continue };
+                        for k in 0..e.count.max(1) {
+                            if let Some(list) = lib.by_index.get(&(base + k as u32)) {
+                                let f = OFrame { seq: seq as u16, start: e.start, k, single: e.count <= 1 };
+                                add(&mut commands, node.index as usize, list, Some(f));
+                            }
+                        }
+                    }
+                    continue;
+                }
                 let label: String = (tree.prefix.clone() + &node.label).chars().take(15).collect();
                 if let Some(list) = lib.by_label.get(&label) {
-                    let holder = commands.spawn((SumnerPart(which, node.index as usize), Transform::default(), Visibility::default())).id();
-                    for (mesh, material) in list {
-                        let c = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
-                        commands.entity(holder).add_child(c);
-                    }
-                    commands.entity(b).add_child(holder);
+                    add(&mut commands, node.index as usize, list, None);
                 }
             }
             continue;
@@ -1484,12 +1514,16 @@ fn present_sumner(
             }
         }
         if let Ok(pose) = gdl_client::tree_pose(anim, ti, &pkg.anim_bytes, current as usize, frame.max(0.0), true) {
-            for (holder, part, mut t) in &mut parts {
+            let index = object_frame(frame.max(0.0), tree.sequences.get(current as usize));
+            for (holder, part, mut t, of, mut v) in &mut parts {
                 if part.0 != which {
                     continue;
                 }
                 if let Some(mat) = pose.get(part.1) {
                     *t = Transform::from_matrix(*mat);
+                }
+                if let Some(f) = of {
+                    show_oframe(f, current, index, &mut v);
                 }
                 // The good wizard's MBTreeSetAlpha (0 opaque … 0xff clear),
                 // drawn by setPrimAlpha.

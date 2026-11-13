@@ -730,7 +730,12 @@ impl Game {
                     .unwrap_or_default();
                     use super::hud::Arg;
                     let text = super::hud::format_c(&fmt, &[Arg::S(h.string_text(0x16, colour).unwrap_or_default()), Arg::S(h.string_text(0x17, class).unwrap_or_default()), Arg::D(lv), Arg::S(rank)]);
-                    let font = h.text.as_ref().and_then(|r| r.entries.get(0x18)).and_then(|e| r_font(h, r_fonts(h), e.font)).unwrap_or(0);
+                    // CaptionTextSub(text, 6, frame / 2, y, 0.667) at
+                    // 0x17536c: font_desc[6], font32 — not the entry's font
+                    // (GameText 0x18's FONT 0 '8Hi_fonts5' matches nothing,
+                    // so it would be font8x8; until 2026-11-13 the port drew
+                    // that, the reference shows font32).
+                    let font = h.tables.as_ref().and_then(|t| t.font_desc.iter().position(|n| n == "font32")).unwrap_or(6);
                     let done = self.hud.caption(f32::from_bits(0x3f2a_c083), &text, font, (frame >> 1) - self.tower.caption.1, 0x138);
                     if self.tower.plyr_sidx < 0 {
                         // sumner_plyr_sidx = AudioExp(...): the level line.
@@ -1291,8 +1296,10 @@ impl Game {
             self.players[k].set_i32(0x9ac + 0x18 * c, exp);
         }
         if n != 0 {
-            // SumnerGhostStart, 0.5 s of speech, DisablePlayerControls,
-            // CaptionTextReset.
+            // SumnerGhostStart (0x174c60; the port skipped it until
+            // 2026-11-13, so level speeches showed no ghost), 0.5 s of
+            // speech, DisablePlayerControls, CaptionTextReset.
+            self.sumner_ghost_start();
             self.tower.sumner_speech_time = 0.5;
             self.tower.speech_frame = 0;
             self.tower.caption = (0, 0, 0x3c);

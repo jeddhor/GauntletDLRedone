@@ -550,8 +550,15 @@ level %d %s!") with the colour (0x16), class (0x17), level and rank (0x15
 or the class list) — through CaptionTextSub 0x165290 at y 0x138, scale
 0.667: characters revealed at 1.75 frames each ('.'/',' +2, tab 5, '\r'
 30 + page), the partial line re-centred on x 256, white over a shadow.
-GameText's FONT '8Hi_fonts5' matches no font_desc name, so StringInitSub
-leaves font 0 (font8x8). The text (font z 0.25) draws over the letterbox
+The level caption's font is not GameText's (whose FONT entry 0
+'8Hi_fonts5' matches no font_desc name, so StringInitSub leaves font 0,
+font8x8): SumnerDoSpeech calls CaptionTextSub(text, 6, frame / 2, y, 0.667)
+(0x17536c), font_desc[6] = font32 — the reference level speech
+(warp-tower-lvspeech-a-v1: tower-newgame-v1 with experience 50000 and
+level 28 written, WARPED; private/runs/ghost-ref/lv-a.png) shows font32,
+and so does the port since 2026-11-13 (it drew font8x8 before). CaptionText
+(scroll captions, the good wizard's boss speech) passes the entry's own
+font. The text (font z 0.25) draws over the letterbox
 (z 0.5), which is now a z-sorted blit pair (AAAWHITE, colour 0).
 A player's speech ends once the caption is revealed, 0x168 frames passed
 and AudioSoundPlaying(AudioExp's line) is clear (audio_queue track timing,
@@ -598,9 +605,19 @@ frames/30). Verified natively (GDL_DEBUG_SHARDS=2, GDL_DEBUG_RUNES=1,
 GDL_DEBUG_OLD_SHARDS=1fe GDL_DEBUG_OLD_RUNES=fff): NewShards/MoreShards
 captions with paging, the window and rune cameras (rune camera 5.67 s =
 40 + 300 vblanks), the twelve runes in the rune circle and the light ray.
-Not verified against the reference: the ghost (WIZARD tree, presented at
-the waypoint; not seen in the Sumner camera's view) and the window
-camera's SHARD effect.
+The ghost (2026-11-13, against the reference level speech above, same
+camera): SumnerGhostStart 0x174998 makes a node at unitmat under the world
+root and parents AtreeInit(item_anim's WIZARD, flags 0xc00880) to it;
+SumnerDoSpeech CopyMat4s the closest waypoint (FindClosestWaypoint of the
+players' average, 100000, 1) onto it and activates the camera by the
+waypoint's +0x72. SumnerLevelSpeechStart calls SumnerGhostStart too
+(0x174c60; the port skipped it). The tree's node flags draw it additive
+(0x800000) without depth writes (0x80) — DoGoodWizard's WIZARD has
+0x881880 — and its OANIM node 31 is the trailing robe; the port drew both
+WIZARD trees opaque and without that node, so the ghost stood as a small
+dark figure behind the rune circle (ghost-native-lv) where the reference
+shows a tall glowing translucent wizard trailing into it. Now drawn so
+(ghost-native-lv3). Not compared: the window camera's SHARD effect.
 
 ## Player select
 
