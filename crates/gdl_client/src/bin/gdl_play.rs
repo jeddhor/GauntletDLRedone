@@ -1772,6 +1772,11 @@ struct MatReq {
     color: Option<Vec3>,
     /// MBTreeSetAmbientAdd / 255.
     ambient: f32,
+    /// ProcessItems' type-10 hit flash with MBTreeSetFlags 0x4000: no
+    /// lightmap, and the colour 128 × (1 + add) without the vertex colours
+    /// (the reference's flash is the texture's own colour; gs.wgsl
+    /// light_dir.w 2).
+    flat: bool,
 }
 
 impl MatRequests {
@@ -1939,11 +1944,31 @@ fn present_skins(
             }
         }
     };
+    // ProcessItems' type-10 hit flash (Game::item_white): AAAWHITE
+    // (LoadWorldDone's MBOX_FindTexture_Sub from the world model) over every
+    // texture of the item's subtree, with node flag 0x4000. The reference
+    // flash (G1 wall 7, GS dump replay ref-flash/replay23) is POWERUPS'
+    // AAAWHITE, 184/224/184; G1's own decodes 190/228/190.
+    let level_white = || ["POWERUPS", LEVEL_LIB].iter().find_map(|k| libs.0.get(*k)?.textures.get("AAAWHITE").cloned());
     for (slot, kids) in &slots {
         if slot.kind == SlotKind::Enemy
             && let Some(v) = g.skin_views.enemies.get(slot.index)
         {
             apply(kids, v, &mut req);
+        }
+        if slot.kind == SlotKind::Item
+            && g.item_white.contains(&slot.index)
+            && let Some(image) = level_white()
+        {
+            let mut stack: Vec<Entity> = kids.iter().collect();
+            while let Some(e) = stack.pop() {
+                let r = req.get(e);
+                r.replace = Some(image.clone());
+                r.flat = true;
+                if let Ok(c) = children.get(e) {
+                    stack.extend(c.iter());
+                }
+            }
         }
     }
     for (root, kids) in &bodies {
@@ -2030,7 +2055,8 @@ fn apply_material_requests(
             }
             None => (None, None, 1.0, 0.0),
         };
-        if image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 && r.as_ref().is_none_or(|r| r.uv.is_none() && r.color.is_none()) {
+        let flat = r.as_ref().is_some_and(|r| r.flat);
+        if image.is_none() && overlay.is_none() && 0.999 <= alpha && ambient == 0.0 && !flat && r.as_ref().is_none_or(|r| r.uv.is_none() && r.color.is_none()) {
             if ov.is_some() {
                 m.0 = base;
                 commands.entity(e).remove::<MatOverride>();
@@ -2079,8 +2105,16 @@ fn apply_material_requests(
             } else {
                 p.scale.x += ambient;
             }
+            // The hit flash: no lightmap (node flag 0x4000), flat colour.
+            let (lightmap, lit) = if flat {
+                p.options.y = 0.0;
+                p.light_dir.w = 2.0;
+                (None, false)
+            } else {
+                (b.lightmap.clone(), b.lit)
+            };
             let params_changed = cur.params.tint != p.tint || cur.params.scale != p.scale || cur.params.light != p.light || cur.params.light_dir != p.light_dir || cur.params.options != p.options || cur.params.extra != p.extra || cur.params.chrome_u != p.chrome_u || cur.params.chrome_v != p.chrome_v || cur.params.uv_xform != p.uv_xform;
-            if (cur.base != img || cur.overlay != overlay || params_changed)
+            if (cur.base != img || cur.overlay != overlay || params_changed || cur.lightmap != lightmap || cur.lit != lit)
                 && let Some(own) = materials.get_mut(&m.0)
             {
                 if own.base != img {
@@ -2088,6 +2122,12 @@ fn apply_material_requests(
                 }
                 if own.overlay != overlay {
                     own.overlay = overlay.clone();
+                }
+                if own.lightmap != lightmap {
+                    own.lightmap = lightmap;
+                }
+                if own.lit != lit {
+                    own.lit = lit;
                 }
                 if params_changed {
                     own.params = p;
@@ -5191,11 +5231,21 @@ fn spawn_tree_psys(mut commands: Commands, mut pending: ResMut<PendingTreePsys>,
 }
 
 /// Follow tree anchors: original-space matrix = MIRROR × the anchor's render
-/// transform; emitters of despawned anchors go away.
-fn follow_tree_psys(mut commands: Commands, anchors: Query<(&GlobalTransform, &InheritedVisibility)>, mut q: Query<(Entity, &mut Emitter)>) {
+/// transform; emitters of despawned anchors go away. AnimateNode 0x112720
+/// switches a type-4 (psys) node when its AnimInfo has option bit 4, which
+/// SetItem gives hazards (record +0x97): off (0x200000) in sequence 0, on
+/// in any other — a fire trap's flame burns only while the trap is on
+/// (playtest 2026-11-12: G1's traps burned throughout).
+fn follow_tree_psys(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    anchors: Query<(&GlobalTransform, &InheritedVisibility, Option<&ChildOf>)>,
+    slots: Query<&Slot>,
+    mut q: Query<(Entity, &mut Emitter)>,
+) {
     for (e, mut em) in &mut q {
         let Some(a) = em.anchor else { continue };
-        let Ok((g, vis)) = anchors.get(a) else {
+        let Ok((g, vis, parent)) = anchors.get(a) else {
             commands.entity(e).despawn();
             continue;
         };
@@ -5204,7 +5254,12 @@ fn follow_tree_psys(mut commands: Commands, anchors: Query<(&GlobalTransform, &I
             m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0, m.y_axis.x, m.y_axis.y, m.y_axis.z, 0.0, m.z_axis.x, m.z_axis.y, m.z_axis.z, 0.0, m.w_axis.x,
             m.w_axis.y, m.w_axis.z, 1.0,
         ];
-        if !vis.get() {
+        let off = parent.and_then(|p| slots.get(p.parent()).ok()).filter(|s| s.kind == SlotKind::Item).is_some_and(|s| {
+            let game = &sim.game;
+            game.items.records.get(s.index).is_some_and(|r| r.u8_(0x97) & 4 != 0)
+                && game.item_anims.get(s.index).and_then(Option::as_ref).is_some_and(|anim| anim.clock.sequence == 0)
+        });
+        if !vis.get() || off {
             em.psys.node_flags |= 0x200000;
         } else {
             em.psys.node_flags &= !0x200000;
@@ -6262,6 +6317,15 @@ fn simulate(
                         "frame": a.map(|a| a.clock.frame), "scale": chest_content_scale(&sim.game, k),
                         "content": { "slot": c, "clip": ca.map(|a| a.current), "frame": ca.map(|a| a.clock.frame),
                             "matrix": sim.game.items.records.get(c).map(|cr| cr.matrix()) } })
+                }).collect::<Vec<_>>());
+                // Every active item: definition, kind/subtype, position, its
+                // clock's clip and frame (None: no tree) and its state byte.
+                d["items"] = serde_json::json!(sim.game.items.records.iter().enumerate().filter(|(_, r)| r.active()).map(|(k, r)| {
+                    let def = &sim.game.items.definitions[r.definition()];
+                    let a = sim.game.item_anims.get(k).and_then(Option::as_ref);
+                    serde_json::json!({ "slot": k, "name": String::from_utf8_lossy(def.name()), "kind": def.kind(), "subtype": def.subtype(),
+                        "pos": r.position(), "clip": a.map(|a| a.current), "frame": a.map(|a| a.clock.frame), "animated": a.map(|a| a.animated), "clips": a.map(|a| a.clips.clone()), "loop_word": r.u16_(0xb8), "flags": r.u16_(0xd8), "next": r.i8_(0xde),
+                        "state": r.i8_(0xdc) })
                 }).collect::<Vec<_>>());
                 // The client's status line (e.g. "save recovered from …").
                 d["last_event"] = serde_json::Value::from(sim.last_event.clone());

@@ -22,7 +22,9 @@ struct GsParams {
     // x: base texture bound, y: lightmap bound, z/w: UV shift add.
     options: vec4<f32>,
     // VU1 lighting: xyz towards the light (w = enabled; −1: no VU1
-    // lighting at all, pbBlit sprites); rgb dir colour, a ambient.
+    // lighting at all, pbBlit sprites; 2: flat, 128 × (1 + add) without
+    // the vertex colours — ProcessItems' type-10 hit flash); rgb dir
+    // colour, a ambient.
     light_dir: vec4<f32>,
     light: vec4<f32>,
     // x: unlit colour add (× (1 + x)), y: lit ambient add, z: TEX1 K,
@@ -264,7 +266,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var rgb = params.tint.rgb;
     var alpha = params.tint.a;
 #ifdef VERTEX_COLORS
-    rgb = rgb * in.color.rgb;
+    if params.light_dir.w < 1.5 {
+        rgb = rgb * in.color.rgb;
+    }
     alpha = alpha * in.color.a;
 #endif
     // Character shadows fall on the unlit parts — the world, whose light is
@@ -278,7 +282,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         shadow = shadow_term(pl, in.world_position, normalize(in.world_normal));
     }
 #endif
-    if params.light_dir.w > 0.5 {
+    if 0.5 < params.light_dir.w && params.light_dir.w < 1.5 {
         let n = normalize(in.world_normal);
         let d = max(dot(n, params.light_dir.xyz), 0.0);
         // VU1 program A: min(ambient + light, 128) + point lights, ≤ 255.

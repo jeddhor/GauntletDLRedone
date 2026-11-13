@@ -73,6 +73,30 @@ without an AnimInfo (+0x80 = 0) are 95 BRIDGEPAD, 41 EXIT_PORTAL (8 more
 have one) and 53 S_CARPETFLY in the reference, the same records native
 leaves without a clock.
 
+SetItemGeo's tree branch (0x1516f0..0x151778, 2026-11-12): +0xdc = 0,
+AtreeInit, then `sh 1, 0xb8` — the AnimInfo's loop word is 1 whatever the
+clip's repeat word (InitAnim had stored the clip header's +0x24) — and for
++0xd8 bit 0 +0xde = ((+0xd8 >> 2) ^ 1) & 1, then AnimateATree(+0xde, 2).
+POWERUPS' KEY, KEYRING and SCROLL clips have repeat 0, so without the write
+they turned once and stopped (playtest 2026-11-12: "key rings not
+rotating"; a key ring beside the player stood at frame 0 or 29 for 120
+updates). Reference trace-G1-chest31-v3: +0xb8 = 1 in every item record at
+step 0; after the fix all 295 G1 item records with a tree match it in +0xb8,
++0xdc and +0xde on loading, and the replays D2combat / G3combat, whose
+dropped BOOSTICON / SCROLL differed at +0xb8 in r95, now match on all 300
+updates (regress r96: 146 replays, the other 144 equal to r95). Hazards
+keep 0: their first AnimateATree restarts clip 0, whose InitAnim replaces
+the 1 (also so in the reference).
+
+Fire traps (FLAMEH, ITEMS_G): no animation channels; the flame is the tree's
+type-4 node, a particle system. AnimateNode 0x112720 switches such a node
+when the AnimInfo's option bits (+0x13; item +0x97) have bit 4: flag
+0x200000 (emission off) in sequence 0, cleared in any other. SetItem's tail
+(0x1529e0) sets that bit for kind 8 (hazards). The client emitted the flame
+whenever the trap was on screen, so traps looked lit while off (playtest:
+"fire traps stuck on"); gdl_play follow_tree_psys now applies the rule
+(frames g1-flame-shots3: trap 110 shows its flame only in states 2/3).
+
 ## Player-count items (+0xe0, +0xe1)
 
 SetItem stores +0xe0 (the record's player count; 10 + n = exactly n) and

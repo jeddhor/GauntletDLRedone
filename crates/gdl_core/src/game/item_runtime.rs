@@ -242,11 +242,26 @@ impl Game {
         Ok(())
     }
 
-    /// SetItemGeo 0x151688 with a tree: AtreeInit (attach_item_anim), then
-    /// AnimateATree(+0x80, +0xde, 2) — the clock starts at creation.
+    /// SetItemGeo 0x151688 with a tree: +0xdc 0, AtreeInit
+    /// (attach_item_anim), the AnimInfo's loop word (+0xb8) 1 whatever the
+    /// clip's repeat word — so every item clip loops until a sequence
+    /// change's InitAnim replaces it (KEY, KEYRING and SCROLL have repeat 0:
+    /// without it they turned once and stopped, the playtest's still key
+    /// rings; reference trace-G1-chest31-v3 holds 1 in every item record) —,
+    /// for +0xd8 bit 0 (hazards) +0xde = ((+0xd8 >> 2) ^ 1) & 1, then
+    /// AnimateATree(+0x80, +0xde, 2): the clock starts at creation.
     pub fn set_item_geo(&mut self, slot: usize) -> R<()> {
+        // A new item's node starts without an alternate texture (MBNodeInit).
+        self.item_white.remove(&slot);
         self.attach_item_anim(slot)?;
         if self.has_item_anim(slot) {
+            let r = &mut self.items.records[slot];
+            r.set_u8(0xdc, 0);
+            r.set_u16(0xb8, 1);
+            let flags = r.u16_(0xd8);
+            if flags & 1 != 0 {
+                r.set_u8(0xde, ((flags >> 2) as u8 ^ 1) & 1);
+            }
             let clip = self.items.records[slot].i8_(0xde).max(0) as u16;
             self.animate_item(slot, clip, 2)?;
         }
@@ -1312,8 +1327,16 @@ impl Game {
     fn process_type10(&mut self, slot: usize) -> R<()> {
         let r = self.items.records[slot].clone();
         let sub_ = self.items.definitions[r.definition()].subtype();
-        // +0xf4/+0xf6 flash timers drive an alternate texture only.
+        // The hit flash (DamageItem sets +0xf4 1): MBTreeSetAltTex(node, −2,
+        // the level's AAAWHITE) and MBTreeSetFlags 0x4000 for this update,
+        // cleared on the next; +0xf4 ≥ 2 blinks it (+0xf6 < 30 of each 61
+        // vblanks) while +0xf4 counts down (presentation: item_white).
         if 2 <= r.i16_(0xf4) {
+            if r.i16_(0xf6) < 0x1e {
+                self.item_white.insert(slot);
+            } else {
+                self.item_white.remove(&slot);
+            }
             let t = r.i16_(0xf6).wrapping_add(self.globals.vb_elapsed as i16);
             let rr = &mut self.items.records[slot];
             if 0x3d <= t {
@@ -1324,9 +1347,12 @@ impl Game {
                 rr.set_i16(0xf6, t);
             }
         } else if r.i16_(0xf4) == 1 {
+            self.item_white.insert(slot);
             let rr = &mut self.items.records[slot];
             rr.set_u16(0xf4, 0);
             rr.set_u16(0xf6, 0);
+        } else {
+            self.item_white.remove(&slot);
         }
         match sub_ {
             0x2c | 0x2d => {

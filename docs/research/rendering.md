@@ -849,6 +849,24 @@ kept the previous enemy's view — most often damage_enemy's death add 999
 (0x13a57c) — and the new enemy drew near-white until its own skin ended
 (research/playtest.md "Playtest after 1.0").
 
+Type-10 items (secret walls, barrels; 2026-11-12): DamageItem sets +0xf4
+= 1 for a hit that leaves health (not subtype 0x29); ProcessItems case 10
+then MBTreeSetAltTex(item node, −2, DAT_0021f3e0) and MBTreeSetFlags(0x4000)
+for one update, cleared on the next (+0xf4 ≥ 2: a blink, +0xf6 < 30 of each
+61 vblanks). The port kept the timers but drew nothing (playtest: "breakable
+walls weren't all flashing when shot"). Reference: w7l1-crate7-v1 with the
+crate schedule, GS dumps from vblanks 23/24 replayed (gs_replay.py,
+private/runs/barrels/ref-flash/replay23/24): the hedge block drawn as one
+flat 184/224/184 shape — POWERUPS' AAAWHITE at colour 128, no lightmap and
+none of the model's vertex colours (DAT_0021f3e0 is LoadWorldDone's
+MBOX_FindTexture_Sub of "AAAWHITE" from the world model; G1's own AAAWHITE
+decodes 190/228/190, so the lookup resolves to POWERUPS'; the screenshots
+at vblanks 22..27 all missed the one flash frame). Native: Game::item_white,
+present_skins' replacement with gs.wgsl light_dir.w 2 (flat colour);
+frozen frame g1-wall-hit3 180/220/180 (the same offset as the knockback
+silhouette above). Not modelled: DamageItem's MBTreeSetZMod(HITCOL node,
+radius × −64), the hit sparks' depth offset (unknowns.md).
+
 ## Sequence texture modifiers (2026-10-30)
 
 Animation sequences carry texture modifiers too: the 0x30-byte sequence

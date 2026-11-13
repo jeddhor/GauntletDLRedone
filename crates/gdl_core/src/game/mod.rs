@@ -358,6 +358,10 @@ pub struct Game {
     pub speech_tables: std::collections::HashMap<&'static str, Vec<i32>>,
     /// MBTreeGetAlpha of item trees the simulation reads (Tower crystals).
     pub item_alpha: std::collections::HashMap<usize, i32>,
+    /// Type-10 items (secret walls, barrels) drawing ProcessItems' hit flash:
+    /// MBTreeSetAltTex(node, −2, the level's AAAWHITE) with MBTreeSetFlags
+    /// 0x4000 (presentation).
+    pub item_white: std::collections::HashSet<usize>,
     /// ReplaceItemAtree: item slots drawing another tree (presentation).
     pub item_trees: std::collections::HashMap<usize, String>,
     /// DamageItem's MBOX_NewObject leftovers, in creation order

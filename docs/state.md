@@ -809,6 +809,12 @@ original (PCSX2 reference on Xvfb :191, private captures):
    and ends the game (no cascade, no hang); Windows writes log.txt; the
    select screen's HD textures load on worker threads (21 s → 3.4 s cold,
    under 1 s warm on that machine).
+   2026-11-12 (players' G1 reports): key rings now spin (SetItemGeo's loop
+   word 1, which every item record holds in the reference; regress r96
+   fixes two replays' only item difference), fire traps show their flame
+   only while on (AnimateNode's psys switch for hazards), and type-10 items
+   (secret walls, barrels) flash on a hit (ProcessItems' AAAWHITE alternate
+   texture, matched to a GS dump replay of the original's flash).
 
 ---
 

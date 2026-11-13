@@ -560,6 +560,7 @@ impl Game {
                 }
             },
             item_alpha: std::collections::HashMap::new(),
+            item_white: std::collections::HashSet::new(),
             item_trees: std::collections::HashMap::new(),
             item_debris: Vec::new(),
             speech_tables: ["crystal_sidx", "garg_sidx", "shard_sidx"]
