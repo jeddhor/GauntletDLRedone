@@ -588,6 +588,16 @@ impl GsMaterial {
 }
 
 impl GsMaterial {
+    /// This material with a node Z modifier of its own (MBTreeSetZMod or a
+    /// direct +0x68 store): a DEPTH_MOD pipeline at [`zmod_depth_factor`];
+    /// 0 removes it.
+    pub fn with_zmod(&self, zmod: i16) -> Self {
+        let mut m = self.clone();
+        m.draw.depth_mod = zmod != 0;
+        m.params.depth.x = if zmod != 0 { zmod_depth_factor(zmod) } else { 0.0 };
+        m
+    }
+
     /// The lightmap pass of a lightmapped part as a separate draw (the base
     /// keeps its own pass without the lightmap): None when the part has no
     /// lightmap.

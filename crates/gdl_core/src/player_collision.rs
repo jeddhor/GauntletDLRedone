@@ -93,6 +93,34 @@ pub(crate) fn hit_normal(world: &CollisionWorld, hit: &Hit) -> R<V3> {
     Ok(create_mat3_norm_row1(n))
 }
 
+/// Collision output-struct rows 0..2 as WorldCollide's tail writes them
+/// (0x11e9e8..0x11eab4): a matrix object (flag 0x1000000, or 0x1000
+/// without bit 0) turns the file normal by its world matrix, takes
+/// CreateMat3Norm(triangle scale, normal) and NormalVector on rows 0 and
+/// 2; other objects CreateMat3Norm of the file normal alone. Rows that are
+/// not finite (a flat triangle tilted by its object: scale +inf) are an
+/// error here (the original copies them as they are).
+pub(crate) fn hit_rows(world: &CollisionWorld, hit: &Hit) -> R<[V3; 3]> {
+    let t = world.triangles[hit.triangle];
+    let flags = world.runtime_flags[hit.object];
+    let row = |r: [f32; 4]| [r[0], r[1], r[2]];
+    let out = match hit.matrix {
+        Some(m) if flags & 0x100_0000 != 0 || flags & 1 == 0 => {
+            let n = world_vector(t.normal, &[[m[0][0], m[0][1], m[0][2]], [m[1][0], m[1][1], m[1][2]], [m[2][0], m[2][1], m[2][2]]])?;
+            let r = crate::collision::create_mat3_norm(t.scale, n)?;
+            let (mut r0, mut r2) = (row(r[0]), row(r[2]));
+            normal_vector(&mut r0)?;
+            normal_vector(&mut r2)?;
+            [r0, row(r[1]), r2]
+        }
+        _ => {
+            let r = crate::collision::create_mat3_norm(t.scale, t.normal)?;
+            [row(r[0]), row(r[1]), row(r[2])]
+        }
+    };
+    if out.iter().flatten().all(|v| v.is_finite()) { Ok(out) } else { Err(UnsupportedCollision("non-finite contact basis")) }
+}
+
 /// WorldObjGetAllFlags: the run-time +0x10 words of the object and its parents.
 fn object_flags_with_parents(world: &CollisionWorld, mut object: Option<usize>) -> u32 {
     let mut flags = 0;

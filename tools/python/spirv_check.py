@@ -17,7 +17,9 @@ cannot see that, so this check looks at the SPIR-V itself:
    graphics option on: the title, Start, the select screen; then a TEST
    character in G1 (GDL_TEST_AUTOSTART, GDL_DEBUG_LEVEL) hitting secret
    wall 7 (GDL_TEST_ACTIONS damage_item), so the hit spark's Z-modifier
-   variant (gs.wgsl DEPTH_MOD, frag_depth) is compiled too;
+   variant (gs.wgsl DEPTH_MOD, frag_depth) is compiled too; and one in H1
+   with the native shadows off (world decals' and blob shadows' Z
+   modifiers);
 3. spirv-val --target-env vulkan1.3 on every stage written.
 
 Two findings occur in naga's output of shaders every driver tested compiles
@@ -149,6 +151,10 @@ def main():
               [['wait', 10], ['key', 'Return', 0.15], ['wait', 2], ['key', 'Return', 0.15], ['wait', 25], ['quit']], {}),
         drive(f'{a.tag}-g1', binary, dump, settings, [['wait', 60], ['quit']],
               {'GDL_TEST_AUTOSTART': '1', 'GDL_DEBUG_LEVEL': 'G1', 'GDL_WINDOW': '640x448', 'GDL_TEST_ACTIONS': str(actions)}),
+        # H1 with the blob shadows (native shadows off): the camp rings'
+        # Z modifier (CreateWorldNode −2) and the shadows' (−36, −32).
+        drive(f'{a.tag}-h1', binary, dump, dict(settings, shadows=False), [['wait', 50], ['quit']],
+              {'GDL_TEST_AUTOSTART': '1', 'GDL_DEBUG_LEVEL': 'H1', 'GDL_WINDOW': '640x448'}),
     ]
     stages, findings, known = [], [], {k: 0 for k in KNOWN}
     frag_depth = 0

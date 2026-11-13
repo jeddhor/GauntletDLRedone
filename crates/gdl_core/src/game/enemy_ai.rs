@@ -1993,6 +1993,8 @@ impl Game {
         }
         let y = add(floor_y, self.ef(i, 0x230))?;
         self.enemies[i].set_f32(0x2a8, y);
+        // 0x143518: CopyMat3(enemy_floor_col, +0x1f0) — this hit's rows.
+        self.enemy_shadow_floor(i, &hit);
         Ok(hit.object as u32 + 1)
     }
 
@@ -2037,6 +2039,8 @@ impl Game {
                         let y = add(h.position[1], self.ef(i, 0x230))?;
                         self.enemies[i].set_f32(0x2a8, y);
                         found = h.object as u32 + 1;
+                        // 0x143788: CopyMat3(enemy_floor_col, +0x1f0).
+                        self.enemy_shadow_floor(i, &h);
                     }
                 }
             } else {
@@ -2424,6 +2428,12 @@ impl Game {
                 for (col, v) in values.iter().take(4).enumerate() {
                     rec.set_f32(0x10 + 16 * row + 4 * col, *v);
                 }
+            }
+            // 0x14415c..0x1441b4: the shadow at the translation (presentation
+            // reads +0x40), hidden (MB flag 2) while +0xe0 == 1.
+            let hide = self.enemies[i].i32_(0xe0) == 1;
+            if let Some(Some(s)) = self.enemy_shadow.get_mut(i) {
+                s.hidden = hide;
             }
         }
         let rec = &mut self.enemies[i];

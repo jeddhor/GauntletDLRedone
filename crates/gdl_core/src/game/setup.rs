@@ -592,6 +592,7 @@ impl Game {
             enemy_anims: vec![None; 25],
             enemy_node: vec![None; 25],
             enemy_floor_parent: vec![None; 25],
+            enemy_shadow: vec![None; 25],
             audio_tid: 0,
             player_clips: Default::default(),
             player_floor_parent: [None; 4],

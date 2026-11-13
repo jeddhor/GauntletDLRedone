@@ -2129,8 +2129,8 @@ impl Game {
             // StartFXSub(0, key, position, 0x80000040, 0x880) as BossKeySfx and
             // SfxSetMorph(30, key, key2, 0): the key morphs after 30 s
             // (trace-B6-goodwiz-v2 step 43); AudioBossKey is the event.
-            let h1 = self.register_custom_effect(self.effects.tables.item_header(1, "BOSSKEY"), "BOSSKEY", 0);
-            let h2 = self.register_custom_effect(self.effects.tables.item_header(1, "BOSSKEY2"), "BOSSKEY2", 0);
+            let h1 = self.register_custom_effect(self.effects.tables.item_header(1, "BOSSKEY"), "BOSSKEY", 0, 0);
+            let h2 = self.register_custom_effect(self.effects.tables.item_header(1, "BOSSKEY2"), "BOSSKEY2", 0, 0);
             if let Ok(h) = usize::try_from(h1) {
                 let k = self.start_fx_sub(0.0, h, Some(at), 0x8000_0040)?;
                 if let Ok(k) = usize::try_from(k) {

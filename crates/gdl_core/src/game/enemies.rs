@@ -96,6 +96,27 @@ impl EnemyTables {
 
 /// Load-time per-type availability (enemy_model >= 0, enemy_loaded,
 /// enemy_genfx), 45 entries each; captured from the level load.
+/// SetEnemyObj's ground shadow node (+0x1f0; presentation): MBNewObject(
+/// MBOX_FindObject_Sub(shadowdesc[n − 1], the type's model table only),
+/// unitmat, no parent, MB flags 0x880), node Z modifier −32 (0x138740) and
+/// +0x54 = 3.0, for every type but 0, 0x15, 0x1e and 0x1f. Drawn at the
+/// enemy's translation (+0x40, which do_enemies and do_enemy_move copy to
+/// it) and, outside boss levels, at EnemyShrink's scale (do_enemies' MB
+/// flag 8). enemy_mod_alpha's MBTreeSetAlpha / flag 2 on it is not
+/// modelled, as for the body (research/rendering.md).
+#[derive(Clone, Copy, Debug)]
+pub struct EnemyShadow {
+    /// SHADOW<n>L1: n = min(level, 3), 1 for a level below 1.
+    pub n: u8,
+    /// The node's rows: unitmat, then CopyMat3(enemy_floor_col) after each
+    /// floor contact (EnemyCollideFloor's success, do_enemy_collide's own
+    /// FloorCollide).
+    pub rows: [[f32; 3]; 3],
+    /// MBTreeSetFlags(…, 2): do_enemy_move sets it while +0xe0 == 1 and
+    /// clears it otherwise.
+    pub hidden: bool,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct EnemyLoad {
     pub model: Vec<i32>,
@@ -478,6 +499,7 @@ impl Game {
             rec.set_u32(0x230, if t == 0x1f { 0x4040_0000 } else { 0 });
         }
         self.attach_enemy_anim(i, t, level)?;
+        self.set_enemy_shadow(i, level);
         // SetEnemyObj's new node (MBNewNode(EnemyRootNode, identity)), then
         // GetObjWorldMat: the record matrix becomes the identity (translation
         // 0 until the position is set). A reused slot otherwise kept the
@@ -538,6 +560,29 @@ impl Game {
             self.animate_enemy(i, 0, 2)?;
         }
         Ok(())
+    }
+
+    /// SetEnemyObj 0x138688..0x138744(enemy, type, level): the old shadow node
+    /// removed (MBRemoveNode), a new one for record types other than 0,
+    /// 0x15, 0x1e and 0x1f (presentation; EnemyShadow).
+    pub(crate) fn set_enemy_shadow(&mut self, i: usize, level: i32) {
+        let t = self.enemies[i].i32_(e::TYPE);
+        let n = if 0 < level { level.min(3) as u8 } else { 1 };
+        let shadow = (![0, 0x15, 0x1e, 0x1f].contains(&t)).then_some(EnemyShadow { n, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], hidden: false });
+        if let Some(s) = self.enemy_shadow.get_mut(i) {
+            *s = shadow;
+        }
+    }
+
+    /// CopyMat3(enemy_floor_col, the shadow node) after a floor contact
+    /// (presentation; a contact basis that is not finite keeps the rows).
+    pub(crate) fn enemy_shadow_floor(&mut self, i: usize, hit: &crate::collision::Hit) {
+        if self.enemy_shadow.get(i).is_some_and(Option::is_some)
+            && let Ok(rows) = crate::player_collision::hit_rows(&self.collision, hit)
+            && let Some(Some(s)) = self.enemy_shadow.get_mut(i)
+        {
+            s.rows = rows;
+        }
     }
 
     /// find_enemy_slot(type, visibility threshold).
@@ -1042,6 +1087,10 @@ impl Game {
         if t == 0x1b {
             self.delete_enemy_parented(i);
         }
+        // 0x139ddc: MBRemoveNode(+0x1f0), +0x1f0 = 0.
+        if let Some(s) = self.enemy_shadow.get_mut(i) {
+            *s = None;
+        }
         self.uncouple_enemy(i);
         Ok(())
     }
@@ -1191,10 +1240,11 @@ impl Game {
                 }
                 // SetEnemyObj(…, 1) swaps the statue model; matrix preserved
                 // (CopyMat4 around it), then UpdateObjWorldMat into the new node
-                // (MBNodeInit: no skin).
+                // (MBNodeInit: no skin). Its shadow is a new SHADOW1L1.
                 if let Some(v) = self.skin_views.enemies.get_mut(i) {
                     *v = super::skin::SkinView::default();
                 }
+                self.set_enemy_shadow(i, 1);
                 self.enemy_update_obj_world_mat(i)?;
                 self.enemy_update_offsets(i)?;
                 return Ok(0);

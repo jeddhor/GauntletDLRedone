@@ -411,13 +411,19 @@ impl ReferenceEffects {
             parent: None,
             target: None,
             tint: None,
-            alpha: None,
+            // MBTreeSetAlpha's node +0x53 (!value) under flag 0x200 (+0x60).
+            alpha: Self::node_alpha(n).map(|b| 255 - i32::from(b)),
             ambient: None,
             follow: None,
             streak: None,
             // MBTreeSetZMod's node +0x68.
             zmod: i16::from_le_bytes([n[0x68], n[0x69]]),
         }
+    }
+
+    /// MBTreeSetAlpha's stored byte (+0x53) while its flag 0x200 is set.
+    fn node_alpha(n: &[u8]) -> Option<u8> {
+        (u32::from_le_bytes(n[0x60..0x64].try_into().unwrap()) & 0x200 != 0).then_some(n[0x53])
     }
 
     /// A node parented to player 0's tree (node +0x74 within 0x400 of the
@@ -458,7 +464,8 @@ impl ReferenceEffects {
 
     /// Differing words of the native effects against these: records (the
     /// AnimInfo clock +0x28..+0x4f is the tree's presentation clock and is
-    /// skipped) and the nodes' rows, translation and Z modifier (+0x68).
+    /// skipped) and the nodes' rows, translation, Z modifier (+0x68) and
+    /// alpha (+0x53 under flag 0x200).
     fn compare(&self, game: &gdl_core::game::Game, items_base: u32) -> Vec<serde_json::Value> {
         let mut out = Vec::new();
         if game.effects.num != self.num {
@@ -481,6 +488,11 @@ impl ReferenceEffects {
             }
             match (game.effects.nodes[k].as_ref(), self.nodes.get(&k)) {
                 (Some(nn), Some(rn)) => {
+                    // MBTreeSetAlpha's byte: !value for a positive value.
+                    let (na, ra) = (nn.alpha.filter(|&a| 0 < a).map(|a| !a as u8), Self::node_alpha(rn));
+                    if na != ra {
+                        out.push(serde_json::json!({"effect":k,"node":"alpha","native":na,"reference":ra,"kind":game.effects.slots[k].u32_(0x60)}));
+                    }
                     let rn = Self::node(rn, 0.0);
                     // A parented node: the traced matrix is the local one.
                     let (pos, m) = match nn.parent {

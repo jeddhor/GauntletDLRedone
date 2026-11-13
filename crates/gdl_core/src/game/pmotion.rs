@@ -1129,9 +1129,9 @@ impl Game {
     pub(crate) fn start_fx_sub(&mut self, time: f32, header: usize, at: Option<V3>, flags: u32) -> R<i32> {
         let Some(h) = self.effects.tables.headers.get(header).copied().flatten() else { return Ok(-1) };
         let k = self.start_fx_tree(time, super::effects::Visual::Header(header), h.frames, h.timing, at, flags)?;
-        // MBTreeSetZMod(node, EffectHeaders[header] zmod, 1): start_fx_tree
-        // sets it for Header visuals. The header's MBTreeSetAlpha is not
-        // applied (research/unknowns.md).
+        // MBTreeSetZMod(node, EffectHeaders[header] zmod, 1) and
+        // MBTreeSetAlpha(node, EffectHeaders[header] alpha, 1): start_fx_tree
+        // sets both for Header visuals.
         self.fx_mut(k).set_u32(super::effects::fx::KIND, header as u32);
         Ok(k as i32)
     }

@@ -214,7 +214,8 @@ they keep their vertex colours. The VU1 microcode was not read.
 
 - load_player: the held weapon is the model package's WEAP_HOLD (base
   classes; WEAP_<COL>_HD<n> for single-model classes) under the right hand
-  node player_rhand[class] (ELF table); SHADOWL1 (MB flags 0x880, z mod −36)
+  node player_rhand[class] (ELF table); SHADOWL1 (MB flags 0x880, z mod −36,
+  drawn since 2026-11-13)
   follows UpdatePlayerShadow (player x/z, max(floor, water) + 0.1; while the
   water +0x8a4 is above the floor +0x88c, MBTreeSetAltTex(−2, TextureSplash
   = POWERUPS "SPLASH" from InitEffects), else (−1)). The splash is drawn
@@ -399,10 +400,12 @@ frame compared (GUI flow menu-flows-m17-v15 streak shows the trail).
   EnemyShrink below 1.
 - Critter shadows: CritterInitGeo calls CritterAddShadow 0x193400 for types
   with +0x5c bit 0: SHADOW<n>L1 (shadowdesc; n = slot + 1, slots ≥ 3 → 2)
-  of the critter's model, MBNewObject flags 0x880, z mod −32, at the
-  critter position; ProcessCritter (kinds 0/1/2/5/6) keeps it at x/z and
-  the floor + 0.1 with an identity rotation. Not verified visually (no
-  shadowed critter met in the checks).
+  of the critter's model, MBNewObject flags 0x880, z mod −32 (both drawn
+  since 2026-11-13), at the critter position; ProcessCritter (kinds
+  0/1/2/5/6) keeps it at x/z and the floor + 0.1 with an identity
+  rotation. Not verified visually (no shadowed critter met in the checks).
+- Enemy shadows (SetEnemyObj's +0x1f0; drawn since 2026-11-13): "Other
+  node Z modifiers, effect alpha and enemy shadows".
 - Fog: InitFog 0x162d40 / FogFadeIn 0x162de0 pass LEVL +0x70..+0x88 to
   MBFogInit 0x1cfa30, which (like MBFogSet) is an empty function in this
   build — there is no fog to draw (consistent with FGE 0 in the G1 dump).
@@ -422,12 +425,16 @@ frame compared (GUI flow menu-flows-m17-v15 streak shows the trail).
 MBTreeSetAlpha on items (Game::item_alpha) and world nodes
 (Game::node_alpha) is drawn as material alpha × (255 − alpha)/255
 (HYPOTHESIS: the +0x53 byte's use in the draw path is not traced).
+2026-11-13: setPrimAlpha 0x1bee30 is read — (int)((255 − a) × 0.50196081)
+/ 128, measured on the crate dump's HITCOL — and effect trees use it
+exactly; items and world nodes keep the formula above (unknowns.md).
 
 Texture scrolls and per-node shifts, character texmods (SetupPlayerTexMods),
 enemy MBTreeSetAlpha fades, chrome (0x8000/0xa0000, setChrome), the colour
 scale of setPrimColor and DoLighting, VU1 vertex lighting of characters
 (point lights MBPosLight*, setPrimColor scales, AmbientSpecial flashes), fog (InitFog/FogFadeIn; FGE was 0 in the
-G1 frame), Z modifiers, sorted transparency order.
+G1 frame), Z modifiers (drawn since 2026-11-13: "Other node Z
+modifiers, effect alpha and enemy shadows"), sorted transparency order.
 
 ## Effect colour and alpha (2026-10-21)
 
@@ -719,11 +726,11 @@ depth-only, alpha-tested draw (no colour writes, depth always written)
 sorted first among the rest and moved towards the camera by the chest
 definition's radius (scaled to keep its screen size), and the chest's parts
 sorted after it — so the chest fails the depth test inside the window.
-HYPOTHESIS: the node Z modifier −800 (MBTreeSetZMod; VU1's use of it is not
-read) is approximated by that offset; the icon tree's MB flag 8 is not
-modelled. 2026-11-13: VU1's use is now read ("Effect depth offset": −800
-orders as if 9.8 % nearer; the reference X-ray dumps measure −800); the
-window still uses the radius offset. Native capture: private/runs/client-xray-g1f (GDL_DEBUG_POWERUP=
+The node Z modifier −800 (InitItemInfoData 0x14fd50 stores it directly)
+was approximated by that offset until 2026-11-13; VU1's use is now read
+("Effect depth offset": −800 orders as if 9.8 % nearer; the reference
+X-ray dumps measure −800) and the window draws it at the chest's centre.
+The icon tree's MB flag 8 is not modelled. Native capture: private/runs/client-xray-g1f (GDL_DEBUG_POWERUP=
 9:2:120 with GDL_DEBUG_TELEPORT next to chest 43). The contents differ by
 moment: random contents resolve through RandItemIdx without advancing, so
 they follow the item random state, in both.
@@ -949,8 +956,102 @@ Checks (2026-11-13):
 - spirv_check.py (its G1 run hits wall 7): the DEPTH_MOD stage validates
   (66 stages, two writing FragDepth, no new findings).
 
-Not modelled: particles (MBDrawPsys's use of +0x68 is unread), critter
-colnodes, world nodes, and the header's MBTreeSetAlpha (unknowns.md).
+## Other node Z modifiers, effect alpha and enemy shadows (2026-11-13)
+
+Every writer of node +0x68 in SLUS_200.47 (a scan for `sh rt, 0x68(rs)`
+and for calls of MBTreeSetZMod 0x1cfd08): MBNodeInit (0), MBTreeSetZMod
+and its callers above, load_player 0x12fd7c (the player's SHADOWL1: −36),
+SetEnemyObj 0x138740 (the enemy shadow: −32), CritterAddShadow 0x19349c
+(−32), InitItemInfoData 0x14fd50 (the X-ray window: −800),
+CritterInitColnodes 0x192c18 and CreateWorldNode 0x11bad0. All are drawn
+now, through GsMaterial::with_zmod (a material of the node's own; a frame's
+material request keeps it unless it brings its own modifier):
+
+- The reference dumps' −32 and −36 draws are the enemies' and the
+  player's blob shadows (4-vertex meshes, ALPHA 0x44): replaying the crate
+  dump without the draws of their textures (TBP 14208, 14656, 14880;
+  tools/python/gs_replay.py with those kicks dropped, run
+  private/runs/ref-shadow-ab) removes the dark ovals under the three
+  enemies' feet (3699 pixels, mean darkening 19.7 summed RGB).
+- Particles take none: MBDrawPsys 0x1cd8a8 reads the node's +0x70, +0x60
+  and +0x44 only, and DrawPsysSub 0x1cd358 projects each sprite on the EE
+  through pbg+4 +0x2d0 and writes Z = (int)(z / w) — no +0x68 term, no
+  pb_obj_info +0x38. The port's particles were already right.
+- World nodes: file flag 0x400 → MBTreeSetZMod(node, −2, 1). 93 nodes in
+  8 world files carry it (S1, I4, H3, H2, H1, G3, B3, A4 floor decals:
+  craters, sand, camp rings, rectangles, "…XS_…"), none with children
+  (MBNewNode appends children after their parent exists, so the walk could
+  not reach them anyway). spawn_level gives their variants factor 1.000244.
+- Critter colnodes: CritterInitColnodes walks each colnode's tree node
+  (data +0x14 as CritterInitHeader resolved it) with data +0x16, mode 1,
+  in colnode order. On the disc: Skorne (E2 skorne1, F2 skorne2)
+  BODY1_HEAD0 −300 and the wing parts BODY1_WI#2/#6 −500, the dragon (B6)
+  OANIM_LWING/RWING −250, the Djinn (C5) JOINT#6 −12. present_critters
+  walks the tree as MBTreeSetZMod does (children by index — MBNewNode
+  appends — unless the first has MB flag 0x10, later ones with 0x10
+  skipped).
+- The X-ray window draws its −800 at the chest's centre instead of the
+  radius offset ("The X-ray chest view").
+- Shadows: the player's −36 and critters' −32 with MB flags 0x880 (the
+  critter shadow had neither before).
+
+Enemy shadows were not drawn at all. SetEnemyObj (init_enemy with the raw
+level, damage_enemy's statue swap with level 1) removes the old +0x1f0 node
+and, for record types other than 0, 0x15, 0x1e and 0x1f, makes
+MBNewObject(MBOX_FindObject_Sub(shadowdesc[min(level, 3) − 1, or 0 for a
+level below 1] = SHADOW1L1..SHADOW3L1, the type's model table only — first
+= last = 0x233650[type]), unitmat, no parent, flags 0x880) with +0x68 =
+−32 and +0x54 = 3.0. do_enemies (after UpdateObjWorldMat) and do_enemy_move
+copy the enemy's translation +0x40 to it; do_enemy_move sets MB flag 2
+while +0xe0 == 1 and clears it otherwise; EnemyCollideFloor's success path
+(0x143518) and do_enemy_collide's own FloorCollide (0x143788) CopyMat3
+enemy_floor_col 0x234090 — the contact basis WorldCollide's tail writes
+(0x11e9e8..: CreateMat3Norm of the file normal, or for a matrix object of
+the turned normal with NormalVector on rows 0 and 2;
+player_collision::hit_rows) — into its rows; kill_enemy 0x139ddc removes
+it. Game::enemy_shadow keeps type, rows and flag 2 (presentation);
+present_enemy_shadows draws it at the record translation (hidden with the
+enemy's state 0, which generate_enemy's and trans_enemy's flag-2 writes
+accompany). do_enemies 0x13bce8 also scales the enemy's +0x70 node and
+the shadow by EnemyShrink outside boss levels (MB flag 8, node scale x, y,
+z), which the client did not draw for the body either: both are scaled
+now. Not modelled: enemy_mod_alpha's MBTreeSetAlpha and flag 2 on body and
+shadow (unknowns.md).
+
+Effect header alpha: StartFXSub 0x17da34 and ChangeEffect 0x17abc4 call
+MBTreeSetAlpha 0x1cfdb0(node, EffectHeaders alpha, 1) — +0x53 = !a, flag
+0x200 for a > 0, cleared otherwise, children walked as for the Z modifier.
+EffectInfo +0x24 holds 96 for the hit and blood sets; InitEffect stores
+its t0 (0 for every InitEffects entry after the EffectInfo loop, 0x52/0x53
+copying 0x51's), InitCustomEffectSub its a3 (PlayerSfxInit: SFXX +0x32,
+CritterInitSfx: +0x46, the other InitCustomEffect calls 0). ProcessEffects
+0x17b978 also fades an effect with +0xc8 > 0 and no hit effect over its
+last +0xc8 seconds: MBTreeSetAlpha(node, (int)((1 − remaining / +0xc8) ×
+255), 1), remaining = END − ATime. setPrimAlpha 0x1bee30 turns +0x53 into
+the vertex alpha (float)byte × 0.50196081, an integer at the GS: the crate
+dump's HITCOL (a = 96) draws with 79, which gdl_play's prim_alpha now
+gives (79/128 = 0.6171875; before: full alpha).
+
+Checks (2026-11-13):
+- Actual disc, replays: gdl_tools seeds and compares the node alpha (+0x53
+  under flag 0x200). The traces hold 22,736 effect nodes, 5,536 with an
+  alpha (96: 5484; the fade's 224..233: 52) in 28 traces; regress r99 has
+  no alpha or Z modifier difference and every count of all 146 replays
+  equals r98. Negative control: a build without the header alpha gives
+  frame-fight-g1 three differences (kinds 3, 8, 9: native none, reference
+  byte 159) and 267 of 270 equal effect updates instead of 270.
+- Native, original presentation (lavapipe, private/runs): the G1 hedge
+  hit (g1-shadows-b1) draws HITCOL blended at 0.6171875 with factor
+  1.0781238 and the player shadow at 1.0043944. G1 at update 500
+  (g1-eshadow-on / -off, DIAGNOSTIC GDL_NO_ENEMY_SHADOWS=1): 25 enemy
+  shadow meshes at 1.0039063, scene dumps otherwise equal, 2018 pixels
+  differ — dark ovals at the enemies' feet (mean darkening 26.5), as the
+  reference replay's. B6 at update 200 (b6-colnode-z): the dragon's two
+  wing meshes at 1.0305171 (−250). H1 at update 100 (h1-decal-z): its 12
+  camp-ring decals at 1.0002441 (−2). The X-ray window beside G1 chest 43
+  (g1-xray-z, GDL_DEBUG_POWERUP=9:2:120): one mesh at 1.0976548 (−800),
+  the window cut through the chest's front with the icon and the ground
+  inside, as in xray-ref-v1 (contents differ by moment, see above).
 
 ## Sequence texture modifiers (2026-10-30)
 

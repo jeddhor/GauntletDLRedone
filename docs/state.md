@@ -829,8 +829,22 @@ original (PCSX2 reference on Xvfb :191, private captures):
    (offsets −640, −36, −32, the rest 0); the native crate hit starts HITCOL
    with −640 as there; the replays now compare effect node +0x68 at every
    effect creation and equal the reference in all 146 (regress r98, every
-   count equal to r96) (research/rendering.md "Effect depth offset"). Open:
-   particles, critter colnodes, world nodes, the header alpha (unknowns.md).
+   count equal to r96) (research/rendering.md "Effect depth offset").
+   Same day (user: the sparks' and blood's transparency, then the other
+   open items): effect trees draw the header alpha (StartFXSub/ChangeEffect
+   MBTreeSetAlpha, setPrimAlpha's truncated 79/128 for HITCOL as in the
+   crate dump) and ProcessEffects' end-of-life fade; the replays compare the
+   node alpha too (5,536 traced nodes with one; regress r99 equal to r98,
+   a negative control without the header alpha fails 3 creations). Every
+   node +0x68 writer is drawn: world decals (−2), critter colnodes
+   (Skorne, dragon, Djinn), the X-ray window's −800, player and critter
+   shadows (−36, −32); particles take none (MBDrawPsys/DrawPsysSub read).
+   The reference's −32 draws were enemy blob shadows, which the port never
+   drew: SetEnemyObj's SHADOW<n>L1 is now drawn with its floor rows,
+   flag 2 and EnemyShrink scale (bodies shrink too). research/rendering.md
+   "Other node Z modifiers, effect alpha and enemy shadows". Open: enemy
+   tree alpha fades, critter shrink, setPrimAlpha outside effect trees
+   (unknowns.md).
 
 ---
 

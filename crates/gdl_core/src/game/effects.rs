@@ -182,6 +182,9 @@ pub struct EffectTables {
     /// and InitCustomEffectSub store their zmod argument whether or not the
     /// tree matched): StartFXSub's MBTreeSetZMod.
     pub zmods: Vec<i32>,
+    /// EffectHeaders' alpha word (+8, stored beside the Z modifier):
+    /// StartFXSub's and ChangeEffect's MBTreeSetAlpha(node, alpha, 1).
+    pub alphas: Vec<i32>,
     /// MagicEffects 0x2407a0: EffectHeaders index by potion colour (0..4).
     pub magic_effects: [i32; 5],
     /// ShieldEffects 0x2407d0 and ThrowMagicEffects 0x2407b8 by colour.
@@ -241,8 +244,11 @@ impl EffectTables {
         let table = elf.object("EffectInfo")?;
         let mut headers = vec![None; MAX_HEADERS];
         let mut zmods = vec![0; MAX_HEADERS];
+        let mut alphas = vec![0; MAX_HEADERS];
         for (k, h) in headers.iter_mut().enumerate().take(0x50) {
-            zmods[k] = table.get(0x28 * k + 0x20..0x28 * k + 0x24).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
+            let word = |o: usize| table.get(0x28 * k + o..0x28 * k + o + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
+            zmods[k] = word(0x20);
+            alphas[k] = word(0x24);
             let raw = &table[0x28 * k..0x28 * k + 0x20];
             let name = &raw[..raw.iter().position(|&b| b == 0).unwrap_or(raw.len())];
             if name.is_empty() {
@@ -305,6 +311,7 @@ impl EffectTables {
             exp,
             headers,
             zmods,
+            alphas,
             magic_effects,
             shield_effects,
             throw_magic_effects,
@@ -636,9 +643,10 @@ impl Game {
         // only direct StartFXTree callers, StartMissile and
         // StartFamiliarFireBall, draw missile trees), so a Header visual
         // takes its header's modifier here; other trees keep MBNodeInit's 0.
-        let zmod = match visual {
-            Visual::Header(h) => self.header_zmod(h),
-            _ => 0,
+        // The same for its MBTreeSetAlpha(node, EffectHeaders[h] alpha, 1).
+        let (zmod, alpha) = match visual {
+            Visual::Header(h) => (self.header_zmod(h), self.header_alpha(h)),
+            _ => (0, None),
         };
         self.effects.nodes[i] = Some(EffectNode {
             matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -652,7 +660,7 @@ impl Game {
             target: None,
             tint: None,
             ambient: None,
-            alpha: None,
+            alpha,
             follow: None,
             streak: None,
             zmod,
@@ -677,13 +685,22 @@ impl Game {
             self.fx_mut(i).set_i16(fx::LINK, -1);
         }
         let atime = self.globals.atime;
-        let zmod = self.header_zmod(header);
+        let (zmod, alpha) = (self.header_zmod(header), self.header_alpha(header));
         if let Some(n) = self.effects.nodes[i].as_mut() {
             n.visual = Visual::Header(header);
             n.start = atime;
-            // MBTreeSetZMod(node, EffectHeaders[header] zmod, 1).
+            // MBTreeSetZMod(node, EffectHeaders[header] zmod, 1) and
+            // MBTreeSetAlpha(node, EffectHeaders[header] alpha, 1).
             n.zmod = zmod;
+            n.alpha = alpha;
         }
+    }
+
+    /// EffectHeaders[header]'s alpha as MBTreeSetAlpha 0x1cfdb0 applies it:
+    /// node +0x53 = !value and flag 0x200 for a positive value, the flag
+    /// cleared (drawn opaque) otherwise — None.
+    pub(crate) fn header_alpha(&self, header: usize) -> Option<i32> {
+        self.effects.tables.alphas.get(header).copied().filter(|&a| 0 < a)
     }
 
     /// EffectHeaders[header]'s Z modifier as MBTreeSetZMod stores it (sh).
@@ -824,7 +841,7 @@ impl Game {
                 let (_, frames, timing, repeat) = self.classes[p].sfx_trees[k];
                 EffectHeader { source: 0x40 + p as u8, tree: k, frames, timing, repeat }
             });
-            self.effects.weap_throw_fx[p][t] = self.register_custom_effect(own, &name, 0);
+            self.effects.weap_throw_fx[p][t] = self.register_custom_effect(own, &name, 0, 0);
         }
     }
 
@@ -2264,13 +2281,17 @@ impl Game {
 
     /// InitEffect 0x179d38(index, package, name, zmod, alpha, …): the header
     /// is always written — the AtreeMatch result, or none without a package
-    /// or match — and so is the Z modifier.
+    /// or match — and so are the Z modifier and the alpha (t0: 0 in every
+    /// InitEffects call after the EffectInfo loop).
     fn init_effect(&mut self, idx: usize, h: Option<EffectHeader>, zmod: i32) -> bool {
         if let Some(slot) = self.effects.tables.headers.get_mut(idx) {
             *slot = h;
         }
         if let Some(z) = self.effects.tables.zmods.get_mut(idx) {
             *z = zmod;
+        }
+        if let Some(a) = self.effects.tables.alphas.get_mut(idx) {
+            *a = 0;
         }
         h.is_some()
     }
@@ -2296,6 +2317,9 @@ impl Game {
             }
             if let Some(z) = self.effects.tables.zmods.get_mut(k) {
                 *z = 0;
+            }
+            if let Some(a) = self.effects.tables.alphas.get_mut(k) {
+                *a = 0;
             }
         }
         for t in 0..45usize {
@@ -2336,7 +2360,7 @@ impl Game {
             }
             for (name, die) in [("GENHIT", false), ("GENDIE", true)] {
                 let own = self.enemy_effect_tree(t, name);
-                let h = self.register_custom_effect(own, name, 0);
+                let h = self.register_custom_effect(own, name, 0, 0);
                 if die {
                     self.gen_die_effects[t] = h;
                 } else {
@@ -2346,9 +2370,9 @@ impl Game {
         }
         if (self.globals.cur_world as u32).wrapping_sub(5) < 2 {
             let own = self.effects.tables.item_header(0, "GENHIT");
-            self.gen_hit_effects[0] = self.register_custom_effect(own, "GENHIT", 0);
+            self.gen_hit_effects[0] = self.register_custom_effect(own, "GENHIT", 0, 0);
             let own = self.effects.tables.item_header(0, "GENDIE");
-            self.gen_die_effects[0] = self.register_custom_effect(own, "GENDIE", 0);
+            self.gen_die_effects[0] = self.register_custom_effect(own, "GENDIE", 0, 0);
         }
         if 0 <= self.globals.boss_type {
             for (k, name) in [(0x5a, "LEGENDFX"), (0x5b, "LEGENDFX2"), (0x5d, "LEGENDPRJ"), (0x5c, "LEGENDHLD")] {
@@ -2360,6 +2384,7 @@ impl Game {
             if self.effects.tables.headers.get(k).is_some_and(Option::is_none) {
                 self.effects.tables.headers[k] = self.effects.tables.headers[0x51];
                 self.effects.tables.zmods[k] = self.effects.tables.zmods[0x51];
+                self.effects.tables.alphas[k] = self.effects.tables.alphas[0x51];
             }
         }
         if self.in_level(b"B6\0\0") || self.in_level(b"I5\0\0") {
@@ -2900,8 +2925,17 @@ impl Game {
             }
         };
         let damage = mul(power, self.fx(i).f32_(fx::DAMAGE))?;
+        // 0x17b978..0x17b9d4: a fading effect (+0xc8 > 0, no hit effect at
+        // +0xbe) in its last +0xc8 seconds takes MBTreeSetAlpha(node,
+        // (int)((1 − remaining / fade) × 255), 1) — remaining the END −
+        // ATime above (f22). Presentation.
+        let fade = self.fx(i).f32_(fx::FADE_IN);
+        let fade_alpha = if 0.0 < fade && hit_fx <= 0 && age < fade { Some(mul(sub(1.0, div(age, fade)?)?, 255.0)? as i32) } else { None };
         if let Some(n) = self.effects.nodes[i].as_mut() {
             n.radius = radius;
+            if let Some(a) = fade_alpha {
+                n.alpha = (0 < a).then_some(a);
+            }
         }
         let fwd = {
             let mut f = m[2];

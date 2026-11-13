@@ -1249,7 +1249,7 @@ struct CritterPart {
 /// pick one; Skorne's lower body), posed by gdl_core::tree_pose
 /// (presentation of the native pose). Effects started on the critter are
 /// the effect slots'.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_critters(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -1257,6 +1257,7 @@ fn present_critters(
     libs: Res<Libraries>,
     mut slots: Query<(Entity, &mut CritterSlot, &mut Visibility, Option<&Children>)>,
     mut parts: Query<(&CritterPart, &mut Transform, Option<&OFrame>, &mut Visibility), Without<CritterSlot>>,
+    (mut materials, mut variants): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<NodeVariants>),
 ) {
     let g = &sim.game;
     for (entity, mut slot, mut vis, children) in &mut slots {
@@ -1283,13 +1284,31 @@ fn present_critters(
             // else a package named after the tree prefix (bosses).
             let lib_name = session.levels.get(session.current).and_then(|l| l.critters.get(cr.ty.0)).and_then(|c| c.2.clone()).unwrap_or_else(|| t.prefix.clone());
             if let Some(lib) = libs.0.get(&lib_name) {
-                let add = |commands: &mut Commands, node: usize, list: &Parts, frame: Option<OFrame>| {
+                // CritterInitColnodes 0x192c18: MBTreeSetZMod(each colnode's
+                // tree node — data +0x14 as CritterInitHeader resolved it —
+                // data +0x16, 1), in colnode order (later walks overwrite).
+                let mut zmods = HashMap::new();
+                if let Some(ty) = file.wad.types.get(cr.ty.1) {
+                    let (n, first) = (gdl_core::game::critters::CritterFile::i16_pub(ty, 0x118), gdl_core::game::critters::CritterFile::i16_pub(ty, 0x11a));
+                    for k in 0..n.max(0) as usize {
+                        let Some(d) = usize::try_from(first).ok().and_then(|f| file.wad.nodes.get(f + k)) else { continue };
+                        let (node, z) = (gdl_core::game::critters::CritterFile::i16_pub(d, 0x14), gdl_core::game::critters::CritterFile::i16_pub(d, 0x16));
+                        if let Ok(node) = usize::try_from(node)
+                            && t.nodes.iter().any(|x| x.index as usize == node)
+                        {
+                            tree_set_zmod(&t.nodes, node, z, &mut zmods);
+                        }
+                    }
+                }
+                let mut add = |commands: &mut Commands, node: usize, list: &Parts, frame: Option<OFrame>| {
                     let holder = commands.spawn((CritterPart { node }, Transform::default(), Visibility::default())).id();
                     if let Some(f) = frame {
                         commands.entity(holder).insert(f);
                     }
+                    let z = zmods.get(&node).copied().unwrap_or(0);
                     for (mesh, material) in list {
-                        let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+                        let m = node_variant(&mut materials, &mut variants, material, 0, z);
+                        let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(m), Transform::default())).id();
                         commands.entity(holder).add_child(child);
                     }
                     commands.entity(entity).add_child(holder);
@@ -1579,11 +1598,11 @@ fn present_camera_face(sim: Res<Sim>, mut nodes: Query<(&CameraFace, &mut Transf
 
 /// CritterAddShadow's object per critter with a shadow (Critter::shadow):
 /// SHADOW<n>L1 from the critter's model package at the simulated position,
-/// world-aligned.
+/// world-aligned, MB flags 0x880 and Z modifier −32 (0x19349c).
 #[derive(Component)]
 struct CritterShadow(usize);
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn present_critter_shadows(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -1592,6 +1611,7 @@ fn present_critter_shadows(
     root: Query<Entity, With<MirrorRoot>>,
     mut shadows: Query<(Entity, &CritterShadow, &mut Transform, &mut Visibility)>,
     settings: Res<gdl_client::settings::Settings>,
+    (mut materials, mut variants): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<NodeVariants>),
 ) {
     let g = &sim.game;
     let mut have = std::collections::HashSet::new();
@@ -1624,7 +1644,89 @@ fn present_critter_shadows(
         let e = commands.spawn((CritterShadow(i), Transform::from_translation(Vec3::from_array(at)), shown, LevelEntity)).id();
         commands.entity(r).add_child(e);
         for (mesh, material) in parts {
-            let ch = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default())).id();
+            let m = node_variant(&mut materials, &mut variants, material, 0x880, -32);
+            let ch = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(m), Transform::default())).id();
+            commands.entity(e).add_child(ch);
+        }
+    }
+}
+
+/// setPrimAlpha 0x1bee30 for a node with MBTreeSetAlpha's flag 0x200: the
+/// vertex alpha (float)(+0x53 = 255 − a) × 0.50196081 (0x3f008081), which
+/// reaches the GS as an integer — truncated: the reference crate frame's
+/// HITCOL (a = 96) draws with 79 — over the 128 of an unmodified node.
+fn prim_alpha(a: i32) -> f32 {
+    ((255 - a.clamp(0, 255)) as f32 * f32::from_bits(0x3f00_8081)) as i32 as f32 / 128.0
+}
+
+/// do_enemies 0x13bce8..0x13bdbc: outside boss levels (BossType < 0) an
+/// EnemyShrink other than 1 sets MB flag 8 and the node scale (x, y and z)
+/// on the enemy's +0x70 node and its shadow; 1 clears them. Boss levels
+/// leave the nodes unscaled.
+fn enemy_shrink_scale(g: &gdl_core::game::Game) -> f32 {
+    if g.globals.boss_type < 0 && g.globals.enemy_shrink != 1.0 { g.globals.enemy_shrink } else { 1.0 }
+}
+
+/// SetEnemyObj's ground shadow of an enemy slot (Game::enemy_shadow):
+/// SHADOW<n>L1 from the enemy type's model package (MBOX_FindObject_Sub on
+/// that table alone), MB flags 0x880, Z modifier −32, at the enemy's
+/// translation (+0x40) with the last floor contact's rows (CopyMat3 of
+/// enemy_floor_col) and EnemyShrink's scale; hidden with the enemy (state
+/// 0), by its MB flag 2, and while the NATIVE ENHANCEMENT character
+/// shadows replace the blob shadows.
+#[derive(Component)]
+struct EnemyShadowNode(usize, (i32, u8));
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn present_enemy_shadows(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    sources: Res<Sources>,
+    libs: Res<Libraries>,
+    root: Query<Entity, With<MirrorRoot>>,
+    mut nodes: Query<(Entity, &EnemyShadowNode, &mut Transform, &mut Visibility)>,
+    settings: Res<gdl_client::settings::Settings>,
+    (mut materials, mut variants): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<NodeVariants>),
+) {
+    let g = &sim.game;
+    let key = |i: usize| g.enemy_shadow.get(i).copied().flatten().map(|s| (g.enemies[i].i32_(0), s.n));
+    let scale = enemy_shrink_scale(g);
+    let mut have = std::collections::HashSet::new();
+    for (e, node, mut tf, mut vis) in &mut nodes {
+        let i = node.0;
+        if key(i) != Some(node.1) {
+            commands.entity(e).despawn();
+            continue;
+        }
+        have.insert(i);
+        let Some(s) = g.enemy_shadow.get(i).copied().flatten() else { continue };
+        let r = &g.enemies[i];
+        let show = r.i32_(0xc8) != 0 && !s.hidden && !settings.shadows && !no_enemy_shadows();
+        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        if show {
+            let mut t = record_transform(s.rows.map(Vec3::from_array), row(r, 0x40));
+            t.scale *= scale;
+            if t.is_finite() && *tf != t {
+                *tf = t;
+            }
+        }
+    }
+    let Ok(root) = root.single() else { return };
+    for i in 0..g.enemy_shadow.len().min(g.enemies.len()) {
+        let Some(k) = key(i) else { continue };
+        if have.contains(&i) {
+            continue;
+        }
+        let Some((pkg, _)) = sources.monsters.get(&k.0) else { continue };
+        let Some(parts) = libs.0.get(pkg).and_then(|l| l.by_label.get(&format!("SHADOW{}L1", k.1))) else { continue };
+        let e = commands.spawn((EnemyShadowNode(i, k), Transform::default(), Visibility::Hidden, LevelEntity)).id();
+        commands.entity(root).add_child(e);
+        for (mesh, material) in parts {
+            let m = node_variant(&mut materials, &mut variants, material, 0x880, -32);
+            let ch = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(m), Transform::default())).id();
             commands.entity(e).add_child(ch);
         }
     }
@@ -2074,7 +2176,9 @@ fn apply_material_requests(
             continue;
         }
         let alpha_mode = if styled && (b.alpha_mode == AlphaMode::Opaque || matches!(b.alpha_mode, AlphaMode::Mask(_))) { AlphaMode::Blend } else { b.alpha_mode };
-        let draw = gdl_client::GsDraw { depth_mod: zmod != 0, ..b.draw };
+        // A request's Z modifier, else the base material's own (world decals,
+        // shadows, critter colnodes: GsMaterial::with_zmod).
+        let draw = gdl_client::GsDraw { depth_mod: zmod != 0 || b.draw.depth_mod, ..b.draw };
         if ov.is_none() {
             let mut own = b.clone();
             own.alpha_mode = alpha_mode;
@@ -2108,7 +2212,9 @@ fn apply_material_requests(
                 p.extra.y = 1.0;
             }
             p.tint.w = b.params.tint.w * alpha;
-            p.depth.x = if zmod != 0 { gdl_client::zmod_depth_factor(zmod) } else { 0.0 };
+            if zmod != 0 {
+                p.depth.x = gdl_client::zmod_depth_factor(zmod);
+            }
             if let Some(c) = r.as_ref().and_then(|r| r.color) {
                 p.tint = (b.params.tint.truncate() * c).extend(p.tint.w);
             }
@@ -4321,7 +4427,7 @@ fn present_special_texmods(sim: Res<Sim>, libs: Res<Libraries>, q: Query<(Entity
 }
 
 /// The ground shadow object of a player slot (load_player: SHADOWL1, MB
-/// flags 0x880, z modifier −36; UpdatePlayerShadow places it).
+/// flags 0x880, Z modifier −36 drawn; UpdatePlayerShadow places it).
 #[derive(Component)]
 struct PlayerShadow(usize);
 
@@ -4360,7 +4466,8 @@ fn spawn_body(commands: &mut Commands, root: Entity, slot: usize, pc: &PlayerCha
     let shadow: Vec<_> = object_parts("SHADOWL1")
         .into_iter()
         .map(|(mesh, m)| {
-            let v = materials.get(&m).cloned().map(|x| materials.add(x.with_draw(0x880)));
+            // load_player 0x12fd7c: node +0x68 = −36 (Z modifier).
+            let v = materials.get(&m).cloned().map(|x| materials.add(x.with_draw(0x880).with_zmod(-36)));
             (mesh, v.unwrap_or(m))
         })
         .collect();
@@ -4690,7 +4797,7 @@ fn spawn_level(
         }
         f
     };
-    let mut variants: HashMap<(AssetId<gdl_client::GsMaterial>, u32), Handle<gdl_client::GsMaterial>> = HashMap::new();
+    let mut variants: HashMap<(AssetId<gdl_client::GsMaterial>, u32, i16), Handle<gdl_client::GsMaterial>> = HashMap::new();
     let mut lm_variants: HashMap<AssetId<gdl_client::GsMaterial>, Handle<gdl_client::GsMaterial>> = HashMap::new();
     if let Ok(placements) = session.world.placements() {
         let parent: HashMap<usize, usize> =
@@ -4722,8 +4829,12 @@ fn spawn_level(
             let hidden = node_hidden(&chain, &[], &[]);
             let Some(list) = names.get(node.label.as_str()).and_then(|i| parts.get(i)) else { continue };
             let rest = Vec3::from_array(p.summed_position);
+            // CreateWorldNode 0x11bad0: file flag 0x400 → MBTreeSetZMod(node,
+            // −2, 1). Every such node on the disc (93 in 8 levels: floor
+            // decals, "…XS_…") has no children, so the walk ends at it.
+            let zmod: i16 = if node.flags & 0x400 != 0 { -2 } else { 0 };
             for (mesh, material) in list {
-                let key = (material.id(), flags & (0x800000 | 0x4000 | 0x1000 | 0x80 | 0x40));
+                let key = (material.id(), flags & (0x800000 | 0x4000 | 0x1000 | 0x80 | 0x40), zmod);
                 // A lightmapped part whose texture is not opaque draws its
                 // lightmap as a pass of its own (GsDraw::lightmap_pass): the
                 // base keeps the texture alone.
@@ -4731,7 +4842,7 @@ fn spawn_level(
                 let material = variants
                     .entry(key)
                     .or_insert_with(|| {
-                        let mut m = materials.get(material).expect("part material").with_draw(flags);
+                        let mut m = materials.get(material).expect("part material").with_draw(flags).with_zmod(zmod);
                         if split {
                             m.params.options.y = 0.0;
                         }
@@ -7078,6 +7189,47 @@ fn spawn_parts(commands: &mut Commands, parent: Entity, list: Model, materials: 
 #[derive(Resource, Default)]
 struct PartVariants(HashMap<(AssetId<gdl_client::GsMaterial>, u32), Handle<gdl_client::GsMaterial>>);
 
+/// Material variants with MB draw flags and a node Z modifier of their own
+/// (shadows, critter colnodes), by base material, flags and modifier.
+#[derive(Resource, Default)]
+struct NodeVariants(HashMap<(AssetId<gdl_client::GsMaterial>, u32, i16), Handle<gdl_client::GsMaterial>>);
+
+/// `m` under MB draw flags `flags` (GsMaterial::with_draw, none for 0) and
+/// node Z modifier `zmod` (GsMaterial::with_zmod, none for 0).
+fn node_variant(materials: &mut Assets<gdl_client::GsMaterial>, cache: &mut NodeVariants, m: &Handle<gdl_client::GsMaterial>, flags: u32, zmod: i16) -> Handle<gdl_client::GsMaterial> {
+    if flags == 0 && zmod == 0 {
+        return m.clone();
+    }
+    cache
+        .0
+        .entry((m.id(), flags, zmod))
+        .or_insert_with(|| {
+            let v = materials.get(m).map(|x| {
+                let x = if flags != 0 { x.with_draw(flags) } else { x.clone() };
+                if zmod != 0 { x.with_zmod(zmod) } else { x }
+            });
+            v.map_or_else(|| m.clone(), |v| materials.add(v))
+        })
+        .clone()
+}
+
+/// MBTreeSetZMod 0x1cfd08(node, value, 1) on a package tree: the node, then
+/// its children in creation order (MBNewNode appends, so by index) unless
+/// the first has MB flag 0x10, skipping later ones with flag 0x10 (mode 2's
+/// sibling walk), each with its own children the same way.
+fn tree_set_zmod(nodes: &[gdl_formats::animation::Node], k: usize, value: i16, out: &mut HashMap<usize, i16>) {
+    out.insert(k, value);
+    let mut kids: Vec<&gdl_formats::animation::Node> = nodes.iter().filter(|n| n.parent == k as i32).collect();
+    kids.sort_by_key(|n| n.index);
+    if kids.first().is_some_and(|c| tree_node_flags(c) & 0x10 == 0) {
+        for c in kids {
+            if tree_node_flags(c) & 0x10 == 0 {
+                tree_set_zmod(nodes, c.index as usize, value, out);
+            }
+        }
+    }
+}
+
 /// CameraFace on a model node under an item/effect slot (the slot's
 /// Transform is in original coordinates).
 #[derive(Component)]
@@ -7123,7 +7275,8 @@ fn present_world(
                     continue;
                 };
                 let (t, level) = anim.tree;
-                let tf = record_transform([row(r, 0x10), row(r, 0x20), row(r, 0x30)], row(r, 0x40));
+                let mut tf = record_transform([row(r, 0x10), row(r, 0x20), row(r, 0x30)], row(r, 0x40));
+                tf.scale *= enemy_shrink_scale(g);
                 let Some((pkg, prefix)) = sources.monsters.get(&t) else {
                     *vis = Visibility::Hidden;
                     continue;
@@ -7358,14 +7511,15 @@ fn present_world(
 struct SeeThruView(usize, Option<String>);
 
 /// InitItemInfoData's "SEETHRU" object (POWERUPS, texture XRAY_A, MB flags
-/// 0x4200000: camera-facing; node Z modifier −800) for player `.0`. The
-/// reference (xray-ref-v1, a labelled powerup write beside G1's chest 43)
-/// shows its rounded window cut through the chest's front, the contents'
-/// icon and the ground behind visible: drawn after the icon and before the
-/// chest, it writes only depth, nearer than the chest. Here: depth only,
-/// sorted first among translucent draws, offset towards the camera by the
-/// chest definition's radius (+0xc; HYPOTHESIS for the Z modifier, whose
-/// VU1 use is not read), with the chest's parts sorted after it.
+/// 0x4200000: camera-facing; node Z modifier −800, 0x14fd50) for player
+/// `.0`. The reference (xray-ref-v1, a labelled powerup write beside G1's
+/// chest 43) shows its rounded window cut through the chest's front, the
+/// contents' icon and the ground behind visible: drawn after the icon and
+/// before the chest, it writes only depth, nearer than the chest. Here:
+/// depth only, sorted first among translucent draws, at the chest's centre
+/// with the Z modifier drawn (it orders as if 9.8 % nearer;
+/// research/rendering.md "Effect depth offset"), the chest's parts sorted
+/// after it.
 #[derive(Component)]
 struct SeeThruFrame(usize);
 
@@ -7401,7 +7555,8 @@ fn present_see_thru(
             let f = commands.spawn((SeeThruFrame(p), CameraFace { mode: 0x400_0000, anchor: Vec3::ZERO, offset: Vec3::ZERO }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
             commands.entity(root).add_child(f);
             for (mesh, material) in &frame_parts {
-                let Some(mut m) = materials.get(material).cloned() else { continue };
+                let Some(m) = materials.get(material).cloned() else { continue };
+                let mut m = m.with_zmod(-800);
                 m.draw.depth_only = true;
                 m.alpha_mode = AlphaMode::Blend;
                 let child = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(materials.add(m)), Transform::default())).id();
@@ -7447,14 +7602,8 @@ fn present_see_thru(
                 let m = r.matrix();
                 let scale = Vec3::from_array(m[0]).length();
                 face.anchor = Vec3::from_array(r.position());
-                let radius = g.items.definitions[r.definition()].f32_(0xc);
-                face.offset = Vec3::new(0.0, 0.0, radius);
-                // Moved towards the camera only for depth: keep the size it
-                // has on screen at the chest's centre.
-                let eye = g.std_camera.as_ref().map(|c| Vec3::from_array(c.pb.eye));
-                let d = eye.map_or(0.0, |e| e.distance(face.anchor));
-                let k = if radius < d { (d - radius) / d } else { 1.0 };
-                ftf.scale = Vec3::splat(scale * k);
+                face.offset = Vec3::ZERO;
+                ftf.scale = Vec3::splat(scale);
                 *vis = Visibility::Inherited;
             }
             None => *vis = Visibility::Hidden,
@@ -7690,11 +7839,11 @@ fn present_effect_trees(
                 meshes.push((e, idx.0));
             }
         }
-        // MBTreeSetAlpha (setPrimAlpha: (255 − v) / 255) and MBTreeSetColor.
+        // MBTreeSetAlpha (setPrimAlpha's vertex alpha) and MBTreeSetColor.
         if let Some(Some(n)) = sim.game.effects.nodes.get(fx.slot) {
             for &(e, _) in &meshes {
                 if let Some(a) = n.alpha {
-                    req.alpha(e, (255 - a.clamp(0, 255)) as f32 / 255.0);
+                    req.alpha(e, prim_alpha(a));
                 }
                 if let Some(c) = n.tint {
                     req.get(e).color = Some(Vec3::new((c >> 16 & 0xff) as f32, (c >> 8 & 0xff) as f32, (c & 0xff) as f32) / 255.0);
@@ -7718,6 +7867,13 @@ fn present_effect_trees(
             request_tree_texmods(mods, lib, index, seq, &meshes, &mut req);
         }
     }
+}
+
+/// DIAGNOSTIC: GDL_NO_ENEMY_SHADOWS=1 leaves SetEnemyObj's ground shadows
+/// out (A/B frames of the shadows). Not a game feature.
+fn no_enemy_shadows() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var_os("GDL_NO_ENEMY_SHADOWS").is_some_and(|v| v == "1"))
 }
 
 /// DIAGNOSTIC: GDL_NO_ZMOD=1 draws effect trees without their node Z
@@ -11041,6 +11197,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(presentation)
         .init_resource::<Libraries>()
         .init_resource::<PartVariants>()
+        .init_resource::<NodeVariants>()
         .init_resource::<MatRequests>()
         .init_resource::<PendingTreePsys>()
         .init_resource::<ChestNodes>()
@@ -11111,7 +11268,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_enemy_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

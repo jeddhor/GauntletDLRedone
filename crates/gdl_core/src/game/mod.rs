@@ -417,6 +417,8 @@ pub struct Game {
     /// (do_enemy_collide's MBNodeSetParent onto a 0x1000 floor object);
     /// None = EnemyRootNode.
     pub enemy_floor_parent: Vec<Option<usize>>,
+    /// SetEnemyObj's ground shadow per enemy slot (presentation).
+    pub enemy_shadow: Vec<Option<enemies::EnemyShadow>>,
     /// tid.165 0x2bd000: AudioTempTrackSet's request counter (item loops
     /// only; other sound starts do not advance it natively).
     pub audio_tid: u16,

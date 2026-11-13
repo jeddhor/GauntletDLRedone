@@ -569,7 +569,7 @@ impl Game {
     /// InitCustomEffectSub 0x179aa8 (critter file f's model when given, then
     /// weapon_anim, powerup_anim, item_anim and item_anim2):
     /// EffectHeaders[0x61 + n].
-    pub(crate) fn init_custom_effect(&mut self, f: Option<usize>, name: &str, zmod: i16, _alpha: i16) -> i32 {
+    pub(crate) fn init_custom_effect(&mut self, f: Option<usize>, name: &str, zmod: i16, alpha: i16) -> i32 {
         if name.is_empty() {
             return -1;
         }
@@ -579,14 +579,14 @@ impl Game {
                 EffectHeader { source: 2 + f as u8, tree: k, frames: s.map_or(0, |s| s.frames), timing: s.map_or(0, |s| s.timing_factor), repeat: s.map_or(0, |s| s.repeat) }
             })
         });
-        self.register_custom_effect(found, name, i32::from(zmod))
+        self.register_custom_effect(found, name, i32::from(zmod), i32::from(alpha))
     }
 
     /// InitCustomEffectSub's search after the caller's package (`own`):
     /// weapon_anim, powerup_anim and the item packages; the next custom
     /// EffectHeaders entry (0x61 + n, at most 0x79 of them) with the zmod
-    /// argument.
-    pub(crate) fn register_custom_effect(&mut self, own: Option<EffectHeader>, name: &str, zmod: i32) -> i32 {
+    /// and alpha arguments (a2, a3; 0x179cc0 / 0x179cc8).
+    pub(crate) fn register_custom_effect(&mut self, own: Option<EffectHeader>, name: &str, zmod: i32, alpha: i32) -> i32 {
         if name.is_empty() {
             return -1;
         }
@@ -602,6 +602,9 @@ impl Game {
         }
         if let Some(z) = self.effects.tables.zmods.get_mut(idx) {
             *z = zmod;
+        }
+        if let Some(a) = self.effects.tables.alphas.get_mut(idx) {
+            *a = alpha;
         }
         idx as i32
     }
