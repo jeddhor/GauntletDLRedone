@@ -1009,3 +1009,12 @@ sixteen, client-equiv0/1); this machine's select-screen preparation 2.7 →
 0.4 s. On the owner's machine with the pack where the game keeps it (an SSD):
 3.4 s for the first load after the copy (cold files), under 1 s after (runs
 user-fix4, select-shots; GDL_FRAME_LOG's PERF materials_for lines).
+
+Open (2026-11-12): the first run of the build of f82b054 on that machine
+(run final-g1: G1, the owner's settings and HD pack) lost its device after
+11 frames with the same "Unexpected error variant", with 5.0 s and 3.9 s
+frames during the load (the driver's shader cache did not yet hold the
+new shaders; 2.4 of 15.9 GB free). The next six runs of that source (the
+release build, the SPIR-V-dumping build, and three of the
+internal_error_panic build, which would have named the Vulkan result and
+the call) ran clean, so the failing call is not known (unknowns.md).
