@@ -15,9 +15,12 @@ Platforms
     from an image file and from an image mounted as a disc drive, and
     playing, with release 1.0.0. The owner installed 1.3.0 on Windows
     (2026-11-05) and found that its movies needed FFmpeg and opened a
-    console window each (fixed since: the game decodes them itself). The
-    graphics options (generating HD textures included) and network play
-    are still untested there by a person.
+    console window each (fixed since: the game decodes them itself). With
+    1.3.1 on an NVIDIA GeForce GTX 1080 the game stopped when the New/Load
+    screen appeared, whatever the settings (releases 1.1.0 to 1.3.1 give
+    NVIDIA's driver a shader it refuses; fixed since, and checked on that
+    machine with every graphics option and HD textures on). Network play
+    and generating HD textures are still untested there by a person.
     Older Windows versions are untested.
   - A graphics card with Vulkan (or DirectX 12 on Windows) is required.
 

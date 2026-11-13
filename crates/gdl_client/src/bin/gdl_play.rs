@@ -10936,7 +10936,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             bevy::post_process::bloom::BloomPlugin,
             gdl_client::writeback::MsaaWritebackPlugin,
         ))
-        .add_plugins(gdl_client::GsMaterialPlugin)
+        .add_plugins((gdl_client::GsMaterialPlugin, DeviceLostReport))
         .init_resource::<Ui>()
         .init_resource::<HudSets>()
         .insert_resource(PromptStyle(gdl_client::glyphs::Style::PlayStation))
@@ -11313,6 +11313,15 @@ fn process_start() -> std::time::Instant {
 /// developer run (no GDL_* variable), the desktop's error dialog (kdialog
 /// or zenity, whichever is installed; nothing when neither is).
 fn report_fatal(msg: &str) {
+    // The first fatal error is the one reported: another thread failing on
+    // the same cause (the renderer after a lost device, 2026-11-12) waits
+    // while the first message is shown, then the process ends.
+    static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REPORTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        loop {
+            std::thread::park();
+        }
+    }
     if let Ok(d) = gdl_client::data_home() {
         let d = d.join("gdl-native");
         let _ = std::fs::create_dir_all(&d);
@@ -11359,12 +11368,74 @@ fn fatal_text(info: &std::panic::PanicHookInfo) -> String {
     }
 }
 
+/// A lost graphics device ends the game with the driver's reason (wgpu-core
+/// loses the device on a driver reset or failure and on running out of
+/// memory while it works). Without this, Bevy's renderer panicked on its
+/// next buffer write and again while it released the window's frame, and
+/// the game hung (the owner's Windows machine, GTX 1080, 2026-11-12).
+struct DeviceLostReport;
+
+impl Plugin for DeviceLostReport {
+    fn build(&self, _: &mut App) {}
+
+    fn finish(&self, app: &mut App) {
+        let Some(device) = app.world().get_resource::<bevy::render::renderer::RenderDevice>() else { return };
+        device.wgpu_device().set_device_lost_callback(|reason, message| {
+            if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+                return;
+            }
+            eprintln!("renderer: the graphics device was lost ({reason:?}): {message}");
+            report_fatal(&format!(
+                "The graphics card stopped working for the game (the graphics driver reported: {message}).\n\nThis happens when the graphics card runs out of memory or its driver resets. Turning off HD textures and other graphics options (F10) asks less of it; updating the graphics card's driver can help too."
+            ));
+            std::process::exit(1);
+        });
+    }
+}
+
+/// Windows: a game started from its shortcut has no stderr (no console), so
+/// its lines and the renderer's log go to <data home>/gdl-native/log.txt,
+/// the previous run's kept as log-previous.txt. A console or a pipe that
+/// started it keeps them.
+#[cfg(windows)]
+fn log_to_file() {
+    use std::os::windows::io::IntoRawHandle;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetStdHandle(which: u32) -> *mut core::ffi::c_void;
+        fn SetStdHandle(which: u32, handle: *mut core::ffi::c_void) -> i32;
+    }
+    const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+    // SAFETY: a query of the process's standard error handle.
+    let current = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+    if !current.is_null() && current as isize != -1 {
+        return;
+    }
+    let Ok(home) = gdl_client::data_home() else { return };
+    let d = home.join("gdl-native");
+    let _ = std::fs::create_dir_all(&d);
+    let _ = std::fs::rename(d.join("log.txt"), d.join("log-previous.txt"));
+    if let Ok(f) = std::fs::File::create(d.join("log.txt")) {
+        // SAFETY: the file's handle, kept open for the life of the process
+        // (std's stderr looks the handle up on every write).
+        unsafe { SetStdHandle(STD_ERROR_HANDLE, f.into_raw_handle()) };
+    }
+}
+
 fn main() {
     let _ = process_start();
+    #[cfg(windows)]
+    log_to_file();
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        report_fatal(&fatal_text(info));
+        // The log first (stderr; Windows: log.txt): the message waits for
+        // the player.
         default_hook(info);
+        report_fatal(&fatal_text(info));
+        // The first failure is the one reported: no unwinding into the
+        // renderer's teardown, whose own panics replaced the message and
+        // hung the game (2026-11-12).
+        std::process::exit(101);
     }));
     if let Err(error) = run() {
         eprintln!("{error}");

@@ -836,7 +836,35 @@ pub fn materials_for(
     // Each decoded record's level-0 alpha class (0 opaque, 1 cut-out, 2
     // blended; the alpha_mode rule below).
     let mut class_of: HashMap<u16, u8> = HashMap::new();
-    for bitmap in &objects.bitmap_records {
+    let sharp = texfilter::sharp();
+    let candidates_of: Vec<Vec<&gdl_formats::texdef::Bitmap>> = objects
+        .bitmap_records
+        .iter()
+        .map(|bitmap| {
+            if bitmap.format == 146 {
+                return Vec::new();
+            }
+            table
+                .bitmaps
+                .iter()
+                .filter(|b| {
+                    b.texture_offset == bitmap.texture_offset
+                        && b.format == bitmap.format
+                        && b.width == bitmap.width
+                        && b.height == bitmap.height
+                })
+                .collect()
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let mut prepared = prepare_textures(objects, table, textures, &candidates_of, sharp).into_iter();
+    // DIAGNOSTIC (performance, with gdl_play's GDL_FRAME_LOG): the textures'
+    // preparation time per package.
+    if std::env::var_os("GDL_FRAME_LOG").is_some() {
+        eprintln!("PERF materials_for records {} ms {:.1}", objects.bitmap_records.len(), started.elapsed().as_secs_f64() * 1000.0);
+    }
+    for (bitmap, candidates) in objects.bitmap_records.iter().zip(candidates_of) {
+        let decoded = prepared.next().flatten();
         if bitmap.format == 146 {
             match bitmap.decode_lightmap_indices(textures) {
                 Ok(indices) => {
@@ -850,26 +878,10 @@ pub fn materials_for(
             }
             continue;
         }
-        let candidates: Vec<_> = table
-            .bitmaps
-            .iter()
-            .filter(|b| {
-                b.texture_offset == bitmap.texture_offset
-                    && b.format == bitmap.format
-                    && b.width == bitmap.width
-                    && b.height == bitmap.height
-            })
-            .collect();
-        // Level 0 and, for records with mips, every level (the GS uploads
-        // them all and samples with TEX1's LOD).
-        let decoded = record_texdef(table, bitmap).and_then(|def| {
-            let levels: Vec<Vec<u8>> = (0..=def.mipmap_count).map_while(|k| def.decode_level_rgba(textures, k).ok()).collect();
-            (!levels.is_empty()).then_some(levels)
-        });
         if candidates.len() == 1 {
             label_index.entry(candidates[0].label.to_uppercase()).or_insert(bitmap.index as u16);
         }
-        let Some(mut levels) = decoded else {
+        let Some(PreparedTexture { width, height, levels, own_levels, class }) = decoded else {
             unresolved.push(bitmap.index);
             // A magenta placeholder image: texture modifiers (MBSetRomTexture /
             // MBCopyTexture) may later copy a decoded frame into this record.
@@ -892,39 +904,16 @@ pub fn materials_for(
             );
             continue;
         };
-        for l in levels.iter_mut() {
-            texa_alpha(bitmap.format, l);
-        }
-        // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack;
-        // one level, so the GS LOD selection does not apply to it).
-        let (mut width, mut height) = (bitmap.width, bitmap.height);
-        if texture_pack::active()
-            && let Some((w, h, new)) = texture_pack::replace(width, height, &levels[0], &candidates[0].label, bitmap.flags)
-        {
-            (width, height, levels) = (w as u16, h as u16, vec![new]);
-        }
-        // Opaque when every texel passes at full coverage; Mask when texels
-        // are either rejected by the alpha test or full; otherwise blended.
-        let rgba = &levels[0];
-        let opaque = rgba.chunks_exact(4).all(|p| p[3] >= 0x80);
-        let binary = rgba.chunks_exact(4).all(|p| p[3] <= 1 || p[3] >= 0x80);
-        let alpha_mode = if opaque {
-            AlphaMode::Opaque
-        } else if binary {
-            AlphaMode::Mask(0.5)
-        } else {
-            AlphaMode::Blend
+        let alpha_mode = match class {
+            0 => AlphaMode::Opaque,
+            1 => AlphaMode::Mask(0.5),
+            _ => AlphaMode::Blend,
         };
-        class_of.insert(bitmap.index as u16, if opaque { 0 } else if binary { 1 } else { 2 });
-        let max_level = (levels.len() - 1) as u8;
-        if 0 < max_level {
+        class_of.insert(bitmap.index as u16, class);
+        if 1 < own_levels {
             mipmapped.insert(bitmap.index as u16);
         }
-        // NATIVE ENHANCEMENT (texfilter, "sharp"): the chain continued to
-        // 1×1 and an anisotropic sampler; the original keeps these levels.
-        let key = texfilter::TexKey { flags: bitmap.flags, levels: levels.len() as u8, animated: false, borrowed: false };
-        let sharp = texfilter::sharp();
-        let levels = texfilter::with_chain(width.into(), height.into(), levels, sharp);
+        let key = texfilter::TexKey { flags: bitmap.flags, levels: own_levels, animated: false, borrowed: false };
         let image = images.add(mip_image(width, height, levels, texfilter::sampler(key, sharp)));
         texfilter::register(image.id(), key);
         labels.entry(candidates[0].label.to_uppercase()).or_insert_with(|| image.clone());
@@ -968,6 +957,95 @@ pub fn materials_for(
     unknown.draw.cull = true;
     let unknown = materials.add(unknown);
     MaterialSet { base, labels, label_index, record_images, lightmaps, mipmapped, unknown, unresolved }
+}
+
+/// A record's texture as materials_for draws it: its levels after the
+/// texture pack's replacement and texfilter's chain, the level count before
+/// the chain (the record's own, or 1 for a replacement) and level 0's alpha
+/// class (0 opaque, 1 cut-out, 2 blended).
+struct PreparedTexture {
+    width: u16,
+    height: u16,
+    levels: Vec<Vec<u8>>,
+    own_levels: u8,
+    class: u8,
+}
+
+fn prepare_texture(table: &TextureTable, textures: &[u8], bitmap: &gdl_formats::objects::ObjectBitmap, label: &str, sharp: bool) -> Option<PreparedTexture> {
+    // Level 0 and, for records with mips, every level (the GS uploads them
+    // all and samples with TEX1's LOD).
+    let def = record_texdef(table, bitmap)?;
+    let mut levels: Vec<Vec<u8>> = (0..=def.mipmap_count).map_while(|k| def.decode_level_rgba(textures, k).ok()).collect();
+    if levels.is_empty() {
+        return None;
+    }
+    for l in levels.iter_mut() {
+        texa_alpha(bitmap.format, l);
+    }
+    // NATIVE ENHANCEMENT: a texture pack's replacement (texture_pack; one
+    // level, so the GS LOD selection does not apply to it).
+    let (mut width, mut height) = (bitmap.width, bitmap.height);
+    if texture_pack::active()
+        && let Some((w, h, new)) = texture_pack::replace(width, height, &levels[0], label, bitmap.flags)
+    {
+        (width, height, levels) = (w as u16, h as u16, vec![new]);
+    }
+    // Opaque when every texel passes at full coverage; Mask when texels are
+    // either rejected by the alpha test or full; otherwise blended.
+    let rgba = &levels[0];
+    let class = if rgba.chunks_exact(4).all(|p| p[3] >= 0x80) {
+        0
+    } else if rgba.chunks_exact(4).all(|p| p[3] <= 1 || p[3] >= 0x80) {
+        1
+    } else {
+        2
+    };
+    let own_levels = levels.len() as u8;
+    // NATIVE ENHANCEMENT (texfilter, "sharp"): the chain continued to 1×1
+    // and an anisotropic sampler; the original keeps these levels.
+    let levels = texfilter::with_chain(width.into(), height.into(), levels, sharp);
+    Some(PreparedTexture { width, height, levels, own_levels, class })
+}
+
+/// prepare_texture for every record (lightmaps and records without a
+/// candidate: None), in record order, on worker threads: each is
+/// independent, and with HD textures every one reads and decodes a PNG and
+/// builds its chain (the select screen's 769 took 21 s in one frame on the
+/// owner's Windows machine, 2026-11-12, and Windows reported the game as not
+/// responding). A texture dump (texture_pack) writes files: one thread.
+fn prepare_textures(objects: &Objects, table: &TextureTable, textures: &[u8], candidates_of: &[Vec<&gdl_formats::texdef::Bitmap>], sharp: bool) -> Vec<Option<PreparedTexture>> {
+    let records = &objects.bitmap_records;
+    let one = |k: usize| -> Option<PreparedTexture> {
+        let label = candidates_of[k].first()?.label.as_str();
+        prepare_texture(table, textures, &records[k], label, sharp)
+    };
+    let workers = if texture_pack::dumping() { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()).min(16) };
+    if workers <= 1 || records.len() < 2 {
+        return (0..records.len()).map(one).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut out: Vec<Option<PreparedTexture>> = (0..records.len()).map(|_| None).collect();
+    let done: Vec<Vec<(usize, Option<PreparedTexture>)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if k >= records.len() {
+                            return mine;
+                        }
+                        mine.push((k, one(k)));
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))).collect()
+    });
+    for (k, p) in done.into_iter().flatten() {
+        out[k] = p;
+    }
+    out
 }
 
 /// Mesh/material handles for every object index, with unsupported parts listed.

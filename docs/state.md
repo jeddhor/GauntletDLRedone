@@ -799,6 +799,16 @@ original (PCSX2 reference on Xvfb :191, private captures):
    on PATH the attract movies play to their ends on Linux and under Wine;
    1.3.0 skipped them (movie_play_check.py; research/presentation.md
    "Movies"). Released as 1.3.1 (research/release.md).
+   2026-11-12 (user, on Windows with 1.3.1, GTX 1080: Start → the New/Load
+   screen, then two panics and a hang): NVIDIA's compiler refused GsMaterial's
+   bindless fragment shader (invalid SPIR-V from naga: a binding array's
+   element passed to gs.wgsl bspline_r), so the device was lost on the first
+   3D scene whatever the settings; fixed in the shader, checked on that
+   machine (research/rendering.md "NVIDIA"), and spirv_check.py validates
+   the renderer's SPIR-V here. A lost device now reports the driver's reason
+   and ends the game (no cascade, no hang); Windows writes log.txt; the
+   select screen's HD textures load on worker threads (21 s → 3.4 s cold,
+   under 1 s warm on that machine).
 
 ---
 

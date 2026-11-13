@@ -197,11 +197,13 @@ stay as well, in the hd-textures folder beside saves.
 
 If something goes wrong
 -----------------------
-If the game cannot start, it writes the reason to
+If the game cannot start or stops, it writes the reason to
     Linux:    ~/.local/share/gdl-native/last-error.txt
     Windows:  %APPDATA%\gdl-native\last-error.txt
-(and on Windows shows it in a message box). KNOWN_ISSUES.txt lists what is
-known to differ from the original.
+(and on Windows shows it in a message box). On Windows the game's log of
+its last run is beside it, log.txt (the run before in log-previous.txt);
+it helps with a report. KNOWN_ISSUES.txt lists what is known to differ from
+the original.
 
 
 License

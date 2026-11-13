@@ -196,8 +196,15 @@ fn gs_modulate(cv: vec3<f32>, tex: vec3<f32>, full: bool) -> vec3<f32> {
 // through four bilinear taps (Sigg & Hadwiger, GPU Gems 2 ch. 20). The
 // 4-bit lightmaps' texel steps and 16 levels become smooth gradients; the
 // level 0 taps need no derivatives.
-fn bspline_r(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> f32 {
-    let size = vec2<f32>(textureDimensions(t, 0));
+struct BsplineTaps {
+    // The four taps' coordinates (h0/h1 per axis) and weights (g0/g1).
+    h0: vec2<f32>,
+    h1: vec2<f32>,
+    g0: vec2<f32>,
+    g1: vec2<f32>,
+}
+
+fn bspline_taps(size: vec2<f32>, uv: vec2<f32>) -> BsplineTaps {
     let p = uv * size - 0.5;
     let i = floor(p);
     let f = p - i;
@@ -209,14 +216,37 @@ fn bspline_r(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> f32 {
     let w3 = f3 / 6.0;
     let g0 = w0 + w1;
     let g1 = w2 + w3;
-    let h0 = (i - 1.0 + w1 / g0 + 0.5) / size;
-    let h1 = (i + 1.0 + w3 / g1 + 0.5) / size;
-    let t00 = textureSampleLevel(t, s, vec2(h0.x, h0.y), 0.0).r;
-    let t10 = textureSampleLevel(t, s, vec2(h1.x, h0.y), 0.0).r;
-    let t01 = textureSampleLevel(t, s, vec2(h0.x, h1.y), 0.0).r;
-    let t11 = textureSampleLevel(t, s, vec2(h1.x, h1.y), 0.0).r;
-    return g0.y * (g0.x * t00 + g1.x * t10) + g1.y * (g0.x * t01 + g1.x * t11);
+    return BsplineTaps((i - 1.0 + w1 / g0 + 0.5) / size, (i + 1.0 + w3 / g1 + 0.5) / size, g0, g1);
 }
+
+fn bspline_mix(b: BsplineTaps, t00: f32, t10: f32, t01: f32, t11: f32) -> f32 {
+    return b.g0.y * (b.g0.x * t00 + b.g1.x * t10) + b.g1.y * (b.g0.x * t01 + b.g1.x * t11);
+}
+
+#ifdef BINDLESS
+// The bindless lightmap by its slab indices: naga 27 passes a binding
+// array's element to a texture or sampler parameter as a loaded handle where
+// the function takes a pointer, invalid SPIR-V that NVIDIA's compiler
+// refuses ("NVVM compilation failed"; the GTX 1080's device was lost on the
+// first 3D scene, 2026-11-12; research/rendering.md "NVIDIA").
+fn bspline_r(ti: u32, si: u32, uv: vec2<f32>) -> f32 {
+    let b = bspline_taps(vec2<f32>(textureDimensions(bindless_textures_2d[ti], 0)), uv);
+    return bspline_mix(b,
+        textureSampleLevel(bindless_textures_2d[ti], bindless_samplers_filtering[si], vec2(b.h0.x, b.h0.y), 0.0).r,
+        textureSampleLevel(bindless_textures_2d[ti], bindless_samplers_filtering[si], vec2(b.h1.x, b.h0.y), 0.0).r,
+        textureSampleLevel(bindless_textures_2d[ti], bindless_samplers_filtering[si], vec2(b.h0.x, b.h1.y), 0.0).r,
+        textureSampleLevel(bindless_textures_2d[ti], bindless_samplers_filtering[si], vec2(b.h1.x, b.h1.y), 0.0).r);
+}
+#else
+fn bspline_r(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> f32 {
+    let b = bspline_taps(vec2<f32>(textureDimensions(t, 0)), uv);
+    return bspline_mix(b,
+        textureSampleLevel(t, s, vec2(b.h0.x, b.h0.y), 0.0).r,
+        textureSampleLevel(t, s, vec2(b.h1.x, b.h0.y), 0.0).r,
+        textureSampleLevel(t, s, vec2(b.h0.x, b.h1.y), 0.0).r,
+        textureSampleLevel(t, s, vec2(b.h1.x, b.h1.y), 0.0).r);
+}
+#endif
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -327,7 +357,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef VERTEX_UVS_B
 #ifdef BINDLESS
     let lm_bilinear = textureSample(bindless_textures_2d[material_indices[slot].lightmap_texture], bindless_samplers_filtering[material_indices[slot].lightmap_sampler], in.uv_b).r;
-    let lm_smooth = bspline_r(bindless_textures_2d[material_indices[slot].lightmap_texture], bindless_samplers_filtering[material_indices[slot].lightmap_sampler], in.uv_b);
+    let lm_smooth = bspline_r(material_indices[slot].lightmap_texture, material_indices[slot].lightmap_sampler, in.uv_b);
 #else
     let lm_bilinear = textureSample(lightmap_texture, lightmap_sampler, in.uv_b).r;
     let lm_smooth = bspline_r(lightmap_texture, lightmap_sampler, in.uv_b);

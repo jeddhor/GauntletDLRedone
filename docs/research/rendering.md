@@ -920,3 +920,74 @@ each frame — they are now one storage buffer bound by every material
 client's DIAGNOSTIC frame log (GDL_FRAME_LOG) in scenarios perf-*-g1:
 square attack 262 → 180 ms mean frame time on the private Xvfb, standing
 126, cross throws 148 (m12-acceptance.md "Acceptance").
+
+## NVIDIA: the lost device on the first 3D scene (2026-11-12)
+
+The owner's report (Windows 11, release 1.3.1): the movies play, but on Start
+the New/Load screen (the select screen, world 13: the first 3D scene) appears,
+stops responding, two panics are shown and the game hangs until ended. The
+machine: GeForce GTX 1080, NVIDIA 582.78, Vulkan (wgpu's choice), a 3840×2160
+and a 1920×1080 display; the owner's settings had every graphics option on
+and HD textures. The game itself, run on that desktop with a test APPDATA
+and its own diagnostic builds (the owner's approval; private/runs/
+windows-diag: run.ps1 drives title → Start → select over a scheduled task
+in the signed-in session; the results per run in NAME.txt):
+
+- Release 1.3.1's two panics were consequences. The first failure was a lost
+  device: wgpu-core loses the device on a hal "unexpected" error, wgpu drops
+  the errors of a lost device (left to a device-lost callback, which Bevy 0.18
+  does not install), so Bevy's next uniform write got None
+  (bevy_render uniform_buffer.rs:312), and the unwinding render thread then
+  released the window's swapchain while a frame was held (wgpu-hal
+  instance.rs:194; "panic in a destructor during cleanup", the process
+  aborted). The modal message box of the panic hook on the render thread
+  kept the window from answering.
+- The device-lost callback (gdl_play DeviceLostReport) reported "Unexpected
+  error variant (driver implementation is at fault)"; wgpu-hal's
+  internal_error_panic feature named it: vkCreateGraphicsPipelines returned
+  VK_ERROR_UNKNOWN in create_render_pipeline, with the driver's "NVVM
+  compilation failed: 1" on stderr (run user-dbg). With every graphics option
+  off and MSAA 1 the same (run off): the default settings fail too.
+- A DIAGNOSTIC copy of wgpu-hal (tools/python/spirv_check.py builds it)
+  named the pipelines, opaque_mesh_pipeline and alpha_blend_mesh_pipeline,
+  and wrote their SPIR-V: GsMaterial's bindless fragment shaders. spirv-val
+  (Vulkan 1.3) finds in exactly those two an OpFunctionCall whose argument
+  is a loaded image where the function takes a pointer to one: gs.wgsl's
+  bspline_r (smooth lightmaps, compiled in whatever the setting) was called
+  with bindless_textures_2d[…] / bindless_samplers_filtering[…] elements,
+  and naga 27 passes a binding array's element to a texture or sampler
+  parameter that way. Invalid SPIR-V; Mesa (RADV on the RX 580, lavapipe)
+  compiles it, NVIDIA's compiler does not (an upstream naga defect, not
+  reported upstream from here).
+- Fix: in bindless mode bspline_r takes the slab indices and indexes the
+  arrays itself; the B-spline taps and mix are shared (bspline_taps,
+  bspline_mix). The owner's settings then reach the select screen and play
+  G1 on the GTX 1080 without an error (runs user-fix2, select-shots, g1b;
+  frames shot on that machine match this one's).
+- Regression check: spirv_check.py renders the select screen and G1 with
+  every graphics option on (lavapipe) through that wgpu-hal copy and
+  validates every stage. Two findings recur in naga output that every
+  driver compiles (explicit layout on Function/Workgroup variables, relaxed
+  atomics) and are counted; anything else fails. With the fix: 65 stages,
+  passed (spirv-check-nvfix); with 1.3.1's gs.wgsl: the two fragments the
+  GTX 1080 refused (the same SPIR-V hashes as dumped on Windows) and a third
+  variant fail (spirv-check-nvcontrol).
+
+Reporting: a lost device now ends the game with the driver's reason and the
+remedy (DeviceLostReport); only the first fatal error is reported (a second
+thread failing on the same cause waits), the panic hook logs before its
+message box and ends the process after it (no unwinding into the renderer's
+teardown); on Windows, where a shortcut-started game has no stderr, stderr
+goes to <APPDATA>/gdl-native/log.txt (the previous run's in
+log-previous.txt).
+
+Loading time: the select screen's 769 HD replacements (187 MiB) were read,
+decoded and given their mip chains one after another in one frame: 21–23 s
+on that machine (i7-10700F) with the pack on its hard disk, which Windows
+reports as not responding. materials_for now prepares the records' textures
+on worker threads (prepare_textures; identical results: the hash of every
+prepared texture of the ten package loads equal with one thread and with
+sixteen, client-equiv0/1); this machine's select-screen preparation 2.7 →
+0.4 s. On the owner's machine with the pack where the game keeps it (an SSD):
+3.4 s for the first load after the copy (cold files), under 1 s after (runs
+user-fix4, select-shots; GDL_FRAME_LOG's PERF materials_for lines).

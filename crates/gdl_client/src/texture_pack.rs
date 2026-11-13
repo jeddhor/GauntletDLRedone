@@ -48,6 +48,11 @@ pub fn active() -> bool {
     CONFIG.read().is_ok_and(|c| c.pack.is_some() || c.generated.is_some() || c.dump.is_some())
 }
 
+/// Whether a texture dump is configured (replace writes its files).
+pub fn dumping() -> bool {
+    CONFIG.read().is_ok_and(|c| c.dump.is_some())
+}
+
 /// A texture's file name stem.
 pub fn name(width: u16, height: u16, rgba: &[u8]) -> String {
     let mut h = Sha256::new();
