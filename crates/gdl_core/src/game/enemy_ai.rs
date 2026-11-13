@@ -1613,13 +1613,28 @@ impl Game {
         Ok(())
     }
 
-    /// enemy_mod_alpha 0x13b110: tree alpha ± delta·vb_elapsed in 0..=255.
-    /// Only enemy_mod_alpha reads enemy tree alpha, so this is presentation
-    /// state (`enemy_alpha`; the initial tree alpha 255 is a HYPOTHESIS).
+    /// enemy_mod_alpha 0x13b110: a = MBTreeGetAlpha(+0x70) + delta ×
+    /// vb_elapsed in 0..=255, skipped when rising at 255 or falling at 0.
+    /// At 255 the body and the shadow (+0x1f0) get MB flag 2 and keep their
+    /// alpha; otherwise MBTreeSetAlpha(…, a, 1) and flag 2 cleared on both.
+    /// Only enemy_mod_alpha reads enemy tree alpha, so all of it is
+    /// presentation (`enemy_alpha`, `enemy_look`, the shadow's look).
     fn enemy_mod_alpha(&mut self, i: usize, delta: i32) {
         let a = self.enemy_alpha[i];
-        if (delta < 1 || a < 0xff) && (delta < 0 || a != 0) {
-            self.enemy_alpha[i] = (delta * self.globals.vb_elapsed + a).clamp(0, 0xff);
+        if (delta <= 0 || a < 0xff) && (0 <= delta || a != 0) {
+            let a = delta.wrapping_mul(self.globals.vb_elapsed).wrapping_add(a).clamp(0, 0xff);
+            let hide = a == 0xff;
+            if !hide {
+                self.enemy_alpha[i] = a;
+                self.enemy_look[i].set_alpha(a);
+            }
+            self.enemy_look[i].hidden = hide;
+            if let Some(Some(s)) = self.enemy_shadow.get_mut(i) {
+                if !hide {
+                    s.look.set_alpha(a);
+                }
+                s.look.hidden = hide;
+            }
         }
     }
 
@@ -1648,8 +1663,9 @@ impl Game {
             self.enemies[i].set_i32(0xe4, 3);
         }
         if self.enemies[i].i32_(e::TYPE) == 0x18 {
-            // Phasing (type 0x18): +0x2e8 alternates fade-out (positive) and
-            // fade-in (negative) periods of RandInt(60) + 60 updates.
+            // Phasing (the warlock, type 0x18): +0x2e8 alternates shown
+            // (positive: alpha falls to 0, solid) and gone (negative: alpha
+            // rises to 255, hidden) periods of RandInt(60) + 60 updates.
             let st = self.enemies[i].i32_(0xe0);
             if (st as u32).wrapping_sub(3) < 2 || st == 0 {
                 let t = self.enemies[i].i16_(0x2e8);
@@ -2433,7 +2449,7 @@ impl Game {
             // reads +0x40), hidden (MB flag 2) while +0xe0 == 1.
             let hide = self.enemies[i].i32_(0xe0) == 1;
             if let Some(Some(s)) = self.enemy_shadow.get_mut(i) {
-                s.hidden = hide;
+                s.look.hidden = hide;
             }
         }
         let rec = &mut self.enemies[i];
@@ -2863,8 +2879,13 @@ impl Game {
                             self.enemies[k].set_i32(0x1f4, -1);
                         }
                         if alpha < 0xff {
+                            // MBTreeSetAlpha(+0x70, +0x39c, 1): the body
+                            // only (type 0x1e has no shadow).
                             if let Some(a) = self.enemy_alpha.get_mut(k) {
-                                *a = alpha;
+                                *a = 0xff - i32::from(!(alpha as u8));
+                            }
+                            if let Some(l) = self.enemy_look.get_mut(k) {
+                                l.set_alpha(alpha);
                             }
                             self.enemies[k].set_i32(0x39c, alpha + 4 * self.globals.vb_elapsed);
                             let y = add(mul(self.globals.spf, 10.0)?, self.ef(k, 0x44))?;

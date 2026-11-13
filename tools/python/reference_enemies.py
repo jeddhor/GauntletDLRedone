@@ -143,6 +143,21 @@ def enemy_probe(memory):
             parent, = struct.unpack('<I', read(node + 0x74, 4))
             parents.append(-1 if parent == root else node_of.get(parent, -2))
         out['enemy_node_parents'] = parents
+        # Each enemy tree's drawn state (2026-11-13): the +0x70 body node's and
+        # the +0x1f0 shadow node's MBTreeSetAlpha byte +0x53 and MB flags +0x60
+        # (0x200 translucent, 2 hidden), as [byte, flags] or None.
+        trees = []
+        for k in range(ENEMY_COUNT):
+            pair = []
+            for o in (0x70, 0x1f0):
+                node, = struct.unpack_from('<I', raw, k * ENEMY_SIZE + o)
+                if 0x100000 <= node < 0x2000000 and node % 4 == 0:
+                    b = read(node + 0x50, 0x14)
+                    pair.append([b[3], struct.unpack_from('<I', b, 0x10)[0]])
+                else:
+                    pair.append(None)
+            trees.append(pair)
+        out['enemy_trees'] = trees
         # CritterInsts (16 × 0xb70, delta-coded) with NumCritterInsts and
         # BossCritInst.
         crit = chunks(read, sym['CritterInsts'], 16 * 0xb70)
@@ -163,6 +178,18 @@ def enemy_probe(memory):
             if ty and node and node % 16 == 0 and node + 0x80 <= 32 * 1024 * 1024:
                 raw = read(node, 0x80)
                 nodes[str(k)] = {'node': raw[:0x40].hex(), 'parent': raw[0x74:0x78].hex()}
+                # The drawn state (2026-11-13) of the +0x70 node, the +0xcc
+                # animation root and the +0xd0 shadow: [MBTreeSetAlpha byte
+                # +0x53, MB flags +0x60, scale +0x40..+0x4b hex] or None.
+                looks = {}
+                for name, o in (('body', 0x70), ('anim', 0xcc), ('shadow', 0xd0)):
+                    n, = struct.unpack_from('<I', r, o)
+                    if 0x100000 <= n < 0x2000000 and n % 4 == 0:
+                        b = read(n + 0x40, 0x24)
+                        looks[name] = [b[0x13], struct.unpack_from('<I', b, 0x20)[0], b[:12].hex()]
+                    else:
+                        looks[name] = None
+                nodes[str(k)]['looks'] = looks
                 # CritterGetNode's table: +0xc0 → +0xbc entries of 0x28
                 # bytes, the tree node's MB node pointer first (the
                 # chimera's tree has 176 nodes; its heads share the table).

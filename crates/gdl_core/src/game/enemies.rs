@@ -102,8 +102,7 @@ impl EnemyTables {
 /// +0x54 = 3.0, for every type but 0, 0x15, 0x1e and 0x1f. Drawn at the
 /// enemy's translation (+0x40, which do_enemies and do_enemy_move copy to
 /// it) and, outside boss levels, at EnemyShrink's scale (do_enemies' MB
-/// flag 8). enemy_mod_alpha's MBTreeSetAlpha / flag 2 on it is not
-/// modelled, as for the body (research/rendering.md).
+/// flag 8). enemy_mod_alpha fades and hides it with the body (`look`).
 #[derive(Clone, Copy, Debug)]
 pub struct EnemyShadow {
     /// SHADOW<n>L1: n = min(level, 3), 1 for a level below 1.
@@ -112,9 +111,32 @@ pub struct EnemyShadow {
     /// floor contact (EnemyCollideFloor's success, do_enemy_collide's own
     /// FloorCollide).
     pub rows: [[f32; 3]; 3],
-    /// MBTreeSetFlags(…, 2): do_enemy_move sets it while +0xe0 == 1 and
-    /// clears it otherwise.
+    /// Alpha from enemy_mod_alpha; MB flag 2 from enemy_mod_alpha at 255
+    /// and from do_enemy_move, which sets it while +0xe0 == 1 and clears it
+    /// otherwise (the last writer of an update wins).
+    pub look: TreeLook,
+}
+
+/// MBTreeSetAlpha(node, a, 1) and MB flag 2 left on an enemy tree's root
+/// (presentation). A new tree (SetEnemyObj) has neither: MBNodeInit zeroes
+/// +0x53 without flag 0x200, so it draws solid while MBTreeGetAlpha reads
+/// 255.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TreeLook {
+    /// The last MBTreeSetAlpha value while it left flag 0x200 (a > 0):
+    /// setPrimAlpha draws vertex alpha (int)((255 − a) × 0.50196081).
+    pub alpha: Option<i32>,
+    /// MBTreeSetFlags(root, 2, 0) / MBTreeClearFlags (the root alone; the
+    /// draw traversal skips a hidden root with its subtree).
     pub hidden: bool,
+}
+
+impl TreeLook {
+    /// MBTreeSetAlpha 0x1cfdb0: +0x53 = ~a, flag 0x200 set for a > 0 and
+    /// cleared otherwise.
+    pub fn set_alpha(&mut self, a: i32) {
+        self.alpha = (0 < a).then_some(a);
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -499,7 +521,7 @@ impl Game {
             rec.set_u32(0x230, if t == 0x1f { 0x4040_0000 } else { 0 });
         }
         self.attach_enemy_anim(i, t, level)?;
-        self.set_enemy_shadow(i, level);
+        self.set_enemy_trees(i, level);
         // SetEnemyObj's new node (MBNewNode(EnemyRootNode, identity)), then
         // GetObjWorldMat: the record matrix becomes the identity (translation
         // 0 until the position is set). A reused slot otherwise kept the
@@ -562,15 +584,22 @@ impl Game {
         Ok(())
     }
 
-    /// SetEnemyObj 0x138688..0x138744(enemy, type, level): the old shadow node
-    /// removed (MBRemoveNode), a new one for record types other than 0,
-    /// 0x15, 0x1e and 0x1f (presentation; EnemyShadow).
-    pub(crate) fn set_enemy_shadow(&mut self, i: usize, level: i32) {
+    /// SetEnemyObj 0x1384d8(enemy, type, level)'s new trees (presentation):
+    /// the body (+0x70, MBNewObject: MBTreeGetAlpha 255, solid, shown) and,
+    /// after the old shadow node is removed (MBRemoveNode), a new one for
+    /// record types other than 0, 0x15, 0x1e and 0x1f (EnemyShadow).
+    pub(crate) fn set_enemy_trees(&mut self, i: usize, level: i32) {
         let t = self.enemies[i].i32_(e::TYPE);
         let n = if 0 < level { level.min(3) as u8 } else { 1 };
-        let shadow = (![0, 0x15, 0x1e, 0x1f].contains(&t)).then_some(EnemyShadow { n, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], hidden: false });
+        let shadow = (![0, 0x15, 0x1e, 0x1f].contains(&t)).then_some(EnemyShadow { n, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], look: TreeLook::default() });
         if let Some(s) = self.enemy_shadow.get_mut(i) {
             *s = shadow;
+        }
+        if let Some(a) = self.enemy_alpha.get_mut(i) {
+            *a = 0xff;
+        }
+        if let Some(l) = self.enemy_look.get_mut(i) {
+            *l = TreeLook::default();
         }
     }
 
@@ -1244,7 +1273,7 @@ impl Game {
                 if let Some(v) = self.skin_views.enemies.get_mut(i) {
                     *v = super::skin::SkinView::default();
                 }
-                self.set_enemy_shadow(i, 1);
+                self.set_enemy_trees(i, 1);
                 self.enemy_update_obj_world_mat(i)?;
                 self.enemy_update_offsets(i)?;
                 return Ok(0);

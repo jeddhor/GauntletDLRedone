@@ -597,8 +597,11 @@ pub struct Game {
     /// StdCamUpdate (new_camera_switch 1), so it stays 0 (do_players,
     /// InitCamera clear it).
     pub lock_cam_req: i32,
-    /// Enemy tree alpha (presentation; see enemy_mod_alpha).
+    /// MBTreeGetAlpha of each enemy tree (+0x70; enemy_mod_alpha reads it):
+    /// 255 for a new tree (SetEnemyObj), then the last MBTreeSetAlpha value.
     pub enemy_alpha: Vec<i32>,
+    /// The drawn state of each enemy tree (presentation: alpha, MB flag 2).
+    pub enemy_look: Vec<enemies::TreeLook>,
     /// sfx_ene_bloodidx 0x2407.. (AddEnemyHitCol's alternating blood).
     pub sfx_ene_bloodidx: u32,
     /// GenHitEffects 0x244ec0 / GenDieEffects 0x244f78 (InitEffects: the

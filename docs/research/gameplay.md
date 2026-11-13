@@ -39,10 +39,16 @@ closure; the interim player driver), ProcessEffects.
 - move_logic29 0x13cf40 (hold an 8–18 band: +0x330 0 hold / 1 back off / 2
   close in at speed 0.8 with offset_step5 steps on +0x36c contacts; attacks
   0xc/0xe alternating via +0x33c, 0x10 at level 3+, on the +0x334 timer).
-- Phasing enemies (type 0x18, enemy_ai_control 0x13b208): +0x2e8 alternates
-  fade-out (positive) and fade-in (negative) periods of RandInt(60) + 60
-  while +0xe0 is 0/3/4. enemy_mod_alpha 0x13b110 is the only reader of enemy
-  tree alpha, so alpha is presentation (`enemy_alpha`).
+- Phasing enemies (the warlock, type 0x18, enemy_ai_control 0x13b208):
+  +0x2e8 alternates shown (positive: enemy_mod_alpha −16, the alpha falls to
+  0, solid) and gone (negative: +16, the alpha rises to 255, hidden) periods
+  of RandInt(60) + 60 while +0xe0 is 0/3/4 (otherwise −16, shown). A new
+  warlock starts at MBTreeGetAlpha 255 and drawn solid, so its first call
+  (−16) pops it to nearly clear and it fades in. enemy_mod_alpha 0x13b110 is
+  the only reader of enemy tree alpha, so alpha is presentation
+  (`enemy_alpha`, `enemy_look`; rendering.md "Enemy fades"). Its guard was
+  transcribed wrong until 2026-11-13: a rising call at alpha 0 is not
+  skipped (bgez in 0x13b148), only a falling one.
 - ActivePlayerMask 0x220154: SetPlayerVars 0x125ef8 ORs 1 << k for players
   whose +0xfc is 1 or 5 (sllv in the delay slot at 0x125f94); called from
   game_main, AddItemInstList and ProcessItems when NumInGamePlayers 0x20f98c

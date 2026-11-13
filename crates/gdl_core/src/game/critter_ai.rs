@@ -325,7 +325,15 @@ impl Game {
                         }
                     } else if aux & 0x80 == 0 {
                         self.globals.boss_is_dead = 1;
-                        // Fade-out alpha during the last 0.5 s: presentation.
+                        // 0x19805c..0x1980b4: the last half second fades the
+                        // tree out, MBTreeSetAlpha(+0xcc, 255 − (int)(2 ×
+                        // (until − Time) × 255), 1) (presentation).
+                        let rem = sub(until, time)?;
+                        if rem < 0.5 {
+                            let p = mul(rem, 255.0)?;
+                            let a = 255 - add(p, p)? as i32;
+                            self.crit_mut(i).anim_alpha = (0 < a).then_some(a);
+                        }
                     }
                 } else {
                     self.crm_pub(i).set_f32(c::HOLD_UNTIL, add(hold, time)?);
@@ -1966,8 +1974,8 @@ impl Game {
     }
 
     /// CritterGolemAI 0x198598 (golems 3, gargoyles 7, generals 8); false
-    /// when the instance was deleted. EnemyShrink tree scaling and the death
-    /// fade alpha are presentation.
+    /// when the instance was deleted. Ends with EnemyShrink's node scale
+    /// (critter_golem_shrink) unless the instance was deleted.
     fn critter_golem_ai(&mut self, i: usize) -> R<bool> {
         self.critter_get_single_target_player(i)?;
         self.critter_set_difficulty(i)?;
@@ -2031,8 +2039,18 @@ impl Game {
                 self.critter_del_inst(i)?;
                 return Ok(false);
             }
-            // MBTreeSetAlpha fade over the move's last frames: presentation.
+            // 0x198770..0x1987b4: from the move's frame +0x40 to the clip's
+            // frame count +0x94, MBTreeSetAlpha(+0xcc, 255 − (frame − start)
+            // × 255 / (count − start), 1) (presentation).
+            let start = self.critter_move_i32(i, mv, 0x40);
+            let count = i32::from(self.ci16(i, c::ANIM_FRAMES));
+            let (done, span) = (frame.wrapping_sub(start), count.wrapping_sub(start));
+            if 0 < start && 0 < done && 0 < span {
+                let a = 255 - done.wrapping_mul(255) / span;
+                self.crit_mut(i).anim_alpha = (0 < a).then_some(a);
+            }
         } else if stop {
+            self.critter_golem_shrink(i);
             return Ok(true);
         }
         self.critter_do_transition(i, mv)?;
@@ -2041,7 +2059,21 @@ impl Game {
             self.critter_rotate(i, mv)?;
         }
         self.critter_look_at_player(i, Some(mv))?;
+        self.critter_golem_shrink(i);
         Ok(true)
+    }
+
+    /// CritterGolemAI 0x198818..0x198890: an EnemyShrink other than 1 sets
+    /// MBTreeSetScale(s, s, s) — MB flag 8 — on the +0x70 node and the
+    /// shadow +0xd0; 1 clears flag 8 on both. No boss test (SetPlayerVars
+    /// keeps EnemyShrink at 1 on boss levels). The +0x70 scale is
+    /// simulation: CritterDoSfx and CritterDoDamageFX scale by it.
+    fn critter_golem_shrink(&mut self, i: usize) {
+        let s = self.globals.enemy_shrink;
+        let v = if s != 1.0 { s } else { 1.0 };
+        let cr = self.crit_mut(i);
+        cr.node_scale = v;
+        cr.shadow_scale = v;
     }
 
     /// CritterKill 0x1976c0.

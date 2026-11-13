@@ -1015,8 +1015,7 @@ enemy's state 0, which generate_enemy's and trans_enemy's flag-2 writes
 accompany). do_enemies 0x13bce8 also scales the enemy's +0x70 node and
 the shadow by EnemyShrink outside boss levels (MB flag 8, node scale x, y,
 z), which the client did not draw for the body either: both are scaled
-now. Not modelled: enemy_mod_alpha's MBTreeSetAlpha and flag 2 on body and
-shadow (unknowns.md).
+now. The enemy fades follow ("Enemy and critter fades").
 
 Effect header alpha: StartFXSub 0x17da34 and ChangeEffect 0x17abc4 call
 MBTreeSetAlpha 0x1cfdb0(node, EffectHeaders alpha, 1) — +0x53 = !a, flag
@@ -1052,6 +1051,85 @@ Checks (2026-11-13):
   (g1-xray-z, GDL_DEBUG_POWERUP=9:2:120): one mesh at 1.0976548 (−800),
   the window cut through the chest's front with the icon and the ground
   inside, as in xray-ref-v1 (contents differ by moment, see above).
+
+## Enemy and critter fades, shrink, setPrimAlpha everywhere (2026-11-13)
+
+Enemy trees. enemy_mod_alpha 0x13b110(enemy, delta) reads MBTreeGetAlpha
+0x1cfe90 (255 − +0x53) of the +0x70 node, returns when delta > 0 at 255 or
+delta < 0 at 0 (bgez at 0x13b148: a rising call at 0 is NOT skipped — the
+port's guard skipped it until now, which kept a warlock solid), adds delta
+× vb_elapsed, clamps to 0..255, and then either (255) MBTreeSetFlags(+0x70
+and +0x1f0, 2, 0) — hidden, the stored alpha unchanged — or
+MBTreeSetAlpha(+0x70 and +0x1f0, a, 1) and MBTreeClearFlags(both, 2, 0).
+MBTreeSetFlags/ClearFlags 0x1d0190/0x1d0240 with mode 0 touch the root
+only; the draw skips a hidden root's subtree. Callers: enemy_ai_control's
+warlock phasing (type 0x18, "war"; gameplay.md). Death's leaving rise
+(do_enemies 0x13ba5c) calls MBTreeSetAlpha(+0x70, +0x39c, 1) on the body
+alone (type 0x1e has no shadow). The other flag-2 writers on enemy trees
+leave nothing to draw: generate_enemy and trans_enemy hide body and shadow
+and clear the record (+0xc8 = 0), init_enemy and damage_enemy's statue swap
+clear it on a new tree (SetEnemyObj), kill_enemy on a freed slot, and
+EnemyPickupItem hides the picked-up item's tree. Game::enemy_look (body)
+and EnemyShadow::look keep the flag-0x200 value and flag 2; SetEnemyObj
+(set_enemy_trees) resets them and enemy_alpha (255). present_world hides
+the body, present_tree_alpha and present_enemy_shadows draw the alpha.
+
+Critter trees. CritterBossAI 0x197fd0..0x1980b4: after the death move
+(type 0x11) has ended, while its hold time (+0x258) is still ahead and
+(0x210788 & 0x80) is clear, BossIsDead = 1 and in the last half second
+MBTreeSetAlpha(+0xcc, 255 − (int)(2 × (+0x258 − Time) × 255), 1) — the
++0xcc animation root's subtree, not the shadow. CritterGolemAI 0x198770 has
+the same kind of fade over a death move (255 − (frame − move +0x40) × 255
+/ (+0x94 frame count − move +0x40)), but every death move of the seven
+golem-type critter files (002691..002697) has +0x40 = 0, so it never runs
+on the disc (A1's golem: move 2, trace-A1-golemkill-v3). CritterGolemAI
+ends (0x198818..0x198890, on every path that keeps the instance, StopTime
+included) with MBTreeSetScale(+0x70 and the shadow +0xd0, s, s, s) — MB
+flag 8 — for an EnemyShrink s ≠ 1, else MBTreeClearFlags(both, 8); no boss
+test (SetPlayerVars keeps EnemyShrink at 1 on boss levels). The +0x70
+scale is Critter::node_scale, which CritterDoSfx and CritterDoDamageFX
+read, so this is simulation as well (the old build diverges in A1 at step
+26 of trace-A1-golemshrink-v1's replay). Critter::shadow_scale and
+::anim_alpha are presentation; present_critters scales the root by
+node_scale (the D5 drider's legend-item 0.8 was not drawn before either),
+present_critter_shadows by shadow_scale, present_tree_alpha draws
+anim_alpha on every node of the slot (HYPOTHESIS for trees with children:
+the root's value on all of them).
+
+setPrimAlpha 0x1bee30 draws every node with MBTreeSetAlpha's flag 0x200 the
+same way, so gdl_play now uses prim_alpha / prim_byte ((int)(byte ×
+0.50196081) / 128) for every such request: item trees, world nodes, the
+player's translucency, the familiars' fade, the good wizard, the compass
+(128 → 63/128), weapon trails, DoTexFadeSub's −4/−5 node fades
+(MBTreeSetAlpha((int)(255 × v), 1) for −5 and (int)(255 × (1 − v)) for −4,
+f32 arithmetic) and MBSetupObject's distance fade (+0x53 written directly;
+the untruncated product before). By instructions; no item-specific GS dump
+was compared.
+
+Checks:
+- Actual disc, replays (gdl_tools: enemy_trees and critter node looks are
+  traced from 2026-11-13 — reference_enemies.py — seeded before and
+  compared after each update): trace-J3-combat-v2 (lvl-J3-play-v1, the
+  combat sweep's 600 vblanks again) has warlocks hidden in 766 samples with
+  byte 31 kept (alpha 224) and fading in 32-steps; replay 300/300 updates
+  equal in enemy trees and every other part. Negative control: the old
+  guard gives 197/300 (344 tree differences). trace-B6-bosskill-v3
+  (w2l6-bosskill-v1, the v1 schedule plus 100 idle vblanks): the dragon's
+  +0xcc byte falls 238 → 0 over steps 513..541 and the instance goes at 543;
+  replay 300/300 in every part. Negative control without the fade: 285/300
+  (15 anim_alpha differences from step 513, native none against 17).
+  trace-A1-golemkill-v3: no fade, 240/240. WARPED (guest write: a 60 s or
+  2.5 s shrink powerup in player 0's slot 0, warp-A1-golemshrink-v1/-v2):
+  trace-A1-golemshrink-v1 shows flag 8 with 0.6670 (0x3f2ac083) on body and
+  shadow, -v2 the powerup ending at step 150 and both flags cleared at 152;
+  both replays 240/240 in every part (the build before this, r101: 239/240,
+  critter +0x200/+0x204 at step 26 of -v2).
+- Native, original presentation (lavapipe): J3 (j3-warlock-fade, frames
+  400..1390 every 30): warlock meshes in groups of 10 at 111, 95, 79, 63,
+  47, 31, 16 and 15 /128 — the trace's alpha bytes 223..31. A1 at update
+  660 by the golem (a1-golem-shrink-on/-off, GDL_DEBUG_POWERUP=9:200:60):
+  287 meshes at scale 0.667 with the powerup, none without; the golem and
+  the enemies are drawn at two thirds.
 
 ## Sequence texture modifiers (2026-10-30)
 

@@ -337,6 +337,17 @@ impl ReferenceObjects {
     }
 }
 
+/// A traced enemy tree node's [+0x53 byte, +0x60 MB flags].
+fn tree_state(v: &serde_json::Value) -> Option<(u8, u32)> {
+    Some((u8::try_from(v.get(0)?.as_u64()?).ok()?, u32::try_from(v.get(1)?.as_u64()?).ok()?))
+}
+
+/// The native TreeLook of a traced node: MBTreeSetAlpha's value 255 − byte
+/// under flag 0x200, MB flag 2.
+fn tree_look(byte: u8, flags: u32) -> gdl_core::game::enemies::TreeLook {
+    gdl_core::game::enemies::TreeLook { alpha: (flags & 0x200 != 0).then_some(255 - i32::from(byte)), hidden: flags & 2 != 0 }
+}
+
 /// The reference Effects array (64 × 0xf0) accumulated from
 /// reference_enemies.py's `effects_delta`, with the live slots' render nodes.
 #[derive(Default, Clone)]
@@ -531,6 +542,33 @@ struct ReferenceCritters {
     /// (traces from trace-k2-newgame-v4) and CritterGetNode's tree node
     /// pointers by index (from trace-k2-newgame-v5).
     nodes: std::collections::BTreeMap<usize, (Vec<u8>, u32, Vec<u32>)>,
+    /// The drawn state of the +0x70 node, the +0xcc animation root and the
+    /// +0xd0 shadow (traces from 2026-11-13).
+    looks: std::collections::BTreeMap<usize, CritterLooks>,
+}
+
+/// A critter's traced nodes: (+0x53 alpha byte, MB flags, scale x/y/z) of
+/// the body (+0x70), animation root (+0xcc) and shadow (+0xd0).
+#[derive(Clone, Copy, Debug, Default)]
+struct CritterLooks {
+    body: Option<(u8, u32, [f32; 3])>,
+    anim: Option<(u8, u32, [f32; 3])>,
+    shadow: Option<(u8, u32, [f32; 3])>,
+}
+
+impl CritterLooks {
+    fn parse(v: &serde_json::Value) -> Option<(u8, u32, [f32; 3])> {
+        let h = v.get(2)?.as_str()?;
+        let b: Vec<u8> = (0..h.len()).step_by(2).filter_map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok()).collect();
+        let f = |o: usize| b.get(o..o + 4).map(|x| f32::from_le_bytes(x.try_into().unwrap()));
+        Some((u8::try_from(v.get(0)?.as_u64()?).ok()?, u32::try_from(v.get(1)?.as_u64()?).ok()?, [f(0)?, f(4)?, f(8)?]))
+    }
+    /// The native fields: node_scale and shadow_scale (+0x44 under flag 8,
+    /// else 1.0) and anim_alpha (255 − byte under flag 0x200).
+    fn native(&self) -> (Option<f32>, Option<f32>, Option<Option<i32>>) {
+        let scale = |n: Option<(u8, u32, [f32; 3])>| n.map(|(_, f, s)| if f & 8 != 0 { s[1] } else { 1.0 });
+        (scale(self.body), scale(self.shadow), self.anim.map(|(b, f, _)| (f & 0x200 != 0).then_some(255 - i32::from(b))))
+    }
 }
 
 impl ReferenceCritters {
@@ -564,6 +602,15 @@ impl ReferenceCritters {
                     None => Vec::new(),
                 };
                 self.nodes.insert(k.parse()?, (hexv(&n["node"])?, u32::from_le_bytes(p[..4].try_into()?), tree));
+            }
+        }
+        self.looks.clear();
+        if let Some(nodes) = e["critter_nodes"].as_object() {
+            for (k, n) in nodes {
+                if let Some(l) = n.get("looks") {
+                    let looks = CritterLooks { body: CritterLooks::parse(&l["body"]), anim: CritterLooks::parse(&l["anim"]), shadow: CritterLooks::parse(&l["shadow"]) };
+                    self.looks.insert(k.parse()?, looks);
+                }
             }
         }
         Ok(true)
@@ -707,6 +754,13 @@ impl ReferenceCritters {
             if let (Some(Some(sc)), Some(Some(cr))) = (scales.get(k), game.critters.get_mut(k)) {
                 cr.node_scale = *sc;
             }
+            // Traces with the node looks: scales and the tree alpha.
+            if let (Some(l), Some(Some(cr))) = (self.looks.get(&k), game.critters.get_mut(k)) {
+                let (body, shadow, anim) = l.native();
+                cr.node_scale = body.unwrap_or(cr.node_scale);
+                cr.shadow_scale = shadow.unwrap_or(1.0);
+                cr.anim_alpha = anim.flatten();
+            }
             roots.push((k, t, ty));
             // The traced node pointers against the native look-at and
             // collision nodes (a reference node outside the tree is noted).
@@ -814,6 +868,20 @@ impl ReferenceCritters {
             match (n, self.live(k)) {
                 (None, false) => {}
                 (Some(cr), true) => {
+                    if let Some(l) = self.looks.get(&k) {
+                        let (body, shadow, anim) = l.native();
+                        let pairs = [("node_scale", body.map(|v| v.to_bits()), Some(cr.node_scale.to_bits())), ("shadow_scale", shadow.map(|v| v.to_bits()), l.shadow.map(|_| cr.shadow_scale.to_bits()))];
+                        for (name, r, n) in pairs {
+                            if r.is_some() && r != n {
+                                out.push(serde_json::json!({"critter":k,"look":name,"native":n.map(f32::from_bits),"reference":r.map(f32::from_bits)}));
+                            }
+                        }
+                        if let Some(a) = anim
+                            && a != cr.anim_alpha
+                        {
+                            out.push(serde_json::json!({"critter":k,"look":"anim_alpha","native":cr.anim_alpha,"reference":a}));
+                        }
+                    }
                     let ncol = Self::ncol(game, cr.ty);
                     let mut nr = cr.rec.0.clone();
                     ReferenceItems::write_clock(&mut nr, &cr.clock);
@@ -2740,6 +2808,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let mut world_anim_updates_equal = 0;
             let mut player_updates_equal = 0;
             let mut effect_updates_equal = 0;
+            let (mut tree_updates, mut tree_updates_equal) = (0, 0);
             let mut item_updates_equal = 0;
             let mut by_item_offset: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
             // Per item slot over every update (item_diffs keeps 60 per update).
@@ -3215,6 +3284,26 @@ fn run() -> Result<(), Box<dyn Error>> {
                             game.enemy_node[k] = Some(game.collision.unparent_chain(m, Some(o)).map_err(|e| e.0)?);
                         }
                     }
+                    // Traces with enemy_trees (trace-J3-combat-v2 on): each
+                    // enemy tree's MBTreeSetAlpha byte and MB flags, body and
+                    // shadow (presentation state enemy_mod_alpha reads back).
+                    if let Some(ts) = b["enemies"].get("enemy_trees").and_then(|v| v.as_array()) {
+                        for (k, t) in ts.iter().enumerate().take(game.enemies.len()) {
+                            if let Some((byte, flags)) = t.get(0).and_then(tree_state) {
+                                game.enemy_alpha[k] = 255 - i32::from(byte);
+                                game.enemy_look[k] = tree_look(byte, flags);
+                            }
+                            if let Some((byte, flags)) = t.get(1).and_then(tree_state) {
+                                // A shadow the seeded record never created
+                                // natively: n and rows are not compared
+                                // (placeholder SHADOW1L1, unit rows).
+                                let s = game.enemy_shadow[k].get_or_insert(gdl_core::game::enemies::EnemyShadow { n: 1, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], look: Default::default() });
+                                s.look = tree_look(byte, flags);
+                            } else {
+                                game.enemy_shadow[k] = None;
+                            }
+                        }
+                    }
                     game.setup_dyn_grid().map_err(|e| e.0)?;
                     Ok(())
                 };
@@ -3461,6 +3550,33 @@ fn run() -> Result<(), Box<dyn Error>> {
                 if diffs.is_empty() && res.is_ok() {
                     equal_updates += 1;
                 }
+                // The enemy trees' alpha byte (MBTreeGetAlpha = 255 − it),
+                // flag 0x200 with its value and flag 2, body and shadow,
+                // for records alive after the update.
+                let mut tree_diffs = Vec::new();
+                if let Some(ts) = a["enemies"].get("enemy_trees").and_then(|v| v.as_array()) {
+                    for (k, t) in ts.iter().enumerate().take(game.enemies.len()) {
+                        if game.enemies[k].i32_(0xc8) == 0 || word(&ea[k * ESIZE + 0xc8..]) == 0 {
+                            continue;
+                        }
+                        if let Some((byte, flags)) = t.get(0).and_then(tree_state) {
+                            let nb = 255 - game.enemy_alpha[k];
+                            let (nl, rl) = (game.enemy_look[k], tree_look(byte, flags));
+                            if nb != i32::from(byte) || nl != rl {
+                                tree_diffs.push(serde_json::json!({"enemy":k,"tree":"body","native":[nb, nl.alpha, nl.hidden],"reference":[byte, rl.alpha, rl.hidden]}));
+                            }
+                        }
+                        let rs = t.get(1).and_then(tree_state).map(|(b, f)| tree_look(b, f));
+                        let ns = game.enemy_shadow[k].map(|s| s.look);
+                        if rs != ns {
+                            tree_diffs.push(serde_json::json!({"enemy":k,"tree":"shadow","native":ns.map(|l| (l.alpha, l.hidden)),"reference":rs.map(|l| (l.alpha, l.hidden))}));
+                        }
+                    }
+                    if tree_diffs.is_empty() && res.is_ok() {
+                        tree_updates_equal += 1;
+                    }
+                    tree_updates += 1;
+                }
                 let item_diffs = if items_mode { ref_before.compare(&game, &hexb(&a["enemies"]["WorldInfo"])?, items_base) } else { Vec::new() };
                 let (mut player_diffs, effect_diffs) = (Vec::new(), if frame_mode { fx_before.compare(&game, items_base) } else { Vec::new() });
                 let mut critter_diffs = Vec::new();
@@ -3629,6 +3745,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "item_words_differing":item_diffs.len(),"item_diffs":item_diffs.iter().take(60).collect::<Vec<_>>(),
                     "player_words_differing":player_diffs.len(),"player_diffs":player_diffs.iter().take(40).collect::<Vec<_>>(),
                     "effect_words_differing":effect_diffs.len(),"effect_diffs":effect_diffs.iter().take(40).collect::<Vec<_>>(),
+                    "tree_diffs":tree_diffs.iter().take(40).collect::<Vec<_>>(),
                     "critter_words_differing":critter_diffs.len(),"critter_diffs":critter_diffs.iter().take(60).collect::<Vec<_>>(),
                     "camera_words_differing":camera_diffs.len(),"camera_diffs":camera_diffs.iter().take(40).collect::<Vec<_>>(),
                     "wizard_diffs":wizard_diffs}));
@@ -3638,6 +3755,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "item_updates_equal":item_updates_equal,"differing_item_offsets":by_item_offset,"differing_item_slots":by_item_slot,
                 "differing_item_names":by_item_slot.keys().filter_map(|&k| game.items.records.get(k as usize).map(|r| (k.to_string(), { let d = &game.items.definitions[r.definition()]; format!("{} kind {} sub {:#x}", String::from_utf8_lossy(d.name()), d.kind(), d.subtype()) }))).collect::<std::collections::BTreeMap<_, _>>(),
                 "frame_mode":frame_mode,"player_updates_equal":player_updates_equal,"effect_updates_equal":effect_updates_equal,
+                "enemy_tree_updates":(0 < tree_updates).then_some([tree_updates_equal, tree_updates]),
                 "world_anim_updates_equal":world_anim_updates_equal,
                 "critter_updates_equal":have_crit.then_some(critter_updates_equal),
                 "camera_updates_equal":camera_updates_equal,

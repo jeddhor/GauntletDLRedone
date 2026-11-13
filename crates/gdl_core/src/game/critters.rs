@@ -190,6 +190,13 @@ pub struct Critter {
     /// offsets, radius and blast by it (D5's drider at 0.8 after the legend
     /// item, trace-D5-legend-v1 step 395).
     pub node_scale: f32,
+    /// The +0xd0 shadow node's scale while its MB flag 8 is set (else 1.0;
+    /// presentation): CritterGolemAI's EnemyShrink.
+    pub shadow_scale: f32,
+    /// MBTreeSetAlpha(+0xcc animation root, a, 1)'s value while it left
+    /// flag 0x200 (presentation; setPrimAlpha draws (255 − a)): CritterBossAI's
+    /// last half second, CritterGolemAI's death move.
+    pub anim_alpha: Option<i32>,
     pub clock: ClockState,
     pub clip: u16,
     pub clips: Vec<ClipTiming>,
@@ -725,6 +732,8 @@ impl Game {
             parent: None,
             anim_root: 0,
             node_scale: 1.0,
+            shadow_scale: 1.0,
+            anim_alpha: None,
             clock: super::setup::fresh_clock(),
             clip: 0,
             clips,

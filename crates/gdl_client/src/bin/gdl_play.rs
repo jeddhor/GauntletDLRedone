@@ -1352,8 +1352,11 @@ fn present_critters(
         }
         let r = &cr.rec;
         let mut root = gdl_core::tree_pose::IDENTITY;
+        // The +0x70 node's scale under MB flag 8 (CritterGolemAI's
+        // EnemyShrink, the legend item's 0.8 on D5's drider).
+        let s = cr.node_scale;
         for row in 0..3 {
-            root[4 * row..4 * row + 3].copy_from_slice(&r.v3(0x10 + 16 * row));
+            root[4 * row..4 * row + 3].copy_from_slice(&r.v3(0x10 + 16 * row).map(|v| v * s));
         }
         root[12..15].copy_from_slice(&r.v3(0x40));
         let Some(children) = children else { continue };
@@ -1471,11 +1474,12 @@ fn present_sumner(
                 if let Some(mat) = pose.get(part.1) {
                     *t = Transform::from_matrix(*mat);
                 }
-                // The good wizard's MBTreeSetAlpha (0 opaque … 0xff clear).
+                // The good wizard's MBTreeSetAlpha (0 opaque … 0xff clear),
+                // drawn by setPrimAlpha.
                 if which == 2
                     && let Ok(meshes) = children.get(holder)
                 {
-                    let a = (255 - w.alpha.clamp(0, 255)) as f32 / 255.0;
+                    let a = prim_alpha(w.alpha);
                     for m in meshes.iter() {
                         req.alpha(m, a);
                     }
@@ -1618,9 +1622,12 @@ fn present_critter_shadows(
     // NATIVE ENHANCEMENT character shadows replace the blob shadows.
     let shown = if settings.shadows { Visibility::Hidden } else { Visibility::Inherited };
     for (e, cs, mut tf, mut vis) in &mut shadows {
-        match g.critters.get(cs.0).and_then(Option::as_ref).and_then(|c| c.shadow) {
-            Some((_, at)) => {
+        let c = g.critters.get(cs.0).and_then(Option::as_ref);
+        match c.and_then(|c| c.shadow.map(|s| (s, c.shadow_scale))) {
+            Some(((_, at), scale)) => {
                 tf.translation = Vec3::from_array(at);
+                // CritterGolemAI's EnemyShrink on the +0xd0 node (flag 8).
+                tf.scale = Vec3::splat(scale);
                 if *vis != shown {
                     *vis = shown;
                 }
@@ -1656,7 +1663,13 @@ fn present_critter_shadows(
 /// reaches the GS as an integer — truncated: the reference crate frame's
 /// HITCOL (a = 96) draws with 79 — over the 128 of an unmodified node.
 fn prim_alpha(a: i32) -> f32 {
-    ((255 - a.clamp(0, 255)) as f32 * f32::from_bits(0x3f00_8081)) as i32 as f32 / 128.0
+    prim_byte((255 - a.clamp(0, 255)) as f32)
+}
+
+/// setPrimAlpha's vertex alpha from a node's +0x53 byte (MBTreeSetAlpha's
+/// !a, MBSetupObject's distance fade): (int)(byte × 0.50196081) / 128.
+fn prim_byte(b: f32) -> f32 {
+    (b * f32::from_bits(0x3f00_8081)) as i32 as f32 / 128.0
 }
 
 /// do_enemies 0x13bce8..0x13bdbc: outside boss levels (BossType < 0) an
@@ -1671,9 +1684,10 @@ fn enemy_shrink_scale(g: &gdl_core::game::Game) -> f32 {
 /// SHADOW<n>L1 from the enemy type's model package (MBOX_FindObject_Sub on
 /// that table alone), MB flags 0x880, Z modifier −32, at the enemy's
 /// translation (+0x40) with the last floor contact's rows (CopyMat3 of
-/// enemy_floor_col) and EnemyShrink's scale; hidden with the enemy (state
-/// 0), by its MB flag 2, and while the NATIVE ENHANCEMENT character
-/// shadows replace the blob shadows.
+/// enemy_floor_col) and EnemyShrink's scale, faded with the body by
+/// enemy_mod_alpha (setPrimAlpha); hidden with the enemy (state 0), by its
+/// MB flag 2, and while the NATIVE ENHANCEMENT character shadows replace
+/// the blob shadows.
 #[derive(Component)]
 struct EnemyShadowNode(usize, (i32, u8));
 
@@ -1687,6 +1701,7 @@ fn present_enemy_shadows(
     mut nodes: Query<(Entity, &EnemyShadowNode, &mut Transform, &mut Visibility)>,
     settings: Res<gdl_client::settings::Settings>,
     (mut materials, mut variants): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<NodeVariants>),
+    (children, mut req): (Query<&Children>, ResMut<MatRequests>),
 ) {
     let g = &sim.game;
     let key = |i: usize| g.enemy_shadow.get(i).copied().flatten().map(|s| (g.enemies[i].i32_(0), s.n));
@@ -1701,7 +1716,7 @@ fn present_enemy_shadows(
         have.insert(i);
         let Some(s) = g.enemy_shadow.get(i).copied().flatten() else { continue };
         let r = &g.enemies[i];
-        let show = r.i32_(0xc8) != 0 && !s.hidden && !settings.shadows && !no_enemy_shadows();
+        let show = r.i32_(0xc8) != 0 && !s.look.hidden && !settings.shadows && !no_enemy_shadows();
         let want = if show { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want {
             *vis = want;
@@ -1711,6 +1726,11 @@ fn present_enemy_shadows(
             t.scale *= scale;
             if t.is_finite() && *tf != t {
                 *tf = t;
+            }
+            if let (Some(a), Ok(kids)) = (s.look.alpha, children.get(e)) {
+                for k in kids.iter() {
+                    req.alpha(k, prim_alpha(a));
+                }
             }
         }
     }
@@ -1808,7 +1828,7 @@ fn present_compass(
             }
             if let Some(kids) = kids {
                 for k in kids.iter() {
-                    req.alpha(k, (255.0 - 128.0) / 255.0);
+                    req.alpha(k, prim_alpha(128));
                 }
             }
         }
@@ -1840,7 +1860,7 @@ fn present_distance_fade(sim: Res<Sim>, q: Query<(&DistanceFade, &MeshMaterial3d
     for (fade, m) in &q {
         let depth = (fade.at - eye).dot(forward);
         let alpha = ((255.0 / fade.max) * depth).clamp(0.0, 255.0).floor();
-        let a = alpha * 0.5019608 / 128.0;
+        let a = prim_byte(alpha);
         // Compare before get_mut: it marks the material modified (re-prepared).
         if materials.get(&m.0).is_some_and(|mat| (mat.params.tint.w - a).abs() > 1e-4)
             && let Some(mat) = materials.get_mut(&m.0)
@@ -1907,14 +1927,47 @@ struct MatOverride {
     base: Handle<gdl_client::GsMaterial>,
 }
 
-/// MBTreeSetAlpha on item trees (Game::item_alpha) and world nodes with
-/// their subtrees (Game::node_alpha): node +0x53 = ~alpha with the
-/// translucent flag 0x200. HYPOTHESIS: the drawn alpha is the material's
-/// times (255 − alpha) / 255 (the +0x53 byte's use in the draw path is not
-/// traced).
-fn present_tree_alpha(sim: Res<Sim>, slots: Query<(&Slot, &Children)>, children: Query<&Children>, world: Query<(Entity, &NodeChain), With<WorldNode>>, mut req: ResMut<MatRequests>) {
+/// MBTreeSetAlpha on item trees (Game::item_alpha), world nodes with their
+/// subtrees (Game::node_alpha), enemy trees (Game::enemy_look) and critter
+/// animation roots (Critter::anim_alpha): node +0x53 = ~alpha with the
+/// translucent flag 0x200, drawn by setPrimAlpha (prim_alpha: the material's
+/// alpha times the truncated vertex alpha / 128).
+fn present_tree_alpha(
+    sim: Res<Sim>,
+    slots: Query<(&Slot, &Children)>,
+    children: Query<&Children>,
+    world: Query<(Entity, &NodeChain), With<WorldNode>>,
+    critters: Query<(&CritterSlot, &Children)>,
+    mut req: ResMut<MatRequests>,
+) {
     let g = &sim.game;
+    // MBTreeSetAlpha on a critter's +0xcc animation root (CritterBossAI's
+    // last half second): every node its slot draws. HYPOTHESIS for trees
+    // with children (the chimera's heads): the root's value on all of them.
+    for (cs, kids) in &critters {
+        let Some(a) = g.critters.get(cs.index).and_then(Option::as_ref).and_then(|c| c.anim_alpha) else { continue };
+        let mut stack: Vec<Entity> = kids.iter().collect();
+        while let Some(e) = stack.pop() {
+            req.alpha(e, prim_alpha(a));
+            if let Ok(c) = children.get(e) {
+                stack.extend(c.iter());
+            }
+        }
+    }
     for (slot, kids) in &slots {
+        if slot.kind == SlotKind::Enemy {
+            // enemy_mod_alpha (the warlock's phasing) and Death's rise.
+            if let Some(a) = g.enemy_look.get(slot.index).and_then(|l| l.alpha) {
+                let mut stack: Vec<Entity> = kids.iter().collect();
+                while let Some(e) = stack.pop() {
+                    req.alpha(e, prim_alpha(a));
+                    if let Ok(c) = children.get(e) {
+                        stack.extend(c.iter());
+                    }
+                }
+            }
+            continue;
+        }
         if slot.kind != SlotKind::Item {
             continue;
         }
@@ -1922,7 +1975,7 @@ fn present_tree_alpha(sim: Res<Sim>, slots: Query<(&Slot, &Children)>, children:
         if a <= 0 {
             continue;
         }
-        let f = (255 - a.min(255)) as f32 / 255.0;
+        let f = prim_alpha(a);
         let mut stack: Vec<Entity> = kids.iter().collect();
         while let Some(e) = stack.pop() {
             req.alpha(e, f);
@@ -1936,7 +1989,7 @@ fn present_tree_alpha(sim: Res<Sim>, slots: Query<(&Slot, &Children)>, children:
             if let Some(a) = chain.0.iter().find_map(|&(n, _)| g.node_alpha.get(n).copied().flatten())
                 && 0 < a
             {
-                req.alpha(e, (255 - u32::from(a)) as f32 / 255.0);
+                req.alpha(e, prim_alpha(i32::from(a)));
             }
         }
     }
@@ -1969,7 +2022,7 @@ type Flag10Query<'w, 's> = Query<'w, 's, (), Or<(With<HandObject>, With<ItSign>,
 /// during action 0x92; with the invisibility powerup (+0x138 4) a shimmer
 /// (int)(sin(2π t) × 16) + 0xa0, t the longest kind-9 flag-4 slot time —
 /// solid (0) on the even eighths of its last 3 s, a negative (unlimited)
-/// time shimmers; otherwise 0. Drawn alpha (255 − v) / 255 (setPrimAlpha).
+/// time shimmers; otherwise 0. Drawn by setPrimAlpha (prim_alpha).
 fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)>, children: Query<&Children>, flag10: Flag10Query, mut req: ResMut<MatRequests>) {
     let g = &sim.game;
     for (root, kids) in &bodies {
@@ -1996,7 +2049,7 @@ fn present_player_alpha(sim: Res<Sim>, bodies: Query<(&CharacterRoot, &Children)
         if v == 0 {
             continue;
         }
-        let a = (255 - v.clamp(0, 255)) as f32 / 255.0;
+        let a = prim_alpha(v);
         // MBTreeSetAlpha's recursion skips nodes with MB flag 0x10 and their
         // subtrees: the attached objects (MBNewObject flags 0x810 / 0x9010 /
         // 0x10), IT_SIGN and the held weapon (load_player's 0x810) keep
@@ -2390,10 +2443,12 @@ fn request_tree_texmods(mods: &[NodeTexMod], lib: &Library, f: i32, seq: usize, 
                 let (t, c) = (d as f32, f32::from(m.count));
                 let mut v = 0.0;
                 if 0.0 < t && 0.0 < c {
-                    v = if t < c { t / c } else { 1.0 };
+                    v = if t < c { gdl_core::numeric::div_rn(t, c).unwrap_or(t / c) } else { 1.0 };
                 }
-                // MBTreeSetAlpha(255 · v) for −5, 255 · (1 − v) for −4.
-                let opacity = if m.frame_base == -4 { v } else { 1.0 - v };
+                // DoTexFadeSub 0x110bd0: MBTreeSetAlpha((int)(255 × v), 1)
+                // for −5, (int)(255 × (1 − v)) for −4 (EE f32 arithmetic).
+                let w = if m.frame_base == -4 { gdl_core::numeric::sub_guarded_rz(1.0, v).unwrap_or(1.0 - v) } else { v };
+                let opacity = prim_alpha(gdl_core::numeric::mul_rz(w, 255.0).unwrap_or(w * 255.0) as i32);
                 for &(e, n) in meshes {
                     if m.subtree.contains(&n) {
                         req.alpha(e, opacity);
@@ -4309,7 +4364,7 @@ fn present_powerup_trees(
         {
             let v = ((1.0 - fade) * 255.0) as i32;
             for c in children.iter() {
-                req.alpha(c, (255 - v) as f32 / 255.0);
+                req.alpha(c, prim_alpha(v));
             }
         }
     }
@@ -5152,7 +5207,7 @@ fn present_weapon_trails(
     }
     for (part, handle) in &parts {
         let Some(c) = sim.game.weap_trail.get(part.slot).and_then(|s| s[part.copy]) else { continue };
-        let a = part.base_alpha * (255 - c.fade.clamp(0, 255)) as f32 / 255.0;
+        let a = part.base_alpha * prim_alpha(c.fade);
         if let Some(m) = materials.get(&handle.0)
             && m.params.tint.w != a
             && let Some(m) = materials.get_mut(&handle.0)
@@ -7270,7 +7325,9 @@ fn present_world(
             SlotKind::Enemy => {
                 let r = &g.enemies[slot.index];
                 let st = r.i32_(0xc8);
-                let Some(anim) = g.enemy_anims[slot.index].as_ref().filter(|_| st != 0) else {
+                // enemy_mod_alpha's MB flag 2 (a warlock gone).
+                let hidden = g.enemy_look.get(slot.index).is_some_and(|l| l.hidden);
+                let Some(anim) = g.enemy_anims[slot.index].as_ref().filter(|_| st != 0 && !hidden) else {
                     *vis = Visibility::Hidden;
                     continue;
                 };

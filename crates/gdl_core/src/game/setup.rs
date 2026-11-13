@@ -664,6 +664,7 @@ impl Game {
             randpottype: s.extra.randpottype,
             active_player_mask: 0,
             enemy_alpha: vec![0xff; 25],
+            enemy_look: vec![enemies::TreeLook::default(); 25],
             skin_views: Default::default(),
             health_meters: Default::default(),
             sfx_ene_bloodidx: 0,
