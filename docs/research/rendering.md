@@ -542,7 +542,18 @@ code. Two programs light vertices:
   N·axis is the unit dot product. gdl_play (2026-10-23): unit axes and
   uv = −0.5 t − 0.5 + angle; before, the axes kept the 1/7.5 against unit
   normals and the scale was 1, so the chrome was nearly flat. The warp's
-  header bit 0x40 (pbSetDORegs from pbg +0x1c +0xa4) is not traced.
+  header bit 0x40: pbSetDORegs 0x1bfb64 sets it on every object while
+  pbg +0x1c +0xa4 is non-zero and clears it otherwise; pbg +0x1c is
+  pb_global_attribute 0x268570 (pbInitAttribute / pbResetAttribute),
+  whose +0xa4 is 0 in the ELF and written only by pbResetLights 0x1ae804
+  (1; a scan of every `sw …, 0xa4(base)` with the base loaded from
+  pbg +0x1c finds no other writer); PINE read in the running reference
+  (K3 play state, 2026-11-13): 1. So chrome draws are warped: gdl_play
+  (gs.wgsl) uses 0.6 t + 0.4 t³ since 2026-11-13. Reference shot with a
+  written gold shield (WARPED: players+0x144/0x148/0x150, warp-G1-
+  goldshield-shot-v1, private/runs/chrome-ref) against native
+  GDL_DEBUG_SHIELD=110000:60 (chrome-old/-new): the same gold chrome; the
+  cameras differ, so the warp itself is not seen there.
 - gdl_play: lit materials min(min(ambient + N·L light, 1) + Σ, 255/128);
   vertex-coloured materials min(min(colour × (1 + add), 1) + Σ, 255/128).
   HYPOTHESIS: vf12 of program B is MBLightmapMod/MBNoShadeMod's 1 + add

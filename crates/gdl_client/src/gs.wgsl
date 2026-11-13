@@ -345,10 +345,14 @@ fn gs_fragment(in: VertexOutput) -> vec4<f32> {
     if params.extra.y > 0.5 {
         let n = normalize(in.world_normal);
         // VU1 program A: t = N·axis (the ×7.5 normal encoding cancels the
-        // axes' 1/7.5), then setTexShift's chrome scale −0.5 and offset
-        // −0.5 + the camera angle (pb_debug_chrome +0x34/+0x38 = −1.0,
-        // texsh_def [1, 0, 1, 0]).
-        let t = vec2(dot(n, params.chrome_u.xyz), dot(n, params.chrome_v.xyz));
+        // axes' 1/7.5), warped to 0.6 t + 0.4 t³ by header word 1.y bit 0x40
+        // (pbSetDORegs sets it whenever pb_global_attribute +0xa4 is
+        // non-zero; pbResetLights writes 1, the only writer, and the
+        // running reference holds 1), then setTexShift's chrome scale −0.5
+        // and offset −0.5 + the camera angle (pb_debug_chrome +0x34/+0x38 =
+        // −1.0, texsh_def [1, 0, 1, 0]).
+        let t0 = vec2(dot(n, params.chrome_u.xyz), dot(n, params.chrome_v.xyz));
+        let t = t0 * 0.6 + t0 * t0 * t0 * 0.4;
         uv = t * -0.5 + vec2(params.chrome_u.w - 0.5, params.chrome_v.w - 0.5);
     }
     // GS LOD (TEX1 LCM 0, L 0): log2(1/Q) + K, 1/Q the view depth in game
