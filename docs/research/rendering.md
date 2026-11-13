@@ -1321,3 +1321,30 @@ new shaders; 2.4 of 15.9 GB free). The next six runs of that source (the
 release build, the SPIR-V-dumping build, and three of the
 internal_error_panic build, which would have named the Vulkan result and
 the call) ran clean, so the failing call is not known (unknowns.md).
+
+Named (2026-11-13, the owner's GTX 1080, driver 582.78, the owner's
+settings and HD pack, G1 autostart; private/runs/windows-diag cold1): a
+build of d05c906 with wgpu-hal's internal_error_panic, its NVIDIA driver
+shader cache (%LOCALAPPDATA%/NVIDIA/GLCache) cleared before the launch
+(run-cold.ps1), took 64 s from start to the first update with a 3.7 s
+frame, then panicked "Unexpected Vulkan error: TIMEOUT" in
+wgpu_hal::vulkan::Surface::acquire_texture under Bevy's prepare_windows.
+In wgpu-hal 27.0.4 a VK_TIMEOUT from vkAcquireNextImageKHR is handled, but
+the wait for the swapchain's acquire fence that follows it (added for frame
+pacing with DXGI-backed swapchains, wgpu issues 8310/8354) passes the
+timeout to map_host_device_oom_and_lost_err: an "unexpected" device error,
+which a release build reports as the lost device ("Unexpected error
+variant"). wgpu-hal 30.0.1 maps it the same way; Bevy 0.18 would panic on a
+SurfaceError::Timeout on Windows anyway. Fix: the workspace builds a
+patched wgpu-hal (third_party/wgpu-hal-27.0.4, GDL-PATCH.md) that waits for
+that fence again without a timeout — the image is acquired, the frame is
+only late. The SPIR-V check's diagnostic copy starts from it.
+Check (the same machine and settings, cold driver cache each time,
+coldp1..coldp10, the patched wgpu-hal with internal_error_panic): ten
+launches, no lost device and no panic; coldp2 loaded for 79 s with 6.4 s
+and 4.2 s frames, the condition of cold1. Three of the ten (coldp4/6/9) —
+and one unpatched run of 2026-11-12 (g1) — drew about one frame a second
+throughout: the wait for the previous submission that precedes the
+acquire timing out each frame (wgpu-hal ignores that result), which no
+player has reported; HYPOTHESIS: the scheduled-task harness's window
+without the foreground (unknowns.md).

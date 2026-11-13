@@ -51,9 +51,12 @@ def locked_version(name):
 
 
 def patched_hal():
-    """private/diag-patch/wgpu-hal-VERSION with the DIAGNOSTIC patch."""
+    """private/diag-patch/wgpu-hal-VERSION with the DIAGNOSTIC patch, made from
+    the workspace's own wgpu-hal (third_party/wgpu-hal-VERSION, the GDL PATCH
+    applied) when it has one, else the registry's."""
     version = locked_version('wgpu-hal')
-    registry = next((pathlib.Path.home() / '.cargo/registry/src').glob(f'*/wgpu-hal-{version}'))
+    vendored = ROOT / 'third_party' / f'wgpu-hal-{version}'
+    registry = vendored if vendored.exists() else next((pathlib.Path.home() / '.cargo/registry/src').glob(f'*/wgpu-hal-{version}'))
     out = ROOT / 'private/diag-patch' / f'wgpu-hal-{version}'
     if out.exists():
         shutil.rmtree(out)

@@ -36,13 +36,23 @@ def crates():
                 continue
             p, lic = line.split('\t', 1)
             parts = p.split()
-            if len(parts) < 2 or (len(parts) > 2 and parts[2].startswith('(/')):
-                continue  # this workspace's own crates
+            if len(parts) < 2:
+                continue
+            if len(parts) > 2 and parts[2].startswith('(/'):
+                # A path package: this workspace's own crates are left out;
+                # third_party/ holds patched copies of registry crates
+                # (wgpu-hal, third_party/*/GDL-PATCH.md), listed as such.
+                path = pathlib.Path(parts[2].strip('()'))
+                if not path.is_relative_to(ROOT / 'third_party'):
+                    continue
             out[(parts[0], parts[1].lstrip('v'))] = lic.strip()
     return out
 
 
 def package_dir(name, version):
+    vendored = ROOT / 'third_party' / f'{name}-{version}'
+    if vendored.is_dir():
+        return vendored
     for reg in REGISTRY:
         d = reg / f'{name}-{version}'
         if d.is_dir():
@@ -64,7 +74,8 @@ def main():
             missing.append(f'{name} {version}')
         for f in files:
             texts.setdefault(f.read_text(errors='replace').strip(), []).append(f'{name} {version}')
-        rows.append(f'{name} {version} — {lic}')
+        patched = ' (patched: third_party/' + f'{name}-{version}/GDL-PATCH.md in the source)' if (ROOT / 'third_party' / f'{name}-{version}' / 'GDL-PATCH.md').exists() else ''
+        rows.append(f'{name} {version} — {lic}{patched}')
     out = ['THIRD-PARTY NOTICES — Gauntlet: Dark Legacy native port', '=' * 56, '',
            'The programs gdl_play and gdl_import contain the following Rust crates',
            f'({len(rows)} packages; the license chosen where a choice is offered is any',
