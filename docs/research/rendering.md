@@ -1190,9 +1190,21 @@ matches (game_run b363-detail). Native frames (RX 580): frozen-barrel363
 (before: red light and staves only), frozen-barrel363fix2 (the fireball
 grows, reddens and fades over ~24 updates). Original-presentation frozen
 frames of TOWER, G1, J5, C2 and H4 stay identical to 1.0 (base-fx1).
-Residual: after the fireball the settled break frames (BAREXPACTI F16–F24:
-staves lying flat, height ≤ 0.46, radius ~4) draw bright red natively,
-while the reference shows them dark against the scorch (unknowns.md).
+After the fireball the settled break frames (BAREXPACTI F16–F24) drew
+bright red natively, the reference dark against the scorch. Resolved
+2026-11-13: they fade out. ProcessItems 0x156f00 (subtypes 0x2c and 0x2d,
+the jump table at 0x2a8510) gives an item with +0xdc == 1 and +0xda <
+0x68 MBTreeSetAlpha(+0x70, min(256 − (int)((+0xda − 16) × 2.83), 255), 1);
++0xda starts at 96 on the hit and counts down. The reference GS dump at vb
+94 (gs_uploads: the stave textures are ITEMS_G records 120/121, 16 × 32 and
+32 × 32 PSMT8, resident before the frame; their draws are TBP 13472/13504
+with CBP + 28, private/reports/gs-uploads-barrel94-v1.json) draws them with
+vertex colour 102..128 and vertex alpha 10, 13, 24 and 27 — the formula's
+values for +0xda 24, 26, 34 and 36 through setPrimAlpha — so they are faint,
+not dark. Native, the same moment (barrel-break-fade, G1 update 296 after
+DEBUG damage to 364 at 260): the stave meshes at 13/128 and 27/128 (before:
+opaque, barrel-break-native). DeleteItem and AddItemSub now drop the slot's
+item alpha with its tree.
 
 DamageItem's leftovers: MBOX_NewObject(name, item node, node parent,
 0x80800) → MBNewObject → MBNewNode copies the item node's local matrix

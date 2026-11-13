@@ -135,6 +135,8 @@ impl Game {
             *n = None;
         }
         self.item_trees.remove(&slot);
+        // The tree (and its MBTreeSetAlpha state) goes with the item.
+        self.item_alpha.remove(&slot);
         if slot < self.items.first_empty {
             self.items.first_empty = slot;
         }
@@ -1356,7 +1358,19 @@ impl Game {
         }
         match sub_ {
             0x2c | 0x2d => {
-                if r.i8_(0xdc) == 2 {
+                if r.i8_(0xdc) == 1 {
+                    // 0x156f10..0x156f5c: the red and poison barrels' break
+                    // frames fade out while +0xda counts below 0x68:
+                    // MBTreeSetAlpha(+0x70, min(256 − (int)((+0xda − 16) ×
+                    // 2.83), 255), 1) (presentation; the reference GS dump at
+                    // vb 94 draws the staves with vertex alpha 10..27).
+                    let da = r.i16_(0xda);
+                    if da < 0x68 {
+                        let v = mul((i32::from(da) - 16) as f32, f32::from_bits(0x4035_1eb8))? as i32;
+                        let a = 256 - v;
+                        self.item_alpha.insert(slot, if a < 0x100 { a } else { 0xff });
+                    }
+                } else if r.i8_(0xdc) == 2 {
                     let mut best = 100_000.0;
                     for pl in &self.players {
                         if pl.i32_(0xfc) == 1 {

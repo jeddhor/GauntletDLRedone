@@ -426,6 +426,7 @@ impl Game {
         let max = self.items.records.len() + 500;
         let slot = self.items.new_item_ptr(max.max(self.items.max_items))?;
         self.item_trees.remove(&slot);
+        self.item_alpha.remove(&slot);
         // A new render node: CopyMat4 of the record until it has been shown.
         if let Some(w) = self.items.node_w.get_mut(slot) {
             *w = false;
