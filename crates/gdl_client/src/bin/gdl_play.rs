@@ -7325,6 +7325,45 @@ fn node_variant(materials: &mut Assets<gdl_client::GsMaterial>, cache: &mut Node
         .clone()
 }
 
+/// Every mesh entity's spawn order (its first frame with Mesh3d, in query
+/// order): the tie-break of translucent draws at equal sort distance.
+#[derive(Resource, Default)]
+struct MeshSpawnOrder {
+    next: u64,
+    key: HashMap<Entity, u64>,
+}
+
+/// Each view's visible meshes in spawn order. Transparent3d sorts by view
+/// distance (AABB centre + material bias) with a stable sort, so draws at
+/// equal distance blend in the visible-entity order — which check_visibility
+/// builds in a parallel loop and Bevy's entity allocation shapes (unrelated
+/// startup entities or render systems changed G1's tied spear faces and red
+/// glows, unknowns.md). Spawn order follows construction (level nodes in
+/// file order, a tree's parts in node order), the nearest stand-in for
+/// pbTraverseDrawObjects' order (HYPOTHESIS: not compared with a reference
+/// overlap). Distinct distances keep their order; opaque and cut-out
+/// phases are binned, so only exact ties change.
+fn order_visible_meshes(
+    mut order: ResMut<MeshSpawnOrder>,
+    added: Query<Entity, Added<Mesh3d>>,
+    mut removed: RemovedComponents<Mesh3d>,
+    mut views: Query<&mut bevy::camera::visibility::VisibleEntities>,
+) {
+    for e in removed.read() {
+        order.key.remove(&e);
+    }
+    for e in &added {
+        let n = order.next;
+        order.key.insert(e, n);
+        order.next += 1;
+    }
+    let class = std::any::TypeId::of::<Mesh3d>();
+    for mut v in &mut views {
+        let list = v.get_mut(class);
+        list.sort_by_cached_key(|e| order.key.get(e).copied().unwrap_or(u64::MAX));
+    }
+}
+
 /// MBTreeSetZMod 0x1cfd08(node, value, 1) on a package tree: the node, then
 /// its children in creation order (MBNewNode appends, so by index) unless
 /// the first has MB flag 0x10, skipping later ones with flag 0x10 (mode 2's
@@ -11340,6 +11379,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<Libraries>()
         .init_resource::<PartVariants>()
         .init_resource::<NodeVariants>()
+        .init_resource::<MeshSpawnOrder>()
         .init_resource::<MatRequests>()
         .init_resource::<PendingTreePsys>()
         .init_resource::<ChestNodes>()
@@ -11398,6 +11438,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(First, net_frame_start)
         .add_systems(PreUpdate, (net_poll, net_local_tick).chain())
         .add_systems(PostUpdate, (interpolate_transforms.before(bevy::transform::TransformSystems::Propagate), mark_shadow_casters, present_shadow_light))
+        .add_systems(PostUpdate, order_visible_meshes.after(bevy::camera::visibility::VisibilitySystems::CheckVisibility))
         .add_systems(FixedUpdate, (simulate, apply_rumble).chain().run_if(playing))
         .add_systems(
             Update,
