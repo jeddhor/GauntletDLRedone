@@ -60,12 +60,19 @@ def scripts():
     join = presses(30, 1, 1, START) + presses(90, 45, 8, CROSS)
     # Both walk from step 700, turning every 100 steps; the host attacks;
     # triangle closes the scroll boxes walking may open (a realm door's).
+    # A box waits for the triangle of the player who opened it
+    # (ScrollMessageBox's mask), so both machines press it; a machine queues
+    # input at most NET_MAX_AHEAD (30) steps past the game, which waits while
+    # a box is open, so the presses come every 25 steps (2026-11-13: the
+    # joining machine's player reached the East Wing door's box, which the
+    # host's presses every 50 steps could not close).
     for k in range(16):
         host.append([700 + 100 * k, 799 + 100 * k, [[RIGHT, UP, LEFT, DOWN][k % 4]]])
         join.append([700 + 100 * k, 799 + 100 * k, [[LEFT, DOWN, RIGHT, UP][k % 4]]])
-    host += presses(710, 20, 60, CROSS) + presses(1075, 50, 20, TRIANGLE)
+    host += presses(710, 20, 60, CROSS) + presses(1075, 25, 40, TRIANGLE)
     # The joining machine pauses everyone, moves in the shared menu, opens
     # Settings, goes back and resumes.
+    join += presses(1075, 25, 40, TRIANGLE)
     join += [[950, 950, [M_TOGGLE]], [970, 970, [M_DOWN]], [980, 980, [M_UP]], [995, 995, [M_ACCEPT]], [1025, 1025, [M_BACK]], [1050, 1050, [M_BACK]]]
     return host, join
 
@@ -119,7 +126,10 @@ def main():
     ap.add_argument('--wine', action='store_true')
     ap.add_argument('--delay', type=int, default=2)
     ap.add_argument('--updates', type=int, default=900)
-    ap.add_argument('--host-extra', type=int, default=45, help='updates the host runs on (so the joining machine ends first; more than gdl_play NET_MAX_AHEAD, fewer than the 0x3c steps before the game asks for a controller)')
+    ap.add_argument('--host-extra', type=int, default=10, help='updates the host runs on, so the joining machine usually ends first; '
+                    'with the host up to NET_MAX_AHEAD (30) steps behind it, the host\'s last steps after it left stay under the 0x3c '
+                    'after which the game asks for the departed player\'s controller (45 left net-check-loop132c in that box, '
+                    '2026-11-13). A host that ends first has already sent the inputs of the joining machine\'s remaining steps')
     ap.add_argument('--window', default='640x448', help='GDL_WINDOW: a small window keeps two software renderers near 30 Hz')
     ap.add_argument('--port', type=int, default=28790)
     ap.add_argument('--level', help='GDL_DEBUG_LEVEL on both machines: the level after the select screen instead of the Tower')
