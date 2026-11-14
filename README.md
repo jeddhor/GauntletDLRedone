@@ -29,6 +29,40 @@ platform checks are in docs/research/performance.md. Import tooling,
 inspectors and comparison harnesses sit beside it in crates/gdl_tools and
 tools/python.
 
+## Which version of the game this is
+
+This is a port of the **PlayStation 2** version of Gauntlet: Dark Legacy (USA
+release SLUS-20047), and of that version only. Its gameplay is the PS2
+program's: the rules are reconstructed from that program and checked against
+it running in PCSX2 (docs/research/), and the installer accepts only that
+disc. Nothing comes from the later GameCube or Xbox releases.
+
+Those releases (2002, built from the PS2 version) added features this port
+does not have, because the PS2 version does not:
+
+- An item menu: power-ups can be kept and used later, and item pickups can be
+  switched off. On the PS2, and here, a power-up takes effect when it is
+  picked up.
+- Sumner as a character unlocked in play (on the GameCube, reportedly by
+  finishing the last coin room, in the Fortified Towers). On the PS2 he is
+  reached only by a code.
+
+Reviews also describe GameCube-only shortcomings (more slowdown than the PS2
+version and, outside the PAL release, no life bars for golems, gargoyles and
+bosses); this port follows the PS2 version there too. Sources: Wikipedia's
+[Gauntlet Dark Legacy](https://en.wikipedia.org/wiki/Gauntlet_Dark_Legacy)
+article (the item menu, saved power-ups, the GameCube's performance and life
+bars), [Nintendo World Report's GameCube review](https://www.nintendoworldreport.com/review/3894/gauntlet-dark-legacy-gamecube)
+(slowdown against the PS2 version) and The Cutting Room Floor's page on the
+game (Sumner's unlock on the GameCube; seen in a search summary, the page
+itself not read).
+
+What the port adds is on top of the PS2 game and does not change its rules:
+graphics enhancements (widescreen, sharp filtering, full colour, more lights,
+character shadows, ambient occlusion, bloom, HD textures; the "Original"
+preset and "Original presentation" turn them off), motion blending at the
+display's rate, key bindings, Xbox button prompts, and network play.
+
 **To play**, download the Linux or Windows package from the
 [releases](https://github.com/jeddhor/GauntletDLRedone/releases), run its
 installer and point it at your own copy of the game: the disc in a drive, a

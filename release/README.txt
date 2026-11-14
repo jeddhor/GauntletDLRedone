@@ -7,6 +7,14 @@ contains none of the game's own data: the installer reads that from your
 own disc (or an image of it) and checks every file against the supported
 release. No PlayStation 2 BIOS and no emulator are used.
 
+It is a port of the PlayStation 2 version only. The later GameCube and Xbox
+versions added an item menu (power-ups kept for later, pickups switched off)
+and, on the GameCube, Sumner as a character unlocked in play; this port does
+not have them, because the PS2 version does not: power-ups take effect when
+picked up, and Sumner is reached by a code. The gameplay is the PS2
+version's; the graphics options, widescreen, network play and the other
+additions in this guide are optional extras on top of it.
+
 
 What you need
 -------------

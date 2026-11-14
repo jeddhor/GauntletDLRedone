@@ -5,6 +5,13 @@ Gauntlet: Dark Legacy in Rust, with Bevy desktop presentation on Linux x86-64 an
 Windows x86-64. The final game must execute native gameplay and use native graphics;
 PCSX2 and a BIOS are development references, never runtime dependencies.
 
+The port is of the PlayStation 2 version only: its gameplay is the PS2
+program's, faithfully reconstructed. Features of the later GameCube and Xbox
+releases that the PS2 version lacks (their item menu for saving power-ups,
+the GameCube's in-play Sumner unlock; README.md "Which version of the game
+this is") are out of scope. Native additions (graphics enhancements, network
+play and the like) are optional and must not change the PS2 rules.
+
 Initially target only the exact SHA-256-qualified SLUS_200.47 disc in
 profiles/ps2/slus-20047.json. The serial and SYSTEM.CNF VER do not prove a retail
 revision number. Unknown inputs must be reported and rejected by release imports.
