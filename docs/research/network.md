@@ -135,7 +135,8 @@ listens on TCP 28780 (NATIVE default) on IPv4.
   that the confirmed step does not have. No rollback of the game itself.
 - IPv6 hosting (the host binds 0.0.0.0); joining by an IPv6 address works in
   brackets.
-- Windows: the firewall asks to allow the host's port on the first host.
+- Windows: the firewall asks to allow the host's port on the first host
+  (the LAN check added a rule instead).
 
 ## Verification
 
@@ -202,5 +203,30 @@ listens on TCP 28780 (NATIVE default) on IPv4.
     all 900 equal, and the Windows build's 900 hashes byte-identical to
     net-check-p5-lag's Linux host; the host waited 1.0 s in 31.9 s of play
     (Wine's client renders slower).
-- Unit and menu tests do not reach a real network: every run above is one
-  machine over loopback.
+- Two computers on a LAN (2026-11-13, the owner approving the use of their
+  Windows 11 desktop, GTX 1080, 10.1.0.91; this Linux machine on the
+  private Xvfb with lavapipe; the same source, d05c906 + the wgpu-hal
+  patch, its Windows build with internal_error_panic; scratch harnesses
+  net_lan.py / net_lan_win.py with the net_check scripts; the desktop's
+  machine run by a scheduled task in its session with a test APPDATA,
+  empty saves, the original presentation, no audio, gamepads or attract):
+  - net-lan-lan1 (Linux hosts): equal at update 300, then both machines
+    waited in the East Wing door's box ("You need 20 Golden Eagle
+    Feathers"), which the joining machine's player had opened and only that
+    player's triangle closes (ScrollMessageBox's mask); the script pressed
+    triangle on the host only. The same happened on loopback
+    (net-check-loop132); net_check's scripts now press triangle on both
+    machines every 25 steps, and the host's extra updates are 10 (45 left
+    loop132c in the departed player's controller box). net-check-loop132d:
+    passed, 900/900.
+  - net-lan-lan2 (Linux hosts, the desktop joins): all 900 hashes equal,
+    the dumps at updates 300 and 880 equal, ports 0 and 1, both ended
+    normally; the host's 900 hashes byte-identical to loop132d's, the
+    desktop's last equal to loop132d's last (962f5e54…).
+  - net-lan-lan3 (the desktop hosts, Linux joins; an inbound Windows
+    Firewall rule for the test program on the Private profile added over
+    SSH and removed afterwards): all 900 equal, both dumps equal, both
+    ended normally, the last hash again 962f5e54….
+- Not covered: the internet (latency, loss, NAT), a Windows-to-Windows
+  game, the firewall prompt itself (the rule was added), the shop, map and
+  movie paths over two machines.

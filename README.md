@@ -12,8 +12,11 @@ for up to four computers (a native addition, lockstep over TCP:
 opened chest's item; release 1.3.0 made network play hold up over the
 internet (each computer draws the game ahead of the others' inputs and
 keeps its own clock); release 1.3.1 plays the movies without FFmpeg (a
-native MPEG-2 decoder: [decisions/0007](docs/decisions/0007-native-movie-video.md);
-[research/release.md](docs/research/release.md)). The native game runs
+native MPEG-2 decoder: [decisions/0007](docs/decisions/0007-native-movie-video.md));
+release 1.3.2 fixes a lost graphics device on NVIDIA cards during slow loads
+(a patched wgpu-hal, third_party/) and draws many effects closer to the
+original — effect transparency and depth, enemy shadows and fades, texture
+animations, Sumner's ghost ([research/release.md](docs/research/release.md)). The native game runs
 the original rules from the player's own disc: the Tower, all realms and
 bosses, one to four players, the original HUD, menus, audio and movies, and
 saves; a character has been played from a new game to the ending
