@@ -585,7 +585,7 @@ library-source files and SHA256SUMS. GitHub's SHA-256 of every asset equals
 SHA256SUMS. Audits before the push: release-audit-v131b and
 history-audit-v131 (509 commits, 3,094 blobs), both without findings.
 
-## Release 1.3.2 (2026-11-13; not published — awaiting the owner)
+## Release 1.3.2 (2026-11-13)
 
 After 1.3.1 the owner reported, on their Windows desktop (GTX 1080): the
 lost device on the first 3D scene (876da3d), G1 details (ca6be7d), the
@@ -637,6 +637,16 @@ the original-presentation gate and the frame-time benchmarks. Not checked:
 a person playing 1.3.2 on the Windows desktop (the owner tests it), network
 play over the internet, a physical disc. The source archive is cut from the
 commit that adds this record.
+
+Published 2026-11-14 (UTC) after the owner's go-ahead ("Go ahead and
+publish"): tag v1.3.2 at 6266068 (annotated, jeddhor's noreply identity),
+main pushed after history-audit-v132-push (529 commits, 3,286 blobs: no
+findings); the GitHub release "Gauntlet: Dark Legacy native port 1.3.2"
+(latest) with the nine assets of private/dist-1.3.2 — the two packages,
+GauntletDarkLegacy-1.3.2-source-6266068.tar.gz, the five library-source
+files and SHA256SUMS — and the notes of private/runs/github-release-1.3.2;
+every asset's digest on GitHub equals the local file's SHA-256. The owner's
+Windows test copy is P:\gauntlet\dist-1.3.2.
 
 ## History rewrite (2026-10-29)
 
