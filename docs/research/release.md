@@ -585,6 +585,59 @@ library-source files and SHA256SUMS. GitHub's SHA-256 of every asset equals
 SHA256SUMS. Audits before the push: release-audit-v131b and
 history-audit-v131 (509 commits, 3,094 blobs), both without findings.
 
+## Release 1.3.2 (2026-11-13; not published — awaiting the owner)
+
+After 1.3.1 the owner reported, on their Windows desktop (GTX 1080): the
+lost device on the first 3D scene (876da3d), G1 details (ca6be7d), the
+right stick and the menu's options (f82b054); then asked for the hit
+sparks' depth offset (ac51f3e), the effects' transparency and the other
+open items (ddb99ce), and for 1.3.2: the remaining open items and the
+visible gaps of unknowns.md (84e756e, 61107a2, dad738d, b213c38, 466b5cd,
+181eb1f, d05c906), a hunt for the intermittent lost device on their
+desktop (080d8f1: the patched wgpu-hal, third_party/) and a network game
+between two computers (network.md). The owner asked for a report before
+publishing. Version 1.3.2 in Cargo.toml's workspace and
+installer/CMakeLists.txt (1c1f232; 1.3.1 and 1.3.2 do not play together
+over the network). Programs built by tools/package.sh at commit 95748fd:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.3.2-linux-x86_64.tar.gz (48 MB; 120 MiB unpacked, 41 files) | 7afd8a257a7a4fd7… |
+| GauntletDarkLegacy-1.3.2-windows-x86_64.zip (51 MB; 122 MiB unpacked, 22 files) | 2e4b3c6215538981… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | 66cf3aa325d1c317… / 2e2ddf0e44689c5a… / da9261ca4f9d4bc6… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | 0b60cd501c317683… / 3ccab6ae3ebf751d… / cb4155df6fdb4f4b… |
+| library-source/ | unchanged from 1.3.1 |
+
+The packages hold the same files as 1.3.1's. The third-party notices list
+the same 295 crates, wgpu-hal marked as patched (third_party/wgpu-hal-27.0.4,
+GDL-PATCH.md; its source is in the source archive). cargo test --workspace
+--release: 189 tests pass; strict Clippy; spirv_check vendored132 passed
+(66 stages, the vendored wgpu-hal as its base); the replay regression r104:
+all 146 summary lines equal r100's.
+
+No check started a kwin session on the RX 580; the GTX 1080 runs below are
+the owner-approved desktop runs (scheduled tasks in their session, a test
+APPDATA). Checks of 1.3.2:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive (of 95748fd, 421 files) | pass, no findings | release-audit-v132 |
+| Network play with the shipped games, a simulated distant network (60 ms one way + up to 30 ms): the Linux package's gdl_play hosting, the Windows package's gdl_play.exe joining under Wine, G1, 900 updates, a shared pause | all 900 hashes equal, 0 prediction digest mismatches; the host waited 1.0 s in 31.9 s of play | net-check-v132-pkg |
+| Network play between two computers on a LAN (the development builds of d05c906 + the wgpu-hal patch; the owner's Windows desktop and this Linux machine, each hosting once; a Windows Firewall rule for the test program added and removed over SSH) | all 900 hashes equal both ways, equal to the loopback run's | net-lan-lan2, net-lan-lan3, net-check-loop132d |
+| The lost device on the GTX 1080 with a cold driver shader cache | the build without the patch failed on its first launch (Unexpected Vulkan error: TIMEOUT in acquire_texture); ten launches with it, none failed (one through a 79 s load) | windows-diag cold1, coldp1..coldp10 |
+| The development build: 24 menu flows on the private Xvfb | all pass | menu-flows-v132 |
+| Ubuntu 20.04 container without GPU or display: libraries of all 29 ELF files, `--batch` install from the ISO (read-only), verify | none missing; exit 0; 2953 checked, none differing | old-distro-v132-libs |
+| Linux 2026 host, system Qt masked: `--batch` | pass | qt-bundle-v132 |
+| Linux wizard on the private Xvfb with the ISO attached as a drive, system Qt masked, game started | pass, 9.1 s | installer-gui-v132 |
+| Update over release 1.3.1 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, the installed KNOWN_ISSUES describes 1.3.2, verify none of 2953 differing, no leftovers, test folder removed | pass, 21 s + 19 s | private/runs/windows-update-v132 |
+
+Not run (they start kwin sessions on the RX 580): old_distro_check's wizard
+and game in the container, update_check.py on Linux, title_start_check.py,
+the original-presentation gate and the frame-time benchmarks. Not checked:
+a person playing 1.3.2 on the Windows desktop (the owner tests it), network
+play over the internet, a physical disc. The source archive is cut from the
+commit that adds this record.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
