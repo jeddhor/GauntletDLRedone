@@ -648,6 +648,52 @@ files and SHA256SUMS — and the notes of private/runs/github-release-1.3.2;
 every asset's digest on GitHub equals the local file's SHA-256. The owner's
 Windows test copy is P:\gauntlet\dist-1.3.2.
 
+## Release 1.3.3 (2026-11-17)
+
+After 1.3.2 the owner passed on a player's reports from the Linux version:
+the lich's skull throw ending as it starts, the 3-way shot showing two
+missiles, the shard not turning after the lich, and G3's fire pool (the
+Parchment of Fire) keeping its flames with the water not flowing. 1a0011c
+fixes all four (state.md 2026-11-16; trace-G5-skull5-v1 and
+trace-G1-3way-v1 joined the regression, r105: all lines equal r104's but
+frame-D5legend, whose effects improved). The owner asked for the push and
+a new version ("push to Github and cut a new version"). Version 1.3.3 in
+Cargo.toml's workspace and installer/CMakeLists.txt (9bc9ecf; 1.3.2 and
+1.3.3 do not play together over the network). Programs built by
+tools/package.sh at commit 9bc9ecf:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.3.3-linux-x86_64.tar.gz (48 MB; 120 MiB unpacked, 41 files) | bd5dd2e1d8321adb… |
+| GauntletDarkLegacy-1.3.3-windows-x86_64.zip (51 MB; 122 MiB unpacked, 22 files) | 732f821ee2dd9e40… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | 8f5bc1ebdf6f19bf… / e6131aa52c0204aa… / 895109df3e2a7d5b… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | 337de18a85541c56… / a3b2b23517bcef96… / 078c26bfef3739d6… |
+| library-source/ | unchanged from 1.3.2 |
+
+The packages hold the same files as 1.3.2's. cargo test --workspace
+--release: 189 tests pass; strict Clippy (tests-v133). No shader changed
+since 1.3.2, so spirv_check was not rerun.
+
+No check started a kwin session on the RX 580, and none ran on the owner's
+desktop. Checks of 1.3.3:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive (of 9bc9ecf) | pass, no findings | release-audit-v133 |
+| Network play with the shipped games, a simulated distant network (60 ms one way + up to 30 ms): the Linux package's gdl_play hosting, the Windows package's gdl_play.exe joining under Wine, G1, 900 updates | all 900 hashes equal, 0 prediction digest mismatches | net-check-v133-pkg |
+| The development build: 24 menu flows on the private Xvfb | all pass | menu-flows-v133 |
+| Ubuntu 20.04 container without GPU or display: libraries of all 29 ELF files, `--batch` install from the ISO (read-only), verify | none missing; exit 0; 2953 checked, none differing | old-distro-v133-libs |
+| Linux 2026 host, system Qt masked: `--batch` | pass | qt-bundle-v133 |
+| Linux wizard on the private Xvfb with the ISO attached as a drive, system Qt masked, game started | pass, 7.1 s | installer-gui-v133 |
+| Update over release 1.3.2 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, gdl_play replaced, verify none of 2953 differing, no leftovers, test folder removed | pass, 25 s + 21 s | private/runs/windows-update-v133 |
+
+Not run (they start kwin sessions on the RX 580): old_distro_check's wizard
+and game in the container, update_check.py on Linux, title_start_check.py,
+the original-presentation gate and the frame-time benchmarks. Not checked:
+a person playing 1.3.3, network play between two computers or over the
+internet, a physical disc. The source archive is cut from the commit that
+adds this record.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
