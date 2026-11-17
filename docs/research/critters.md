@@ -390,3 +390,31 @@ Native: critter_break_colnode (critter_hits.rs); the client hides removed
 nodes and draws "<prefix>D<label>" for a broken node when the package has
 it (HYPOTHESIS for the name mapping). Not yet compared with a reference
 trace.
+
+## Projectile morphs and the lich's attacks (2026-11-16, actual disc)
+
+A player reported the lich's skull attack "dissipates as soon as it
+starts". The lich (MONSTERS/LICH) throws two kinds of projectile:
+- DAMG 11–15 (kind 1, flags 0x1, moves 37–40, range 25–80): SFXX 28
+  ATK15GENFX (5 frames) morphing into SFXX 29 ATK15LPFX after it ends
+  (DAMG +0x44), speed 40, aimed at the target.
+- DAMG 16 (kind 1, flags 0x8, moves 41/42, range 15–25, difficulty ≥ 0.75
+  or ≥ 2.6): SFXX 31 ATK12PROJ (a 0-frame tree, StartFXTree's 0x1e-frame
+  loop), hit SFXX 32 ATK12HIT.
+
+CritterDoDamageFX 0x194adc: when DAMG +0x44 ≥ 0, SfxSetMorph(DAMG +0x3c,
+or 15 when ≤ 0; slot; SFXX[+0x44] header; SFXX[+0x46] header or 0) —
++0xc0/+0xc2, flag 0x4000, +0x74. The port treated the call as
+presentation, so ATK15GENFX ended after its 5 frames; ProcessEffects
+already ran the morph for the player's effects. Now called; trace step 293
+of trace-G5-skull5-v1 has +0x64 0x4807, +0x74 15, +0xc0 124 at creation,
+and at the generator's end the slot keeps kind 123 with END = now + 15.
+
+Reference: CritterSetDifficulty (difficulty = (1 − health / max) × 4.5 +
+0.5) keeps the lich at 0.5 at full health, below both projectiles' minimum,
+so the captures write its health to 3800 (w7l5-skull-v1, WARPED); the
+walk-in then idle traces trace-G5-skull-v1 and trace-G5-skull2..5-v1
+(chained through warp captures w7l5-skull-v2..v5, 600 vblanks each) reach
+DAMG 16 at trace 5 step 127 (velocity, arc and landing equal the native
+run's) and DAMG 11–15 at step 293. Replays: traces 1–3 300/300 in every
+part; 4 and 5 every part except player +0x8a4 (unknowns.md).

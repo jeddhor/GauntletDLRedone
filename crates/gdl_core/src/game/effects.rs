@@ -173,7 +173,9 @@ pub struct EffectTables {
     pub missile_info: Vec<[u32; 12]>,
     /// WallHitEffects 0x2406f8.
     pub wall_hit: Vec<i32>,
-    /// The three-missile spread at 0x2ad9d0 (cos then sin, 5 each + pad).
+    /// The multi-missile spread: cos at 0x2ad9d0 (5 words, then a pad
+    /// word) and sin at 0x2ad9e8 (5 words), as PlayerStartMissile copies
+    /// them (0x18fe48 / 0x18fe78).
     pub spread: [f32; 12],
     /// exp_damaged_by_weapon / killed_by_weapon / damaged_by_attack / killed_by_attack.
     pub exp: [Vec<i32>; 4],
@@ -944,7 +946,7 @@ impl Game {
             if 3 <= k && wide == 0 {
                 return Ok(k);
             }
-            let (c, s) = (spread[k as usize], spread[5 + k as usize]);
+            let (c, s) = (spread[k as usize], spread[6 + k as usize]);
             let d = [add(mul(dir[0], c)?, mul(dir[2], s)?)?, dir[1], add(mul(-dir[0], s)?, mul(dir[2], c)?)?];
             // Classes 2/6 with a throw effect and the class info fly
             // EffectHeaders[0]'s tree under it.

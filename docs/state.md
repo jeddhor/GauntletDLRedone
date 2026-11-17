@@ -865,6 +865,35 @@ original (PCSX2 reference on Xvfb :191, private captures):
    uncollectable Tower crystal. Found: I5 frozen frames vary between runs
    (world texture animation). research/rendering.md "Enemy and critter
    fades", hud.md "Sumner's speeches and captions".
+   2026-11-16 (a player's Linux reports after 1.3.2):
+   - The lich's skull volley "dissipates as soon as it starts":
+     CritterDoDamageFX never called SfxSetMorph (0x194adc), so the
+     5-frame ATK15GENFX ended instead of becoming ATK15LPFX (the flying
+     skull, 15 s). Reference: trace-G5-skull5-v1 (capture chain
+     w7l5-skull-v1..v5, the lich's health WARPED to 3800 so its difficulty
+     allows the attack); its replay now equals in every part but player
+     +0x8a4 (below), effects 300/300 (298 before).
+   - The 3-way shot showed two missiles: PlayerStartMissile's sines start
+     at 0x2ad9e8 (cos at 0x2ad9d0, five words and a pad), the port read
+     one word early, so missile 1 flew with missile 0. trace-G1-3way-v1
+     (w7l1-3way-v1, the powerup WARPED into player 0's slot) replays
+     100/100 in every part; its missiles fly at 100.4°, 115.4°, 130.4°.
+   - The shard not turning at the level end: effect trees now wrap by
+     their slot's AnimInfo loop word (+0x50), which SfxSetMorph sets — the
+     boss key's BOSSKEY2 turns for its 30 s (it held BOSSKEY2's last frame);
+     the lich's ATK15LPFX loops too.
+   - G3's fire pool (Parchment of Fire): the switch chain ran natively but
+     the fire stayed and the water did not grow. World psys now follow
+     their moved ancestor objects (the POOLFIRE emitters are children of
+     G3FENCE22..25, which sink 20 units), and moved world nodes take the
+     world animation's node scale (the bowl and drips grow 0.33 → 1).
+     Not checked against a reference picture (unknowns.md "G3 puzzle in
+     the reference").
+   Regress r105: the 146 previous summary lines equal r104's except
+   frame-D5legend, whose effects improve 296 → 298 (another critter morph);
+   tools/regress.sh now also replays trace-G5-skull5-v1 (every part but
+   player +0x8a4) and trace-G1-3way-v1 (100/100; a negative control with
+   the old sine index fails the throw update).
 
 ---
 

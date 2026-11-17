@@ -68,8 +68,15 @@ impl Game {
     /// the boss critter from player 0, so BossDeath and the good wizard run
     /// through the ported paths. Returns CritterDamage's result.
     pub fn debug_damage_boss(&mut self) -> R<i32> {
+        self.debug_damage_boss_by(1.0e6)
+    }
+
+    /// DEBUG (headless checks, not a game feature): CritterDamage(amount) on
+    /// the boss from player 0, e.g. to raise its difficulty (CritterSetDifficulty
+    /// follows the health) into the range of its later moves.
+    pub fn debug_damage_boss_by(&mut self, amount: f32) -> R<i32> {
         let Some(b) = usize::try_from(self.boss_crit_inst - 1).ok().filter(|&b| self.critters.get(b).is_some_and(|c| c.is_some())) else { return Ok(-1) };
-        self.critter_damage(1.0e6, b, 0, 0, None, None, 0)
+        self.critter_damage(amount, b, 0, 0, None, None, 0)
     }
 
     /// DEBUG (headless checks, not a game feature): CritterDamage(1e6) on

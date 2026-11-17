@@ -1562,26 +1562,63 @@ fn present_world_nodes(sim: Res<Sim>, mut nodes: Query<(&WorldNode, &mut Transfo
         return;
     }
     for (n, mut tf) in &mut nodes {
-        let mut k = Some(n.node);
-        let mut mover = None;
-        let mut guard = 0;
-        while let Some(i) = k.filter(|&i| i < c.objects.len()) {
-            if c.object_moved(i) {
-                mover = Some(i);
-                break;
-            }
-            k = c.objects[i].parent;
-            guard += 1;
-            if 256 < guard {
-                break;
-            }
-        }
-        let Some(m) = mover else { continue };
-        let (Ok(cur), Ok(rest)) = (c.object_matrix(m), c.object_rest_matrix(m)) else { continue };
-        let rows = Mat3::from_cols(Vec3::new(cur[0][0], cur[0][1], cur[0][2]), Vec3::new(cur[1][0], cur[1][1], cur[1][2]), Vec3::new(cur[2][0], cur[2][1], cur[2][2]));
-        let rel = n.rest - Vec3::new(rest[3][0], rest[3][1], rest[3][2]);
-        tf.translation = rows * rel + Vec3::new(cur[3][0], cur[3][1], cur[3][2]);
+        let Some((rows, scale, translation)) = moved_world_node(c, n.node, n.rest) else { continue };
+        tf.translation = translation;
         tf.rotation = Quat::from_mat3(&rows);
+        tf.scale = scale;
+    }
+}
+
+/// A world node under its nearest moved object (itself or an ancestor):
+/// that object's current rows, its world animation's node scale (DoWorldAnimSub
+/// MBNodeSetScale, flag 8: PushMatrix's S·N·P, so the scale applies in the
+/// object's frame to it and every node below — G3's water, the bowl and
+/// drips growing from 0.33 to 1) and the node's displaced position (`rest`
+/// is its summed file position). None while nothing above it has moved.
+fn moved_world_node(c: &gdl_core::collision::CollisionWorld, node: usize, rest: Vec3) -> Option<(Mat3, Vec3, Vec3)> {
+    let mut k = Some(node);
+    let mut mover = None;
+    let mut guard = 0;
+    while let Some(i) = k.filter(|&i| i < c.objects.len()) {
+        if c.object_moved(i) {
+            mover = Some(i);
+            break;
+        }
+        k = c.objects[i].parent;
+        guard += 1;
+        if 256 < guard {
+            break;
+        }
+    }
+    let m = mover?;
+    let (Ok(cur), Ok(rest_m)) = (c.object_matrix(m), c.object_rest_matrix(m)) else { return None };
+    let rows = Mat3::from_cols(Vec3::new(cur[0][0], cur[0][1], cur[0][2]), Vec3::new(cur[1][0], cur[1][1], cur[1][2]), Vec3::new(cur[2][0], cur[2][1], cur[2][2]));
+    let scale = c.node_scale[m].map_or(Vec3::ONE, Vec3::from_array);
+    let rel = rest - Vec3::new(rest_m[3][0], rest_m[3][1], rest_m[3][2]);
+    Some((rows, scale, rows * (scale * rel) + Vec3::new(cur[3][0], cur[3][1], cur[3][2])))
+}
+
+/// A world psys node (spawn_world_psys): its world node and summed file
+/// position, so the emitter follows a moved ancestor object as the original's
+/// node does (G3's pool fire under the G3FENCE22..25 objects, which sink 20
+/// units when the pool's switch chain fires).
+#[derive(Component)]
+struct WorldPsysNode {
+    node: usize,
+    rest: Vec3,
+}
+
+fn follow_world_psys(sim: Res<Sim>, mut q: Query<(&WorldPsysNode, &mut Emitter)>) {
+    let c = &sim.game.collision;
+    if !(0..c.objects.len()).any(|o| c.object_moved(o)) {
+        return;
+    }
+    for (n, mut em) in &mut q {
+        let Some((rows, scale, t)) = moved_world_node(c, n.node, n.rest) else { continue };
+        // Original-space row-major matrix: the object's rows (Mat3 columns
+        // here), each scaled by its axis (S·N).
+        let (x, y, z) = (rows.x_axis * scale.x, rows.y_axis * scale.y, rows.z_axis * scale.z);
+        em.matrix = [x.x, x.y, x.z, 0.0, y.x, y.y, y.z, 0.0, z.x, z.y, z.z, 0.0, t.x, t.y, t.z, 1.0];
     }
 }
 
@@ -3412,7 +3449,7 @@ struct TestHarness {
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
     /// {"at": u, "health": h[, "player": k]} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
-    /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "critter_kill": instance} (DEBUG) |
+    /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "boss_damage": amount} (DEBUG) | {"at": u, "critter_kill": instance} (DEBUG) |
     /// {"at": u, "damage_item": [slot, damage(, flags)]} (DEBUG) |
     /// {"at": u, "spawn": [type, level, ai(, dx, dz)]} (DEBUG) | {"at": u, "next_coin": coins} (DEBUG) |
     /// {"at": u, "save": card file} for player 1 |
@@ -5440,6 +5477,21 @@ fn spawn_world_psys(commands: &mut Commands, root: Entity, session: &Session, se
         let Some(at) = node.label.find("PSYS") else { continue };
         let Some(letter) = node.label.as_bytes().get(at + 4).copied() else { continue };
         let Some(record) = table.chunks_exact(gdl_core::psys::RECORD).find(|r| r[6] == letter) else { continue };
+        // DEBUG: GDL_DEBUG_PSYS=1 lists each world psys node with its parent
+        // chain. Not a game feature.
+        if std::env::var_os("GDL_DEBUG_PSYS").is_some() {
+            let parents: std::collections::HashMap<u32, Option<u32>> = world.placements().map(|v| v.iter().map(|q| (q.node_index, q.parent)).collect()).unwrap_or_default();
+            let mut chain = Vec::new();
+            let mut cur = p.parent;
+            while let Some(c) = cur {
+                chain.push(format!("{c}:{}:{:#x}", world.nodes[c as usize].label, world.nodes[c as usize].flags));
+                cur = parents.get(&c).copied().flatten();
+                if chain.len() > 32 {
+                    break;
+                }
+            }
+            eprintln!("PSYS {} {} {:#x} {:?} parents {}", p.node_index, node.label, node.flags, p.summed_position, chain.join(" < "));
+        }
         let dir = (0 < node.collision_count)
             .then(|| world.collisions.get(node.collision_index as usize))
             .flatten()
@@ -5453,6 +5505,7 @@ fn spawn_world_psys(commands: &mut Commands, root: Entity, session: &Session, se
         let e = commands
             .spawn((
                 Emitter { psys, anchor: None, matrix, sprites: Vec::new(), texture, material: None, fire, fire_colour: None },
+                WorldPsysNode { node: p.node_index as usize, rest: Vec3::new(x, y, z) },
                 Mesh3d(mesh),
                 Transform::default(),
                 Visibility::Hidden,
@@ -6479,6 +6532,13 @@ fn simulate(
             {
                 sim.error = Some(format!("TEST boss_kill: {}", e.0));
             }
+            // {"boss_damage": amount}: DEBUG CritterDamage of that amount on
+            // the boss (its difficulty follows its health).
+            if let Some(n) = a["boss_damage"].as_f64()
+                && let Err(e) = sim.game.debug_damage_boss_by(n as f32)
+            {
+                sim.error = Some(format!("TEST boss_damage: {}", e.0));
+            }
             // {"critter_kill": instance}: DEBUG lethal CritterDamage on any
             // critter (critter_slot_check.py).
             if let Some(i) = a["critter_kill"].as_u64()
@@ -7035,13 +7095,72 @@ fn simulate(
         sim.game.saver.timer = 36000 - n;
     }
     // DEBUG: GDL_DEBUG_FX=1 logs the live effect slots every 10 updates.
-    if std::env::var("GDL_DEBUG_FX").is_ok() && sim.updates.is_multiple_of(10) {
+    // DEBUG: GDL_DEBUG_TRIGGERS=1 lists the trigger items (type 5) with
+    // their bound world objects at update 60, then logs every change of a
+    // world object's +0x16/+0x17 bytes. Not a game feature.
+    if std::env::var_os("GDL_DEBUG_TRIGGERS").is_some() {
+        static PREV: std::sync::Mutex<Vec<(u8, u8)>> = std::sync::Mutex::new(Vec::new());
+        let g = &sim.game;
+        if sim.updates == 60 {
+            for (k, r) in g.items.records.iter().enumerate() {
+                if !r.active() {
+                    continue;
+                }
+                let d = &g.items.definitions[r.definition()];
+                if d.kind() == 5 {
+                    let b = r.u32_(0xf0).checked_sub(1).map(|o| o as usize);
+                    eprintln!(
+                        "TRIG {k} sub {} flags {:#x} pos {:?} bound {:?} {} chain {}",
+                        d.subtype(),
+                        r.u16_(0xf4),
+                        r.v3(0x40),
+                        b,
+                        b.and_then(|o| g.world_labels.get(o)).cloned().unwrap_or_default(),
+                        r.u32_(0xf8)
+                    );
+                }
+            }
+        }
+        if let Ok(list) = std::env::var("GDL_DEBUG_TRIGGERS")
+            && list.contains(',')
+            && sim.updates.is_multiple_of(10)
+        {
+            for o in list.split(',').filter_map(|v| v.trim().parse::<usize>().ok()) {
+                let m = g.collision.object_matrix(o).ok();
+                let wa: Vec<String> = g.world_anims.entries.iter().filter(|e| e.object == o).map(|e| format!("fl {:#x} fr {} / {} tf {:#x} ch {:#x} act {}", e.flags, e.frame, e.frames, e.transform_flags, e.channels, e.active)).collect();
+                eprintln!("WOBJM {} {o} {} moved {} scale {:?} t {:?} mb {:#x} wa {:?}", sim.updates, g.world_labels.get(o).cloned().unwrap_or_default(), g.collision.object_moved(o), g.collision.node_scale[o], m.map(|m| m[3]), g.items.objects[o].flags_10, wa);
+            }
+        }
+        let cur: Vec<(u8, u8)> = g.items.objects.iter().map(|o| (o.byte_16, o.byte_17)).collect();
+        let mut prev = PREV.lock().unwrap();
+        if prev.len() == cur.len() {
+            for (o, (a, b)) in prev.iter().zip(cur.iter()).enumerate() {
+                if a != b {
+                    eprintln!("WOBJ {} {o} {} {:?} -> {:?}", sim.updates, g.world_labels.get(o).cloned().unwrap_or_default(), a, b);
+                }
+            }
+        }
+        *prev = cur;
+    }
+    if std::env::var("GDL_DEBUG_FX").is_ok() && sim.updates == 10 {
+        let g = &sim.game;
+        for (k, h) in g.effects.tables.headers.iter().enumerate().skip(0x61) {
+            if let Some(h) = h
+                && let Some(f) = (h.source as usize).checked_sub(2).filter(|_| (2..0x40).contains(&h.source))
+                && let Some(m) = g.critter_data.files.get(f).and_then(|f| f.model.as_ref())
+            {
+                eprintln!("FXHEADER {k} critter file {f} tree {} frames {} repeat {}", m.0.trees[h.tree].label, h.frames, h.repeat);
+            }
+        }
+    }
+    if std::env::var("GDL_DEBUG_FX").is_ok_and(|v| v == "every" || sim.updates.is_multiple_of(10)) {
         let g = &sim.game;
         let live: Vec<String> = (0..g.effects.num)
             .filter(|&k| 0.0 < g.effects.slots[k].f32_(0x68))
             .map(|k| {
                 let n = g.effects.nodes[k];
-                format!("{k}:{:?}/{:?}/{:?}", n.map(|n| n.visual), n.and_then(|n| n.follow), n.map(|n| n.position))
+                let r = &g.effects.slots[k];
+                format!("{k}:{:?}/{:?}/{:?}/fl {:#x} end {} t {} v {:?}", n.map(|n| n.visual), n.and_then(|n| n.follow), n.map(|n| n.position), r.u32_(0x64), r.f32_(0x68), g.globals.atime, [r.f32_(0x80), r.f32_(0x84), r.f32_(0x88)])
             })
             .collect();
         if !live.is_empty() {
@@ -7970,6 +8089,12 @@ fn present_effect_trees(
         let mut frame = ((atime - fx.start) * 900.0 / f32::from(fx.timing.max(1))).max(0.0);
         let seq = fx.fixed.map_or(fx.seq, |f| f.0);
         let sequence = anim.trees.get(fx.tree).and_then(|t| t.sequences.get(seq));
+        // An effect slot's tree wraps by its AnimInfo loop word (+0x50):
+        // StartFXTree leaves the header's repeat flag there or sets 1 on its
+        // time and zero-frame paths, SfxSetMorph's ChangeEffect sets 1 (the
+        // boss key's BOSSKEY2, the lich's ATK15LPFX); without it the last
+        // frame holds.
+        let slot_loops = sim.game.effects.slots.get(fx.slot).is_some_and(|r| r.u16_(0x50) != 0);
         if let Some((_, f)) = fx.fixed {
             frame = f;
         } else if fx.looping
@@ -7977,6 +8102,8 @@ fn present_effect_trees(
         {
             let n = f32::from(s.frames.max(1));
             frame = if s.repeat != 0 { frame % n } else { frame.min(n - 1.0) };
+        } else if slot_loops && let Some(s) = sequence {
+            frame %= f32::from(s.frames.max(1));
         }
         let Ok(pose) = gdl_client::tree_pose(anim, fx.tree, &pkg.anim_bytes, seq, frame, true) else { continue };
         let index = object_frame(frame, sequence);
@@ -11451,7 +11578,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, follow_tree_psys, present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_enemy_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, (follow_tree_psys, follow_world_psys), present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_enemy_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,

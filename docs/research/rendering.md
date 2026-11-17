@@ -1348,3 +1348,32 @@ throughout: the wait for the previous submission that precedes the
 acquire timing out each frame (wgpu-hal ignores that result), which no
 player has reported; HYPOTHESIS: the scheduled-task harness's window
 without the foreground (unknowns.md).
+
+## Effect loops, world psys under moving objects, world animation scale (2026-11-16)
+
+Three presentation gaps from a player's reports:
+- Effect tree frames: the header-visual effect trees were posed at the
+  time since their start without wrapping, so a tree held its last pose
+  once its frames ran out. The effect slot's AnimInfo loop word (+0x50:
+  StartFXTree leaves the header's repeat flag or sets 1 on its time and
+  zero-frame paths; SfxSetMorph's change sets 1) now wraps the frame. The
+  boss key (BossDeath's BOSSKEY morphing to BOSSKEY2 for 30 s) turns for
+  its whole life instead of stopping 1.3 s after the morph; the lich's
+  looping ATK15LPFX skulls animate.
+- World psys: spawn_world_psys placed every emitter at its summed file
+  position for good. In the original a psys node is a node of the world
+  tree, drawn at its world matrix, so it moves with an animated ancestor.
+  The emitters now follow their nearest moved ancestor object like world
+  geometry (present_world_nodes). G3's pool fire (G3PSYSC1–C16, D1–D4,
+  POOLFIRE) are children of G3FENCE22..25, which DoWorldAnimSub lowers
+  20 units when the Parchment of Fire's switch chain fires; the 1.3.2
+  client kept the flames burning over the water.
+- World animation scale: DoWorldAnimSub's scale channels (transform flags
+  & 0x700) set the node's scale (collision.node_scale; PushMatrix's S·N·P
+  for flag 8, so the node and its descendants are scaled in the object's
+  frame). present_world_nodes ignored it; G3's NSBOWLFILL (uniform 0.33 →
+  1), XSNSBIGDRIP (0.46/0.075/0.9 → 1) and XSNSDRIP grow while the water
+  starts.
+Native check only (GDL_DEBUG_CAMERA frozen frames of the pool, 1.3.2
+against this build): the fire's glow leaves the solved pool. No reference
+picture of the solved pool (unknowns.md).

@@ -749,12 +749,19 @@ impl Game {
                 r.or_u32(fx::FLAGS, 0x20_0000);
             }
         }
-        if 0 <= CritterFile::i16_pub(&drec, 0x44) {
-            // SfxSetMorph: presentation; its flag side effects are kept.
+        if let Ok(m1) = usize::try_from(CritterFile::i16_pub(&drec, 0x44)) {
+            // 0x194adc: SfxSetMorph(DAMG +0x3c or 15, slot, SFXX[+0x44]
+            // header, SFXX[+0x46] header or 0). ProcessEffects changes the
+            // effect to the first header when its tree ends (the lich's
+            // ATK15GENFX → ATK15LPFX skulls, trace-G5-skull5-v1 step 293:
+            // +0x64 0x4807, +0x74 15, +0xc0 124).
             let mut t = CritterFile::f32_pub(&drec, 0x3c);
             if t <= 0.0 {
                 t = 15.0;
             }
+            let next = CritterFile::i32_pub(&self.csfx_pub(i, m1), 8) as i16;
+            let second = usize::try_from(CritterFile::i16_pub(&drec, 0x46)).map_or(0, |m2| CritterFile::i32_pub(&self.csfx_pub(i, m2), 8) as i16);
+            self.sfx_set_morph(k, t, next, second);
             if f16 & 0x800 != 0 {
                 self.fx_mut(k).or_u32(fx::FLAGS, 0x8000);
             }

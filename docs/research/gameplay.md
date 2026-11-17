@@ -83,6 +83,15 @@ closure; the interim player driver), ProcessEffects.
   (NULLFX) under it. Headless: game-run sfx=… weapon=1:60
   (game-run-weapon-G1-v2.json: WeapThrowFx [−1, 109..112], the follower
   linked to its missile and deleted at the hit).
+  Multi-shot (flags 0x80000: three missiles, 0x400000: five): missile k
+  flies the direction yawed by cos[k] at 0x2ad9d0 (1, .966, .966, .866,
+  .866, then a pad word) and sin[k] at 0x2ad9e8 (0, .259, −.259, .5, −.5),
+  as 0x18fe48/0x18fe78 copy them. Until 2026-11-16 the port read the sines
+  from 0x2ad9e4, so missile 1 flew with missile 0 and a 3-way shot showed
+  two (a player's report). trace-G1-3way-v1 (the 3-way powerup, pickup
+  0xc's kind 5 flags 0x80000, WARPED into player 0's +0x154 slot of
+  w7l1-newgame-v1): three throws, replay 100/100 in every part, the
+  missiles at 100.4°, 115.4° and 130.4°.
 - Enemy missiles: shoot_missile, EnemyStartMissile (EnemyMissileInfo
   0x24de80, trees "<PREFIX>_ARROW/BOMB/FBALL" per InitEnemyMissiles; a missing
   tree returns no missile as Errorf does), MissileCollidePlayer and the
