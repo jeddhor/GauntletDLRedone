@@ -18,7 +18,9 @@ release 1.3.2 fixes a lost graphics device on NVIDIA cards during slow loads
 original — effect transparency and depth, enemy shadows and fades, texture
 animations, Sumner's ghost; release 1.3.3 fixes player reports: the Lich's
 skull volley, the 3-way and 5-way shots' spread, the shard turning after a
-boss, and the Cemetery's fire pool going out ([research/release.md](docs/research/release.md)). The native game runs
+boss, and the Cemetery's fire pool going out; release 1.3.4 adds the title
+music, draws items that appear mid-level (a boss's coins, dropped bags) and
+turns the Lich's skull trail with its flight ([research/release.md](docs/research/release.md)). The native game runs
 the original rules from the player's own disc: the Tower, all realms and
 bosses, one to four players, the original HUD, menus, audio and movies, and
 saves; a character has been played from a new game to the ending
