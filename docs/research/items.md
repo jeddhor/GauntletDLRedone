@@ -13,6 +13,15 @@ per WORLDS instance (60 B: def i16 +0, +2 player count, +3 flags, +4/+6 words,
 MaxLevelCoins = shown (1,1) items; ProcessItemWobjs; PlaceItem per slot;
 MatchTransporters; LinkTriggers.
 
+NewItemPtr appends a record when no earlier slot is free (up to MaxItems):
+boss coin spews (StartSpewItem), CritterDropItem's bags, chest contents and
+other runtime AddItems take slots past the level's instances. Native
+presentation: gdl_play's item slots grow with the records (grow_item_slots,
+2026-11-17); before, only the level's initial records had slots, so an
+appended item existed (and could be collected) but was not drawn — the G5
+lich's five coins (slots 19–23 in the kill run g5-coins-v4) showed none,
+a player saw one or two (coins that reused freed slots).
+
 NewItem: matrix = identity, then WPitchMat3(rot.x), WYawMat3(rot.y),
 WRollMat3(rot.z) (each skipped for |a| < 0x38d1b717; libm sinf/cosf; mul then
 EE add/sub per row). CopyMat3 copies three quadwords, so record +0x4c receives

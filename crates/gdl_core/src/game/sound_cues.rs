@@ -125,13 +125,13 @@ impl Game {
     }
 
     /// AudioSelect 0x15ce80(k): the select-screen music 0xc0000 (AudioFX at
-    /// volMusic, priority 1) for k = 1, killed otherwise
-    /// (audio_select_state; AudioLoadStage of the select bank is the
-    /// host's).
+    /// volMusic — `lw a1, volMusic` at 0x15cec8 — priority 1) for k = 1,
+    /// killed otherwise (audio_select_state; AudioLoadStage of the select
+    /// bank is the host's). Until 2026-11-17 the volume was 100.
     pub fn audio_select(&mut self, k: i32) {
         if self.sounds.audio_select_state != k {
             if k == 1 {
-                self.sfx_flat(0xc_0000, 100, 1);
+                self.sfx_flat(0xc_0000, self.vol_music, 1);
             } else {
                 self.kill_sound(0xc_0000);
             }

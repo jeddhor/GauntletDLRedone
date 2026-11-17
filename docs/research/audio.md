@@ -103,6 +103,28 @@
 - AudioDemonFireBall 0x15fcb8 (enemy type 2 fireballs by CurWorld) and
   AudioSelect 0x15ce80 are ported (effects.rs, sound_cues.rs).
 
+## The title and select music (2026-11-17, actual disc)
+
+AudioSelect 0x15ce80(k), when k differs from audio_select_state 0x23ccb8:
+from state 0 it first calls AudioLoadStage("SELECT" 0x2a8c88, 0); k = 1
+plays AudioFX(0xc0000, volMusic 0x21f6c8, 1) — AudioTrack4(−1, 0xc0000,
+volMusic, 0, 0x7f, 1), the SELECT bank's call 0, which loops by itself
+(rendered offline: 120 s of continuous sound) — any other k
+AudioSoundKill(0xc0000). AudioStopAll 0x15c438 = audio_stop_all + state 0.
+Callers (ghidra-audsel-refs): AudioSelect from init_titlescreen (after
+AudioStopAll), do_player_select (psel_load_audio's countdown, set only by
+init_player_select(k ≠ 0) after its AudioStopAll) and ScreenSaverEnd;
+AudioStopAll also from do_titlescreen's exit to the attract sequence and
+its timeout, OptionsStart in game mode 0x4010 only (not on the title),
+init_over, init_gamemovie, init_shop, BGMusicStart, init_credits, do_flyby
+and others. So the theme starts on the title screen, plays through the
+title menu and its options, and goes on into the select screen reached
+from the title (init_player_select(0)); BGMusicStart stops it in the
+Tower. Native: the client's title_music (front end) and the simulation's
+audio_select (select screen from a game, the saver), both at volMusic.
+Until 2026-11-17 the title played nothing (a player's report) and the
+simulation's AudioSelect used volume 100.
+
 ## Stage records (2026-10-28)
 
 ResolveWorldData 0x161738 (LoadWorldData, when a world's WDATA is loaded)

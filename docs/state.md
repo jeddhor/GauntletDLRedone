@@ -894,6 +894,27 @@ original (PCSX2 reference on Xvfb :191, private captures):
    tools/regress.sh now also replays trace-G5-skull5-v1 (every part but
    player +0x8a4) and trace-G1-3way-v1 (100/100; a negative control with
    the old sine index fails the throw update).
+   2026-11-17 (the same player's reports on 1.3.3):
+   - No title music: init_titlescreen 0x1841a0 calls AudioStopAll and
+     AudioSelect(1), which loads the SELECT bank and plays its looping
+     theme 0xc0000 at volMusic (AudioFX(0xc0000, volMusic, 1)); the front
+     end never did, so the title and the select screen after it were
+     silent. The client now plays it on the title (stopped when the attract
+     sequence starts; it goes on into the select screen, which
+     init_player_select(0) does not stop; the select starts with
+     audio_select_state 1). Game::audio_select used volume 100 instead of
+     volMusic (0x15cec8). Checked on the private Xvfb with ALSA sent to a
+     file: 1.3.3's title is digital silence, the fix plays the theme.
+   - The lich's coins: BossSpewCoins spawns 4 bronze and 1 silver per
+     player for world 7 (spew_tab row 7, 3000 gold, as the player
+     remembered), and all five land in the simulation — but the client
+     made item slots only for the level's initial records, so items that
+     NewItemPtr appended later (coins, bags, keys) were never drawn; only
+     coins reusing a freed slot showed. Slots now grow with the records
+     (grow_item_slots). G5 kill: 0 of 5 coin meshes drawn before, 5 after.
+   - The skull's trail always faced one way: TopFaceMat 0x1c7e90 (MB flags
+     0x8000000, the trail TFSTRE's 0x8081800) keeps the node's own world z
+     row and turns x/y to the eye; the port kept world Z. Now the node's z.
 
 ---
 

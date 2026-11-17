@@ -1160,6 +1160,9 @@ struct Front {
     /// the attract modes' 30 Hz step clock (SetMaxFPS(0x1e)).
     title_timeout: f32,
     attract_clock: f32,
+    /// The title music (init_titlescreen's AudioSelect(1): the SELECT
+    /// bank's 0xc0000) sounds; false while the front end is not shown.
+    title_music: bool,
     /// TEXT/HINTS_E.ROM and the hint pad's state (HintMenu, next_*_hint).
     hints_rom: gdl_formats::textrom::TextRom,
     hints: gdl_core::game::hints::Hints,
@@ -1636,9 +1639,14 @@ struct CameraFace {
 /// coordinates (columns = the PS2 matrix rows). FaceCamMat (0x1c7d48):
 /// YawMat3 by the eye's yaw, PitchMat3 by its pitch clamped to ±limit
 /// (unclamped for 0x3000000); QuickYawMat: yaw to the camera forward + π;
-/// 0x4000000: diag(−1, 1, −1) × the camera→world rows; TopFaceMat: keeps z,
-/// x = normalize((eye − p) × z), y = z × x.
-fn camera_face_rotation(mode: u32, p: Vec3, eye: Vec3, rows: [Vec3; 3]) -> Mat3 {
+/// 0x4000000: diag(−1, 1, −1) × the camera→world rows; TopFaceMat
+/// 0x1c7e90: keeps the current matrix's row 2 (`z`, the node's own world z),
+/// x = normalize((eye − p) × z), y = z × x; when |(eye − p) × z| < 0.01,
+/// y = (0, 1, 0) and x = y × z. Until 2026-11-17 the port kept world Z for
+/// every node, so a streak like the lich's ATK15 skull trail (TFSTRE, MB
+/// flags 0x8081800) lay along one world direction whatever the skull's
+/// heading (a player's report).
+fn camera_face_rotation(mode: u32, p: Vec3, eye: Vec3, rows: [Vec3; 3], z: Vec3) -> Mat3 {
     let to = eye - p;
     let yaw_pitch = |limit: Option<f32>| {
         let yaw = to.x.atan2(to.z);
@@ -1664,13 +1672,20 @@ fn camera_face_rotation(mode: u32, p: Vec3, eye: Vec3, rows: [Vec3; 3]) -> Mat3 
         0x7000000 => yaw_pitch(Some(f32::from_bits(0x3f490fdb))),
         0x4000000 => Mat3::from_cols(-rows[0], rows[1], -rows[2]),
         0x8000000 => {
-            let z = Vec3::Z;
             let x = to.cross(z);
-            if x.length() < 0.01 {
-                Mat3::IDENTITY
+            // NormalVector's length; the rows stay orthogonal, and the
+            // rotation drops their lengths (the slot carries the scale).
+            let (x, y) = if x.length() < 0.01 {
+                let y = Vec3::Y;
+                (y.cross(z), y)
             } else {
                 let x = x.normalize();
-                Mat3::from_cols(x, z.cross(x), z)
+                (x, z.cross(x))
+            };
+            if x.length() < 1e-6 || y.length() < 1e-6 || z.length() < 1e-6 {
+                Mat3::IDENTITY
+            } else {
+                Mat3::from_cols(x.normalize(), y.normalize(), z.normalize())
             }
         }
         _ => Mat3::IDENTITY,
@@ -1682,7 +1697,8 @@ fn present_camera_face(sim: Res<Sim>, mut nodes: Query<(&CameraFace, &mut Transf
     let eye = Vec3::from_array(cam.pb.eye);
     let rows = cam.pb.cam_rows.map(Vec3::from_array);
     for (face, mut tf) in &mut nodes {
-        let m = camera_face_rotation(face.mode, face.anchor, eye, rows);
+        // A translation-only node: its z is the world's.
+        let m = camera_face_rotation(face.mode, face.anchor, eye, rows, Vec3::Z);
         tf.translation = face.anchor + m * face.offset;
         tf.rotation = Quat::from_mat3(&m);
     }
@@ -3165,6 +3181,32 @@ fn exit_attract(front: &mut Front) {
     front.title_timeout = 1800.0;
 }
 
+/// init_titlescreen 0x1841a0: AudioStopAll, then AudioSelect(1) — with
+/// audio_select_state 0, AudioLoadStage("SELECT") and AudioFX(0xc0000,
+/// volMusic, 1), the SELECT bank's looping theme at the music volume. It
+/// plays on through the title menu and its options (OptionsStart stops the
+/// audio only in game mode 0x4010) into the select screen. Every way into
+/// the attract sequence stops it (do_titlescreen's exit_attract and
+/// timeout: AudioStopAll). Until 2026-11-17 the front end started no
+/// sound here: the title and the select screen after it were silent
+/// (a player's report).
+fn title_music(front: &mut Front, audio: Option<&mut NonSendMut<gdl_client::audio::AudioOut>>) {
+    let want = front.attract_run.is_none();
+    if want == front.title_music {
+        return;
+    }
+    front.title_music = want;
+    let Some(a) = audio else { return };
+    a.stop_voices();
+    if want {
+        // AudioFX → AudioTrack4(−1, 0xc0000, volMusic, 0, 0x7f, 1).
+        a.play(TITLE_MUSIC, i32::from(front.menu.music), 0x7f, 1);
+    }
+}
+
+/// The SELECT bank's theme (AudioSelect's sound 0xc0000).
+const TITLE_MUSIC: i32 = 0xc_0000;
+
 /// The attract entries per frame at 30 Hz (SetMaxFPS(0x1e), vb_elapsed 2),
 /// and the title screen's timeout back into the sequence.
 #[allow(clippy::too_many_arguments)]
@@ -3181,9 +3223,14 @@ fn run_attract(
 ) {
     let dt = time.delta_secs();
     if *screen_mode != Screen::Front {
+        // The title's Start keeps the music into the select screen
+        // (init_player_select(0) has no AudioStopAll); whatever ends the
+        // game stops it, and the next title screen starts it again.
+        front.title_music = false;
         return;
     }
     let front = &mut *front;
+    title_music(front, audio.as_mut());
     let movie_now = matches!(front.attract_run, Some(AttractRun::Movie { .. }));
     let credits_now = matches!(front.attract_run, Some(AttractRun::Credits));
     // Leaving a movie or the credits: the quad hides, the sound stops.
@@ -4904,6 +4951,7 @@ fn setup(
 ) {
     let root = commands.spawn((Transform::from_scale(MIRROR), Visibility::default(), MirrorRoot)).id();
     let level_lib = spawn_level(&mut commands, root, &session, sim.game.items.records.len(), &mut meshes, &mut images, &mut materials);
+    commands.insert_resource(ItemSlots(sim.game.items.records.len()));
     libraries.0.insert(LEVEL_LIB.to_string(), level_lib);
     spawn_bodies(&mut commands, root, &sources, &session, &mut meshes, &mut images, &mut materials);
     for (name, pkg) in &sources.packages {
@@ -7514,12 +7562,40 @@ fn present_camera_face_local(sim: Res<Sim>, parents: Query<&Transform, Without<C
     for (face, child_of, mut tf) in &mut q {
         let Ok(p) = parents.get(child_of.parent()) else { continue };
         let at = p.transform_point(tf.translation);
-        let m = camera_face_rotation(face.mode, at, eye, rows);
+        // The node's world z before CameraFace (the slot's rotation times the
+        // node's posed rotation): TopFaceMat keeps it.
+        let z = (p.rotation * tf.rotation) * Vec3::Z;
+        let m = camera_face_rotation(face.mode, at, eye, rows, z);
         tf.rotation = p.rotation.inverse() * Quat::from_mat3(&m);
     }
 }
 
 type SlotQuery<'w, 's> = Query<'w, 's, (Entity, &'static mut Slot, &'static mut Transform, &'static mut Visibility), Without<CharacterRoot>>;
+
+/// The item slots spawned for the level (spawn_level's records, then
+/// grow_item_slots).
+#[derive(Resource, Default)]
+struct ItemSlots(usize);
+
+/// NewItemPtr appends records past the level's own (up to MaxItems =
+/// instances + 500): boss coin spews, dropped bags and keys, chest
+/// contents. Each new record gets an item slot. Until 2026-11-17 the slots
+/// were only the level's initial records, so items appended later were
+/// never drawn (a player's report: the lich's five coins showed as one or
+/// two — only those reusing a freed slot — though all could be collected).
+fn grow_item_slots(mut commands: Commands, sim: Option<Res<Sim>>, mut have: ResMut<ItemSlots>, root: Query<Entity, With<MirrorRoot>>) {
+    let Some(sim) = sim else { return };
+    let n = sim.game.items.records.len();
+    if n <= have.0 {
+        return;
+    }
+    let Ok(root) = root.single() else { return };
+    for index in have.0..n {
+        let e = commands.spawn((Slot { kind: SlotKind::Item, index, key: None }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
+        commands.entity(root).add_child(e);
+    }
+    have.0 = n;
+}
 
 #[allow(clippy::too_many_arguments)]
 fn present_world(
@@ -9597,6 +9673,9 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
         game.players[0].set_i32(0xfc, 0);
         let pdats = world.resource::<Session>().pdats.clone();
         select = Some(game.init_player_select(0, &pdats).map_err(|e| e.0)?);
+        // init_titlescreen's AudioSelect(1) left audio_select_state 1 (the
+        // title music plays on; the select's names use the …2S sounds).
+        game.sounds.audio_select_state = 1;
         // The original loads the Tower after init_player_select(0), so its
         // init_next_level → setup_player_display sees player 1 choosing
         // (state 2, column 0: display mode 0 — no coin, heart, gold, health
@@ -9612,10 +9691,16 @@ fn start_session(world: &mut EcsWorld, from: Option<u32>) -> Result<(), Box<dyn 
     }
     world.insert_resource(Sim { game, error: None, updates: 0, frozen: false, sim_clock: false, weapon_hidden: [false; 4], exp: 0, sparks: Vec::new(), last_event: String::new(), message_box: None, controller_box: false, hint_menu: false, scroll_clock: 0.0, shop: None, map: None, shop_done: None, debug_skip: false, select, select_done: false, select_quit: None, select_next: None, map_done: None, movie: None, movie_done: None, over: None, over_done: false, flyby: None, flyby_done: false });
     world.run_system_once(setup).map_err(|e| format!("{e:?}"))?;
-    // The stage music starts from the level's BGMusicStart request.
+    // The stage music starts from the level's BGMusicStart request. From
+    // the title (init_player_select(0): no AudioStopAll) the title music
+    // goes on behind the select screen.
     let _ = stage;
     if let Some(mut a) = world.get_non_send_resource_mut::<gdl_client::audio::AudioOut>() {
-        a.stop_all();
+        if from.is_none() {
+            a.stream_stop();
+        } else {
+            a.stop_all();
+        }
     }
     if let Some((path, why)) = recovered {
         world.resource_mut::<Sim>().last_event = format!("save recovered from {} ({why})", path.display());
@@ -11448,6 +11533,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         credits,
         attract_pkgs,
         title_timeout: 1800.0,
+        title_music: false,
         attract_clock: 0.0,
         hints_rom: gdl_formats::textrom::TextRom::parse(&catalog_hints)?,
         hints: Default::default(),
@@ -11510,6 +11596,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<MatRequests>()
         .init_resource::<PendingTreePsys>()
         .init_resource::<ChestNodes>()
+        .init_resource::<ItemSlots>()
         .init_resource::<Net>()
         .init_resource::<MovieScreen>()
         .insert_resource(PsysClock { global: gdl_core::psys::PsysGlobal::new(1), accumulated: 0.0 })
@@ -11578,7 +11665,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, (follow_tree_psys, follow_world_psys), present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_enemy_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (grow_item_slots, present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, (follow_tree_psys, follow_world_psys), present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_enemy_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
@@ -11649,7 +11736,7 @@ fn advance_level(
     mut sources: ResMut<Sources>,
     mut libraries: ResMut<Libraries>,
     mut frames: ResMut<EnemyFrames>,
-    (front, ui, mut hud_sets, net): (Res<Front>, Res<Ui>, ResMut<HudSets>, Res<Net>),
+    (front, ui, mut hud_sets, net, mut item_slots): (Res<Front>, Res<Ui>, ResMut<HudSets>, Res<Net>, ResMut<ItemSlots>),
 ) {
     // do_players state 8 plays the dying action (0x7e, +0x8f8) and calls
     // kill_player; in the Tower PlayerRestoreState puts the player back.
@@ -11902,6 +11989,9 @@ fn advance_level(
             if let Ok(root) = root.single() {
                 let n = sim.game.items.records.len();
                 let level_lib = spawn_level(&mut commands, root, &session, n, &mut meshes, &mut images, &mut materials);
+                // Set now, not deferred: grow_item_slots may run later this
+                // frame with the new game's records.
+                item_slots.0 = n;
                 libraries.0.insert(LEVEL_LIB.to_string(), level_lib);
                 spawn_package_texmods(&mut commands, &libraries, &texmod_packages(&session, &sources));
                 if new_body {
@@ -12065,6 +12155,24 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn top_face_keeps_the_nodes_own_z() {
+        // TopFaceMat 0x1c7e90: a streak along +x seen from above keeps x as
+        // its z row; x = normalize((eye − p) × z), y = z × x.
+        let m = camera_face_rotation(0x800_0000, Vec3::ZERO, Vec3::new(0.0, 10.0, 0.0), [Vec3::X, Vec3::Y, Vec3::Z], Vec3::X);
+        assert!((m.z_axis - Vec3::X).length() < 1e-6);
+        assert!((m.x_axis - Vec3::new(0.0, 0.0, -1.0)).length() < 1e-6);
+        assert!((m.y_axis - Vec3::Y).length() < 1e-6);
+        // The same streak turned to +z faces the same eye about its new axis.
+        let m = camera_face_rotation(0x800_0000, Vec3::ZERO, Vec3::new(0.0, 10.0, 0.0), [Vec3::X, Vec3::Y, Vec3::Z], Vec3::Z);
+        assert!((m.z_axis - Vec3::Z).length() < 1e-6);
+        assert!((m.x_axis - Vec3::X).length() < 1e-6);
+        // Eye on the axis (|(eye − p) × z| < 0.01): y = (0, 1, 0), x = y × z.
+        let m = camera_face_rotation(0x800_0000, Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0), [Vec3::X, Vec3::Y, Vec3::Z], Vec3::X);
+        assert!((m.y_axis - Vec3::Y).length() < 1e-6);
+        assert!((m.x_axis - Vec3::new(0.0, 0.0, -1.0)).length() < 1e-6);
+    }
 
     #[test]
     fn torch_lights_merge_one_fires_emitters() {

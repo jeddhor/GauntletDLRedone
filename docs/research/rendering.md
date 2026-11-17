@@ -51,8 +51,15 @@ private/reports/ghidra-render1..7 (2026-10-19).
   the node only; flags & 0xf000000 → CameraFace 0x1c07e0 after PushMatrix:
   0x1000000 FaceCamMat(0) (yaw), 0x3000000 yaw+pitch, 0x5/6/7000000 pitch
   clamped to 0.2618/0.5236/0.7854, 0x2000000 QuickYawMat (camera forward +
-  π), 0x4000000 diag(−1,1,−1)·camera→world rows, 0x8000000 TopFaceMat. The
-  face matrix is inherited by children. YawMat3/PitchMat3 rotate the local
+  π), 0x4000000 diag(−1,1,−1)·camera→world rows, 0x8000000 TopFaceMat
+  0x1c7e90 (instruction-checked 2026-11-17: keeps the current matrix's row
+  2 — the node's own world z — and sets row 0 = normalize((eye − p) × z),
+  row 1 = z × row 0, eye = MboxWinPtr +0xa0; when the cross product's
+  length is under 0.01, row 1 = (0, 1, 0) and row 0 = row 1 × z: a streak
+  turns about its own axis to the eye). The port kept world Z until
+  2026-11-17, so streak quads (the lich's ATK15 trail TFSTRE, MB flags
+  0x8081800; Garm's arcs, combo flashes) lay along one world direction.
+  The face matrix is inherited by children. YawMat3/PitchMat3 rotate the local
   frame (row0/row2, row1/row2).
 - MBSetupObject: flag 0x800 (under a parent with node flag bit 0) defers to
   the distance-sorted list.
