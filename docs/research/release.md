@@ -705,6 +705,61 @@ private/runs/github-release-1.3.3; every asset's digest on GitHub equals
 the local file's SHA-256. The owner's Windows test copy is
 P:\gauntlet\dist-1.3.3.
 
+## Release 1.3.4 (2026-11-17)
+
+The player whose reports led to 1.3.3 tested it and reported three more:
+no title music, the lich dropping one or two bronze coins where the
+original drops four and a silver, and the lich's skull trails facing one
+way. 6134b58 fixes all three (state.md 2026-11-17; regress r106: all 148
+lines equal r105's). The owner asked for the push, a release and a note
+for the player. Version 1.3.4 in Cargo.toml's workspace and
+installer/CMakeLists.txt (5d9ce08; 1.3.3 and 1.3.4 do not play together
+over the network). Programs built by tools/package.sh at commit 5d9ce08:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.3.4-linux-x86_64.tar.gz (48 MB; 120 MiB unpacked, 41 files) | 24c74aece66c5847… |
+| GauntletDarkLegacy-1.3.4-windows-x86_64.zip (51 MB; 122 MiB unpacked, 22 files) | 0acc9bf0d305861a… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | c5ffdb6f620f5e67… / c38e6fbb20379f9d… / d851a869b56b0791… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | 06e8ba2a0539000f… / 8cf574f33af6b365… / 9487768a3f12951f… |
+| library-source/ | unchanged from 1.3.3 |
+
+The packages hold the same files as 1.3.3's. cargo test --workspace
+--release: 190 tests pass; strict Clippy (tests-v134). No shader changed since 1.3.2,
+so spirv_check was not rerun.
+
+No check started a kwin session on the RX 580, and none ran on the owner's
+desktop. The machine had restarted since 1.3.3, so the private Xvfb (:191)
+was started again (virtual_display.py) before the GUI checks. Checks of
+1.3.4:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive (of 5d9ce08) | pass, no findings | release-audit-v134 |
+| Network play with the shipped games, a simulated distant network (60 ms one way + up to 30 ms): the Linux package's gdl_play hosting, the Windows package's gdl_play.exe joining under Wine, G1, 900 updates | all 900 hashes equal, 0 prediction digest mismatches | net-check-v134-pkg |
+| The development build: 24 menu flows on the private Xvfb | 20 of 24 pass (below) | menu-flows-v134, -v134b..d, -v133load |
+| Ubuntu 20.04 container without GPU or display: libraries of all 29 ELF files, `--batch` install from the ISO (read-only), verify | none missing; exit 0; 2953 checked, none differing | old-distro-v134-libs |
+| Linux 2026 host, system Qt masked: `--batch` | pass | qt-bundle-v134 |
+| Linux wizard on the private Xvfb with the ISO attached as a drive, system Qt masked, game started | pass, 9.1 s | installer-gui-v134 |
+| Update over release 1.3.3 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, gdl_play replaced, verify none of 2953 differing, no leftovers, test folder removed | pass, 24 s + 21 s | private/runs/windows-update-v134 |
+
+The menu flows ran while another project's build kept this machine's load
+at 22–50 (load average); the driver's keys are timed by the wall clock, and
+the client fell behind them. pause-burn, pause-tower, select-back and
+quit-game-movie failed in the full run; on reruns pause-tower and
+select-back passed, pause-burn and quit-game-movie failed twice more, each
+stuck before the Tower pause (a message box not yet dismissed). Under the
+same load the 1.3.3 package's gdl_play (GDL_PLAY) failed pause-burn,
+pause-tower and quit-game-movie the same way (menu-flows-v133load); 1.3.3
+passed all 24 on a quiet machine. Not rerun on a quiet machine for 1.3.4.
+
+Not run (they start kwin sessions on the RX 580): old_distro_check's wizard
+and game in the container, update_check.py on Linux, title_start_check.py,
+the original-presentation gate and the frame-time benchmarks. Not checked:
+a person playing 1.3.4, network play between two computers or over the
+internet, a physical disc. The source archive is cut from the commit that
+adds this record.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
