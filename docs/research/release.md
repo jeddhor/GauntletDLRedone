@@ -760,6 +760,17 @@ a person playing 1.3.4, network play between two computers or over the
 internet, a physical disc. The source archive is cut from the commit that
 adds this record.
 
+Published 2026-11-18 (UTC) after the owner's request ("go ahead and push,
+cut the release"): tag v1.3.4 at bedef58 (annotated, jeddhor's noreply
+identity), main pushed after history-audit-v134-push (538 commits, 3,318
+blobs: no findings); the GitHub release "Gauntlet: Dark Legacy native port
+1.3.4" (latest) with the nine assets of private/dist-1.3.4 — the two
+packages, GauntletDarkLegacy-1.3.4-source-bedef58.tar.gz
+(release-audit-v134b), the five library-source files and SHA256SUMS — and
+the notes of private/runs/github-release-1.3.4; every asset's digest on
+GitHub equals the local file's SHA-256. The owner's Windows test copy is
+P:\gauntlet\dist-1.3.4.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
