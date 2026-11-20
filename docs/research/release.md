@@ -771,6 +771,63 @@ the notes of private/runs/github-release-1.3.4; every asset's digest on
 GitHub equals the local file's SHA-256. The owner's Windows test copy is
 P:\gauntlet\dist-1.3.4.
 
+## Release 1.3.5 (2026-11-19)
+
+The same player reported four more things on 1.3.3/1.3.4: G3's movie
+could not be skipped and Start opened menus over it (the screen staying
+white after it), G3's water did not move, generals and golems had no health
+bars, and settings went back to defaults on reloading. 01aede0 fixes the
+first three (state.md 2026-11-19: no pause menu during level movies, frame
+texture modifiers reaching the screen in every level, the golems' and
+gargoyles' in-world meters; generals have none on the PS2); the settings
+report was not reproduced (unknowns.md). The replay regression was not
+rerun: gdl_core is unchanged since r106 but for a comment. The owner asked
+for the push, a release and a note for the player. Version 1.3.5 in
+Cargo.toml's workspace and installer/CMakeLists.txt (ae57300; 1.3.4 and
+1.3.5 do not play together over the network). Programs built by
+tools/package.sh at commit ae57300:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.3.5-linux-x86_64.tar.gz (48 MB; 120 MiB unpacked, 41 files) | 8ee2eff3f8475efc… |
+| GauntletDarkLegacy-1.3.5-windows-x86_64.zip (51 MB; 122 MiB unpacked, 22 files) | bbd2385c327e9d26… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | b1abdec6203818bc… / 9eb5c6be8b596b34… / 3a283e48c88e9e8e… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | ea1740df2546c4b2… / 79ad2f2fd85d3519… / f194809407957091… |
+| library-source/ | unchanged from 1.3.4 |
+
+The packages hold the same files as 1.3.4's. cargo test --workspace
+--release: 190 tests pass; strict Clippy (tests-v135). No shader changed since 1.3.2,
+so spirv_check was not rerun.
+
+No check started a kwin session on the RX 580, and none ran on the owner's
+desktop. Checks of 1.3.5:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive (of ae57300) | pass, no findings | release-audit-v135 |
+| Network play with the shipped games, a simulated distant network (60 ms one way + up to 30 ms): the Linux package's gdl_play hosting, the Windows package's gdl_play.exe joining under Wine, G1, 900 updates | all 900 hashes equal, 0 prediction digest mismatches | net-check-v135-pkg |
+| The development build: 24 menu flows on the private Xvfb | 20 of 24 pass (below) | menu-flows-v135, -v135b |
+| Ubuntu 20.04 container without GPU or display: libraries of all 29 ELF files, `--batch` install from the ISO (read-only), verify | none missing; exit 0; 2953 checked, none differing | old-distro-v135-libs |
+| Linux 2026 host, system Qt masked: `--batch` | pass | qt-bundle-v135 |
+| Linux wizard on the private Xvfb with the ISO attached as a drive, system Qt masked, game started | pass, 8.1 s | installer-gui-v135 |
+| Update over release 1.3.4 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, gdl_play replaced, verify none of 2953 differing, no leftovers, test folder removed | pass, 101 s + 133 s (about 22 s each before; the Windows machine's load not checked) | private/runs/windows-update-v135 |
+
+The menu flows ran while another project's build kept the load average at
+28–63. pause-burn, pause-tower, pause-settings and quit-game-movie failed
+in the full run and again on a rerun, each before the Tower pause (the
+client still on the Tower's message box or just started when the
+wall-clock keys arrived) — the failure 1.3.3's package showed under the
+same kind of load (menu-flows-v133load) and 1.3.4's (release 1.3.4). On
+2026-11-19 (menu-flows-v1119, -v1119b, the fixes of 01aede0) 23 of the 24
+passed at least once. Not rerun on a quiet machine for 1.3.5.
+
+Not run (they start kwin sessions on the RX 580): old_distro_check's wizard
+and game in the container, update_check.py on Linux, title_start_check.py,
+the original-presentation gate and the frame-time benchmarks. Not checked:
+a person playing 1.3.5, network play between two computers or over the
+internet, a physical disc. The source archive is cut from the commit that
+adds this record.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
