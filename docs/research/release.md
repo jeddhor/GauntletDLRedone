@@ -828,6 +828,17 @@ a person playing 1.3.5, network play between two computers or over the
 internet, a physical disc. The source archive is cut from the commit that
 adds this record.
 
+Published 2026-11-20 (UTC) after the owner's request ("push and release
+1.3.5"): tag v1.3.5 at d686bea (annotated, jeddhor's noreply identity),
+main pushed after history-audit-v135-push (542 commits, 3,330 blobs: no
+findings); the GitHub release "Gauntlet: Dark Legacy native port 1.3.5"
+(latest) with the nine assets of private/dist-1.3.5 — the two packages,
+GauntletDarkLegacy-1.3.5-source-d686bea.tar.gz (release-audit-v135b), the
+five library-source files and SHA256SUMS — and the notes of
+private/runs/github-release-1.3.5; every asset's digest on GitHub equals
+the local file's SHA-256. The owner's Windows test copy is
+P:\gauntlet\dist-1.3.5.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
