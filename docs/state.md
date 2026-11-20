@@ -915,6 +915,29 @@ original (PCSX2 reference on Xvfb :191, private captures):
    - The skull's trail always faced one way: TopFaceMat 0x1c7e90 (MB flags
      0x8000000, the trail TFSTRE's 0x8081800) keeps the node's own world z
      row and turns x/y to the eye; the port kept world Z. Now the node's z.
+   2026-11-19 (the same player's reports on 1.3.4):
+   - The level movie (G3's fscroll) "cannot be skipped and the buttons
+     allow menuing": the pause menu opened over a level movie (Start), and
+     then every button worked the menu; the screen stayed white after the
+     movie. game_main runs only do_gamemovie in 0x400e and OptionsStart
+     opens nothing outside 0x4010/0x8009, so the menu is now blocked during
+     movies; cross still skips (G2 → map → movie with cross: the movie ends
+     at frame 200 instead of 547). The harness's debug start already
+     blocked the menu by its own flags, so the opening itself was not
+     reproduced; DEBUG test action exit_next added (as F9).
+   - G3's water did not move: every texture modifier's frame swap left the
+     materials' bind groups on the first frame (since the texmods were
+     ported). Each swap now re-prepares the target's materials: the pool
+     (WATER), the statue's streams (JET) and the splash (BIGSPLASH) change
+     every AFrame (g3-flow-v4: 0 pixels changed over 60 frames; -v5: 5–23
+     per pixel). This affects animated textures in every level.
+   - Health bars: golems and gargoyles (type +0x5c bit 0x800) carry the
+     in-world GMETER meter in the original (reference ref-a1-gar-meter-v1);
+     the client now draws it. Generals have no meter on the PS2 (flags 0x3).
+   - Settings reset on reload: not reproduced. The difficulty is stored at
+     once (options.json) and came back after a restart (settings-v1); the
+     controller options are the character's (+0x190c..), written only when
+     the character is saved (Manage Character), as in the original.
 
 ---
 

@@ -487,8 +487,25 @@ alpha 0x70. ProcessCritter's CritterUpdateHealthMeter moves the shown value
 towards the health by 3 × vb_elapsed and sizes/crops the foreground
 (value/max × (256 − insets); two-piece meters fill the first then the
 second); the backgrounds are tinted 0x8080ff while the boss's +0xb4c
-quest-item time runs. Verified natively in G5 (the lich's bar). Not drawn:
-the in-world meter tree (+0x5c bit 0x800).
+quest-item time runs. Verified natively in G5 (the lich's bar).
+
+In-world meters (2026-11-19, instruction-checked): with type +0x5c bit
+0x800, CritterAddHealthMeter also runs AtreeMatch(model, "GMETER" 0x2adc10,
+1) and AtreeInit(+0x488, 0x800), parents the tree's root to the critter's
++0x70 node (MBNodeSetParent), MBTreeSetFlags(root, 0x2000000) — QuickYawMat,
+turned to the camera — adds the type's +0x100..+0x108 to the root's
+translation and keeps AtreeFindNode("RED_FILLE" 0x2adc18) at +0x4d0.
+CritterUpdateHealthMeter scales that node by (health / (type +0xe4 ×
+level_data +0xac), 1, 1) (MBTreeSetScale) and AtreeDelete's the tree at
+health ≤ 0. On the disc every golem type (GOLEM/LEVELA..K, offset (0, 9,
+0); LEVELF (0, 10.5, 0)) and every gargoyle (GAR_*, (0, 8.5, 7)) has bit
+0x800; generals (flags 0x3) and the bosses do not — the PS2 release draws
+no general health bar. GMETER: GEOMETRY (no object), RED_FILLE at x 1.5135,
+GLASS_TUB; the fill's texture G_HEALTH_FILLER is magenta (191, 0, 191).
+Reference: w1l1-statue-v1 with trace-A1-statue-v2's schedule + 60 vblanks
+(ref-a1-gar-meter-v1.png) shows the magenta bar above the gargoyle; native
+golem and gargoyle shots (meter-golem-v4, meter-gar-v1) match it. Drawn by
+the client's present_critter_meters since 2026-11-19 (a player's report).
 
 ## Rune thermometer and wave timer
 
@@ -766,7 +783,10 @@ the realm movies movieA1.. and the legend-item movies iceaxe, javelin,
 bellows, scimitar, soulsave, fscroll, lamp, lantern, goodbook play before
 their level) and game_main's BossType 0x2c/0x2b level end.
 do_gamemovie 0x165908: an accept edge (active_player_edge 0x2000000, any
-player not in state 0) kills a movietype-1 movie; when it ends, movietype 1
+player not in state 0; cross) kills a movietype-1 movie (instruction-
+checked 2026-11-19; Start does nothing: game_main runs only do_gamemovie in
+0x400e and OptionsStart opens menus only in 0x4010/0x8009 — the port let
+Start open the pause menu over the movie until 2026-11-19); when it ends, movietype 1
 → init_next_level(0), 2 → init_shop. LEVL +0x34 names per realm (actual
 disc, gdl_tools levl-list): A1 movieA1, A2 iceaxe, A3 movieA3; B1 movieB1,
 B4 movieB4, B5 javelin; C1 movieC1, C3 bellows, C4 movieC4; D1 movieD1, D3

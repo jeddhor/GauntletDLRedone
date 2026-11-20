@@ -157,7 +157,13 @@ record (+0x48 + counter) into the target (MBSetRomTexture keeps the target's
 flags), −1 resolves the frame base by name (MBCopyTexture); −2/−3 set the
 MB_tex_shift_tex U/V add = sign·(counter mod |count|)/|count| (setTexShift).
 gdl_play swaps image data per AFrame (30 Hz) and passes the shift in the
-material. Tree-node fades (−4/−5) and scrolls (−2/−3, per-node shift
+material. A GsMaterial's bind group keeps the texture it was prepared with,
+so each swap also re-prepares every material drawing the target
+(present_texmods; the image→material map is rebuilt when materials are
+added). Until 2026-11-19 the swaps were not re-prepared and every frame
+modifier on level geometry stayed on its first frame (G3's WATER, JET and
+BIGSPLASH: pixel-identical over 60 frames in g3-flow-v4, changing in
+g3-flow-v5) — a player's report of still water in G3. Tree-node fades (−4/−5) and scrolls (−2/−3, per-node shift
 0x10000000) are drawn through per-mesh material requests (see Bodies and
 effect trees).
 

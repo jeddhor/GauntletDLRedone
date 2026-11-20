@@ -6,8 +6,8 @@
 //! the left/right insets; blits "<TYPE>_METER_BG<n>" / "_FG<n>" at
 //! (x + 256·(n − 1), 0) with alpha 0x70. The shown value follows the
 //! critter's health (+0x4f4) by 3 × vb_elapsed per frame. The in-world
-//! meter tree (+0x5c bit 0x800, HEALTHMETER node scaled by health) is not
-//! drawn.
+//! meter tree (+0x5c bit 0x800: GMETER, its RED_FILLE node scaled by
+//! health) is the client's present_critter_meters.
 use super::hud::Blit;
 use super::Game;
 

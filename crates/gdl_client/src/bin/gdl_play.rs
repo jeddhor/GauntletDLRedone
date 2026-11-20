@@ -1245,6 +1245,103 @@ struct CritterPart {
     node: usize,
 }
 
+/// CritterAddHealthMeter's in-world meter (type +0x5c bit 0x800: every
+/// golem and gargoyle on the disc; generals and bosses have none): the
+/// model package's GMETER tree under the critter's +0x70 node, its root
+/// moved by the type's +0x100..+0x108 offset, MBTreeSetFlags(root,
+/// 0x2000000) — QuickYawMat, turned to the camera — and the RED_FILLE node
+/// (+0x4d0) scaled in x by CritterUpdateHealthMeter: health / (type +0xe4 ×
+/// level_data +0xac); AtreeDelete at health 0. Until 2026-11-19 not drawn
+/// (a player's report).
+#[derive(Component)]
+struct CritterMeter {
+    index: usize,
+    fill: Option<usize>,
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn present_critter_meters(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    session: Res<Session>,
+    libs: Res<Libraries>,
+    root: Query<Entity, With<MirrorRoot>>,
+    mut meters: Query<(Entity, &CritterMeter, &mut Transform, &mut Visibility, Option<&Children>)>,
+    mut parts: Query<(&TreeNodeIdx, &mut Transform), Without<CritterMeter>>,
+    (mut materials, mut cache, mut pending): (ResMut<Assets<gdl_client::GsMaterial>>, ResMut<PartVariants>, ResMut<PendingTreePsys>),
+) {
+    let g = &sim.game;
+    // A meter for every live critter whose type asks for one.
+    let wants = |k: usize| -> Option<(f32, [f32; 3])> {
+        let cr = g.critters.get(k)?.as_ref()?;
+        let ty = g.critter_data.files.get(cr.ty.0)?.wad.types.get(cr.ty.1)?;
+        let f32_ = |o: usize| ty.get(o..o + 4).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+        let flags = ty.get(0x5c..0x60).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+        let health = cr.rec.f32_(0x4f4);
+        if flags & 0x800 == 0 || health <= 0.0 {
+            return None;
+        }
+        let max = f32_(0xe4) * g.level_f32(0xac);
+        Some((if max != 0.0 { health / max } else { 0.0 }, [f32_(0x100), f32_(0x104), f32_(0x108)]))
+    };
+    let mut have = std::collections::HashSet::new();
+    let cam = g.std_camera.as_ref().map(|c| (Vec3::from_array(c.pb.eye), c.pb.cam_rows.map(Vec3::from_array)));
+    for (e, m, mut tf, mut vis, children) in &mut meters {
+        let Some((frac, off)) = wants(m.index) else {
+            commands.entity(e).despawn();
+            continue;
+        };
+        have.insert(m.index);
+        let Some(Some(cr)) = g.critters.get(m.index) else { continue };
+        let r = &cr.rec;
+        let rows = [Vec3::from_array(r.v3(0x10)), Vec3::from_array(r.v3(0x20)), Vec3::from_array(r.v3(0x30))];
+        let s = cr.node_scale;
+        // The meter root's local translation (its rest position plus the
+        // type's offset) through the +0x70 node (row vectors, scaled).
+        let at = Vec3::from_array(r.v3(0x40)) + (rows[0] * off[0] + rows[1] * off[1] + rows[2] * off[2]) * s;
+        tf.translation = at;
+        if let Some((eye, crows)) = cam {
+            tf.rotation = Quat::from_mat3(&camera_face_rotation(0x200_0000, at, eye, crows, Vec3::Z));
+        }
+        *vis = Visibility::Inherited;
+        if let (Some(fill), Some(children)) = (m.fill, children) {
+            for c in children.iter() {
+                if let Ok((idx, mut ptf)) = parts.get_mut(c)
+                    && idx.0 == fill
+                {
+                    ptf.scale = Vec3::new(frac, 1.0, 1.0);
+                }
+            }
+        }
+    }
+    let Ok(root) = root.single() else { return };
+    for k in 0..g.critters.len() {
+        if have.contains(&k) || wants(k).is_none() {
+            continue;
+        }
+        let Some(Some(cr)) = g.critters.get(k) else { continue };
+        let file = &g.critter_data.files[cr.ty.0];
+        let Some(model) = file.model.as_ref() else { continue };
+        let Some(t) = model.0.trees.iter().find(|t| t.label == "GMETER") else { continue };
+        let lib_name = session.levels.get(session.current).and_then(|l| l.critters.get(cr.ty.0)).and_then(|c| c.2.clone()).unwrap_or_default();
+        let Some(lib) = libs.0.get(&lib_name) else { continue };
+        let mut list: Model = Vec::new();
+        for node in &t.nodes {
+            if node.flags & 1 != 0 || node.node_type == 2 {
+                continue;
+            }
+            let label: String = (t.prefix.clone() + &node.label).chars().take(15).collect();
+            if let Some(p) = lib.by_label.get(&label) {
+                list.push((Vec3::from_array(node.initial_position), p.clone(), tree_node_flags(node), Some(node.index as usize), None));
+            }
+        }
+        let fill = t.nodes.iter().find(|n| n.label == "RED_FILLE").map(|n| n.index as usize);
+        let e = commands.spawn((CritterMeter { index: k, fill }, Transform::default(), Visibility::Hidden, LevelEntity)).id();
+        commands.entity(root).add_child(e);
+        spawn_parts(&mut commands, e, list, &mut materials, &mut cache, &mut pending);
+    }
+}
+
 /// Critters drawn from the simulation skeleton: each tree node's object
 /// "<tree prefix><node label>" (15 characters; AtreeNodeInit: not for node
 /// flag bit 0 nor OANIM nodes) in the critter's model package, and an OANIM
@@ -3496,6 +3593,7 @@ struct TestHarness {
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
     /// {"at": u, "health": h[, "player": k]} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
+    /// {"at": u, "exit_next": true} (DEBUG, as F9) |
     /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "boss_damage": amount} (DEBUG) | {"at": u, "critter_kill": instance} (DEBUG) |
     /// {"at": u, "damage_item": [slot, damage(, flags)]} (DEBUG) |
     /// {"at": u, "spawn": [type, level, ai(, dx, dz)]} (DEBUG) | {"at": u, "next_coin": coins} (DEBUG) |
@@ -5135,8 +5233,11 @@ struct TexMods {
     accumulated: f32,
     /// The stepped-update count at the first run (GDL_FREEZE_AT clock).
     born: Option<u64>,
-    /// Materials by base image, built on first use (scroll targets).
+    /// Materials by base image (frame and scroll targets), built on first
+    /// use and again whenever the material count changes (item, effect and
+    /// variant materials are added later).
     by_image: Option<HashMap<AssetId<Image>, Vec<AssetId<gdl_client::GsMaterial>>>>,
+    materials_seen: usize,
     /// gdl_client::texfilter::generation() at the last copy: a texture
     /// filter switch copies every current frame in again (NATIVE).
     filter_gen: u32,
@@ -5219,7 +5320,7 @@ fn spawn_texmod_list(
         mods.push(TexModState { kind, count: tm.count, start: tm.start, divisor: tm.divisor, counter: tm.counter });
     }
     if !mods.is_empty() {
-        commands.spawn((TexMods { mods, aframe: 0, accumulated: 0.0, born: None, by_image: None, filter_gen: gdl_client::texfilter::generation() }, LevelEntity));
+        commands.spawn((TexMods { mods, aframe: 0, accumulated: 0.0, born: None, by_image: None, materials_seen: 0, filter_gen: gdl_client::texfilter::generation() }, LevelEntity));
     }
 }
 
@@ -5232,7 +5333,7 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut q: Query<&mut TexMods>, m
     for mut tm in &mut q {
         let tm = &mut *tm;
         let first = tm.by_image.is_none();
-        if first {
+        if first || tm.materials_seen != materials.len() {
             let mut map: HashMap<AssetId<Image>, Vec<AssetId<gdl_client::GsMaterial>>> = HashMap::new();
             for (id, m) in materials.iter() {
                 if let Some(b) = &m.base {
@@ -5240,6 +5341,9 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut q: Query<&mut TexMods>, m
                 }
             }
             tm.by_image = Some(map);
+            tm.materials_seen = materials.len();
+        }
+        if first {
             // NATIVE ENHANCEMENT (texfilter): animated textures keep their
             // own levels under the sharp filter (cheaper frame uploads).
             let (mut targets, mut frame_ids) = (Vec::new(), Vec::new());
@@ -5301,6 +5405,16 @@ fn present_texmods(time: Res<Time>, sim: Res<Sim>, mut q: Query<&mut TexMods>, m
                         frame.sampler = old.sampler.clone();
                     }
                     let _ = images.insert(target.id(), frame);
+                    // A material's bind group keeps the texture it was
+                    // prepared with: re-prepare every material drawing the
+                    // target so the new frame reaches the screen. Until
+                    // 2026-11-19 nothing did, and every frame modifier on
+                    // level geometry stayed on its first frame (G3's WATER,
+                    // JET and BIGSPLASH: a player's report; pixel-identical
+                    // over 60 frames before, changing after).
+                    for id in by_image.get(&target.id()).into_iter().flatten() {
+                        let _ = materials.get_mut(*id);
+                    }
                 }
                 TexModKind::Scroll { target, v } => {
                     let n = f32::from(m.count).abs().max(1.0);
@@ -6575,6 +6689,14 @@ fn simulate(
             // {"boss_kill": true}: DEBUG lethal CritterDamage on the boss
             // (Game::debug_damage_boss, as game_run's boss-kill); the death,
             // good wizard, auto exit and what follows are the game's own.
+            // {"exit_next": true}: DEBUG as F9 — the level ends towards the
+            // next level (its map screen and movie follow).
+            if a["exit_next"].as_bool() == Some(true) && sim.game.level_done.is_none() {
+                let next = session.levels.get(session.current + 1).map_or(session.world_number << 8 | 0xff, |l| l.world << 8 | l.index as i32);
+                sim.game.level_done = Some(next);
+                sim.game.exit_ready = true;
+                sim.debug_skip = true;
+            }
             if a["boss_kill"].as_bool() == Some(true) && sim.game.globals.boss_is_dead == 0
                 && let Err(e) = sim.game.debug_damage_boss()
             {
@@ -6674,7 +6796,7 @@ fn simulate(
                     "right_stick": [c.f32_(0x24), c.f32_(0x28)] }) }).collect::<Vec<_>>());
                 d["joy_remap"] = serde_json::json!(sim.game.controls.joy_remap);
                 d["critters"] = serde_json::json!(sim.game.critters.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| serde_json::json!({
-                    "slot": k, "ty": [c.ty.0, c.ty.1], "nodes": c.parents.len() }))).collect::<Vec<_>>());
+                    "slot": k, "ty": [c.ty.0, c.ty.1], "nodes": c.parents.len(), "pos": c.rec.v3(0x40), "health": c.rec.f32_(0x4f4) }))).collect::<Vec<_>>());
                 d["secret"] = serde_json::json!({ "coins": sim.game.players[0].i32_(0x908), "unlocks": sim.game.players[0].u16_(0x9a8),
                     "max_level_coins": sim.game.globals.max_level_coins, "secret_world": sim.game.globals.secret_world,
                     "wave_timer": sim.game.globals.wave_timer, "wave_complete": sim.game.globals.wave_complete });
@@ -10826,11 +10948,16 @@ fn front_system(world: &mut EcsWorld) {
         let paused = world.resource::<Ui>().paused;
         // DoOptions: no menu before WelcomeFlag < 0, during the stage start,
         // or while player controls are disabled (PlayerControl's Start edge
-        // is zero then: trigger cameras, speeches); nor in the shop or map.
+        // is zero then: trigger cameras, speeches); nor in the shop or map,
+        // nor during a level movie: game mode 0x400e runs do_gamemovie only
+        // and OptionsStart opens nothing outside 0x4010 (0x8009 on the
+        // title). Until 2026-11-19 Start opened the pause menu over the
+        // movie, the buttons then worked the menu instead of skipping, and
+        // the screen stayed white after the movie (a player's report).
         let blocked = world.get_resource::<Session>().is_some_and(|s| s.banner.is_some() || s.finished.is_some())
             || world.get_resource::<Sim>().is_some_and(|s| {
                 let g = &s.game;
-                s.shop.is_some() || s.map.is_some() || 0 <= g.globals.welcome_flag || g.globals.start_of_stage != 0 || g.disable_player_controls != 0 || g.good_wiz.optmenu_disable
+                s.shop.is_some() || s.map.is_some() || s.movie.is_some() || 0 <= g.globals.welcome_flag || g.globals.start_of_stage != 0 || g.disable_player_controls != 0 || g.good_wiz.optmenu_disable
             });
         if !paused {
             if toggle && !blocked {
@@ -11665,7 +11792,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 play_menu_cues,
                 run_attract,
                 ps2_viewport,
-                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (grow_item_slots, present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, (follow_tree_psys, follow_world_psys), present_particles, present_texmods, hide_exploded_nodes, present_critters, (present_critter_shadows, present_enemy_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
+                ((advance_level, (refresh_characters, test_players).chain(), net_predict).chain(), (grow_item_slots, present_world, present_see_thru).chain(), present_world_nodes, present_node_flags, (present_scene_light, present_point_lights).chain(), present_distance_fade, present_camera_face, present_effect_trees, (present_item_trees, present_enemy_trees), present_camera_face_local, spawn_tree_psys, (follow_tree_psys, follow_world_psys), present_particles, present_texmods, hide_exploded_nodes, (present_critters, present_critter_meters), (present_critter_shadows, present_enemy_shadows, present_item_debris).chain(), (present_sumner, present_special_texmods, present_hold_fx, present_familiars, present_powerup_trees, present_it_sign, present_hand_objects, present_movie, present_tree_alpha, present_skins, present_player_alpha, present_compass, present_player_shadow, apply_material_requests, present_weapon_trails, present_streaks).chain(), present_player).chain().run_if(playing),
                 front_text,
                 present_hud,
                 present_menu_icon,
