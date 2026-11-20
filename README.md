@@ -23,7 +23,9 @@ music, draws items that appear mid-level (a boss's coins, dropped bags) and
 turns the Lich's skull trail with its flight; release 1.3.5 animates the
 levels' water, flames and other moving textures, draws the golems' and
 gargoyles' health bars and keeps level movies skippable (no pause menu over
-them) ([research/release.md](docs/research/release.md)). The native game runs
+them); release 1.3.6 adds the exit portal's sound, fixes the purple demon
+generators and the orange glow left on the Cemetery's pool
+([research/release.md](docs/research/release.md)). The native game runs
 the original rules from the player's own disc: the Tower, all realms and
 bosses, one to four players, the original HUD, menus, audio and movies, and
 saves; a character has been played from a new game to the ending
