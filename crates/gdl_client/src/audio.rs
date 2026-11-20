@@ -278,7 +278,14 @@ impl AudioOut {
         if silent {
             status = "audio: disabled (GDL_NO_AUDIO)".into();
         }
-        let stream = if silent { None } else { start_output(mixer.clone()) };
+        // DIAGNOSTIC: GDL_AUDIO_CAPTURE=FILE renders the mix at the real-time
+        // pace into FILE (interleaved stereo f32 at OUT_RATE) instead of a
+        // device — test runs on the private display hear nothing otherwise.
+        let stream = match std::env::var_os("GDL_AUDIO_CAPTURE") {
+            Some(path) => start_capture(mixer.clone(), path.into()).map(|t| (Box::new(t) as Box<dyn std::any::Any>, "capture")),
+            None if silent => None,
+            None => start_output(mixer.clone()),
+        };
         if let Some((_, name)) = &stream {
             status = format!("audio: on ({name})");
         }
@@ -550,6 +557,42 @@ fn load_bank(path: &std::path::Path) -> Option<LoadedBank> {
 #[cfg(target_os = "linux")]
 fn start_output(mixer: Arc<Mutex<Mixer>>) -> Option<(Box<dyn std::any::Any>, &'static str)> {
     start_alsa(mixer).map(|t| (Box::new(t) as Box<dyn std::any::Any>, "ALSA"))
+}
+
+/// DIAGNOSTIC (GDL_AUDIO_CAPTURE): the mixer rendered every 10 ms of wall
+/// time into a file, as a device thread would take it.
+fn start_capture(mixer: Arc<Mutex<Mixer>>, path: std::path::PathBuf) -> Option<std::thread::JoinHandle<()>> {
+    use std::io::Write as _;
+    let mut file = std::io::BufWriter::new(std::fs::File::create(path).ok()?);
+    if let Ok(mut m) = mixer.lock() {
+        m.out_rate = OUT_RATE;
+    }
+    std::thread::Builder::new()
+        .name("gdl-audio-capture".into())
+        .spawn(move || {
+            let start = std::time::Instant::now();
+            let mut done: u64 = 0;
+            let mut buf = Vec::new();
+            loop {
+                let due = (start.elapsed().as_secs_f64() * f64::from(OUT_RATE)) as u64;
+                if done < due {
+                    let n = (due - done).min(4800) as usize;
+                    buf.resize(n * 2, 0.0f32);
+                    buf.fill(0.0);
+                    if let Ok(mut m) = mixer.lock() {
+                        m.render(&mut buf, 2);
+                    }
+                    let bytes: Vec<u8> = buf.iter().flat_map(|v| v.to_le_bytes()).collect();
+                    if file.write_all(&bytes).is_err() {
+                        return;
+                    }
+                    let _ = file.flush();
+                    done += n as u64;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        })
+        .ok()
 }
 
 /// The platform's output, fed from the mixer, and its name.

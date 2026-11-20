@@ -2760,7 +2760,7 @@ fn present_point_lights(
     sim: Res<Sim>,
     settings: Res<gdl_client::settings::Settings>,
     mut last: Local<Vec<[f32; 8]>>,
-    mut torches: Local<(usize, Vec<Torch>)>,
+    mut torches: Local<(Vec<[i32; 3]>, Vec<Torch>)>,
     queue: Res<bevy::render::renderer::RenderQueue>,
     cams: Query<&bevy::camera::primitives::Frustum, With<FollowCamera>>,
     emitters: Query<&Emitter>,
@@ -2803,9 +2803,20 @@ fn present_point_lights(
     // NATIVE ENHANCEMENT (Settings::torch_lights): the level's fires after
     // the game's lights.
     if settings.torch_lights {
-        let fires: Vec<(Vec3, Vec3)> = emitters.iter().filter_map(|e| Some((Vec3::new(e.matrix[12], e.matrix[13], e.matrix[14]), e.fire_colour?))).collect();
-        if torches.0 != fires.len() {
-            *torches = (fires.len(), torch_lights(&fires));
+        // Emitting fires only (not hidden: psys node flag 0x200000), at
+        // their current place: the merged lights are rebuilt when a fire
+        // moves or goes out. Until 2026-11-20 they were rebuilt only when
+        // the number of fires changed, so G3's pool fire, which sinks with
+        // its fences once the Parchment of Fire's switches are done, kept
+        // lighting the water orange (a player's report).
+        let fires: Vec<(Vec3, Vec3)> = emitters
+            .iter()
+            .filter(|e| e.psys.node_flags & 0x200000 == 0)
+            .filter_map(|e| Some((Vec3::new(e.matrix[12], e.matrix[13], e.matrix[14]), e.fire_colour?)))
+            .collect();
+        let key: Vec<[i32; 3]> = fires.iter().map(|(p, _)| (*p * 8.0).round().as_ivec3().to_array()).collect();
+        if torches.0 != key {
+            *torches = (key, torch_lights(&fires));
         }
         let t = sim.updates as f32 / 30.0;
         let mut lit: Vec<[f32; 8]> = torches.1.iter().map(|k| k.light(t)).filter(in_view).collect();
@@ -3593,6 +3604,7 @@ struct TestHarness {
     autostarted: bool,
     /// GDL_TEST_ACTIONS: [{"at": update, "teleport": [x, y, z]} |
     /// {"at": u, "health": h[, "player": k]} | {"at": u, "gold": n} | {"at": u, "dump": "label"} |
+    /// {"at": u, "player_or": [offset, bits]} (DEBUG) |
     /// {"at": u, "exit_next": true} (DEBUG, as F9) |
     /// {"at": u, "boss_kill": true} (DEBUG) | {"at": u, "boss_damage": amount} (DEBUG) | {"at": u, "critter_kill": instance} (DEBUG) |
     /// {"at": u, "damage_item": [slot, damage(, flags)]} (DEBUG) |
@@ -5275,8 +5287,13 @@ fn spawn_package_texmods(commands: &mut Commands, libraries: &Libraries, names: 
     for name in names {
         if let Some(lib) = libraries.0.get(name) {
             // MBCopyTexture's by-name frames may be another package's (the
-            // SFX packages' weapon textures are WEAPONS' REDWEAPTEX01..).
-            let others: Vec<&Library> = names.iter().filter(|n| *n != name).filter_map(|n| libraries.0.get(n)).collect();
+            // SFX packages' weapon textures are WEAPONS' REDWEAPTEX01..),
+            // or the level's own (the DEM package's LAVA/LAVAB generator
+            // records copy B4/B5's LAVA00..; before 2026-11-20 the level
+            // was not searched, the records stayed magenta placeholders and
+            // the demon generators drew purple — a player's report).
+            // HYPOTHESIS: the level's package is searched last.
+            let others: Vec<&Library> = names.iter().filter(|n| *n != name).filter_map(|n| libraries.0.get(n)).chain(libraries.0.get(LEVEL_LIB)).collect();
             spawn_texmod_list(commands, &lib.texmods, &lib.label_index, &lib.record_images, &others);
         }
     }
@@ -6689,6 +6706,15 @@ fn simulate(
             // {"boss_kill": true}: DEBUG lethal CritterDamage on the boss
             // (Game::debug_damage_boss, as game_run's boss-kill); the death,
             // good wizard, auto exit and what follows are the game's own.
+            // {"player_or": [offset, bits]}: DEBUG OR bits into player 0's
+            // u32 at offset (e.g. +0x138 bit 1: the levitation wings).
+            if let Some(v) = a["player_or"].as_array()
+                && let (Some(o), Some(bits)) = (v.first().and_then(|x| x.as_u64()), v.get(1).and_then(|x| x.as_u64()))
+                && (o as usize) + 4 <= sim.game.players[0].0.len()
+            {
+                let cur = sim.game.players[0].u32_(o as usize);
+                sim.game.players[0].set_u32(o as usize, cur | bits as u32);
+            }
             // {"exit_next": true}: DEBUG as F9 — the level ends towards the
             // next level (its map screen and movie follow).
             if a["exit_next"].as_bool() == Some(true) && sim.game.level_done.is_none() {
@@ -6817,7 +6843,7 @@ fn simulate(
                     let def = &sim.game.items.definitions[r.definition()];
                     let a = sim.game.item_anims.get(k).and_then(Option::as_ref);
                     serde_json::json!({ "slot": k, "name": String::from_utf8_lossy(def.name()), "kind": def.kind(), "subtype": def.subtype(),
-                        "pos": r.position(), "clip": a.map(|a| a.current), "frame": a.map(|a| a.clock.frame), "animated": a.map(|a| a.animated), "clips": a.map(|a| a.clips.clone()), "loop_word": r.u16_(0xb8), "flags": r.u16_(0xd8), "next": r.i8_(0xde),
+                        "pos": r.position(), "clip": a.map(|a| a.current), "frame": a.map(|a| a.clock.frame), "animated": a.map(|a| a.animated), "clips": a.map(|a| a.clips.clone()), "loop_word": r.u16_(0xb8), "flags": r.u16_(0xd8), "next": r.i8_(0xde), "gen_type": r.i16_(0xf0), "gen_level": r.u8_(0xf6),
                         "state": r.i8_(0xdc) })
                 }).collect::<Vec<_>>());
                 // Live effect slots: header (+0x60), MBTreeSetZMod, position.

@@ -103,6 +103,19 @@
 - AudioDemonFireBall 0x15fcb8 (enemy type 2 fireballs by CurWorld) and
   AudioSelect 0x15ce80 are ported (effects.rs, sound_cues.rs).
 
+## The exit portal loop (2026-11-20, actual disc)
+
+AudioExitAnim 0x1604d0(stop, position): with stop 0, AudioLOOP(3,
+position, 0xe0, 0x76) once (AudioSoundExists) and AudioTrackPan of the
+0x76 track by AudioAng; otherwise AudioSoundKill(3). do_players
+(0x1342f4..0x134358): the first player in state 1 or 4 whose exit timer
++0x928 (do_exit_check) is non-zero calls it with stop 0 and its +0x60,
+unless game mode 0x4012 (then stop 2); with no such player, stop 2.
+game_main's level end calls it with 2 (0x125b14). Sound 3 is S_EXITFLAME;
+AudioPlayerExit 0x1607b0 (do_exit, once per level end) is AudioSFX(4 =
+S_TUNNEL, player +0x50, 0x7f, 9). The port played S_TUNNEL only until
+2026-11-20 (a player's report: no portal sound).
+
 ## The title and select music (2026-11-17, actual disc)
 
 AudioSelect 0x15ce80(k), when k differs from audio_select_state 0x23ccb8:

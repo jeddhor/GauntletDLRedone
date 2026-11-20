@@ -291,7 +291,10 @@ they keep their vertex colours. The VU1 microcode was not read.
   REDWEAPTEX/PIXIE_R/LIGHT) are named by their texmod's +0x04 target name,
   and a −1 frame base is found by name in another loaded package
   (MBCopyTexture: REDWEAPTEX01.. are WEAPONS records). HYPOTHESIS: the
-  search order (own package, then the level's load list).
+  search order (own package, then the level's load list, then the level's
+  own package — since 2026-11-20: the DEM package's LAVA/LAVAB copy B4/B5's
+  LAVA00, the only such case on the disc; before, the demon generators
+  were magenta placeholders).
 - PlayerProcessPowerups' held-weapon effect: with a weapon powerup
   (+0x130 & 0xf) WeapHoldFxTree[player][type] ("WEAP_HOLD_<DmgTypeDesc>" of
   the SFX package) hangs under the right hand (+0x6a8) at PlayerData +0x68 +

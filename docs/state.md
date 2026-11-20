@@ -938,6 +938,32 @@ original (PCSX2 reference on Xvfb :191, private captures):
      once (options.json) and came back after a restart (settings-v1); the
      controller options are the character's (+0x190c..), written only when
      the character is saved (Manage Character), as in the original.
+   2026-11-20 (the same player's reports on 1.3.5):
+   - The portal sound: AudioExitAnim (do_players 0x1342f4..0x134358) keeps
+     sound 3 (S_EXITFLAME) looping while a player in state 1/4 has the exit
+     timer +0x928 running, and game_main's level end kills it (0x125b14);
+     the port left it out as presentation. AudioPlayerExit (S_TUNNEL) was
+     already played. Checked natively: G1's portal plays S_EXITFLAME then
+     S_TUNNEL (GDL_SOUND_LOG, portal-v2).
+   - Purple demon generators (B4/B5): the DEM package's LAVA/LAVAB records
+     (flag 0x20) are filled by texmods copying LAVA00 by name from the
+     level's package, which the client did not search; now it does (last).
+     B4 generator 176: magenta in 1.3.5, dark rock and lava now.
+   - G3's water stayed orange after the fire went out: the torch-light
+     enhancement kept the lights it built when the level loaded (rebuilt
+     only when the number of fires changed); they now follow the fires and
+     leave out hidden ones. Solved pool: warm in 1.3.5, cool now (g3-glow).
+   - Not changed, with what was found: the vertical-pull switch (G3 item
+     412) shows its red handle before the pull and only its base after,
+     in the reference too (ref-g3-lever-pulled2, g3-cam-a4); the Death
+     statue items 54/55 are drawn (scene dumps); no potion lies within 60
+     units of G3's start in the level data; the map tune S_MAP_<L> is
+     requested and voiced at priority 1 in G1→G2 and B3→B4 runs
+     (GDL_AUDIO_CAPTURE, new: real-time capture to a file); the wings anchor
+     for the Valkyrie is ROOT_LHIP_3 by the port's rule (not checked against
+     the reference; levitation pickups: A2 over open space, G5 for 3+
+     players). Crispy audio, partly loaded demons, the eagle gargoyle's
+     glitch and the unopened chest graphic were not reproduced.
 
 ---
 

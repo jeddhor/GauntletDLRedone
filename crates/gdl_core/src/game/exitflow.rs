@@ -34,10 +34,14 @@ impl Game {
     /// game_main's level-end branch (see the module doc). Also runs
     /// PlayersSetWaveFinished for the level just played when it applies.
     pub fn game_main_level_end(&mut self) -> LevelEnd {
-        let g = &self.globals;
-        if g.active_players == 0 {
+        if self.globals.active_players == 0 {
             return LevelEnd::Over;
         }
+        // AudioExitAnim(2, 0) (0x125b14): the portal loop ends.
+        if self.sounds.loops.contains(&3) {
+            self.kill_sound(3);
+        }
+        let g = &self.globals;
         let here = g.cur_world << 8 | (g.cur_level & 0xff);
         if here == TOWER_WAVE {
             // EndTower; next_world (LoadWorldData); init_mapscreen(0x78, 0).

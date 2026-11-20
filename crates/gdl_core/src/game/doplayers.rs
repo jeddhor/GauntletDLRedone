@@ -891,8 +891,23 @@ impl Game {
             }
             self.players[k].set_u32(0x888, 0);
         }
-        // AudioExitAnim, LockCamReq (old camera), do_got_it and
-        // DoTimestopSound are presentation; WritePlayerInfo drives the panels.
+        // AudioExitAnim (0x1342f4..0x134358): the first player in state 1
+        // or 4 whose exit timer +0x928 runs keeps the portal loop (sound 3,
+        // AudioLOOP 0xe0 / 0x76) at its +0x60, outside game mode 0x4012;
+        // with none, AudioSoundKill(3). Until 2026-11-20 not played (a
+        // player's report: no portal sound). The pan update (AudioTrackPan)
+        // is presentation.
+        let exiting = (0..4).find(|&k| matches!(self.players[k].i32_(0xfc), 1 | 4) && self.players[k].i16_(0x928) != 0);
+        match exiting {
+            Some(k) if self.globals.game_mode != 0x4012 => {
+                let pos = self.players[k].v3(0x60);
+                self.loop_sound(3, Some(pos), 0xe0, 0x76)?;
+            }
+            _ if self.sounds.loops.contains(&3) => self.kill_sound(3),
+            _ => {}
+        }
+        // LockCamReq (old camera), do_got_it and DoTimestopSound are
+        // presentation; WritePlayerInfo drives the panels.
         if !matches!(self.globals.game_mode, 0x400d | 0x4012 | 0x4016) && self.globals.start_of_stage == 0 {
             self.write_player_info(-1)?;
             self.do_got_it();
