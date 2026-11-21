@@ -894,6 +894,17 @@ a person playing 1.3.6, network play between two computers or over the
 internet, a physical disc. The source archive is cut from the commit that
 adds this record.
 
+Published 2026-11-21 (UTC) after the owner's go-ahead ("Yes please, to all
+of that"): tag v1.3.6 at d5f4e66 (annotated, jeddhor's noreply identity),
+main pushed after history-audit-v136-push (546 commits, 3,344 blobs: no
+findings); the GitHub release "Gauntlet: Dark Legacy native port 1.3.6"
+(latest) with the nine assets of private/dist-1.3.6 — the two packages,
+GauntletDarkLegacy-1.3.6-source-d5f4e66.tar.gz (release-audit-v136b), the
+five library-source files and SHA256SUMS — and the notes of
+private/runs/github-release-1.3.6; every asset's digest on GitHub equals
+the local file's SHA-256. The owner's Windows test copy is
+P:\gauntlet\dist-1.3.6.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
