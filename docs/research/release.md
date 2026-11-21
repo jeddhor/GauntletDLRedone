@@ -839,6 +839,61 @@ private/runs/github-release-1.3.5; every asset's digest on GitHub equals
 the local file's SHA-256. The owner's Windows test copy is
 P:\gauntlet\dist-1.3.5.
 
+## Release 1.3.6 (2026-11-20)
+
+The same player's fourth session (on 1.3.5) reported the exit portal's
+sound missing, the map tune rarely playing, G3's switch handles, Death
+barrel, a potion, a chest graphic and the pool's orange glow, crackling
+audio, purple demon generators in B4/B5, half-loaded demons, an eagle
+gargoyle's glitch and no levitation wings. c0e4b41 fixes the portal loop
+(AudioExitAnim), the generators (LAVA00 found in the level's package) and
+the glow (the torch-light enhancement following the fires); the rest were
+checked or not reproduced (state.md 2026-11-20, unknowns.md). Regress
+r107: all 148 lines equal r106's. The owner asked for the push, a release
+and a note for the player. Version 1.3.6 in Cargo.toml's workspace and
+installer/CMakeLists.txt (1d10412; 1.3.5 and 1.3.6 do not play together
+over the network). Programs built by tools/package.sh at commit 1d10412:
+
+| File | SHA-256 |
+| --- | --- |
+| GauntletDarkLegacy-1.3.6-linux-x86_64.tar.gz (48 MB; 120 MiB unpacked, 41 files) | b80ce0a531ec99b7… |
+| GauntletDarkLegacy-1.3.6-windows-x86_64.zip (51 MB; 122 MiB unpacked, 22 files) | 5f1b0097b44cf2b2… |
+| Linux: GauntletDarkLegacy-Installer / gdl_play / gdl_import | 1542db873ef669be… / bb518d6389b1f01f… / 443985c083a5cecc… |
+| Windows: GauntletDarkLegacy-Installer.exe / gdl_play.exe / gdl_import.exe | e85e372aa5b51357… / b66ec4335558333b… / be8e61d74b947f44… |
+| library-source/ | unchanged from 1.3.5 |
+
+The packages hold the same files as 1.3.5's. cargo test --workspace
+--release: 190 tests pass; strict Clippy (tests-v136). No shader changed
+since 1.3.2, so spirv_check was not rerun.
+
+No check started a kwin session on the RX 580, and none ran on the owner's
+desktop. Checks of 1.3.6:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Private-data audit: both packages, their archives, the source archive (of 1d10412) | pass, no findings | release-audit-v136 |
+| Network play with the shipped games, a simulated distant network (60 ms one way + up to 30 ms): the Linux package's gdl_play hosting, the Windows package's gdl_play.exe joining under Wine, G1, 900 updates | all 900 hashes equal, 0 prediction digest mismatches | net-check-v136-pkg |
+| The development build: 24 menu flows on the private Xvfb | 20 of 24 pass at least once (below) | menu-flows-v136, -v136b |
+| Ubuntu 20.04 container without GPU or display: libraries of all 29 ELF files, `--batch` install from the ISO (read-only), verify | none missing; exit 0; 2953 checked, none differing | old-distro-v136-libs |
+| Linux 2026 host, system Qt masked: `--batch` | pass | qt-bundle-v136 |
+| Linux wizard on the private Xvfb with the ISO attached as a drive, system Qt masked, game started | pass, 8.1 s | installer-gui-v136 |
+| Update over release 1.3.5 (Windows 11 over SSH, `--batch`, APPDATA redirected, the test saves of client-m19-ovl1): saves byte-identical, programs equal to the package's, gdl_play replaced, verify none of 2953 differing, no leftovers, test folder removed | pass, 22 s + 17 s | private/runs/windows-update-v136 |
+
+The menu flows ran while another project's build kept the load average at
+31–51. pause-burn, pause-tower, pause-settings, select-back and
+quit-game-movie failed in the full run; on a rerun select-back passed and
+the other four failed again before the Tower pause (the client behind the
+wall-clock keys) — the pattern of 1.3.3's package under load
+(menu-flows-v133load) and of releases 1.3.4 and 1.3.5. Not rerun on a
+quiet machine for 1.3.6.
+
+Not run (they start kwin sessions on the RX 580): old_distro_check's wizard
+and game in the container, update_check.py on Linux, title_start_check.py,
+the original-presentation gate and the frame-time benchmarks. Not checked:
+a person playing 1.3.6, network play between two computers or over the
+internet, a physical disc. The source archive is cut from the commit that
+adds this record.
+
 ## History rewrite (2026-10-29)
 
 The owner asked for their name and e-mail address to be removed from every
