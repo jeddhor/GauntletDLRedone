@@ -11471,6 +11471,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut audio = audio_rom.clone().map(|rom| gdl_client::audio::AudioOut::new(rom, paths("banks"), paths("streams"), dcs.as_deref()));
     if let Some(a) = audio.as_ref() {
         println!("{}", a.status);
+    } else {
+        gdl_client::audio::note("no audio data in the installation's configuration (data/config.json \"audio\"): reinstall from the disc");
     }
     let elf_bytes = gdl_client::bounded_read(&p("elf")?)?;
     let elf = gdl_formats::elf::Elf::parse(&elf_bytes)?;
