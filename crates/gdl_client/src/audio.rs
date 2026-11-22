@@ -291,6 +291,7 @@ impl AudioOut {
         }
         let stream = stream.map(|(s, _)| s);
         status.push_str(note);
+        self::note(&status);
         let jobs: Vec<(usize, PathBuf)> =
             rom.banks.iter().enumerate().filter_map(|(k, b)| bank_paths.get(&b.name.to_uppercase()).map(|p| (k, p.clone()))).collect();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -598,7 +599,8 @@ fn start_capture(mixer: Arc<Mutex<Mixer>>, path: std::path::PathBuf) -> Option<s
 /// The platform's output, fed from the mixer, and its name.
 #[cfg(windows)]
 fn start_output(mixer: Arc<Mutex<Mixer>>) -> Option<(Box<dyn std::any::Any>, &'static str)> {
-    start_cpal(mixer).map(|s| (Box::new(s) as Box<dyn std::any::Any>, "WASAPI"))
+    let (thread, opened) = start_cpal(mixer)?;
+    Some((Box::new(thread) as Box<dyn std::any::Any>, if opened { "WASAPI" } else { "WASAPI, waiting for an output device" }))
 }
 
 /// No output backend on other platforms.
@@ -607,38 +609,215 @@ fn start_output(_mixer: Arc<Mutex<Mixer>>) -> Option<(Box<dyn std::any::Any>, &'
     None
 }
 
-/// Open the default output device through cpal (WASAPI on Windows) as
-/// stereo f32 at its own rate — the mixer resamples to any rate, as on
-/// ALSA — and render into its callback. Returns None without a device.
+/// A line in the audio log (Windows: audio-log.txt beside gdl_play.exe;
+/// elsewhere nothing).
+pub fn note(line: &str) {
+    #[cfg(windows)]
+    audio_log(line);
+    #[cfg(not(windows))]
+    let _ = line;
+}
+
+/// A line in audio-log.txt beside the executable (Windows: the game has no
+/// console, so this is the only place a device problem shows). Rewritten
+/// at each start; at most 400 lines.
 #[cfg(windows)]
-fn start_cpal(mixer: Arc<Mutex<Mixer>>) -> Option<cpal::Stream> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    let device = cpal::default_host().default_output_device()?;
-    let supported = device.supported_output_configs().ok()?.find(|c| c.channels() == 2 && c.sample_format() == cpal::SampleFormat::F32)?;
-    let rate = if (supported.min_sample_rate().0..=supported.max_sample_rate().0).contains(&OUT_RATE) { cpal::SampleRate(OUT_RATE) } else { supported.max_sample_rate() };
-    let config: cpal::StreamConfig = supported.with_sample_rate(rate).into();
-    if let Ok(mut m) = mixer.lock() {
-        m.out_rate = rate.0;
+fn audio_log(line: &str) {
+    use std::io::Write as _;
+    static LOG: std::sync::OnceLock<Option<Mutex<(std::fs::File, u32)>>> = std::sync::OnceLock::new();
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(std::time::Instant::now);
+    let log = LOG.get_or_init(|| {
+        let path = std::env::current_exe().ok()?.parent()?.join("audio-log.txt");
+        std::fs::File::create(path).ok().map(|f| Mutex::new((f, 0)))
+    });
+    if let Some(Ok(mut g)) = log.as_ref().map(|m| m.lock()) {
+        if g.1 < 400 {
+            g.1 += 1;
+            let _ = writeln!(g.0, "[{:8.2}s] {line}", start.elapsed().as_secs_f64());
+            let _ = g.0.flush();
+        }
     }
-    let stream = device
-        .build_output_stream(
-            &config,
-            move |out: &mut [f32], _| {
-                match mixer.lock() {
-                    Ok(mut m) => m.render(out, 2),
-                    Err(_) => out.fill(0.0),
+}
+
+/// The default output device's name (None: no device).
+#[cfg(windows)]
+fn default_output_name() -> Option<String> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    cpal::default_host().default_output_device().map(|d| d.name().unwrap_or_else(|_| "(unnamed device)".into()))
+}
+
+/// Open Windows' default output device through cpal (WASAPI) and feed it
+/// from the mixer. A thread owns the stream (cpal streams stay on one
+/// thread): it reopens it when the device reports an error or the default
+/// output device changes, and waits for one when there is none. Returns
+/// the thread and whether the first device opened.
+///
+/// NATIVE FIX (2026-11-22; release 1.3.6 asked for a stereo f32
+/// mode only): WASAPI's shared mode offers only the device's own channel
+/// count, so a device set up for 5.1 or 7.1 (surround speakers, many gaming
+/// headsets, HDMI receivers) had no stereo mode and the game stayed silent
+/// without a word. Any channel count and sample format is taken now: the
+/// mix goes to front left/right (mono: their average), other channels stay
+/// silent. Stereo f32 devices get the same samples as before.
+#[cfg(windows)]
+fn start_cpal(mixer: Arc<Mutex<Mixer>>) -> Option<(std::thread::JoinHandle<()>, bool)> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let thread = std::thread::Builder::new()
+        .name("gdl-audio".into())
+        .spawn(move || {
+            let lost = Arc::new(AtomicBool::new(false));
+            let mut current = open_cpal(&mixer, &lost);
+            let _ = ready_tx.send(current.is_some());
+            let mut said_none = current.is_some();
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                let want = default_output_name();
+                let changed = match (&current, &want) {
+                    (Some((_, have)), Some(w)) => have != w,
+                    (None, Some(_)) => true,
+                    _ => false,
+                };
+                let failed = lost.swap(false, Ordering::SeqCst);
+                if failed || changed {
+                    if failed {
+                        audio_log("the output stream failed: reopening");
+                    } else if let Some(w) = &want {
+                        audio_log(&format!("default output device is now \"{w}\": switching"));
+                    }
+                    // The old stream closes before the new one opens.
+                    drop(current.take());
+                    current = open_cpal(&mixer, &lost);
+                    said_none = current.is_some();
+                } else if current.is_none() && !said_none {
+                    audio_log("no output device: waiting for one");
+                    said_none = true;
                 }
-                // As ALSA's i16 conversion saturates.
-                for v in out.iter_mut() {
-                    *v = v.clamp(-1.0, 1.0);
-                }
-            },
-            |_| {},
-            None,
-        )
+            }
+        })
         .ok()?;
-    stream.play().ok()?;
-    Some(stream)
+    let opened = ready_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap_or(false);
+    Some((thread, opened))
+}
+
+/// One attempt at the default device: the stream and the device's name.
+#[cfg(windows)]
+fn open_cpal(mixer: &Arc<Mutex<Mixer>>, lost: &Arc<std::sync::atomic::AtomicBool>) -> Option<(cpal::Stream, String)> {
+    use cpal::SampleFormat as F;
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    let host = cpal::default_host();
+    let Some(device) = host.default_output_device() else {
+        audio_log("no default output device (Windows sound settings: Output)");
+        return None;
+    };
+    let name = device.name().unwrap_or_else(|_| "(unnamed device)".into());
+    audio_log(&format!("default output device: \"{name}\""));
+    let configs: Vec<cpal::SupportedStreamConfigRange> = match device.supported_output_configs() {
+        Ok(c) => c.collect(),
+        Err(e) => {
+            audio_log(&format!("  could not list its formats: {e}"));
+            Vec::new()
+        }
+    };
+    for c in &configs {
+        audio_log(&format!("  offers {} ch {:?} {}..{} Hz", c.channels(), c.sample_format(), c.min_sample_rate().0, c.max_sample_rate().0));
+    }
+    // Stereo f32 as before when offered (48 kHz when in range); otherwise
+    // the device's own default format.
+    let stereo = configs.iter().find(|c| c.channels() == 2 && c.sample_format() == F::F32).map(|c| {
+        let rate = if (c.min_sample_rate().0..=c.max_sample_rate().0).contains(&OUT_RATE) { cpal::SampleRate(OUT_RATE) } else { c.max_sample_rate() };
+        c.clone().with_sample_rate(rate)
+    });
+    let supported = match stereo {
+        Some(s) => s,
+        None => match device.default_output_config() {
+            Ok(s) => s,
+            Err(e) => {
+                audio_log(&format!("  no usable format: {e}"));
+                return None;
+            }
+        },
+    };
+    let format = supported.sample_format();
+    let config: cpal::StreamConfig = supported.config();
+    let channels = usize::from(config.channels.max(1));
+    if let Ok(mut m) = mixer.lock() {
+        m.out_rate = config.sample_rate.0;
+    }
+    let (m, l) = (mixer.clone(), lost.clone());
+    let built = match format {
+        F::F32 => build_cpal::<f32>(&device, &config, channels, m, l),
+        F::F64 => build_cpal::<f64>(&device, &config, channels, m, l),
+        F::I16 => build_cpal::<i16>(&device, &config, channels, m, l),
+        F::I32 => build_cpal::<i32>(&device, &config, channels, m, l),
+        F::U16 => build_cpal::<u16>(&device, &config, channels, m, l),
+        F::U8 => build_cpal::<u8>(&device, &config, channels, m, l),
+        F::I8 => build_cpal::<i8>(&device, &config, channels, m, l),
+        F::U32 => build_cpal::<u32>(&device, &config, channels, m, l),
+        other => {
+            audio_log(&format!("  unsupported sample format {other:?}"));
+            return None;
+        }
+    };
+    let stream = match built {
+        Ok(s) => s,
+        Err(e) => {
+            audio_log(&format!("  could not open it: {e}"));
+            return None;
+        }
+    };
+    if let Err(e) = stream.play() {
+        audio_log(&format!("  could not start it: {e}"));
+        return None;
+    }
+    audio_log(&format!("  playing: {} ch {:?} {} Hz", config.channels, format, config.sample_rate.0));
+    Some((stream, name))
+}
+
+/// The output stream in the device's sample type: the mixer renders stereo
+/// f32, mapped to the device's channels (front left/right; mono: their
+/// average; the rest silent) and clamped as ALSA's i16 conversion saturates.
+#[cfg(windows)]
+fn build_cpal<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    channels: usize,
+    mixer: Arc<Mutex<Mixer>>,
+    lost: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<cpal::Stream, cpal::BuildStreamError>
+where
+    T: cpal::SizedSample + cpal::FromSample<f32>,
+{
+    use cpal::traits::DeviceTrait;
+    let mut stereo: Vec<f32> = Vec::new();
+    device.build_output_stream(
+        config,
+        move |out: &mut [T], _| {
+            let frames = out.len() / channels;
+            stereo.resize(frames * 2, 0.0);
+            match mixer.lock() {
+                Ok(mut m) => m.render(&mut stereo, 2),
+                Err(_) => stereo.fill(0.0),
+            }
+            for (f, frame) in out.chunks_exact_mut(channels).enumerate() {
+                let (l, r) = (stereo[2 * f].clamp(-1.0, 1.0), stereo[2 * f + 1].clamp(-1.0, 1.0));
+                for (c, o) in frame.iter_mut().enumerate() {
+                    *o = T::from_sample(match (channels, c) {
+                        (1, _) => 0.5 * (l + r),
+                        (_, 0) => l,
+                        (_, 1) => r,
+                        _ => 0.0,
+                    });
+                }
+            }
+        },
+        move |e| {
+            audio_log(&format!("stream error: {e}"));
+            lost.store(true, std::sync::atomic::Ordering::SeqCst);
+        },
+        None,
+    )
 }
 
 /// Open the default ALSA device (S16 stereo, 48 kHz) and feed it from the

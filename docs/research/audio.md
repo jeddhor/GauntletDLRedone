@@ -411,3 +411,20 @@ set_synchronous), so offline renders and their comparisons are unchanged.
 
 Tower coin sounds against the reference capture, AudioLoadStage bank residency (the host loads banks on
 demand). Sound items follow their +0xf8 world node (process_sound_item).
+
+## Windows output: any device format (2026-11-22)
+
+Release 1.3.6 opened the default WASAPI device only in a stereo f32 mode.
+WASAPI's shared mode offers only the device's own channel count (cpal
+0.15.3 wasapi/device.rs supported_formats: the mix format's channels), so a
+device set up for 5.1 or 7.1 had no such mode and the game was silent with
+no message (the status went to stdout, which a windows-subsystem program
+does not have). start_cpal now takes the device's default format when no
+stereo f32 mode is offered: any channel count (the mix on front left/right,
+mono their average, the rest silent) and any cpal sample format. A thread
+owns the stream and reopens it on a stream error or when the default output
+device changes. audio-log.txt beside gdl_play.exe records the device, its
+formats, the choice and errors. Stereo f32 devices get the same samples as
+before. Checked: Windows cross-build; a player's Windows PC that was
+silent with 1.3.6 plays sound with this change (playtest 2026-11-22; which
+of its formats caused the silence not yet read from its audio-log.txt).
